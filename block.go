@@ -8,8 +8,8 @@ import (
 	"github.com/ava-labs/avalanchego/snow"
 	"github.com/ava-labs/avalanchego/snow/consensus/snowman"
 	"github.com/ava-labs/libevm/core/types"
-	"github.com/ava-labs/libevm/log"
 	"github.com/ava-labs/libevm/rlp"
+	"go.uber.org/zap"
 )
 
 func init() {
@@ -30,17 +30,17 @@ func (b *Block) ID() ids.ID {
 }
 
 func (b *Block) Accept(ctx context.Context) error {
-	return b.chain.accepted.Use(ctx, func(a *accepted) (*accepted, error) {
+	return b.chain.accepted.Use(ctx, func(a *accepted) error {
 		a.last = b.ID()
 		a.all[b.ID()] = b
 
 		select {
 		case <-ctx.Done():
-			return a, ctx.Err()
+			return ctx.Err()
 		case b.chain.toExecute <- blockAcceptance{ctx, b}:
 			// See the comment on [blockAcceptance] re temporary storage of a
 			// Context, against recommended style.
-			return a, nil
+			return nil
 		}
 	})
 }
@@ -55,16 +55,16 @@ func (b *Block) Parent() ids.ID {
 
 func (b *Block) Verify(ctx context.Context) error {
 	// TODO(arr4n): this is where worst-case cost validation occurs.
-	return b.chain.blocks.Use(ctx, func(bm blockMap) (blockMap, error) {
+	return b.chain.blocks.Use(ctx, func(bm blockMap) error {
 		bm[b.ID()] = b
-		return bm, nil
+		return nil
 	})
 }
 
 func (b *Block) Bytes() []byte {
 	buf, err := rlp.EncodeToBytes(b.b)
 	if err != nil {
-		log.Error("rlp.EncodeToBytes()", "error", err.Error())
+		b.chain.logger().Error("rlp.EncodeToBytes()", zap.Error(err))
 		return nil
 	}
 	return buf
