@@ -64,6 +64,7 @@ func New() *Chain {
 }
 
 type Chain struct {
+	snowCtx *snow.Context
 	common.AppHandler
 
 	blocks     sink.Mutex[blockMap]
@@ -94,7 +95,12 @@ func (c *Chain) Initialize(
 	fxs []*common.Fx,
 	appSender common.AppSender,
 ) error {
-	return errUnimplemented
+	c.snowCtx = chainCtx
+	return nil
+}
+
+func (c *Chain) logger() logging.Logger {
+	return c.snowCtx.Log
 }
 
 func (c *Chain) HealthCheck(context.Context) (any, error) {
@@ -179,7 +185,7 @@ func (c *Chain) BuildBlock(context.Context) (snowman.Block, error) {
 }
 
 func (c *Chain) SetPreference(ctx context.Context, blkID ids.ID) error {
-	return c.preference.Use(ctx, func(ids.ID) (ids.ID, error) {
+	return c.preference.Replace(ctx, func(ids.ID) (ids.ID, error) {
 		return blkID, nil
 	})
 }
@@ -193,7 +199,7 @@ func (c *Chain) GetBlockIDAtHeight(ctx context.Context, height uint64) (ids.ID, 
 }
 
 func (*Chain) Engine() consensus.Engine {
-	panic(errUnimplemented)
+	return nil
 }
 
 func (c *Chain) GetHeader(ethcommon.Hash, uint64) *types.Header {

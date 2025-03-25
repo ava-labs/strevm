@@ -3,14 +3,20 @@ package sae
 import (
 	"context"
 	"errors"
+	"math"
+	"math/big"
 	"sync"
 
 	"github.com/arr4n/sink"
+	"github.com/ava-labs/avalanchego/utils/logging"
+	"github.com/ava-labs/avalanchego/vms/components/gas"
 	"github.com/ava-labs/libevm/core"
+	"github.com/ava-labs/libevm/core/rawdb"
 	"github.com/ava-labs/libevm/core/state"
+	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/core/vm"
-	"github.com/ava-labs/libevm/log"
 	"github.com/ava-labs/libevm/params"
+	"go.uber.org/zap"
 )
 
 type (
@@ -26,9 +32,13 @@ type exec struct {
 	quit   <-chan sig
 	done   chan<- ack
 
+	spawned sync.WaitGroup
+
 	q       sink.Mutex[[]*Block]
 	pending chan sig
-	spawned sync.WaitGroup
+
+	gasConfig gas.Config
+	excess    gas.Gas
 }
 
 type blockAcceptance struct {
@@ -42,7 +52,9 @@ type blockAcceptance struct {
 	block *Block
 }
 
-type chunk struct{}
+type chunk struct {
+	receipts []*types.Receipt
+}
 
 func (e *exec) start() {
 	e.q = sink.NewMutex[[]*Block](nil)
@@ -59,6 +71,10 @@ func (e *exec) start() {
 	close(e.done)
 }
 
+func (e *exec) logger() logging.Logger {
+	return e.chain.snowCtx.Log
+}
+
 func (e *exec) spawn(fn func()) {
 	e.spawned.Add(1)
 	go func() {
@@ -73,7 +89,7 @@ func (e *exec) enqueueAccepted() {
 		case <-e.quit:
 			return
 		case a := <-e.blocks:
-			e.q.Use(a.ctx, func(q []*Block) ([]*Block, error) {
+			e.q.Replace(a.ctx, func(q []*Block) ([]*Block, error) {
 				return append(q, a.block), nil
 			})
 			e.spawn(e.signalQueuePush)
@@ -101,38 +117,73 @@ func (e *exec) clearQueue() {
 			return
 		case <-e.pending:
 			var b *Block
-			err := e.q.Use(ctx, func(q []*Block) ([]*Block, error) {
+			err := e.q.Replace(ctx, func(q []*Block) ([]*Block, error) {
 				b = q[0]
-				return q[1:], nil
+				return q[1:], ctx.Err()
 			})
 			if errors.Is(err, context.Canceled) {
 				return
 			}
-			if err := e.execute(b); err != nil {
-				log.Error("Executing enqueued block", "error", err.Error(), "height", b.Height(), "ID", b.ID())
+			if err := e.execute(ctx, b); err != nil {
+				e.logger().Error(
+					"Executing enqueued block",
+					zap.Error(err),
+					zap.Uint64("height", b.Height()),
+					zap.Any("hash", b.b.Hash()),
+				)
 				return
 			}
 		}
 	}
 }
 
-func (e *exec) execute(b *Block) error {
+func (e *exec) execute(ctx context.Context, b *Block) error {
 	gp := new(core.GasPool)
-	var statedb *state.StateDB
+	gp.SetGas(math.MaxUint64)
+
+	db := state.NewDatabase(rawdb.NewMemoryDatabase())
+	statedb, err := state.New(types.EmptyRootHash, db, nil)
+	if err != nil {
+		return err
+	}
 	var usedGas uint64
 
-	for _, tx := range b.b.Transactions() {
-		core.ApplyTransaction(
-			params.AllDevChainProtocolChanges,
+	hdr := types.CopyHeader(b.b.Header())
+	hdr.BaseFee = new(big.Int)
+	maxChunkSize := e.gasConfig.MaxPerSecond
+	_ = maxChunkSize
+
+	// TODO(arr4n): implement the chunk-boundary algorithm
+	chunk := new(chunk)
+
+	for i, tx := range b.b.Transactions() {
+		price := gas.CalculatePrice(params.GWei, e.excess, e.gasConfig.ExcessConversionConstant)
+		hdr.BaseFee.SetUint64(uint64(price))
+
+		statedb.SetTxContext(tx.Hash(), i)
+
+		receipt, err := core.ApplyTransaction(
+			params.TestChainConfig,
 			e.chain,
-			nil, // `author` (is nil in [core.StateProcessor.Process])
+			&hdr.Coinbase,
 			gp,
 			statedb,
-			b.b.Header(),
+			hdr,
 			tx,
 			&usedGas,
 			vm.Config{},
 		)
+		if err != nil {
+			return err
+		}
+		chunk.receipts = append(chunk.receipts, receipt)
+		e.excess += gas.Gas(receipt.GasUsed / 2)
 	}
-	return nil
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case e.chunks <- chunk:
+		return nil
+	}
 }
