@@ -51,14 +51,13 @@ func New() *Chain {
 		execResults: results,
 	}
 
-	e := &exec{
-		chain:  chain,
-		blocks: blocks,
-		chunks: results,
-		quit:   quit,
-		done:   done,
+	chain.exec = &executor{
+		chain:    chain,
+		accepted: blocks,
+		chunks:   results,
+		quit:     quit,
+		done:     done,
 	}
-	go e.start()
 
 	return chain
 }
@@ -75,6 +74,8 @@ type Chain struct {
 	doneExecute <-chan ack
 	toExecute   chan<- blockAcceptance
 	execResults <-chan *chunk
+
+	exec *executor
 }
 
 type blockMap map[ids.ID]*Block
@@ -96,6 +97,10 @@ func (c *Chain) Initialize(
 	appSender common.AppSender,
 ) error {
 	c.snowCtx = chainCtx
+	if err := c.exec.init(); err != nil {
+		return err
+	}
+	go c.exec.start()
 	return nil
 }
 

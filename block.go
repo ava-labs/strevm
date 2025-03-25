@@ -8,6 +8,7 @@ import (
 	"github.com/ava-labs/avalanchego/snow"
 	"github.com/ava-labs/avalanchego/snow/consensus/snowman"
 	"github.com/ava-labs/libevm/core/types"
+	"github.com/ava-labs/libevm/libevm/sync"
 	"github.com/ava-labs/libevm/rlp"
 	"go.uber.org/zap"
 )
@@ -29,19 +30,25 @@ func (b *Block) ID() ids.ID {
 	return ids.ID(b.b.Hash())
 }
 
+var errChans = sync.Pool[chan error]{
+	New: func() chan error {
+		return make(chan error)
+	},
+}
+
 func (b *Block) Accept(ctx context.Context) error {
 	return b.chain.accepted.Use(ctx, func(a *accepted) error {
 		a.last = b.ID()
 		a.all[b.ID()] = b
 
-		select {
-		case <-ctx.Done():
+		errCh := errChans.Get()
+		defer errChans.Put(errCh)
+		// See the comment on [blockAcceptance] re temporary storage of a
+		// Context, against recommended style.
+		if !send(ctx.Done(), b.chain.toExecute, blockAcceptance{ctx, b, errCh}) {
 			return ctx.Err()
-		case b.chain.toExecute <- blockAcceptance{ctx, b}:
-			// See the comment on [blockAcceptance] re temporary storage of a
-			// Context, against recommended style.
-			return nil
 		}
+		return <-errCh
 	})
 }
 
