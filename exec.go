@@ -35,13 +35,12 @@ type executor struct {
 
 	spawned sync.WaitGroup
 
-	q        sink.Mutex[[]*Block]
-	pending  chan sig
-	statedb  *state.StateDB
-	receipts chan *execResult
+	q       sink.Mutex[[]*Block]
+	pending chan sig
 
-	gasConfig gas.Config
-	excess    gas.Gas
+	// executeScratchSpace MUST NOT be accessed by any methods other than
+	// [executor.init] and [executor.execute].
+	executeScratchSpace executeScratchSpace
 }
 
 func (e *executor) init() error {
@@ -50,23 +49,22 @@ func (e *executor) init() error {
 	if err != nil {
 		return err
 	}
-	e.statedb = statedb
+	x := &e.executeScratchSpace
+	x.statedb = statedb
+	x.curr = new(chunk)
 	return nil
 }
 
 func (e *executor) start() {
 	e.q = sink.NewMutex[[]*Block](nil)
-	e.pending = make(chan sig)
-	e.receipts = make(chan *execResult, 1+uint64(e.gasConfig.MaxPerSecond)/params.TxGas)
+	e.pending = make(chan sig, 1)
 	e.spawn(e.enqueueAccepted)
 	e.spawn(e.clearQueue)
-	e.spawn(e.fillChunks)
 
 	<-e.quit
 	e.spawned.Wait()
 	close(e.chunks)
 	close(e.pending)
-	close(e.receipts)
 	e.q.Close()
 
 	close(e.done)
@@ -138,7 +136,7 @@ func (e *executor) clearQueue() {
 		switch err := e.execute(b); err {
 		case nil:
 		default:
-			e.logger().Error(
+			e.logger().Fatal(
 				"Executing enqueued block",
 				zap.Error(err),
 				zap.Uint64("height", b.Height()),
@@ -149,79 +147,59 @@ func (e *executor) clearQueue() {
 	}
 }
 
-func (e *executor) execute(b *Block) error {
-	gp := new(core.GasPool)
-	gp.SetGas(math.MaxUint64)
+type executeScratchSpace struct {
+	statedb   *state.StateDB
+	curr      *chunk
+	gasPool   core.GasPool
+	gasConfig gas.Config
+	excess    gas.Gas
+}
 
-	var usedGas uint64
+type chunk struct {
+	stateRoot common.Hash
+	receipts  []*types.Receipt
+	usedGas   uint64
+}
+
+func (e *executor) execute(b *Block) error {
+	x := &e.executeScratchSpace
+	x.gasPool.SetGas(math.MaxUint64)
 
 	hdr := types.CopyHeader(b.b.Header())
 	hdr.BaseFee = new(big.Int)
-	maxChunkSize := e.gasConfig.MaxPerSecond
+	maxChunkSize := x.gasConfig.MaxPerSecond
 	_ = maxChunkSize
 
 	txs := b.b.Transactions()
-	lastTxIndex := len(txs) - 1
+	x.curr.receipts = make([]*types.Receipt, len(txs))
 	for ti, tx := range txs {
-		price := gas.CalculatePrice(params.GWei, e.excess, e.gasConfig.ExcessConversionConstant)
+		price := gas.CalculatePrice(params.GWei, x.excess, x.gasConfig.ExcessConversionConstant)
 		hdr.BaseFee.SetUint64(uint64(price))
 
-		e.statedb.SetTxContext(tx.Hash(), ti)
+		x.statedb.SetTxContext(tx.Hash(), ti)
 
 		receipt, err := core.ApplyTransaction(
 			params.TestChainConfig,
 			e.chain,
 			&hdr.Coinbase,
-			gp,
-			e.statedb,
+			&x.gasPool,
+			x.statedb,
 			hdr,
 			tx,
-			&usedGas,
+			&x.curr.usedGas,
 			vm.Config{},
 		)
 		if err != nil {
 			return err
 		}
 
-		res := &execResult{
-			receipt:     receipt,
-			lastInBlock: ti == lastTxIndex,
-		}
-		if !send(e.quit, e.receipts, res) {
-			return context.Canceled
-		}
-		e.excess += gas.Gas(receipt.GasUsed / 2)
+		x.curr.receipts[ti] = receipt
+		x.excess += gas.Gas(receipt.GasUsed / 2)
 	}
 
+	x.curr.stateRoot = x.statedb.IntermediateRoot(true)
+	if !send(e.quit, e.chunks, x.curr) {
+		return context.Canceled
+	}
 	return nil
-}
-
-type chunk struct {
-	stateRoot common.Hash
-	receipts  []*types.Receipt
-}
-
-type execResult struct {
-	receipt     *types.Receipt
-	lastInBlock bool
-}
-
-func (e *executor) fillChunks() {
-	c := new(chunk)
-
-	for {
-		r, ok := recv(e.quit, e.receipts)
-		if !ok {
-			return
-		}
-		c.receipts = append(c.receipts, r.receipt)
-		if !r.lastInBlock {
-			continue
-		}
-
-		c.stateRoot = e.statedb.IntermediateRoot(true)
-		if !send(e.quit, e.chunks, c) {
-			return
-		}
-	}
 }

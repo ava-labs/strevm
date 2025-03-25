@@ -84,7 +84,9 @@ func TestBasicRoundTrip(t *testing.T) {
 		t.Logf("Executed %d txs (%s gas) in %v", len(body.Transactions), gas, end.Sub(start))
 	}
 
-	want := new(chunk)
+	want := &chunk{
+		usedGas: params.TxGas * uint64(len(body.Transactions)),
+	}
 	for _, tx := range body.Transactions {
 		want.receipts = append(want.receipts, &types.Receipt{TxHash: tx.Hash()})
 	}
@@ -93,6 +95,8 @@ func TestBasicRoundTrip(t *testing.T) {
 	}
 
 	require.NoError(t, chain.Shutdown(ctx))
+	gotNonce := chain.exec.executeScratchSpace.statedb.GetNonce(eoa)
+	require.Equal(t, uint64(len(body.Transactions)), gotNonce, "Nonce of EOA sending txs")
 }
 
 func newTestPrivateKey(t *testing.T, seed []byte) *ecdsa.PrivateKey {
