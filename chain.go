@@ -39,12 +39,14 @@ func New() *Chain {
 	done := make(chan ack)
 
 	chain := &Chain{
+		// Chain and chain state
 		AppHandler: common.NewNoOpAppHandler(logging.NoLog{}),
 		blocks:     sink.NewMutex(make(blockMap)),
 		accepted: sink.NewMutex(&accepted{
 			all: make(blockMap),
 		}),
-		preference:  sink.NewMutex[ids.ID](ids.Empty),
+		preference: sink.NewMutex[ids.ID](ids.Empty),
+		// Execution
 		quitExecute: quit,
 		doneExecute: done,
 		toExecute:   blocks,
