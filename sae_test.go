@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math/big"
 	"runtime"
+	"sort"
 	"testing"
 	"time"
 
@@ -42,9 +43,21 @@ func TestBasicRoundTrip(t *testing.T) {
 	chainConfig := params.TestChainConfig
 	signer := types.LatestSigner(chainConfig)
 
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	snowCtx := snowtest.Context(t, ids.Empty)
+	snowCtx.Log = tbLogger{tb: t, level: logging.Debug + 1}
+	chain := New()
+	require.NoErrorf(t, chain.Initialize(
+		ctx, snowCtx,
+		nil, nil, nil, nil, nil, nil, nil,
+	), "%T.Initialize()", chain)
+
 	header := &types.Header{
-		Number: big.NewInt(1),
-		Time:   0,
+		Number:     big.NewInt(1),
+		Time:       1,
+		ParentHash: common.Hash(chain.genesis),
 	}
 	body := types.Body{
 		Transactions: []*types.Transaction{},
@@ -58,24 +71,17 @@ func TestBasicRoundTrip(t *testing.T) {
 		body.Transactions = append(body.Transactions, tx)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	snowCtx := snowtest.Context(t, ids.Empty)
-	snowCtx.Log = tbLogger{tb: t}
-	chain := New()
-	require.NoErrorf(t, chain.Initialize(
-		ctx, snowCtx,
-		nil, nil, nil, nil, nil, nil, nil,
-	), "%T.Initialize()", chain)
+	requiredChunks := (len(body.Transactions)*int(params.TxGas)-1)/maxGasPerChunk + 1
+	waitForChunks := requiredChunks + 2 // extras for each of genesis and chunk-reporting blocks
 
 	blocks := []snowman.Block{
 		asSnowmanBlock(ctx, t, chain, types.NewBlockWithHeader(header).WithBody(body)),
 		asSnowmanBlock(
 			ctx, t, chain,
 			types.NewBlockWithHeader(&types.Header{
-				Number: new(big.Int).Add(header.Number, big.NewInt(1)),
-				Time:   header.Time + 21,
+				Number:     new(big.Int).Add(header.Number, big.NewInt(1)),
+				Time:       header.Time + uint64(requiredChunks),
+				ParentHash: header.Hash(),
 			}),
 		),
 	}
@@ -87,7 +93,7 @@ func TestBasicRoundTrip(t *testing.T) {
 	for _, b := range blocks {
 		require.NoErrorf(t, b.Accept(ctx), "%T.Accept()", b)
 	}
-	for range 22 {
+	for range waitForChunks {
 		<-chain.exec.chunkFilled
 	}
 
@@ -97,7 +103,7 @@ func TestBasicRoundTrip(t *testing.T) {
 		lastFilledBy     time.Time
 	)
 	chain.exec.chunks.Use(ctx, func(cs map[uint64]*chunk) error {
-		for timestamp := range uint64(22) {
+		for timestamp := range uint64(waitForChunks) {
 			got, ok := cs[timestamp]
 			if !ok {
 				t.Errorf("chunk at time %d not found", timestamp)
@@ -163,7 +169,8 @@ func chunkCmpOpts() cmp.Options {
 
 type tbLogger struct {
 	logging.NoLog
-	tb testing.TB
+	level logging.Level
+	tb    testing.TB
 }
 
 var _ logging.Logger = tbLogger{}
@@ -181,14 +188,25 @@ func (l tbLogger) Debug(msg string, fields ...zap.Field) {
 }
 
 func (l tbLogger) handle(level logging.Level, dest func(string, ...any), msg string, fields ...zap.Field) {
+	if level < l.level {
+		return
+	}
 	enc := zapcore.NewMapObjectEncoder()
 	for _, f := range fields {
 		f.AddTo(enc)
 	}
-	var parts []string
-	for k, v := range enc.Fields {
-		parts = append(parts, fmt.Sprintf("%s=%v", k, v))
+
+	var keys []string
+	for k := range enc.Fields {
+		keys = append(keys, k)
 	}
+	sort.Strings(keys)
+
+	var parts []string
+	for _, k := range keys {
+		parts = append(parts, fmt.Sprintf("%s=%v", k, enc.Fields[k]))
+	}
+
 	_, file, line, _ := runtime.Caller(2)
 	dest("[%s] %q %v - %s:%d", level, msg, parts, file, line)
 }
