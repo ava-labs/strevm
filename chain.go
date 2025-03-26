@@ -34,7 +34,6 @@ func init() {
 
 func New() *Chain {
 	blocks := make(chan blockAcceptance)
-	results := make(chan *chunk)
 	quit := make(chan sig)
 	done := make(chan ack)
 
@@ -50,13 +49,11 @@ func New() *Chain {
 		quitExecute: quit,
 		doneExecute: done,
 		toExecute:   blocks,
-		execResults: results,
 	}
 
 	chain.exec = &executor{
 		chain:    chain,
 		accepted: blocks,
-		chunks:   results,
 		quit:     quit,
 		done:     done,
 	}
@@ -75,7 +72,6 @@ type Chain struct {
 	quitExecute chan<- sig
 	doneExecute <-chan ack
 	toExecute   chan<- blockAcceptance
-	execResults <-chan *chunk
 
 	exec *executor
 }

@@ -41,6 +41,13 @@ func (b *Block) Accept(ctx context.Context) error {
 		a.last = b.ID()
 		a.all[b.ID()] = b
 
+		defer func() {
+			b.chain.logger().Debug(
+				"Accepted block",
+				zap.Uint64("height", b.Height()),
+			)
+		}()
+
 		errCh := errChans.Get()
 		defer errChans.Put(errCh)
 		// See the comment on [blockAcceptance] re temporary storage of a
