@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/ava-labs/avalanchego/ids"
+	"github.com/ava-labs/avalanchego/snow/consensus/snowman"
 	"github.com/ava-labs/avalanchego/snow/snowtest"
 	"github.com/ava-labs/avalanchego/utils/logging"
 	"github.com/ava-labs/avalanchego/vms/components/gas"
@@ -25,6 +26,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
 func TestMain(m *testing.M) {
@@ -40,8 +42,9 @@ func TestBasicRoundTrip(t *testing.T) {
 	chainConfig := params.TestChainConfig
 	signer := types.LatestSigner(chainConfig)
 
-	hdr := &types.Header{
-		Number: big.NewInt(42),
+	header := &types.Header{
+		Number: big.NewInt(1),
+		Time:   0,
 	}
 	body := types.Body{
 		Transactions: []*types.Transaction{},
@@ -55,9 +58,6 @@ func TestBasicRoundTrip(t *testing.T) {
 		body.Transactions = append(body.Transactions, tx)
 	}
 
-	blockBuf, err := rlp.EncodeToBytes(types.NewBlockWithHeader(hdr).WithBody(body))
-	require.NoErrorf(t, err, "rlp.EncodeToBytes(%T)", &types.Block{})
-
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -69,30 +69,58 @@ func TestBasicRoundTrip(t *testing.T) {
 		nil, nil, nil, nil, nil, nil, nil,
 	), "%T.Initialize()", chain)
 
-	block, err := chain.ParseBlock(ctx, blockBuf)
-	require.NoErrorf(t, err, "%T.ParseBlock()", chain)
-	require.NoErrorf(t, block.Verify(ctx), "%T.Verify()", block)
+	blocks := []snowman.Block{
+		asSnowmanBlock(ctx, t, chain, types.NewBlockWithHeader(header).WithBody(body)),
+		asSnowmanBlock(
+			ctx, t, chain,
+			types.NewBlockWithHeader(&types.Header{
+				Number: new(big.Int).Add(header.Number, big.NewInt(1)),
+				Time:   header.Time + 21,
+			}),
+		),
+	}
+	for _, b := range blocks {
+		require.NoErrorf(t, b.Verify(ctx), "%T.Verify()", b)
+	}
 
 	start := time.Now()
-	require.NoErrorf(t, block.Accept(ctx), "%T.Accept()", block)
-	got := <-chain.execResults
-	end := time.Now()
-	require.Equalf(t, len(body.Transactions), len(got.receipts), "# %T == # %T", &types.Receipt{}, &types.Transaction{})
-	{
-		// TODO(arr4n) using `CumulativeGasUsed` will underestimate gas used
-		// once chunk filling is properly implemented.
-		last := got.receipts[len(got.receipts)-1]
-		gas := humanize.Comma(int64(last.CumulativeGasUsed))
-		t.Logf("Executed %d txs (%s gas) in %v", len(body.Transactions), gas, end.Sub(start))
+	for _, b := range blocks {
+		require.NoErrorf(t, b.Accept(ctx), "%T.Accept()", b)
+	}
+	for range 22 {
+		<-chain.exec.chunkFilled
 	}
 
-	want := &chunk{
-		consumed: gas.Gas(params.TxGas) * gas.Gas(len(body.Transactions)),
+	var (
+		gotReceipts      []*types.Receipt
+		totalGasConsumed gas.Gas
+		lastFilledBy     time.Time
+	)
+	chain.exec.chunks.Use(ctx, func(cs map[uint64]*chunk) error {
+		for timestamp := range uint64(22) {
+			got, ok := cs[timestamp]
+			if !ok {
+				t.Errorf("chunk at time %d not found", timestamp)
+				continue
+			}
+			gotReceipts = append(gotReceipts, got.receipts...)
+			totalGasConsumed += got.consumed
+			lastFilledBy = got.filledBy
+		}
+		return nil
+	})
+
+	require.Equalf(t, len(body.Transactions), len(gotReceipts), "# %T == # %T", &types.Receipt{}, &types.Transaction{})
+	{
+		gas := humanize.Comma(int64(totalGasConsumed))
+		t.Logf("Executed %d txs (%s gas) in %v", len(gotReceipts), gas, lastFilledBy.Sub(start))
 	}
+
+	var wantReceipts []*types.Receipt
 	for _, tx := range body.Transactions {
-		want.receipts = append(want.receipts, &types.Receipt{TxHash: tx.Hash()})
+		wantReceipts = append(wantReceipts, &types.Receipt{TxHash: tx.Hash()})
 	}
-	if diff := cmp.Diff(want, got, chunkCmpOpts()); diff != "" {
+	if diff := cmp.Diff(wantReceipts, gotReceipts, chunkCmpOpts()); diff != "" {
 		t.Errorf("Execution results diff (-want +got): \n%s", diff)
 	}
 
@@ -101,13 +129,23 @@ func TestBasicRoundTrip(t *testing.T) {
 	require.Equal(t, uint64(len(body.Transactions)), gotNonce, "Nonce of EOA sending txs")
 }
 
-func newTestPrivateKey(t *testing.T, seed []byte) *ecdsa.PrivateKey {
-	t.Helper()
+func newTestPrivateKey(tb testing.TB, seed []byte) *ecdsa.PrivateKey {
+	tb.Helper()
 	s := crypto.NewKeccakState()
 	s.Write(seed)
 	key, err := ecdsa.GenerateKey(crypto.S256(), s)
-	require.NoErrorf(t, err, "ecdsa.GenerateKey(%T, %T)", crypto.S256(), s)
+	require.NoErrorf(tb, err, "ecdsa.GenerateKey(%T, %T)", crypto.S256(), s)
 	return key
+}
+
+func asSnowmanBlock(ctx context.Context, tb testing.TB, chain *Chain, b *types.Block) snowman.Block {
+	tb.Helper()
+	buf, err := rlp.EncodeToBytes(b)
+	require.NoErrorf(tb, err, "rlp.EncodeToBytes(%T)", &types.Block{})
+
+	block, err := chain.ParseBlock(ctx, buf)
+	require.NoErrorf(tb, err, "%T.ParseBlock()", chain)
+	return block
 }
 
 func chunkCmpOpts() cmp.Options {
@@ -128,24 +166,29 @@ type tbLogger struct {
 	tb testing.TB
 }
 
+var _ logging.Logger = tbLogger{}
+
 func (l tbLogger) Error(msg string, fields ...zap.Field) {
-	l.handle(logging.Error, msg, fields...)
+	l.handle(logging.Error, l.tb.Errorf, msg, fields...)
 }
 
 func (l tbLogger) Fatal(msg string, fields ...zap.Field) {
-	l.handle(logging.Fatal, msg, fields...)
+	l.handle(logging.Fatal, l.tb.Errorf, msg, fields...)
 }
 
-func (l tbLogger) handle(level logging.Level, msg string, fields ...zap.Field) {
-	parts := make([]string, len(fields))
-	for i, f := range fields {
-		var val any = f.Interface
-		switch v := val.(type) {
-		case ids.ID:
-			val = fmt.Sprintf("%#x", v)
-		}
-		parts[i] = fmt.Sprintf("%q=%v", f.Key, val)
+func (l tbLogger) Debug(msg string, fields ...zap.Field) {
+	l.handle(logging.Debug, l.tb.Logf, msg, fields...)
+}
+
+func (l tbLogger) handle(level logging.Level, dest func(string, ...any), msg string, fields ...zap.Field) {
+	enc := zapcore.NewMapObjectEncoder()
+	for _, f := range fields {
+		f.AddTo(enc)
+	}
+	var parts []string
+	for k, v := range enc.Fields {
+		parts = append(parts, fmt.Sprintf("%s=%v", k, v))
 	}
 	_, file, line, _ := runtime.Caller(2)
-	l.tb.Errorf("[%s] %q %v (%s:%d)", level, msg, parts, file, line)
+	dest("[%s] %q %v - %s:%d", level, msg, parts, file, line)
 }

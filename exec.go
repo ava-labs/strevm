@@ -6,6 +6,7 @@ import (
 	"math"
 	"math/big"
 	"sync"
+	"time"
 
 	"github.com/arr4n/sink"
 	"github.com/ava-labs/avalanchego/utils/logging"
@@ -19,7 +20,11 @@ import (
 	"github.com/ava-labs/libevm/core/vm"
 	"github.com/ava-labs/libevm/params"
 	"go.uber.org/zap"
+
+	"github.com/ava-labs/strevm/queue"
 )
+
+const maxGasPerChunk = 100_000
 
 type (
 	sig struct{}
@@ -30,14 +35,15 @@ type executor struct {
 	chain *Chain
 
 	accepted <-chan blockAcceptance
-	chunks   chan<- *chunk
 	quit     <-chan sig
 	done     chan<- ack
 
 	spawned sync.WaitGroup
 
-	queue        sink.Mutex[[]*Block]
+	queue        sink.Mutex[*queue.FIFO[*Block]]
 	queuePending chan sig
+	chunks       sink.Mutex[map[uint64]*chunk]
+	chunkFilled  chan sig
 
 	// executeScratchSpace MUST NOT be accessed by any methods other than
 	// [executor.init] and [executor.execute].
@@ -55,7 +61,7 @@ func (e *executor) init() error {
 		statedb: statedb,
 		chunk:   new(chunk),
 		gasConfig: gas.Config{
-			MaxPerSecond:             1e9,
+			MaxPerSecond:             maxGasPerChunk,
 			ExcessConversionConstant: 0, // TODO(arr4n)
 		},
 	}
@@ -63,18 +69,31 @@ func (e *executor) init() error {
 }
 
 func (e *executor) start() {
-	e.queue = sink.NewMutex[[]*Block](nil)
+	e.queue = sink.NewMutex(new(queue.FIFO[*Block]))
 	e.queuePending = make(chan sig, 1)
+	e.chunks = sink.NewMutex(make(map[uint64]*chunk))
+	const d = 1 // ACP variable
+	e.chunkFilled = make(chan sig, d)
 	e.spawn(e.enqueueAccepted)
 	e.spawn(e.clearQueue)
 
 	<-e.quit
 	e.spawned.Wait()
-	close(e.chunks)
+	close(e.chunkFilled)
+	e.chunks.Close()
 	close(e.queuePending)
 	e.queue.Close()
 
 	close(e.done)
+}
+
+func (e *executor) quitCtx() context.Context {
+	ctx, cancel := context.WithCancel(context.Background())
+	e.spawn(func() {
+		<-e.quit
+		cancel()
+	})
+	return ctx
 }
 
 func (e *executor) logger() logging.Logger {
@@ -107,10 +126,10 @@ func (e *executor) enqueueAccepted() {
 		if !ok {
 			return
 		}
-		a.errCh <- e.queue.Replace(a.ctx, func(q []*Block) ([]*Block, error) {
-			q = append(q, a.block)
+		a.errCh <- e.queue.Use(a.ctx, func(q *queue.FIFO[*Block]) error {
+			q.Push(a.block)
 			e.spawn(e.signalQueuePush)
-			return q, nil
+			return nil
 		})
 	}
 }
@@ -119,22 +138,24 @@ func (e *executor) signalQueuePush() {
 	send(e.quit, e.queuePending, sig{})
 }
 
-func (e *executor) clearQueue() {
-	ctx, cancel := context.WithCancel(context.Background())
-	e.spawn(func() {
-		<-e.quit
-		cancel()
-	})
+func (e *executor) signalChunkFilled() {
+	send(e.quit, e.chunkFilled, sig{})
+}
 
+func (e *executor) clearQueue() {
 	for {
 		if _, ok := recv(e.quit, e.queuePending); !ok {
 			return
 		}
 
-		var b *Block
-		err := e.queue.Replace(ctx, func(q []*Block) ([]*Block, error) {
-			b = q[0]
-			return q[1:], ctx.Err()
+		block, err := sink.FromMutex(e.quitCtx(), e.queue, func(q *queue.FIFO[*Block]) (*Block, error) {
+			b, ok := q.Pop()
+			if !ok {
+				// The recv() above is effectively a CondVar so if this happens
+				// then we've wired things up incorrectly.
+				return nil, errors.New("BUG: empty block queue")
+			}
+			return b, nil
 		})
 		if errors.Is(err, context.Canceled) {
 			return
@@ -146,13 +167,13 @@ func (e *executor) clearQueue() {
 			e.logger().Fatal("BUG: popping from queue", zap.Error(err))
 		}
 
-		if err := e.execute(b); err != nil {
+		if err := e.execute(block); err != nil {
 			e.logger().Fatal(
-				"Executing enqueued block",
+				"Executing accepted block",
 				zap.Error(err),
-				zap.Uint64("height", b.Height()),
-				zap.Uint64("timestamp", b.b.Time()),
-				zap.Any("hash", b.b.Hash()),
+				zap.Uint64("height", block.Height()),
+				zap.Uint64("timestamp", block.b.Time()),
+				zap.Any("hash", block.b.Hash()),
 			)
 			return
 		}
@@ -183,7 +204,8 @@ type chunk struct {
 	stateRoot          common.Hash
 	receipts           []*types.Receipt
 	consumed, donation gas.Gas
-	time               uint64 // same type as [types.Header.Time]
+	time               uint64    // same type as [types.Header.Time]
+	filledBy           time.Time // wall time for metrics
 }
 
 func (e *executor) execute(b *Block) error {
@@ -200,6 +222,13 @@ func (e *executor) execute(b *Block) error {
 			zap.Uint64("chunk time", x.chunk.time),
 		)
 	}
+
+	e.logger().Debug(
+		"Executing accepted block",
+		zap.Uint64("height", b.Height()),
+		zap.Uint64("timestamp", header.Time),
+		zap.Int("transactions", len(b.b.Transactions())),
+	)
 
 	for ti, tx := range b.b.Transactions() {
 		header.BaseFee.SetUint64(uint64(x.gasPrice()))
@@ -235,10 +264,16 @@ func (e *executor) execute(b *Block) error {
 		}
 	}
 
-	// TODO(arr4n): this needs additional checks, to see if the queue was
-	// exhausted.
-	if !e.nextChunk(x, nil) {
-		return context.Canceled
+	// Let C and B be the timestamps of the chunk and the block (header),
+	// respectively:
+	//
+	// * B < C: execution is slower than blocks so the queue is not exhausted
+	// * C == B: queue exhausted per criterion (1) of the ACP
+	// * B > C: invalid (enforced earlier)
+	if x.chunk.time == header.Time {
+		if !e.nextChunk(x, nil) {
+			return context.Canceled
+		}
 	}
 	return nil
 }
@@ -256,30 +291,42 @@ func (e *executor) nextChunk(x *executionScratchSpace, overflowTx *types.Receipt
 	}
 
 	x.chunk.stateRoot = x.statedb.IntermediateRoot(true)
-	if !send(e.quit, e.chunks, x.chunk) {
+	x.chunk.filledBy = time.Now()
+	e.logger().Debug(
+		"Concluding chunk",
+		zap.Uint64("timestamp", x.chunk.time),
+	)
+	err = e.chunks.Use(e.quitCtx(), func(cs map[uint64]*chunk) error {
+		cs[x.chunk.time] = x.chunk
+		e.spawn(e.signalChunkFilled)
+		return nil
+	})
+	if err != nil {
 		return false
 	}
-	x.chunk = new(chunk)
 
-	if overflowTx == nil {
-		// The queue was exhausted so the gas excess is reduced, but we MUST NOT
-		// donate the surplus to the next chunk because the execution stream is
-		// now dormant.
+	x.chunk = &chunk{
+		time: x.chunk.time + 1,
+	}
+	if tx := overflowTx; tx != nil {
+		// The queue wasn't exhausted so surplus gas is being used for the
+		// overflowing transaction and MUST be donated to the next chunk but
+		// MUST NOT count as a reduction in gas excess.
+		x.chunk.donation = surplus
+		x.chunk.consumed += gas.Gas(tx.GasUsed)
+		if x.chunkCapacity() < gas.Gas(tx.GasUsed) {
+			e.logger().Fatal("Unimplemented: empty interim chunk for XL tx")
+		}
+		x.chunk.receipts = []*types.Receipt{tx}
+	} else {
+		// Conversely, the queue was exhausted so the gas excess is reduced, but
+		// we MUST NOT donate the surplus to the next chunk because the
+		// execution stream is now dormant.
 		xs := x.excess - (surplus >> 1)
 		if xs > x.excess { // underflow
 			xs = 0
 		}
 		x.excess = xs
-
-	} else {
-		// Conversely, the surplus is being used for the overflowing transaction
-		// so MUST be donated to the next chunk and MUST NOT count as a
-		// reduction in gas excess.
-		x.chunk.donation = surplus
-		if x.chunkCapacity() < gas.Gas(overflowTx.GasUsed) {
-			e.logger().Fatal("Unimplemented: empty interim chunk for XL tx")
-		}
-		x.chunk.receipts = []*types.Receipt{overflowTx}
 	}
 
 	return true

@@ -1,4 +1,4 @@
-module github.com/ava-labs/libevm/experimental/sae
+module github.com/ava-labs/strevm
 
 go 1.23.7
 
