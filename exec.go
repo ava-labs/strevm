@@ -36,12 +36,12 @@ type executor struct {
 
 	spawned sync.WaitGroup
 
-	q       sink.Mutex[[]*Block]
-	pending chan sig
+	queue        sink.Mutex[[]*Block]
+	queuePending chan sig
 
 	// executeScratchSpace MUST NOT be accessed by any methods other than
 	// [executor.init] and [executor.execute].
-	executeScratchSpace executeScratchSpace
+	executeScratchSpace executionScratchSpace
 }
 
 func (e *executor) init() error {
@@ -51,7 +51,7 @@ func (e *executor) init() error {
 		return err
 	}
 
-	e.executeScratchSpace = executeScratchSpace{
+	e.executeScratchSpace = executionScratchSpace{
 		statedb: statedb,
 		chunk:   new(chunk),
 		gasConfig: gas.Config{
@@ -63,16 +63,16 @@ func (e *executor) init() error {
 }
 
 func (e *executor) start() {
-	e.q = sink.NewMutex[[]*Block](nil)
-	e.pending = make(chan sig, 1)
+	e.queue = sink.NewMutex[[]*Block](nil)
+	e.queuePending = make(chan sig, 1)
 	e.spawn(e.enqueueAccepted)
 	e.spawn(e.clearQueue)
 
 	<-e.quit
 	e.spawned.Wait()
 	close(e.chunks)
-	close(e.pending)
-	e.q.Close()
+	close(e.queuePending)
+	e.queue.Close()
 
 	close(e.done)
 }
@@ -107,7 +107,7 @@ func (e *executor) enqueueAccepted() {
 		if !ok {
 			return
 		}
-		a.errCh <- e.q.Replace(a.ctx, func(q []*Block) ([]*Block, error) {
+		a.errCh <- e.queue.Replace(a.ctx, func(q []*Block) ([]*Block, error) {
 			q = append(q, a.block)
 			e.spawn(e.signalQueuePush)
 			return q, nil
@@ -116,7 +116,7 @@ func (e *executor) enqueueAccepted() {
 }
 
 func (e *executor) signalQueuePush() {
-	send(e.quit, e.pending, sig{})
+	send(e.quit, e.queuePending, sig{})
 }
 
 func (e *executor) clearQueue() {
@@ -127,26 +127,31 @@ func (e *executor) clearQueue() {
 	})
 
 	for {
-		if _, ok := recv(e.quit, e.pending); !ok {
+		if _, ok := recv(e.quit, e.queuePending); !ok {
 			return
 		}
 
 		var b *Block
-		err := e.q.Replace(ctx, func(q []*Block) ([]*Block, error) {
+		err := e.queue.Replace(ctx, func(q []*Block) ([]*Block, error) {
 			b = q[0]
 			return q[1:], ctx.Err()
 		})
 		if errors.Is(err, context.Canceled) {
 			return
 		}
+		if err != nil {
+			// [sink.Mutex.Replace] will only return the [context.Context] error
+			// or the error returned by its argument, so this is theoretically
+			// impossible but included for completeness to be detected in tests.
+			e.logger().Fatal("BUG: popping from queue", zap.Error(err))
+		}
 
-		switch err := e.execute(b); err {
-		case nil:
-		default:
+		if err := e.execute(b); err != nil {
 			e.logger().Fatal(
 				"Executing enqueued block",
 				zap.Error(err),
 				zap.Uint64("height", b.Height()),
+				zap.Uint64("timestamp", b.b.Time()),
 				zap.Any("hash", b.b.Hash()),
 			)
 			return
@@ -154,7 +159,7 @@ func (e *executor) clearQueue() {
 	}
 }
 
-type executeScratchSpace struct {
+type executionScratchSpace struct {
 	statedb   *state.StateDB
 	chunk     *chunk
 	gasPool   core.GasPool
@@ -162,36 +167,51 @@ type executeScratchSpace struct {
 	excess    gas.Gas
 }
 
-func (x *executeScratchSpace) chunkCapacity() gas.Gas {
+func (x *executionScratchSpace) chunkCapacity() gas.Gas {
 	return x.chunk.donation + x.gasConfig.MaxPerSecond
+}
+
+func (x *executionScratchSpace) gasPrice() gas.Price {
+	return gas.CalculatePrice(
+		x.gasConfig.MinPrice,
+		x.excess,
+		x.gasConfig.ExcessConversionConstant,
+	)
 }
 
 type chunk struct {
 	stateRoot          common.Hash
 	receipts           []*types.Receipt
 	consumed, donation gas.Gas
+	time               uint64 // same type as [types.Header.Time]
 }
 
 func (e *executor) execute(b *Block) error {
 	x := &e.executeScratchSpace
-	x.gasPool.SetGas(math.MaxUint64)
+	x.gasPool.SetGas(math.MaxUint64) // necessary but unused so max it out
 
-	hdr := types.CopyHeader(b.b.Header())
-	hdr.BaseFee = new(big.Int)
+	header := types.CopyHeader(b.b.Header())
+	header.BaseFee = new(big.Int)
+
+	if header.Time > x.chunk.time {
+		e.logger().Fatal(
+			"BUG: chunk executing the future",
+			zap.Uint64("block time", header.Time),
+			zap.Uint64("chunk time", x.chunk.time),
+		)
+	}
 
 	for ti, tx := range b.b.Transactions() {
-		price := gas.CalculatePrice(params.GWei, x.excess, x.gasConfig.ExcessConversionConstant)
-		hdr.BaseFee.SetUint64(uint64(price))
-
+		header.BaseFee.SetUint64(uint64(x.gasPrice()))
 		x.statedb.SetTxContext(tx.Hash(), ti)
 
 		receipt, err := core.ApplyTransaction(
 			params.TestChainConfig,
 			e.chain,
-			&hdr.Coinbase,
+			&header.Coinbase,
 			&x.gasPool,
 			x.statedb,
-			hdr,
+			header,
 			tx,
 			(*uint64)(&x.chunk.consumed),
 			vm.Config{},
@@ -200,15 +220,16 @@ func (e *executor) execute(b *Block) error {
 			return err
 		}
 
-		x.excess += gas.Gas(receipt.GasUsed >> 1)
+		x.excess += gas.Gas(receipt.GasUsed >> 1) // see ACP for details
+
 		if x.chunk.consumed < x.chunkCapacity() {
 			x.chunk.receipts = append(x.chunk.receipts, receipt)
 			continue
 		}
-
 		// The overflowing tx is going to be in the next chunk so reduce the
 		// current one's consumed gas.
 		x.chunk.consumed -= gas.Gas(receipt.GasUsed)
+
 		if !e.nextChunk(x, receipt) {
 			return context.Canceled
 		}
@@ -222,7 +243,9 @@ func (e *executor) execute(b *Block) error {
 	return nil
 }
 
-func (e *executor) nextChunk(x *executeScratchSpace, overflowTx *types.Receipt) bool {
+func (e *executor) nextChunk(x *executionScratchSpace, overflowTx *types.Receipt) bool {
+	// Although gas surplus won't be used until later, it MUST be calculated
+	// before we overwrite the chunk.
 	surplus, err := safemath.Sub(x.chunkCapacity(), x.chunk.consumed)
 	if err != nil {
 		e.logger().Fatal(

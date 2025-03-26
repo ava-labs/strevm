@@ -71,7 +71,7 @@ func (b *Block) Verify(ctx context.Context) error {
 func (b *Block) Bytes() []byte {
 	buf, err := rlp.EncodeToBytes(b.b)
 	if err != nil {
-		b.chain.logger().Error("rlp.EncodeToBytes()", zap.Error(err))
+		b.chain.logger().Error("rlp.EncodeToBytes(Block)", zap.Error(err))
 		return nil
 	}
 	return buf
