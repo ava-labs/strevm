@@ -2,6 +2,7 @@ package sae
 
 import (
 	"context"
+	"math/big"
 	"net/http"
 	"sync"
 
@@ -30,6 +31,28 @@ func init() {
 		_     block.ChainVM     = chain
 		_     core.ChainContext = chain
 	)
+}
+
+type Chain struct {
+	snowCtx *snow.Context
+	common.AppHandler
+
+	genesis    ids.ID
+	blocks     sink.Mutex[blockMap]
+	accepted   sink.Mutex[*accepted]
+	preference sink.Mutex[ids.ID]
+
+	exec        *executor
+	quitExecute chan<- sig
+	doneExecute <-chan ack
+	toExecute   chan<- blockAcceptance
+}
+
+type blockMap map[ids.ID]*Block
+
+type accepted struct {
+	last ids.ID
+	all  blockMap
 }
 
 func New() *Chain {
@@ -61,28 +84,6 @@ func New() *Chain {
 	return chain
 }
 
-type Chain struct {
-	snowCtx *snow.Context
-	common.AppHandler
-
-	blocks     sink.Mutex[blockMap]
-	accepted   sink.Mutex[*accepted]
-	preference sink.Mutex[ids.ID]
-
-	quitExecute chan<- sig
-	doneExecute <-chan ack
-	toExecute   chan<- blockAcceptance
-
-	exec *executor
-}
-
-type blockMap map[ids.ID]*Block
-
-type accepted struct {
-	last ids.ID
-	all  blockMap
-}
-
 func (c *Chain) Initialize(
 	ctx context.Context,
 	chainCtx *snow.Context,
@@ -94,12 +95,30 @@ func (c *Chain) Initialize(
 	fxs []*common.Fx,
 	appSender common.AppSender,
 ) error {
+	genesis := &Block{
+		b: types.NewBlockWithHeader(&types.Header{
+			Number: big.NewInt(0),
+			Time:   0,
+		}),
+		chain: c,
+	}
+	c.genesis = genesis.ID()
+	c.blocks.Use(ctx, func(bs blockMap) error {
+		bs[genesis.ID()] = genesis
+		return nil
+	})
+	c.accepted.Use(ctx, func(a *accepted) error {
+		a.last = genesis.ID()
+		a.all[genesis.ID()] = genesis
+		return nil
+	})
+
 	c.snowCtx = chainCtx
 	if err := c.exec.init(); err != nil {
 		return err
 	}
 	go c.exec.start()
-	return nil
+	return genesis.Accept(ctx)
 }
 
 func (c *Chain) logger() logging.Logger {

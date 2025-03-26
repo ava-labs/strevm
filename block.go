@@ -38,21 +38,28 @@ var errChans = sync.Pool[chan error]{
 
 func (b *Block) Accept(ctx context.Context) error {
 	return b.chain.accepted.Use(ctx, func(a *accepted) error {
-		a.last = b.ID()
 		a.all[b.ID()] = b
 
+		errCh := errChans.Get()
 		defer func() {
+			errChans.Put(errCh)
 			b.chain.logger().Debug(
 				"Accepted block",
 				zap.Uint64("height", b.Height()),
 			)
 		}()
 
-		errCh := errChans.Get()
-		defer errChans.Put(errCh)
-		// See the comment on [blockAcceptance] re temporary storage of a
-		// Context, against recommended style.
-		if !send(ctx.Done(), b.chain.toExecute, blockAcceptance{ctx, b, errCh}) {
+		accept := blockAcceptance{
+			// See the comment on [blockAcceptance] re temporary storage of a
+			// Context, against recommended style.
+			ctx:      ctx,
+			block:    b,
+			previous: a.all[a.last],
+			errCh:    errCh,
+		}
+		a.last = b.ID()
+
+		if !send(ctx.Done(), b.chain.toExecute, accept) {
 			return ctx.Err()
 		}
 		return <-errCh

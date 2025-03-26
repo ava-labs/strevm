@@ -24,7 +24,7 @@ import (
 	"github.com/ava-labs/strevm/queue"
 )
 
-const maxGasPerChunk = 100_000
+const maxGasPerChunk = 1_000_000
 
 type (
 	sig struct{}
@@ -115,27 +115,59 @@ type blockAcceptance struct {
 	// receiver of which requires a Context (this one). Without refactoring the
 	// pattern to being a function call, there is no other way to propagate the
 	// Context.
-	ctx   context.Context
-	block *Block
-	errCh chan error
+	ctx             context.Context
+	previous, block *Block
+	errCh           chan error
 }
 
 func (e *executor) enqueueAccepted() {
 	for {
-		a, ok := recv(e.quit, e.accepted)
+		accepted, ok := recv(e.quit, e.accepted)
 		if !ok {
 			return
 		}
-		a.errCh <- e.queue.Use(a.ctx, func(q *queue.FIFO[*Block]) error {
-			q.Push(a.block)
-			e.spawn(e.signalQueuePush)
+
+		var blocks []*Block
+		if accepted.block.b.NumberU64() == 0 {
+			// Genesis, by definition, has no previous blocks but we need to
+			// trigger the time-zero chunk.
+			blocks = []*Block{accepted.block}
+		} else {
+			// Execution chunks are indexed by timestamp, not by block height,
+			// so they need to know the state of the queue at each second.
+			// Therefore, to signal that there were no transactions between this
+			// accepted block and the last one, we nudge the execution stream
+			// with empty pseudo-blocks that can trigger its chunk-filling
+			// criterion for an exhausted queue.
+			lastTime := accepted.previous.b.Time()
+			gap := accepted.block.b.Time() - lastTime
+
+			blocks = make([]*Block, gap)
+			blocks[gap-1] = accepted.block
+
+			for i := range uint64(gap - 1) {
+				blocks[i] = &Block{
+					b: types.NewBlockWithHeader(&types.Header{
+						Time: lastTime + i + 1,
+					}),
+				}
+			}
+		}
+
+		accepted.errCh <- e.queue.Use(accepted.ctx, func(q *queue.FIFO[*Block]) error {
+			for _, b := range blocks {
+				q.Push(b)
+			}
+			e.spawn(func() { e.signalQueuePush(len(blocks)) })
 			return nil
 		})
 	}
 }
 
-func (e *executor) signalQueuePush() {
-	send(e.quit, e.queuePending, sig{})
+func (e *executor) signalQueuePush(n int) {
+	for range n {
+		send(e.quit, e.queuePending, sig{})
+	}
 }
 
 func (e *executor) signalChunkFilled() {
@@ -295,6 +327,10 @@ func (e *executor) nextChunk(x *executionScratchSpace, overflowTx *types.Receipt
 	e.logger().Debug(
 		"Concluding chunk",
 		zap.Uint64("timestamp", x.chunk.time),
+		zap.Int("receipts", len(x.chunk.receipts)),
+		zap.Bool("queue_exhausted", overflowTx == nil),
+		zap.Uint64("gas_capacity", uint64(x.chunkCapacity())),
+		zap.Uint64("gas_consumed", uint64(x.chunk.consumed)),
 	)
 	err = e.chunks.Use(e.quitCtx(), func(cs map[uint64]*chunk) error {
 		cs[x.chunk.time] = x.chunk
