@@ -13,6 +13,7 @@ import (
 	"github.com/ava-labs/avalanchego/ids"
 	"github.com/ava-labs/avalanchego/snow/snowtest"
 	"github.com/ava-labs/avalanchego/utils/logging"
+	"github.com/ava-labs/avalanchego/vms/components/gas"
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/crypto"
@@ -76,6 +77,7 @@ func TestBasicRoundTrip(t *testing.T) {
 	require.NoErrorf(t, block.Accept(ctx), "%T.Accept()", block)
 	got := <-chain.execResults
 	end := time.Now()
+	require.Equalf(t, len(body.Transactions), len(got.receipts), "# %T == # %T", &types.Receipt{}, &types.Transaction{})
 	{
 		// TODO(arr4n) using `CumulativeGasUsed` will underestimate gas used
 		// once chunk filling is properly implemented.
@@ -85,7 +87,7 @@ func TestBasicRoundTrip(t *testing.T) {
 	}
 
 	want := &chunk{
-		usedGas: params.TxGas * uint64(len(body.Transactions)),
+		consumed: gas.Gas(params.TxGas) * gas.Gas(len(body.Transactions)),
 	}
 	for _, tx := range body.Transactions {
 		want.receipts = append(want.receipts, &types.Receipt{TxHash: tx.Hash()})
