@@ -9,6 +9,7 @@ import (
 
 	"github.com/arr4n/sink"
 	"github.com/ava-labs/avalanchego/utils/logging"
+	safemath "github.com/ava-labs/avalanchego/utils/math"
 	"github.com/ava-labs/avalanchego/vms/components/gas"
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core"
@@ -49,9 +50,15 @@ func (e *executor) init() error {
 	if err != nil {
 		return err
 	}
-	x := &e.executeScratchSpace
-	x.statedb = statedb
-	x.curr = new(chunk)
+
+	e.executeScratchSpace = executeScratchSpace{
+		statedb: statedb,
+		chunk:   new(chunk),
+		gasConfig: gas.Config{
+			MaxPerSecond:             1e9,
+			ExcessConversionConstant: 0, // TODO(arr4n)
+		},
+	}
 	return nil
 }
 
@@ -149,16 +156,20 @@ func (e *executor) clearQueue() {
 
 type executeScratchSpace struct {
 	statedb   *state.StateDB
-	curr      *chunk
+	chunk     *chunk
 	gasPool   core.GasPool
 	gasConfig gas.Config
 	excess    gas.Gas
 }
 
+func (x *executeScratchSpace) chunkCapacity() gas.Gas {
+	return x.chunk.donation + x.gasConfig.MaxPerSecond
+}
+
 type chunk struct {
-	stateRoot common.Hash
-	receipts  []*types.Receipt
-	usedGas   uint64
+	stateRoot          common.Hash
+	receipts           []*types.Receipt
+	consumed, donation gas.Gas
 }
 
 func (e *executor) execute(b *Block) error {
@@ -167,12 +178,8 @@ func (e *executor) execute(b *Block) error {
 
 	hdr := types.CopyHeader(b.b.Header())
 	hdr.BaseFee = new(big.Int)
-	maxChunkSize := x.gasConfig.MaxPerSecond
-	_ = maxChunkSize
 
-	txs := b.b.Transactions()
-	x.curr.receipts = make([]*types.Receipt, len(txs))
-	for ti, tx := range txs {
+	for ti, tx := range b.b.Transactions() {
 		price := gas.CalculatePrice(params.GWei, x.excess, x.gasConfig.ExcessConversionConstant)
 		hdr.BaseFee.SetUint64(uint64(price))
 
@@ -186,20 +193,71 @@ func (e *executor) execute(b *Block) error {
 			x.statedb,
 			hdr,
 			tx,
-			&x.curr.usedGas,
+			(*uint64)(&x.chunk.consumed),
 			vm.Config{},
 		)
 		if err != nil {
 			return err
 		}
 
-		x.curr.receipts[ti] = receipt
-		x.excess += gas.Gas(receipt.GasUsed / 2)
+		x.excess += gas.Gas(receipt.GasUsed >> 1)
+		if x.chunk.consumed < x.chunkCapacity() {
+			x.chunk.receipts = append(x.chunk.receipts, receipt)
+			continue
+		}
+
+		// The overflowing tx is going to be in the next chunk so reduce the
+		// current one's consumed gas.
+		x.chunk.consumed -= gas.Gas(receipt.GasUsed)
+		if !e.nextChunk(x, receipt) {
+			return context.Canceled
+		}
 	}
 
-	x.curr.stateRoot = x.statedb.IntermediateRoot(true)
-	if !send(e.quit, e.chunks, x.curr) {
+	// TODO(arr4n): this needs additional checks, to see if the queue was
+	// exhausted.
+	if !e.nextChunk(x, nil) {
 		return context.Canceled
 	}
 	return nil
+}
+
+func (e *executor) nextChunk(x *executeScratchSpace, overflowTx *types.Receipt) bool {
+	surplus, err := safemath.Sub(x.chunkCapacity(), x.chunk.consumed)
+	if err != nil {
+		e.logger().Fatal(
+			"BUG: Over-filled chunk",
+			zap.Any("capacity", x.chunkCapacity()),
+			zap.Any("consumed", x.chunk.consumed),
+		)
+	}
+
+	x.chunk.stateRoot = x.statedb.IntermediateRoot(true)
+	if !send(e.quit, e.chunks, x.chunk) {
+		return false
+	}
+	x.chunk = new(chunk)
+
+	if overflowTx == nil {
+		// The queue was exhausted so the gas excess is reduced, but we MUST NOT
+		// donate the surplus to the next chunk because the execution stream is
+		// now dormant.
+		xs := x.excess - (surplus >> 1)
+		if xs > x.excess { // underflow
+			xs = 0
+		}
+		x.excess = xs
+
+	} else {
+		// Conversely, the surplus is being used for the overflowing transaction
+		// so MUST be donated to the next chunk and MUST NOT count as a
+		// reduction in gas excess.
+		x.chunk.donation = surplus
+		if x.chunkCapacity() < gas.Gas(overflowTx.GasUsed) {
+			e.logger().Fatal("Unimplemented: empty interim chunk for XL tx")
+		}
+		x.chunk.receipts = []*types.Receipt{overflowTx}
+	}
+
+	return true
 }
