@@ -8,7 +8,6 @@ import (
 	"github.com/ava-labs/avalanchego/snow"
 	"github.com/ava-labs/avalanchego/snow/consensus/snowman"
 	"github.com/ava-labs/libevm/core/types"
-	"github.com/ava-labs/libevm/libevm/sync"
 	"github.com/ava-labs/libevm/rlp"
 	"go.uber.org/zap"
 )
@@ -30,39 +29,21 @@ func (b *Block) ID() ids.ID {
 	return ids.ID(b.b.Hash())
 }
 
-var errChans = sync.Pool[chan error]{
-	New: func() chan error {
-		return make(chan error)
-	},
-}
-
 func (b *Block) Accept(ctx context.Context) error {
 	return b.chain.accepted.Use(ctx, func(a *accepted) error {
-		a.all[b.ID()] = b
-
-		errCh := errChans.Get()
-		defer func() {
-			errChans.Put(errCh)
-			b.chain.logger().Debug(
-				"Accepted block",
-				zap.Uint64("height", b.Height()),
-			)
-		}()
-
-		accept := blockAcceptance{
-			// See the comment on [blockAcceptance] re temporary storage of a
-			// Context, against recommended style.
-			ctx:      ctx,
-			block:    b,
-			previous: a.all[a.last],
-			errCh:    errCh,
+		parent := a.all[a.last] // nil i.f.f. `b` is genesis, but that's allowed
+		if err := b.chain.exec.enqueueAccepted(ctx, b, parent); err != nil {
+			return err
 		}
+
+		a.all[b.ID()] = b
 		a.last = b.ID()
 
-		if !send(ctx.Done(), b.chain.toExecute, accept) {
-			return ctx.Err()
-		}
-		return <-errCh
+		b.chain.logger().Debug(
+			"Accepted block",
+			zap.Uint64("height", b.Height()),
+		)
+		return nil
 	})
 }
 
