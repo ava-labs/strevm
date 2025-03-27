@@ -10,7 +10,7 @@ func (f *FIFO[T]) cap() int {
 	return len(f.ring)
 }
 
-func (f *FIFO[T]) len() int {
+func (f *FIFO[T]) Len() int {
 	return f.n
 }
 
@@ -19,7 +19,7 @@ func (f *FIFO[T]) mod(i int) int {
 }
 
 func (f *FIFO[T]) nextIndex() (_ int, hasSpace bool) {
-	if f.len() == f.cap() {
+	if f.Len() == f.cap() {
 		return 0, false
 	}
 	return f.mod(f.start + f.n), true

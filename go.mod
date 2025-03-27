@@ -3,11 +3,11 @@ module github.com/ava-labs/strevm
 go 1.23.7
 
 require (
-	github.com/arr4n/sink v0.0.0-20250324224606-7ab4d9d68542
+	github.com/arr4n/sink v0.0.0-20250327104229-2b551475a5c0
 	github.com/ava-labs/avalanchego v1.13.0
 	github.com/ava-labs/libevm v1.13.14-0.2.0.rc.3
 	github.com/dustin/go-humanize v1.0.0
-	github.com/google/go-cmp v0.6.0
+	github.com/google/go-cmp v0.7.0
 	github.com/stretchr/testify v1.10.0
 	go.uber.org/goleak v1.3.0
 	go.uber.org/zap v1.26.0

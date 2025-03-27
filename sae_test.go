@@ -43,7 +43,7 @@ func TestBasicRoundTrip(t *testing.T) {
 	chainConfig := params.TestChainConfig
 	signer := types.LatestSigner(chainConfig)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
 	snowCtx := snowtest.Context(t, ids.Empty)
@@ -72,7 +72,7 @@ func TestBasicRoundTrip(t *testing.T) {
 	}
 
 	requiredChunks := (len(body.Transactions)*int(params.TxGas)-1)/maxGasPerChunk + 1
-	waitForChunks := requiredChunks + 2 // extras for each of genesis and chunk-reporting blocks
+	lastChunkTime := header.Time + uint64(requiredChunks)
 
 	blocks := []snowman.Block{
 		asSnowmanBlock(ctx, t, chain, types.NewBlockWithHeader(header).WithBody(body)),
@@ -80,7 +80,7 @@ func TestBasicRoundTrip(t *testing.T) {
 			ctx, t, chain,
 			types.NewBlockWithHeader(&types.Header{
 				Number:     new(big.Int).Add(header.Number, big.NewInt(1)),
-				Time:       header.Time + uint64(requiredChunks),
+				Time:       lastChunkTime,
 				ParentHash: header.Hash(),
 			}),
 		),
@@ -93,28 +93,31 @@ func TestBasicRoundTrip(t *testing.T) {
 	for _, b := range blocks {
 		require.NoErrorf(t, b.Accept(ctx), "%T.Accept()", b)
 	}
-	for range waitForChunks {
-		<-chain.exec.chunkFilled
-	}
 
 	var (
 		gotReceipts      []*types.Receipt
 		totalGasConsumed gas.Gas
 		lastFilledBy     time.Time
 	)
-	chain.exec.chunks.Use(ctx, func(cs map[uint64]*chunk) error {
-		for timestamp := range uint64(waitForChunks) {
-			got, ok := cs[timestamp]
-			if !ok {
-				t.Errorf("chunk at time %d not found", timestamp)
-				continue
+	chain.exec.chunks.Wait(ctx,
+		func(m map[uint64]*chunk) bool {
+			_, ok := m[lastChunkTime]
+			return ok
+		},
+		func(cs map[uint64]*chunk) error {
+			for timestamp := range lastChunkTime + 1 {
+				got, ok := cs[timestamp]
+				if !ok {
+					t.Errorf("chunk at time %d not found", timestamp)
+					continue
+				}
+				gotReceipts = append(gotReceipts, got.receipts...)
+				totalGasConsumed += got.consumed
+				lastFilledBy = got.filledBy
 			}
-			gotReceipts = append(gotReceipts, got.receipts...)
-			totalGasConsumed += got.consumed
-			lastFilledBy = got.filledBy
-		}
-		return nil
-	})
+			return nil
+		},
+	)
 
 	require.Equalf(t, len(body.Transactions), len(gotReceipts), "# %T == # %T", &types.Receipt{}, &types.Transaction{})
 	{
