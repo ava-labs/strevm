@@ -25,10 +25,6 @@ type Block struct {
 	chain *Chain
 }
 
-func newBlock(c *Chain, b *types.Block) *Block {
-	return &Block{b, c}
-}
-
 func (b *Block) ID() ids.ID {
 	return ids.ID(b.b.Hash())
 }

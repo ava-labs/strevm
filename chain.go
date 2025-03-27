@@ -39,7 +39,6 @@ type Chain struct {
 	snowCtx *snow.Context
 	common.AppHandler
 
-	genesis    ids.ID
 	blocks     sink.Mutex[blockMap]
 	accepted   sink.Mutex[*accepted]
 	preference sink.Mutex[ids.ID]
@@ -102,31 +101,27 @@ func (c *Chain) Initialize(
 	fxs []*common.Fx,
 	appSender common.AppSender,
 ) error {
-	genesis := &Block{
-		b: types.NewBlockWithHeader(&types.Header{
-			Number: big.NewInt(0),
-			Time:   0,
-		}),
-		chain: c,
-	}
-	c.genesis = genesis.ID()
-	c.blocks.Use(ctx, func(bs blockMap) error {
-		bs[genesis.ID()] = genesis
-		return nil
-	})
-	c.accepted.Use(ctx, func(a *accepted) error {
-		a.last = genesis.ID()
-		a.all[genesis.ID()] = genesis
-		return nil
-	})
-
 	c.snowCtx = chainCtx
 	if err := c.exec.init(); err != nil {
 		return err
 	}
 	go c.exec.start()
 	<-c.execRunning
+
+	genesis := c.newBlock(
+		types.NewBlockWithHeader(&types.Header{
+			Number: big.NewInt(0),
+			Time:   0,
+		}),
+	)
+	if err := genesis.Verify(ctx); err != nil {
+		return err
+	}
 	return genesis.Accept(ctx)
+}
+
+func (c *Chain) newBlock(b *types.Block) *Block {
+	return &Block{b, c}
 }
 
 func (c *Chain) logger() logging.Logger {
@@ -203,7 +198,7 @@ func (c *Chain) ParseBlock(ctx context.Context, blockBytes []byte) (snowman.Bloc
 	if err := rlp.DecodeBytes(blockBytes, b); err != nil {
 		return nil, err
 	}
-	return newBlock(c, b), nil
+	return c.newBlock(b), nil
 }
 
 func (c *Chain) BuildBlock(ctx context.Context) (snowman.Block, error) {
@@ -259,8 +254,7 @@ BuildLoop:
 	)
 	header.Root = root
 
-	return newBlock(
-		c,
+	return c.newBlock(
 		types.NewBlockWithHeader(header).WithBody(body),
 	), nil
 }
