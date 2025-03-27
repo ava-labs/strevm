@@ -24,8 +24,6 @@ import (
 	"github.com/ava-labs/strevm/queue"
 )
 
-const maxGasPerChunk = 1_000_000
-
 type executor struct {
 	chain   *Chain
 	running chan<- struct{} // closed by [executor.start] to signal to [Chain.Initialize]
@@ -316,11 +314,7 @@ func (e *executor) nextChunk(x *executionScratchSpace, overflowTx *types.Receipt
 		// Conversely, the queue was exhausted so the gas excess is reduced, but
 		// we MUST NOT donate the surplus to the next chunk because the
 		// execution stream is now dormant.
-		xs := x.excess - (surplus >> 1)
-		if xs > x.excess { // underflow
-			xs = 0
-		}
-		x.excess = xs
+		x.excess = clippedSubtract(x.excess, surplus>>1)
 	}
 
 	return true

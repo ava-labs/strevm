@@ -3,7 +3,7 @@ module github.com/ava-labs/strevm
 go 1.23.7
 
 require (
-	github.com/arr4n/sink v0.0.0-20250327104229-2b551475a5c0
+	github.com/arr4n/sink v0.0.0-20250327144913-318b074cfd67
 	github.com/ava-labs/avalanchego v1.13.0
 	github.com/ava-labs/libevm v1.13.14-0.2.0.rc.3
 	github.com/dustin/go-humanize v1.0.0

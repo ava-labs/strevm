@@ -5,6 +5,7 @@ import (
 	"math/big"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/arr4n/sink"
 	"github.com/ava-labs/avalanchego/database"
@@ -20,6 +21,7 @@ import (
 	"github.com/ava-labs/libevm/core"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/rlp"
+	"go.uber.org/zap"
 )
 
 func init() {
@@ -46,6 +48,9 @@ type Chain struct {
 	execRunning <-chan struct{}
 	quitExecute chan<- struct{}
 	execDone    <-chan struct{}
+
+	// Development double (like a test double, but with alliteration)
+	mempool chan *types.Transaction
 }
 
 type blockMap map[ids.ID]*Block
@@ -72,6 +77,8 @@ func New() *Chain {
 		execRunning: running,
 		quitExecute: quit,
 		execDone:    done,
+		// Development-only workarounds
+		mempool: make(chan *types.Transaction, 1000), // buffered so tx creation can keep going => load++
 	}
 
 	chain.exec = &executor{
@@ -196,14 +203,66 @@ func (c *Chain) ParseBlock(ctx context.Context, blockBytes []byte) (snowman.Bloc
 	if err := rlp.DecodeBytes(blockBytes, b); err != nil {
 		return nil, err
 	}
-	return &Block{
-		b:     b,
-		chain: c,
-	}, nil
+	return newBlock(c, b), nil
 }
 
-func (c *Chain) BuildBlock(context.Context) (snowman.Block, error) {
-	return nil, errUnimplemented
+func (c *Chain) BuildBlock(ctx context.Context) (snowman.Block, error) {
+	parent, err := sink.FromMutex(ctx, c.accepted, func(a *accepted) (*types.Block, error) {
+		return a.all[a.last].b, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	body := types.Body{
+		Transactions: make([]*types.Transaction, 0, 100_000),
+	}
+	stop := time.After(10 * time.Millisecond)
+BuildLoop:
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case tx := <-c.mempool:
+			body.Transactions = append(body.Transactions, tx)
+		case <-stop:
+			break BuildLoop
+		}
+	}
+
+	header := &types.Header{
+		ParentHash: parent.Hash(),
+		Number:     new(big.Int).SetUint64(parent.NumberU64() + 1),
+		Time:       parent.Time() + 1,
+	}
+	needStateRootAt := clippedSubtract(header.Time, stateRootDelaySeconds)
+
+	root, err := sink.FromMonitor(ctx, c.exec.chunks,
+		func(cs map[uint64]*chunk) bool {
+			_, ok := cs[needStateRootAt]
+
+			msg := "Waiting for historical state root"
+			if ok {
+				msg = "Received historical state root"
+			}
+			c.logger().Debug(
+				msg,
+				zap.Uint64("block_timestamp", header.Time),
+				zap.Uint64("chunk_timestamp", needStateRootAt),
+			)
+
+			return ok
+		},
+		func(cs map[uint64]*chunk) (ethcommon.Hash, error) {
+			return cs[needStateRootAt].stateRoot, nil
+		},
+	)
+	header.Root = root
+
+	return newBlock(
+		c,
+		types.NewBlockWithHeader(header).WithBody(body),
+	), nil
 }
 
 func (c *Chain) SetPreference(ctx context.Context, blkID ids.ID) error {
