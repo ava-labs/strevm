@@ -40,10 +40,8 @@ type executor struct {
 
 	spawned sync.WaitGroup
 
-	queue        sink.Mutex[*queue.FIFO[*Block]]
-	queuePending chan sig
-	chunks       sink.Mutex[map[uint64]*chunk]
-	chunkFilled  chan sig
+	queue  sink.Monitor[*queue.FIFO[*Block]]
+	chunks sink.Monitor[map[uint64]*chunk]
 
 	// executeScratchSpace MUST NOT be accessed by any methods other than
 	// [executor.init] and [executor.execute].
@@ -69,19 +67,14 @@ func (e *executor) init() error {
 }
 
 func (e *executor) start() {
-	e.queue = sink.NewMutex(new(queue.FIFO[*Block]))
-	e.queuePending = make(chan sig, 1)
-	e.chunks = sink.NewMutex(make(map[uint64]*chunk))
-	const d = 1 // ACP variable
-	e.chunkFilled = make(chan sig, d)
+	e.queue = sink.NewMonitor(new(queue.FIFO[*Block]))
+	e.chunks = sink.NewMonitor(make(map[uint64]*chunk))
 	e.spawn(e.enqueueAccepted)
 	e.spawn(e.clearQueue)
 
 	<-e.quit
 	e.spawned.Wait()
-	close(e.chunkFilled)
 	e.chunks.Close()
-	close(e.queuePending)
 	e.queue.Close()
 
 	close(e.done)
@@ -154,46 +147,34 @@ func (e *executor) enqueueAccepted() {
 			}
 		}
 
-		accepted.errCh <- e.queue.Use(accepted.ctx, func(q *queue.FIFO[*Block]) error {
+		accepted.errCh <- e.queue.UseThenSignal(accepted.ctx, func(q *queue.FIFO[*Block]) error {
 			for _, b := range blocks {
 				q.Push(b)
 			}
-			e.spawn(func() { e.signalQueuePush(len(blocks)) })
 			return nil
 		})
 	}
 }
 
-func (e *executor) signalQueuePush(n int) {
-	for range n {
-		send(e.quit, e.queuePending, sig{})
-	}
-}
-
-func (e *executor) signalChunkFilled() {
-	send(e.quit, e.chunkFilled, sig{})
-}
-
 func (e *executor) clearQueue() {
 	for {
-		if _, ok := recv(e.quit, e.queuePending); !ok {
-			return
-		}
-
-		block, err := sink.FromMutex(e.quitCtx(), e.queue, func(q *queue.FIFO[*Block]) (*Block, error) {
-			b, ok := q.Pop()
-			if !ok {
-				// The recv() above is effectively a CondVar so if this happens
-				// then we've wired things up incorrectly.
-				return nil, errors.New("BUG: empty block queue")
-			}
-			return b, nil
-		})
+		var block *Block
+		err := e.queue.Wait(e.quitCtx(),
+			func(q *queue.FIFO[*Block]) bool {
+				return q.Len() > 0
+			},
+			func(q *queue.FIFO[*Block]) error {
+				// We know that q.Len() > 0 so there's no need to check Pop()'s
+				// boolean.
+				block, _ = q.Pop()
+				return nil
+			},
+		)
 		if errors.Is(err, context.Canceled) {
 			return
 		}
 		if err != nil {
-			// [sink.Mutex.Replace] will only return the [context.Context] error
+			// [sink.Monitor.Wait] will only return the [context.Context] error
 			// or the error returned by its argument, so this is theoretically
 			// impossible but included for completeness to be detected in tests.
 			e.logger().Fatal("BUG: popping from queue", zap.Error(err))
@@ -332,9 +313,8 @@ func (e *executor) nextChunk(x *executionScratchSpace, overflowTx *types.Receipt
 		zap.Uint64("gas_capacity", uint64(x.chunkCapacity())),
 		zap.Uint64("gas_consumed", uint64(x.chunk.consumed)),
 	)
-	err = e.chunks.Use(e.quitCtx(), func(cs map[uint64]*chunk) error {
+	err = e.chunks.UseThenSignal(e.quitCtx(), func(cs map[uint64]*chunk) error {
 		cs[x.chunk.time] = x.chunk
-		e.spawn(e.signalChunkFilled)
 		return nil
 	})
 	if err != nil {
