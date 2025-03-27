@@ -43,9 +43,9 @@ type Chain struct {
 	preference sink.Mutex[ids.ID]
 
 	exec        *executor
-	quitExecute chan<- sig
-	doneExecute <-chan ack
-	toExecute   chan<- blockAcceptance
+	execRunning <-chan struct{}
+	quitExecute chan<- struct{}
+	execDone    <-chan struct{}
 }
 
 type blockMap map[ids.ID]*Block
@@ -56,9 +56,9 @@ type accepted struct {
 }
 
 func New() *Chain {
-	blocks := make(chan blockAcceptance)
-	quit := make(chan sig)
-	done := make(chan ack)
+	running := make(chan struct{})
+	quit := make(chan struct{})
+	done := make(chan struct{})
 
 	chain := &Chain{
 		// Chain and chain state
@@ -69,16 +69,16 @@ func New() *Chain {
 		}),
 		preference: sink.NewMutex[ids.ID](ids.Empty),
 		// Execution
+		execRunning: running,
 		quitExecute: quit,
-		doneExecute: done,
-		toExecute:   blocks,
+		execDone:    done,
 	}
 
 	chain.exec = &executor{
-		chain:    chain,
-		accepted: blocks,
-		quit:     quit,
-		done:     done,
+		chain:   chain,
+		running: running,
+		quit:    quit,
+		done:    done,
 	}
 
 	return chain
@@ -118,6 +118,7 @@ func (c *Chain) Initialize(
 		return err
 	}
 	go c.exec.start()
+	<-c.execRunning
 	return genesis.Accept(ctx)
 }
 
@@ -165,8 +166,7 @@ func (c *Chain) Shutdown(ctx context.Context) error {
 	wg.Wait()
 
 	select {
-	case <-c.doneExecute:
-		close(c.toExecute)
+	case <-c.execDone:
 		return nil
 	case <-ctx.Done():
 		return ctx.Err()

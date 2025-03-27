@@ -26,17 +26,11 @@ import (
 
 const maxGasPerChunk = 1_000_000
 
-type (
-	sig struct{}
-	ack struct{}
-)
-
 type executor struct {
-	chain *Chain
-
-	accepted <-chan blockAcceptance
-	quit     <-chan sig
-	done     chan<- ack
+	chain   *Chain
+	running chan<- struct{} // closed by [executor.start] to signal to [Chain.Initialize]
+	quit    <-chan struct{}
+	done    chan<- struct{}
 
 	spawned sync.WaitGroup
 
@@ -69,8 +63,9 @@ func (e *executor) init() error {
 func (e *executor) start() {
 	e.queue = sink.NewMonitor(new(queue.FIFO[*Block]))
 	e.chunks = sink.NewMonitor(make(map[uint64]*chunk))
-	e.spawn(e.enqueueAccepted)
 	e.spawn(e.clearQueue)
+
+	close(e.running)
 
 	<-e.quit
 	e.spawned.Wait()
@@ -78,6 +73,14 @@ func (e *executor) start() {
 	e.queue.Close()
 
 	close(e.done)
+}
+
+func (e *executor) spawn(fn func()) {
+	e.spawned.Add(1)
+	go func() {
+		fn()
+		e.spawned.Done()
+	}()
 }
 
 func (e *executor) quitCtx() context.Context {
@@ -93,67 +96,42 @@ func (e *executor) logger() logging.Logger {
 	return e.chain.snowCtx.Log
 }
 
-func (e *executor) spawn(fn func()) {
-	e.spawned.Add(1)
-	go func() {
-		fn()
-		e.spawned.Done()
-	}()
-}
+// enqueueAccepted is intended to be called by [Block.Accept], passing itself
+// as the first argument. The `parent` MAY be nil i.f.f `block` is the genesis.
+func (e *executor) enqueueAccepted(ctx context.Context, block, parent *Block) error {
+	var blocks []*Block
+	if block.b.NumberU64() == 0 {
+		// Genesis, by definition, has no previous blocks but we need to
+		// trigger the time-zero chunk.
+		blocks = []*Block{block}
+	} else {
+		// Execution chunks are indexed by timestamp, not by block height,
+		// so they need to know the state of the queue at each second.
+		// Therefore, to signal that there were no transactions between this
+		// accepted block and the last one, we nudge the execution stream
+		// with empty pseudo-blocks that can trigger its chunk-filling
+		// criterion for an exhausted queue.
+		lastTime := parent.b.Time()
+		gap := block.b.Time() - lastTime
 
-type blockAcceptance struct {
-	// This Context MUST be ephemeral and immediately dropped at the end of the
-	// `case` in which it is received. Snowman will call [Block.Accept] with a
-	// Context, at which point the block will be sent over a channel, the
-	// receiver of which requires a Context (this one). Without refactoring the
-	// pattern to being a function call, there is no other way to propagate the
-	// Context.
-	ctx             context.Context
-	previous, block *Block
-	errCh           chan error
-}
+		blocks = make([]*Block, gap)
+		blocks[gap-1] = block
 
-func (e *executor) enqueueAccepted() {
-	for {
-		accepted, ok := recv(e.quit, e.accepted)
-		if !ok {
-			return
-		}
-
-		var blocks []*Block
-		if accepted.block.b.NumberU64() == 0 {
-			// Genesis, by definition, has no previous blocks but we need to
-			// trigger the time-zero chunk.
-			blocks = []*Block{accepted.block}
-		} else {
-			// Execution chunks are indexed by timestamp, not by block height,
-			// so they need to know the state of the queue at each second.
-			// Therefore, to signal that there were no transactions between this
-			// accepted block and the last one, we nudge the execution stream
-			// with empty pseudo-blocks that can trigger its chunk-filling
-			// criterion for an exhausted queue.
-			lastTime := accepted.previous.b.Time()
-			gap := accepted.block.b.Time() - lastTime
-
-			blocks = make([]*Block, gap)
-			blocks[gap-1] = accepted.block
-
-			for i := range uint64(gap - 1) {
-				blocks[i] = &Block{
-					b: types.NewBlockWithHeader(&types.Header{
-						Time: lastTime + i + 1,
-					}),
-				}
+		for i := range uint64(gap - 1) {
+			blocks[i] = &Block{
+				b: types.NewBlockWithHeader(&types.Header{
+					Time: lastTime + i + 1,
+				}),
 			}
 		}
-
-		accepted.errCh <- e.queue.UseThenSignal(accepted.ctx, func(q *queue.FIFO[*Block]) error {
-			for _, b := range blocks {
-				q.Push(b)
-			}
-			return nil
-		})
 	}
+
+	return e.queue.UseThenSignal(ctx, func(q *queue.FIFO[*Block]) error {
+		for _, b := range blocks {
+			q.Push(b)
+		}
+		return nil
+	})
 }
 
 func (e *executor) clearQueue() {
