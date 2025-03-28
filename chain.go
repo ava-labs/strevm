@@ -2,6 +2,7 @@ package sae
 
 import (
 	"context"
+	"encoding/json"
 	"math/big"
 	"net/http"
 	"sync"
@@ -44,7 +45,6 @@ type Chain struct {
 	preference sink.Mutex[ids.ID]
 
 	exec        *executor
-	execRunning <-chan struct{}
 	quitExecute chan<- struct{}
 	execDone    <-chan struct{}
 
@@ -60,7 +60,6 @@ type accepted struct {
 }
 
 func New() *Chain {
-	running := make(chan struct{})
 	quit := make(chan struct{})
 	done := make(chan struct{})
 
@@ -73,7 +72,6 @@ func New() *Chain {
 		}),
 		preference: sink.NewMutex[ids.ID](ids.Empty),
 		// Execution
-		execRunning: running,
 		quitExecute: quit,
 		execDone:    done,
 		// Development-only workarounds
@@ -81,10 +79,9 @@ func New() *Chain {
 	}
 
 	chain.exec = &executor{
-		chain:   chain,
-		running: running,
-		quit:    quit,
-		done:    done,
+		chain: chain,
+		quit:  quit,
+		done:  done,
 	}
 
 	return chain
@@ -102,22 +99,12 @@ func (c *Chain) Initialize(
 	appSender common.AppSender,
 ) error {
 	c.snowCtx = chainCtx
-	if err := c.exec.init(); err != nil {
-		return err
-	}
-	go c.exec.start()
-	<-c.execRunning
 
-	genesis := c.newBlock(
-		types.NewBlockWithHeader(&types.Header{
-			Number: big.NewInt(0),
-			Time:   0,
-		}),
-	)
-	if err := genesis.Verify(ctx); err != nil {
+	gen := new(core.Genesis)
+	if err := json.Unmarshal(genesisBytes, gen); err != nil {
 		return err
 	}
-	return genesis.Accept(ctx)
+	return c.exec.init(ctx, gen)
 }
 
 func (c *Chain) newBlock(b *types.Block) *Block {
@@ -249,7 +236,7 @@ BuildLoop:
 			return ok
 		},
 		func(cs map[uint64]*chunk) (ethcommon.Hash, error) {
-			return cs[needStateRootAt].stateRoot, nil
+			return cs[needStateRootAt].stateRootPost, nil
 		},
 	)
 	header.Root = root

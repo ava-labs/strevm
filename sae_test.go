@@ -3,8 +3,11 @@ package sae
 import (
 	"context"
 	"crypto/ecdsa"
+	"encoding/json"
 	"flag"
 	"fmt"
+	"math"
+	"math/big"
 	"runtime"
 	"sort"
 	"testing"
@@ -15,12 +18,13 @@ import (
 	"github.com/ava-labs/avalanchego/utils/logging"
 	"github.com/ava-labs/avalanchego/vms/components/gas"
 	"github.com/ava-labs/libevm/common"
+	"github.com/ava-labs/libevm/core"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/crypto"
 	"github.com/ava-labs/libevm/params"
 	humanize "github.com/dustin/go-humanize"
 	"github.com/google/go-cmp/cmp"
-	"github.com/google/go-cmp/cmp/cmpopts"
+	"github.com/holiman/uint256"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
 	"go.uber.org/zap"
@@ -41,6 +45,18 @@ func TestBasicE2E(t *testing.T) {
 	chainConfig := params.TestChainConfig
 	signer := types.LatestSigner(chainConfig)
 
+	genesis, err := json.Marshal(&core.Genesis{
+		Config:     chainConfig,
+		Timestamp:  0,
+		Difficulty: big.NewInt(0),
+		Alloc: types.GenesisAlloc{
+			eoa: {
+				Balance: new(uint256.Int).Not(uint256.NewInt(0)).ToBig(),
+			},
+		},
+	})
+	require.NoErrorf(t, err, "json.Marshal(%T)", &core.Genesis{})
+
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
@@ -49,7 +65,7 @@ func TestBasicE2E(t *testing.T) {
 	chain := New()
 	require.NoErrorf(t, chain.Initialize(
 		ctx, snowCtx,
-		nil, nil, nil, nil, nil, nil, nil,
+		nil, genesis, nil, nil, nil, nil, nil,
 	), "%T.Initialize()", chain)
 
 	allTxs := make([]*types.Transaction, *txsInBasicE2E)
@@ -57,10 +73,12 @@ func TestBasicE2E(t *testing.T) {
 	go func() {
 		defer close(allTxsInMempool)
 		for nonce := range *txsInBasicE2E {
-			allTxs[nonce] = types.MustSignNewTx(key, signer, &types.LegacyTx{
-				Nonce: nonce,
-				To:    &eoa,
-				Gas:   params.TxGas,
+			allTxs[nonce] = types.MustSignNewTx(key, signer, &types.DynamicFeeTx{
+				Nonce:     nonce,
+				To:        &eoa,
+				Gas:       params.TxGas,
+				GasTipCap: big.NewInt(0),
+				GasFeeCap: new(big.Int).SetUint64(math.MaxUint64),
 			})
 			chain.mempool <- allTxs[nonce]
 		}
@@ -125,7 +143,8 @@ func TestBasicE2E(t *testing.T) {
 	}
 
 	require.NoError(t, chain.Shutdown(ctx))
-	gotNonce := chain.exec.executeScratchSpace.statedb.GetNonce(eoa)
+
+	gotNonce := chain.exec.executeScratchSpace.chunk.statedb.GetNonce(eoa)
 	require.Equal(t, uint64(len(allTxs)), gotNonce, "Nonce of EOA sending txs")
 }
 
@@ -141,7 +160,6 @@ func newTestPrivateKey(tb testing.TB, seed []byte) *ecdsa.PrivateKey {
 func chunkCmpOpts() cmp.Options {
 	return cmp.Options{
 		cmp.AllowUnexported(chunk{}),
-		cmpopts.IgnoreFields(chunk{}, "stateRoot"),
 		cmp.Transformer("receiptHash", func(r *types.Receipt) common.Hash {
 			if r == nil {
 				return common.Hash{}
