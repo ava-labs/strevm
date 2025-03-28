@@ -3,10 +3,8 @@ package sae
 import (
 	"context"
 	"encoding/json"
-	"math/big"
 	"net/http"
 	"sync"
-	"time"
 
 	"github.com/arr4n/sink"
 	"github.com/ava-labs/avalanchego/database"
@@ -22,6 +20,7 @@ import (
 	"github.com/ava-labs/libevm/core"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/rlp"
+	"github.com/holiman/uint256"
 	"go.uber.org/zap"
 )
 
@@ -44,12 +43,11 @@ type Chain struct {
 	accepted   sink.Mutex[*accepted]
 	preference sink.Mutex[ids.ID]
 
+	builder blockBuilder
+
 	exec        *executor
 	quitExecute chan<- struct{}
 	execDone    <-chan struct{}
-
-	// Development double (like a test double, but with alliteration)
-	mempool chan *types.Transaction
 }
 
 type blockMap map[ids.ID]*Block
@@ -71,11 +69,15 @@ func New() *Chain {
 			all: make(blockMap),
 		}),
 		preference: sink.NewMutex[ids.ID](ids.Empty),
+		// Block building
+		builder: blockBuilder{
+			deficits: make(map[ethcommon.Address]*uint256.Int),
+			// Development-only workaround
+			mempool: make(chan *types.Transaction, 1000), // buffered so tx creation can keep going => load++
+		},
 		// Execution
 		quitExecute: quit,
 		execDone:    done,
-		// Development-only workarounds
-		mempool: make(chan *types.Transaction, 1000), // buffered so tx creation can keep going => load++
 	}
 
 	chain.exec = &executor{
@@ -99,12 +101,17 @@ func (c *Chain) Initialize(
 	appSender common.AppSender,
 ) error {
 	c.snowCtx = chainCtx
+	c.builder.log = chainCtx.Log
 
 	gen := new(core.Genesis)
 	if err := json.Unmarshal(genesisBytes, gen); err != nil {
 		return err
 	}
-	return c.exec.init(ctx, gen)
+	if err := c.exec.init(ctx, gen); err != nil {
+		return err
+	}
+	c.builder.snaps = c.exec.snaps // safe to copy a [sink.Mutex]
+	return nil
 }
 
 func (c *Chain) newBlock(b *types.Block) *Block {
@@ -196,30 +203,9 @@ func (c *Chain) BuildBlock(ctx context.Context) (snowman.Block, error) {
 		return nil, err
 	}
 
-	body := types.Body{
-		Transactions: make([]*types.Transaction, 0, 100_000),
-	}
-	stop := time.After(10 * time.Millisecond)
-BuildLoop:
-	for {
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case tx := <-c.mempool:
-			body.Transactions = append(body.Transactions, tx)
-		case <-stop:
-			break BuildLoop
-		}
-	}
-
-	header := &types.Header{
-		ParentHash: parent.Hash(),
-		Number:     new(big.Int).SetUint64(parent.NumberU64() + 1),
-		Time:       parent.Time() + 1,
-	}
-	needStateRootAt := clippedSubtract(header.Time, stateRootDelaySeconds)
-
-	root, err := sink.FromMonitor(ctx, c.exec.chunks,
+	timestamp := parent.Time() + 1
+	needStateRootAt := clippedSubtract(timestamp, stateRootDelaySeconds)
+	chunk, err := sink.FromMonitor(ctx, c.exec.chunks,
 		func(cs map[uint64]*chunk) bool {
 			_, ok := cs[needStateRootAt]
 
@@ -229,21 +215,26 @@ BuildLoop:
 			}
 			c.logger().Debug(
 				msg,
-				zap.Uint64("block_timestamp", header.Time),
+				zap.Uint64("block_timestamp", timestamp),
 				zap.Uint64("chunk_timestamp", needStateRootAt),
 			)
 
 			return ok
 		},
-		func(cs map[uint64]*chunk) (ethcommon.Hash, error) {
-			return cs[needStateRootAt].stateRootPost, nil
+		func(cs map[uint64]*chunk) (*chunk, error) {
+			// TODO(arr4n) this needs to be all chunks since the last parent,
+			// but only once blocks have >1s between them.
+			return cs[needStateRootAt], nil
 		},
 	)
-	header.Root = root
 
-	return c.newBlock(
-		types.NewBlockWithHeader(header).WithBody(body),
-	), nil
+	x := &c.exec.executeScratchSpace // TODO(arr4n) don't access this directly
+
+	b, err := c.builder.build(ctx, parent, x.chainConfig, &x.gasConfig, chunk)
+	if err != nil {
+		return nil, err
+	}
+	return c.newBlock(b), nil
 }
 
 func (c *Chain) SetPreference(ctx context.Context, blkID ids.ID) error {

@@ -43,6 +43,13 @@ func (f *FIFO[T]) Push(x T) {
 
 func zero[T any]() (z T) { return }
 
+func (f *FIFO[T]) Peek() (T, bool) {
+	if f.n == 0 {
+		return zero[T](), false
+	}
+	return f.ring[f.start], true
+}
+
 func (f *FIFO[T]) Pop() (T, bool) {
 	if f.n == 0 {
 		return zero[T](), false

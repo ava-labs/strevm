@@ -17,6 +17,7 @@ import (
 	"github.com/ava-labs/libevm/core"
 	"github.com/ava-labs/libevm/core/rawdb"
 	"github.com/ava-labs/libevm/core/state"
+	"github.com/ava-labs/libevm/core/state/snapshot"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/core/vm"
 	"github.com/ava-labs/libevm/ethdb"
@@ -39,6 +40,7 @@ type executor struct {
 	// executeScratchSpace MUST NOT be accessed by any methods other than
 	// [executor.init] and [executor.execute].
 	executeScratchSpace executionScratchSpace
+	snaps               sink.Monitor[*snapshot.Tree]
 }
 
 func (e *executor) init(ctx context.Context, genesis *core.Genesis) error {
@@ -49,32 +51,47 @@ func (e *executor) init(ctx context.Context, genesis *core.Genesis) error {
 	if err != nil {
 		return err
 	}
+
 	genesisBlock := rawdb.ReadBlock(db, genesisHash, 0)
+	snapConf := snapshot.Config{
+		CacheSize:  128, // MB
+		AsyncBuild: false,
+	}
+	snaps, err := snapshot.New(snapConf, db, tdb, genesisBlock.Root())
+	if err != nil {
+		return err
+	}
+	e.snaps = sink.NewMonitor(snaps)
+	statedb, err := state.New(genesisBlock.Root(), sdb, snaps)
+	if err != nil {
+		return err
+	}
 
 	e.executeScratchSpace = executionScratchSpace{
 		chainConfig: chainConfig,
 		db:          db,
 		stateCache:  sdb,
-		chunk: &chunk{
-			// The immediate call to [executionScratchSpace.startNewChunk] will
-			// use this as its parent. The time will be incremented so it's ok
-			// if the -1 underflows here.
-			stateRootPost: genesisBlock.Root(),
-			time:          genesis.Timestamp - 1,
-		},
+		statedb:     statedb,
 		gasConfig: gas.Config{
 			MinPrice:                 params.GWei,
 			MaxPerSecond:             maxGasPerChunk,
 			ExcessConversionConstant: 20_000_000, // TODO(arr4n)
 		},
-	}
-	if err := e.executeScratchSpace.startNewChunk(); err != nil {
-		return err
+		chunk: &chunk{ // pre-genesis
+			// The below call to [executor.nextChunk] will use this as its
+			// parent. The time will be incremented so it's ok if the -1
+			// underflows here.
+			time: genesis.Timestamp - 1,
+		},
 	}
 
 	running := make(chan struct{})
 	go e.start(running)
 	<-running
+
+	if err := e.nextChunk(ctx, &e.executeScratchSpace, nil /*overflowTx*/); err != nil {
+		return err
+	}
 
 	b := e.chain.newBlock(genesisBlock)
 	if err := b.Verify(ctx); err != nil {
@@ -94,6 +111,9 @@ func (e *executor) start(ready chan<- struct{}) {
 	e.spawned.Wait()
 	e.chunks.Close()
 	e.queue.Close()
+	snaps := e.snaps.Close()
+	snaps.Disable()
+	snaps.Release()
 
 	close(e.done)
 }
@@ -158,9 +178,11 @@ func (e *executor) enqueueAccepted(ctx context.Context, block, parent *Block) er
 }
 
 func (e *executor) clearQueue() {
+	ctx := e.quitCtx()
+
 	for {
 		var block *Block
-		err := e.queue.Wait(e.quitCtx(),
+		err := e.queue.Wait(ctx,
 			func(q *queue.FIFO[*Block]) bool {
 				return q.Len() > 0
 			},
@@ -181,7 +203,7 @@ func (e *executor) clearQueue() {
 			e.logger().Fatal("BUG: popping from queue", zap.Error(err))
 		}
 
-		switch err := e.execute(block); {
+		switch err := e.execute(ctx, block); {
 		case errors.Is(err, context.Canceled):
 			return
 		case err != nil:
@@ -201,6 +223,7 @@ type executionScratchSpace struct {
 	chainConfig *params.ChainConfig
 	db          ethdb.Database
 	stateCache  state.Database
+	statedb     *state.StateDB
 
 	chunk     *chunk
 	gasPool   core.GasPool
@@ -208,8 +231,8 @@ type executionScratchSpace struct {
 	excess    gas.Gas
 }
 
-func (x *executionScratchSpace) chunkCapacity() gas.Gas {
-	return x.chunk.donation + x.gasConfig.MaxPerSecond
+func (x *executionScratchSpace) chunkCapacity(c *chunk) gas.Gas {
+	return c.donation + x.gasConfig.MaxPerSecond
 }
 
 func (x *executionScratchSpace) gasPrice() gas.Price {
@@ -220,29 +243,24 @@ func (x *executionScratchSpace) gasPrice() gas.Price {
 	)
 }
 
-func (x *executionScratchSpace) startNewChunk() error {
-	parent := x.chunk
-	sdb, err := state.New(parent.stateRootPost, x.stateCache, nil)
-	if err != nil {
-		return err
-	}
-	x.chunk = &chunk{
-		time:    parent.time + 1,
-		statedb: sdb,
-	}
-	return nil
-}
-
 type chunk struct {
-	statedb            *state.StateDB
-	stateRootPost      common.Hash
-	receipts           []*types.Receipt
-	consumed, donation gas.Gas
-	time               uint64    // same type as [types.Header.Time]
-	filledBy           time.Time // wall time for metrics
+	// For use during execution
+	donation, consumed gas.Gas
+	time               uint64 // same type as [types.Header.Time]
+
+	// Post-execution reporting
+	receipts      []*types.Receipt
+	stateRootPost common.Hash
+	// For use by the block builder; the reduction in excess is clipped to avoid
+	// going below zero so can't be computed outside of the execution stream,
+	// while the actual post-execution excess is for the builder to check
+	// invariants.
+	excessReduction, excessPost gas.Gas
+
+	filledBy time.Time // wall time for metrics
 }
 
-func (e *executor) execute(b *Block) error {
+func (e *executor) execute(ctx context.Context, b *Block) error {
 	x := &e.executeScratchSpace
 	x.gasPool.SetGas(math.MaxUint64) // necessary but unused so max it out
 
@@ -266,14 +284,14 @@ func (e *executor) execute(b *Block) error {
 
 	for ti, tx := range b.b.Transactions() {
 		header.BaseFee.SetUint64(uint64(x.gasPrice()))
-		x.chunk.statedb.SetTxContext(tx.Hash(), ti) // TODO(arr4n) `ti` is not correct here
+		x.statedb.SetTxContext(tx.Hash(), ti) // TODO(arr4n) `ti` is not correct here
 
 		receipt, err := core.ApplyTransaction(
 			x.chainConfig,
 			e.chain,
 			&header.Coinbase,
 			&x.gasPool,
-			x.chunk.statedb,
+			x.statedb,
 			header,
 			tx,
 			(*uint64)(&x.chunk.consumed),
@@ -287,7 +305,7 @@ func (e *executor) execute(b *Block) error {
 
 		x.excess += gas.Gas(receipt.GasUsed >> 1) // see ACP for details
 
-		if x.chunk.consumed < x.chunkCapacity() {
+		if x.chunk.consumed < x.chunkCapacity(x.chunk) {
 			x.chunk.receipts = append(x.chunk.receipts, receipt)
 			continue
 		}
@@ -295,7 +313,7 @@ func (e *executor) execute(b *Block) error {
 		// current one's consumed gas.
 		x.chunk.consumed -= gas.Gas(receipt.GasUsed)
 
-		if err := e.nextChunk(x, receipt); err != nil {
+		if err := e.nextChunk(ctx, x, receipt); err != nil {
 			return err
 		}
 	}
@@ -307,62 +325,84 @@ func (e *executor) execute(b *Block) error {
 	// * C == B: queue exhausted per criterion (1) of the ACP
 	// * B > C: invalid (enforced earlier)
 	if x.chunk.time == header.Time {
-		if err := e.nextChunk(x, nil); err != nil {
+		if err := e.nextChunk(ctx, x, nil); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (e *executor) nextChunk(x *executionScratchSpace, overflowTx *types.Receipt) error {
+func (e *executor) nextChunk(ctx context.Context, x *executionScratchSpace, overflowTx *types.Receipt) error {
+	prev := x.chunk
+	x.chunk = nil // avoid accidentally using it before replacement
+
 	// Although gas surplus won't be used until later, it MUST be calculated
 	// before we overwrite the chunk.
-	surplus, err := safemath.Sub(x.chunkCapacity(), x.chunk.consumed)
+	surplus, err := safemath.Sub(x.chunkCapacity(prev), prev.consumed)
 	if err != nil {
-		return fmt.Errorf("*BUG* over-filled chunk consumed %d of %d gas", x.chunk.consumed, x.chunkCapacity())
+		return fmt.Errorf("*BUG* over-filled chunk consumed %d of %d gas", prev.consumed, x.chunkCapacity(prev))
 	}
 
-	root, err := x.chunk.statedb.Commit(x.chunk.time, true)
-	if err != nil {
-		return fmt.Errorf("%T.Commit() at end of chunk at time %d: %w", x.chunk.statedb, x.chunk.time, err)
-	}
-	x.chunk.stateRootPost = root
-	x.chunk.filledBy = time.Now()
+	if err := e.snaps.UseThenSignal(ctx, func(snaps *snapshot.Tree) error {
+		// Commit() will call [snapshot.Tree.Cap] so we do this when holding
+		// `snaps` even though we only explicitly use it a few lines down. Cue
+		// the Rustaceans.
+		root, err := x.statedb.Commit(prev.time, true)
+		if err != nil {
+			return fmt.Errorf("%T.Commit() at end of chunk at time %d: %w", x.statedb, prev.time, err)
+		}
+		if err := x.stateCache.TrieDB().Commit(root, false); err != nil {
+			return err
+		}
+		prev.stateRootPost = root
+		prev.filledBy = time.Now()
 
-	e.logger().Debug(
-		"Concluding chunk",
-		zap.Uint64("timestamp", x.chunk.time),
-		zap.Int("receipts", len(x.chunk.receipts)),
-		zap.Bool("queue_exhausted", overflowTx == nil),
-		zap.Uint64("gas_capacity", uint64(x.chunkCapacity())),
-		zap.Uint64("gas_consumed", uint64(x.chunk.consumed)),
-	)
-	err = e.chunks.UseThenSignal(e.quitCtx(), func(cs map[uint64]*chunk) error {
-		cs[x.chunk.time] = x.chunk
+		db, err := state.New(root, x.stateCache, snaps)
+		if err != nil {
+			return err
+		}
+		x.statedb = db
+		x.chunk = &chunk{
+			time: prev.time + 1,
+		}
 		return nil
-	})
-	if err != nil {
+	}); err != nil {
 		return err
 	}
 
-	if err := x.startNewChunk(); err != nil {
-		return err
-	}
 	if tx := overflowTx; tx != nil {
 		// The queue wasn't exhausted so surplus gas is being used for the
 		// overflowing transaction and MUST be donated to the next chunk but
 		// MUST NOT count as a reduction in gas excess.
 		x.chunk.donation = surplus
 		x.chunk.consumed += gas.Gas(tx.GasUsed)
-		if x.chunkCapacity() < gas.Gas(tx.GasUsed) {
+		if x.chunkCapacity(x.chunk) < gas.Gas(tx.GasUsed) {
 			e.logger().Fatal("Unimplemented: empty interim chunk for XL tx")
 		}
 		x.chunk.receipts = []*types.Receipt{tx}
+		// The execution loop updates the excess after each tx, but the overflow
+		// one is being assigned to the next chunk.
+		prev.excessPost = x.excess - gas.Gas(tx.GasUsed)>>1
 	} else {
 		// Conversely, the queue was exhausted so the gas excess is reduced, but
 		// we MUST NOT donate the surplus to the next chunk because the
 		// execution stream is now dormant.
+		old := x.excess
 		x.excess = clippedSubtract(x.excess, surplus>>1)
+		prev.excessPost = x.excess
+		prev.excessReduction = old - x.excess
 	}
-	return nil
+
+	e.logger().Debug(
+		"Concluding chunk",
+		zap.Uint64("timestamp", prev.time),
+		zap.Int("receipts", len(prev.receipts)),
+		zap.Bool("queue_exhausted", overflowTx == nil),
+		zap.Uint64("gas_capacity", uint64(x.chunkCapacity(prev))),
+		zap.Uint64("gas_consumed", uint64(prev.consumed)),
+	)
+	return e.chunks.UseThenSignal(e.quitCtx(), func(cs map[uint64]*chunk) error {
+		cs[prev.time] = prev
+		return nil
+	})
 }

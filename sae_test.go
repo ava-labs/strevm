@@ -19,22 +19,27 @@ import (
 	"github.com/ava-labs/avalanchego/vms/components/gas"
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core"
+	"github.com/ava-labs/libevm/core/state"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/crypto"
 	"github.com/ava-labs/libevm/params"
-	humanize "github.com/dustin/go-humanize"
 	"github.com/google/go-cmp/cmp"
 	"github.com/holiman/uint256"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
-	"golang.org/x/exp/constraints"
 )
 
 func TestMain(m *testing.M) {
 	flag.Parse()
-	goleak.VerifyTestMain(m, goleak.IgnoreCurrent())
+	goleak.VerifyTestMain(
+		m,
+		goleak.IgnoreCurrent(),
+		// leaky, leaky, very sneaky!
+		goleak.IgnoreTopFunction("github.com/ava-labs/libevm/core/state/snapshot.(*diskLayer).generate"),
+	)
 }
 
 var txsInBasicE2E = flag.Uint64("basic_e2e_tx_count", 100, "Number of transactions to use in TestBasicE2E")
@@ -74,24 +79,26 @@ func TestBasicE2E(t *testing.T) {
 		defer close(allTxsInMempool)
 		for nonce := range *txsInBasicE2E {
 			allTxs[nonce] = types.MustSignNewTx(key, signer, &types.DynamicFeeTx{
-				Nonce:     nonce,
-				To:        &eoa,
-				Gas:       params.TxGas,
+				Nonce: nonce,
+				To:    &eoa,
+				// Adding a buffer of 2 gas will increase the gas excess by 1
+				// for each transaction, which helps with debugging.
+				Gas:       params.TxGas + 2,
 				GasTipCap: big.NewInt(0),
 				GasFeeCap: new(big.Int).SetUint64(math.MaxUint64),
 			})
-			chain.mempool <- allTxs[nonce]
+			chain.builder.mempool <- allTxs[nonce]
 		}
 	}()
 
-	requiredChunks := (int(*txsInBasicE2E)*int(params.TxGas)-1)/maxGasPerChunk + 1
+	requiredChunks := ((*txsInBasicE2E)*params.TxGas-1)/uint64(maxGasPerChunk) + 1
 	lastChunkTime := 100 + uint64(requiredChunks)
 
 	t.Logf(
 		"Expecting %s chunks for %s transactions @ %s gas/chunk",
-		comma(requiredChunks),
-		comma(*txsInBasicE2E),
-		comma(maxGasPerChunk),
+		human(requiredChunks),
+		human(*txsInBasicE2E),
+		human(maxGasPerChunk),
 	)
 	start := time.Now()
 	for range lastChunkTime {
@@ -101,11 +108,12 @@ func TestBasicE2E(t *testing.T) {
 		require.NoErrorf(t, b.Accept(ctx), "%T.Accept()", b)
 	}
 	acceptance := time.Since(start)
-	t.Logf("Accepted %s blocks in %v", comma(lastChunkTime), acceptance)
+	t.Logf("Accepted %s blocks in %v", human(lastChunkTime), acceptance)
 
 	var (
 		gotReceipts      []*types.Receipt
 		totalGasConsumed gas.Gas
+		finalStateRoot   common.Hash
 		lastFilledBy     time.Time
 	)
 	chain.exec.chunks.Wait(ctx,
@@ -123,6 +131,7 @@ func TestBasicE2E(t *testing.T) {
 				gotReceipts = append(gotReceipts, got.receipts...)
 				totalGasConsumed += got.consumed
 
+				finalStateRoot = got.stateRootPost
 				if len(got.receipts) > 0 {
 					lastFilledBy = got.filledBy
 				}
@@ -131,21 +140,34 @@ func TestBasicE2E(t *testing.T) {
 		},
 	)
 
-	require.Equalf(t, len(allTxs), len(gotReceipts), "# %T == # %T", &types.Receipt{}, &types.Transaction{})
-	t.Logf("Executed %s txs (%s gas) in %v", comma(len(gotReceipts)), comma(totalGasConsumed), lastFilledBy.Sub(start))
+	t.Run("tx_receipts", func(t *testing.T) {
+		require.Equalf(t, len(allTxs), len(gotReceipts), "# %T == # %T", &types.Receipt{}, &types.Transaction{})
+		t.Logf("Executed %s txs (%s gas) in %v", human(len(gotReceipts)), human(totalGasConsumed), lastFilledBy.Sub(start))
 
-	var wantReceipts []*types.Receipt
-	for _, tx := range allTxs {
-		wantReceipts = append(wantReceipts, &types.Receipt{TxHash: tx.Hash()})
-	}
-	if diff := cmp.Diff(wantReceipts, gotReceipts, chunkCmpOpts()); diff != "" {
-		t.Errorf("Execution results diff (-want +got): \n%s", diff)
-	}
+		var wantReceipts []*types.Receipt
+		for _, tx := range allTxs {
+			wantReceipts = append(wantReceipts, &types.Receipt{TxHash: tx.Hash()})
+		}
+		if diff := cmp.Diff(wantReceipts, gotReceipts, chunkCmpOpts()); diff != "" {
+			t.Errorf("Execution results diff (-want +got): \n%s", diff)
+		}
+	})
 
 	require.NoError(t, chain.Shutdown(ctx))
 
-	gotNonce := chain.exec.executeScratchSpace.chunk.statedb.GetNonce(eoa)
-	require.Equal(t, uint64(len(allTxs)), gotNonce, "Nonce of EOA sending txs")
+	t.Run("eoa_state", func(t *testing.T) {
+		db := chain.exec.executeScratchSpace.db
+		statedb, err := state.New(finalStateRoot, state.NewDatabase(db), nil)
+		require.NoError(t, err, "state.New() at last chunk's state root")
+
+		got := statedb.GetNonce(eoa)
+		assert.Equal(t, uint64(len(allTxs)), got, "Nonce of EOA sending txs")
+	})
+
+	// Invariants associated with a zero-length builder queue are asserted by
+	// the builder itself and would result in [Chain.BuildBlock] returning an
+	// error.
+	assert.Zero(t, chain.builder.pending.Len(), "block-builder length of pending-tx queue")
 }
 
 func newTestPrivateKey(tb testing.TB, seed []byte) *ecdsa.PrivateKey {
@@ -177,16 +199,20 @@ type tbLogger struct {
 
 var _ logging.Logger = tbLogger{}
 
+func (l tbLogger) Info(msg string, fields ...zap.Field) {
+	l.handle(time.Now(), logging.Info, l.tb.Logf, msg, fields...)
+}
+
+func (l tbLogger) Debug(msg string, fields ...zap.Field) {
+	l.handle(time.Now(), logging.Debug, l.tb.Logf, msg, fields...)
+}
+
 func (l tbLogger) Error(msg string, fields ...zap.Field) {
 	l.handle(time.Now(), logging.Error, l.tb.Errorf, msg, fields...)
 }
 
 func (l tbLogger) Fatal(msg string, fields ...zap.Field) {
 	l.handle(time.Now(), logging.Fatal, l.tb.Errorf, msg, fields...)
-}
-
-func (l tbLogger) Debug(msg string, fields ...zap.Field) {
-	l.handle(time.Now(), logging.Debug, l.tb.Logf, msg, fields...)
 }
 
 func (l tbLogger) handle(when time.Time, level logging.Level, dest func(string, ...any), msg string, fields ...zap.Field) {
@@ -211,8 +237,4 @@ func (l tbLogger) handle(when time.Time, level logging.Level, dest func(string, 
 
 	_, file, line, _ := runtime.Caller(2)
 	dest("[%s] %v %q %v - %s:%d", level, when.UnixNano(), msg, parts, file, line)
-}
-
-func comma[T constraints.Integer](x T) string {
-	return humanize.Comma(int64(x))
 }
