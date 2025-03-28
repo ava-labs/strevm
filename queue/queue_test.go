@@ -7,14 +7,20 @@ import (
 	"github.com/google/go-cmp/cmp"
 )
 
-func all[T any](q *FIFO[T]) []T {
+func all[T comparable](t *testing.T, q *FIFO[T]) []T {
+	t.Helper()
+
 	var got []T
 	for {
-		x, ok := q.Pop()
-		if !ok {
+		peek, peekOK := q.Peek()
+		pop, popOK := q.Pop()
+		if peek != pop || peekOK != popOK {
+			t.Errorf("{%T.Peek() = (%v, %t)} != {Pop() = (%v, %t)}", q, peek, peekOK, pop, popOK)
+		}
+		if !popOK {
 			break
 		}
-		got = append(got, x)
+		got = append(got, pop)
 	}
 	return got
 }
@@ -35,7 +41,7 @@ func TestFIFO(t *testing.T) {
 			q.Push(i)
 			want = append(want, i)
 		}
-		diff(t, all(&q), want)
+		diff(t, all(t, &q), want)
 	})
 
 	t.Run("interleaved_Push_Pop", func(t *testing.T) {
@@ -56,7 +62,7 @@ func TestFIFO(t *testing.T) {
 			}
 		}
 
-		got = append(got, all(&q)...)
+		got = append(got, all(t, &q)...)
 		diff(t, got, want)
 	})
 }
