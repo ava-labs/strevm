@@ -3,6 +3,7 @@ package sae
 import (
 	"context"
 	"encoding/json"
+	"math/rand/v2"
 	"net/http"
 	"sync"
 
@@ -53,8 +54,12 @@ type Chain struct {
 type blockMap map[ids.ID]*Block
 
 type accepted struct {
-	last ids.ID
-	all  blockMap
+	lastID ids.ID
+	all    blockMap
+}
+
+func (a *accepted) last() *Block {
+	return a.all[a.lastID]
 }
 
 func New() *Chain {
@@ -72,8 +77,9 @@ func New() *Chain {
 		// Block building
 		builder: blockBuilder{
 			deficits: make(map[ethcommon.Address]*uint256.Int),
-			// Development-only workaround
+			// Development-only workarounds
 			mempool: make(chan *types.Transaction, 1000), // buffered so tx creation can keep going => load++
+			rng:     rand.New(rand.NewPCG(0, 0)),
 		},
 		// Execution
 		quitExecute: quit,
@@ -197,7 +203,7 @@ func (c *Chain) ParseBlock(ctx context.Context, blockBytes []byte) (snowman.Bloc
 
 func (c *Chain) BuildBlock(ctx context.Context) (snowman.Block, error) {
 	parent, err := sink.FromMutex(ctx, c.accepted, func(a *accepted) (*types.Block, error) {
-		return a.all[a.last].b, nil
+		return a.last().b, nil
 	})
 	if err != nil {
 		return nil, err
