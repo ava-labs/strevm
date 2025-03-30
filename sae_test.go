@@ -45,6 +45,9 @@ func TestMain(m *testing.M) {
 var txsInBasicE2E = flag.Uint64("basic_e2e_tx_count", 100, "Number of transactions to use in TestBasicE2E")
 
 func TestBasicE2E(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
 	key := newTestPrivateKey(t, nil)
 	eoa := crypto.PubkeyToAddress(key.PublicKey)
 	chainConfig := params.TestChainConfig
@@ -53,7 +56,7 @@ func TestBasicE2E(t *testing.T) {
 	genesis, err := json.Marshal(&core.Genesis{
 		Config:     chainConfig,
 		Timestamp:  0,
-		Difficulty: big.NewInt(0),
+		Difficulty: big.NewInt(0), // required by geth
 		Alloc: types.GenesisAlloc{
 			eoa: {
 				Balance: new(uint256.Int).Not(uint256.NewInt(0)).ToBig(),
@@ -61,9 +64,6 @@ func TestBasicE2E(t *testing.T) {
 		},
 	})
 	require.NoErrorf(t, err, "json.Marshal(%T)", &core.Genesis{})
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
 
 	snowCtx := snowtest.Context(t, ids.Empty)
 	snowCtx.Log = tbLogger{tb: t, level: logging.Debug + 1}
@@ -92,6 +92,8 @@ func TestBasicE2E(t *testing.T) {
 	}()
 
 	requiredChunks := ((*txsInBasicE2E)*params.TxGas-1)/uint64(maxGasPerChunk) + 1
+	// TODO(arr4n) change this to wait until the first empty chunk, indicating
+	// that the queue has been processed.
 	lastChunkTime := 100 + uint64(requiredChunks)
 
 	t.Logf(
@@ -139,6 +141,10 @@ func TestBasicE2E(t *testing.T) {
 			return nil
 		},
 	)
+	if t.Failed() {
+		return
+	}
+	require.NoError(t, chain.Shutdown(ctx))
 
 	t.Run("tx_receipts", func(t *testing.T) {
 		require.Equalf(t, len(allTxs), len(gotReceipts), "# %T == # %T", &types.Receipt{}, &types.Transaction{})
@@ -152,8 +158,6 @@ func TestBasicE2E(t *testing.T) {
 			t.Errorf("Execution results diff (-want +got): \n%s", diff)
 		}
 	})
-
-	require.NoError(t, chain.Shutdown(ctx))
 
 	t.Run("eoa_state", func(t *testing.T) {
 		db := chain.exec.executeScratchSpace.db

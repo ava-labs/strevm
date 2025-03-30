@@ -30,17 +30,17 @@ func (b *Block) ID() ids.ID {
 }
 
 func (b *Block) Accept(ctx context.Context) error {
-	// TODO(arr4n) if the block was NOT built locally then the txs need to be
+	// TODO(arr4n) if the block wasn't built locally then the txs need to be
 	// pushed to the [blockBuilder] pending queue. See the equivalent comment at
 	// the beginning of [Block.Reject] for more thoughts.
 	return b.chain.accepted.Use(ctx, func(a *accepted) error {
-		parent := a.all[a.last] // nil i.f.f. `b` is genesis, but that's allowed
+		parent := a.last() // nil i.f.f. `b` is genesis, but that's allowed
 		if err := b.chain.exec.enqueueAccepted(ctx, b, parent); err != nil {
 			return err
 		}
 
 		a.all[b.ID()] = b
-		a.last = b.ID()
+		a.lastID = b.ID()
 
 		b.chain.logger().Debug(
 			"Accepted block",
@@ -53,10 +53,10 @@ func (b *Block) Accept(ctx context.Context) error {
 func (b *Block) Reject(context.Context) error {
 	// TODO(arr4n) if the block was built locally then it will be in the pending
 	// queue of the [blockBuilder] so needs to be removed. The likely best fix
-	// for this is to have the block builder to split its current queue into
-	// a base (accepted) queue and potentially appended (proposed) ones, similar
-	// to layers in a snapshot tree. This will avoid needing to actually remove
-	// anything.
+	// for this is to have the block builder split its current queue into a base
+	// (accepted) queue and others (proposed) to be appended if accepted,
+	// similar to layers in a snapshot tree. This will avoid needing to actually
+	// remove anything.
 	return nil
 }
 
@@ -65,7 +65,8 @@ func (b *Block) Parent() ids.ID {
 }
 
 func (b *Block) Verify(ctx context.Context) error {
-	// TODO(arr4n): this is where worst-case cost validation occurs.
+	// TODO(arr4n): mirror the worst-case validity checks as done by
+	// [blockBuilder].
 	return b.chain.blocks.Use(ctx, func(bm blockMap) error {
 		bm[b.ID()] = b
 		return nil
