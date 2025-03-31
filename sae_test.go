@@ -24,6 +24,7 @@ import (
 	"github.com/ava-labs/libevm/crypto"
 	"github.com/ava-labs/libevm/params"
 	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/holiman/uint256"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -53,16 +54,7 @@ func TestBasicE2E(t *testing.T) {
 	chainConfig := params.TestChainConfig
 	signer := types.LatestSigner(chainConfig)
 
-	genesis, err := json.Marshal(&core.Genesis{
-		Config:     chainConfig,
-		Timestamp:  0,
-		Difficulty: big.NewInt(0), // required by geth
-		Alloc: types.GenesisAlloc{
-			eoa: {
-				Balance: new(uint256.Int).Not(uint256.NewInt(0)).ToBig(),
-			},
-		},
-	})
+	genesisJSON, err := json.Marshal(genesis(t, chainConfig, eoa))
 	require.NoErrorf(t, err, "json.Marshal(%T)", &core.Genesis{})
 
 	snowCtx := snowtest.Context(t, ids.Empty)
@@ -70,7 +62,7 @@ func TestBasicE2E(t *testing.T) {
 	chain := New()
 	require.NoErrorf(t, chain.Initialize(
 		ctx, snowCtx,
-		nil, genesis, nil, nil, nil, nil, nil,
+		nil, genesisJSON, nil, nil, nil, nil, nil,
 	), "%T.Initialize()", chain)
 
 	allTxs := make([]*types.Transaction, *txsInBasicE2E)
@@ -79,11 +71,10 @@ func TestBasicE2E(t *testing.T) {
 		defer close(allTxsInMempool)
 		for nonce := range *txsInBasicE2E {
 			allTxs[nonce] = types.MustSignNewTx(key, signer, &types.DynamicFeeTx{
-				Nonce: nonce,
-				To:    &eoa,
-				// Adding a buffer of 2 gas will increase the gas excess by 1
-				// for each transaction, which helps with debugging.
-				Gas:       params.TxGas + 2,
+				Nonce:     nonce,
+				To:        &wethAddr,
+				Value:     big.NewInt(1),
+				Gas:       params.TxGas + params.SstoreSetGas + 50_000, // arbitrary buffer
 				GasTipCap: big.NewInt(0),
 				GasFeeCap: new(big.Int).SetUint64(math.MaxUint64),
 			})
@@ -157,15 +148,45 @@ func TestBasicE2E(t *testing.T) {
 		if diff := cmp.Diff(wantReceipts, gotReceipts, chunkCmpOpts()); diff != "" {
 			t.Errorf("Execution results diff (-want +got): \n%s", diff)
 		}
+
+		t.Run("logs", func(t *testing.T) {
+			var eoaAsHash common.Hash
+			copy(eoaAsHash[12:], eoa[:])
+
+			for i, r := range gotReceipts {
+				// Use `require` and `t.Fatalf()` because all receipts should be
+				// the same; if one fails then they'll all probably fail in the
+				// same way and there's no point being inundated with thousands
+				// of identical errors.
+				require.Truef(t, r.Status == 1, "tx[%d] execution succeeded", i)
+
+				want := []*types.Log{{
+					Address: wethAddr,
+					Topics: []common.Hash{
+						crypto.Keccak256Hash([]byte("Deposit(address,uint256)")),
+						eoaAsHash,
+					},
+					Data:   uint256.NewInt(1).PaddedBytes(32),
+					TxHash: r.TxHash,
+				}}
+				// Certain fields will have different meanings (TBD) in SAE so
+				// we ignore them for now.
+				ignore := cmpopts.IgnoreFields(types.Log{}, "BlockNumber", "BlockHash", "Index", "TxIndex")
+				if diff := cmp.Diff(want, r.Logs, ignore); diff != "" {
+					t.Fatalf("receipt[%d] logs diff (-want +got):\n%s", i, diff)
+				}
+			}
+		})
 	})
 
-	t.Run("eoa_state", func(t *testing.T) {
+	t.Run("state", func(t *testing.T) {
 		db := chain.exec.executeScratchSpace.db
 		statedb, err := state.New(finalStateRoot, state.NewDatabase(db), nil)
 		require.NoError(t, err, "state.New() at last chunk's state root")
 
-		got := statedb.GetNonce(eoa)
-		assert.Equal(t, uint64(len(allTxs)), got, "Nonce of EOA sending txs")
+		nTxs := uint64(len(allTxs))
+		assert.Equal(t, nTxs, statedb.GetNonce(eoa), "Nonce of EOA sending txs")
+		assert.Equal(t, uint256.NewInt(nTxs), statedb.GetBalance(wethAddr), "Balance of WETH contract")
 	})
 
 	// Invariants associated with a zero-length builder queue are asserted by
