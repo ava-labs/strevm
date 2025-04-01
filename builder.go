@@ -140,14 +140,14 @@ func (bb *blockBuilder) addToPending(ctx context.Context, stateRoot common.Hash,
 
 func (bb *blockBuilder) clearPending(chunk *chunk) error {
 	for _, r := range chunk.receipts {
-		switch first, ok := bb.pending.Peek(); {
-		case !ok:
+		if bb.pending.Len() == 0 {
 			return fmt.Errorf("*BUG* empty pending-tx queue when clearing receipt for %#x", r.TxHash)
-		case first.tx.Hash() != r.TxHash:
-			return fmt.Errorf("*BUG* receipt for tx %#x when next pending is %#x", r.TxHash, first.tx.Hash())
+		}
+		if tx := bb.pending.Peek().tx; tx.Hash() != r.TxHash {
+			return fmt.Errorf("*BUG* receipt for tx %#x when next pending is %#x", r.TxHash, tx.Hash())
 		}
 
-		clear, _ := bb.pending.Pop() // dropped `ok` is guaranteed to be true because of the peek
+		clear := bb.pending.Pop()
 		def := bb.deficits[clear.from]
 		if def.Cmp(clear.costUpperBound) == -1 {
 			return fmt.Errorf("*BUG* for account %#x, deficit %s < pending cost to be cleared %s", clear.from, def.String(), clear.costUpperBound.String())
