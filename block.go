@@ -2,6 +2,7 @@ package sae
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/ava-labs/avalanchego/ids"
@@ -21,8 +22,9 @@ func init() {
 }
 
 type Block struct {
-	b     *types.Block
-	chain *Chain
+	b       *types.Block
+	chain   *Chain
+	tranche *txTranche
 }
 
 func (b *Block) ID() ids.ID {
@@ -30,10 +32,7 @@ func (b *Block) ID() ids.ID {
 }
 
 func (b *Block) Accept(ctx context.Context) error {
-	// TODO(arr4n) if the block wasn't built locally then the txs need to be
-	// pushed to the [blockBuilder] pending queue. See the equivalent comment at
-	// the beginning of [Block.Reject] for more thoughts.
-	return b.chain.accepted.Use(ctx, func(a *accepted) error {
+	if err := b.chain.accepted.Use(ctx, func(a *accepted) error {
 		parent := a.last() // nil i.f.f. `b` is genesis, but that's allowed
 		if err := b.chain.exec.enqueueAccepted(ctx, b, parent); err != nil {
 			return err
@@ -47,16 +46,15 @@ func (b *Block) Accept(ctx context.Context) error {
 			zap.Uint64("height", b.Height()),
 		)
 		return nil
-	})
+	}); err != nil {
+		return err
+	}
+
+	// Synchronises our [blockBuilder] with those of other validators.
+	return b.chain.builder.acceptTranche(ctx, b.tranche)
 }
 
 func (b *Block) Reject(context.Context) error {
-	// TODO(arr4n) if the block was built locally then it will be in the pending
-	// queue of the [blockBuilder] so needs to be removed. The likely best fix
-	// for this is to have the block builder split its current queue into a base
-	// (accepted) queue and others (proposed) to be appended if accepted,
-	// similar to layers in a snapshot tree. This will avoid needing to actually
-	// remove anything.
 	return nil
 }
 
@@ -65,8 +63,33 @@ func (b *Block) Parent() ids.ID {
 }
 
 func (b *Block) Verify(ctx context.Context) error {
-	// TODO(arr4n): mirror the worst-case validity checks as done by
-	// [blockBuilder].
+	root := b.b.Root()
+	x := &b.chain.exec.executeScratchSpace // TODO(arr4n) don't access this directly
+	signer := types.LatestSigner(x.chainConfig)
+	blockTxs := b.b.Transactions()
+
+	// While block-building tranches sample from the mempool, here we use the
+	// unverified block's transactions as the candidates. If the tranche accepts
+	// all txs then (a) the block is valid; and (b) our local [blockBuilder]
+	// will be in sync with all peers' (including the proposer) should this
+	// block be accepted.
+	tranche, err := b.chain.builder.makeTranche(ctx, nil, root, signer, blockTxs, &x.gasConfig)
+	if err != nil {
+		return err
+	}
+	if nTranche, nBlock := len(tranche.proposed), len(blockTxs); nTranche != nBlock {
+		return fmt.Errorf("validation %T has %d proposed txs from block's %d", tranche, nTranche, nBlock)
+	}
+	for i, bTx := range blockTxs {
+		if bTx.Hash() != tranche.proposed[i].Hash() {
+			return fmt.Errorf("block and validation %T have mismatched tx[%d]", tranche, i)
+		}
+	}
+
+	// The tranche will be appended to the builder's i.f.f. [Block.Accept] is
+	// called later, but for now it matches the proposer's tranche from
+	// block-building.
+	b.tranche = tranche
 	return b.chain.blocks.Use(ctx, func(bm blockMap) error {
 		bm[b.ID()] = b
 		return nil

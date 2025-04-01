@@ -9,7 +9,7 @@ import (
 )
 
 const (
-	maxGasPerChunk        = gas.Gas(10e6)
+	maxGasPerChunk        = gas.Gas(50e6) // C-Chain goal of 50Mg/s by September
 	stateRootDelaySeconds = 5
 )
 

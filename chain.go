@@ -21,7 +21,6 @@ import (
 	"github.com/ava-labs/libevm/core"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/rlp"
-	"github.com/holiman/uint256"
 	"go.uber.org/zap"
 )
 
@@ -76,7 +75,7 @@ func New() *Chain {
 		preference: sink.NewMutex[ids.ID](ids.Empty),
 		// Block building
 		builder: blockBuilder{
-			deficits: make(map[ethcommon.Address]*uint256.Int),
+			accepted: sink.NewMutex(newRootTxTranche()),
 			// Development-only workarounds
 			mempool: make(chan *types.Transaction, 1000), // buffered so tx creation can keep going => load++
 			rng:     rand.New(rand.NewPCG(0, 0)),
@@ -113,15 +112,24 @@ func (c *Chain) Initialize(
 	if err := json.Unmarshal(genesisBytes, gen); err != nil {
 		return err
 	}
-	if err := c.exec.init(ctx, gen); err != nil {
+	genBlock, err := c.exec.init(ctx, gen)
+	if err != nil {
 		return err
 	}
+	// The genesis block can't be processed until the [blockBuilder] is
+	// initialised with access to the just-initialised [executor] snapshots.
 	c.builder.snaps = c.exec.snaps // safe to copy a [sink.Mutex]
-	return nil
+	if err := genBlock.Verify(ctx); err != nil {
+		return err
+	}
+	return genBlock.Accept(ctx)
 }
 
 func (c *Chain) newBlock(b *types.Block) *Block {
-	return &Block{b, c}
+	return &Block{
+		b:     b,
+		chain: c,
+	}
 }
 
 func (c *Chain) logger() logging.Logger {
@@ -234,13 +242,24 @@ func (c *Chain) BuildBlock(ctx context.Context) (snowman.Block, error) {
 		},
 	)
 
-	x := &c.exec.executeScratchSpace // TODO(arr4n) don't access this directly
+	// TODO(arr4n) this needs to be done immediately upon filling of the chunk,
+	// but only once the [blockBuilder] keeps chunk tranches for historical
+	// lookback.
+	if err := c.builder.clearExecuted(ctx, chunk); err != nil {
+		return nil, err
+	}
 
-	b, err := c.builder.build(ctx, parent, x.chainConfig, &x.gasConfig, chunk)
+	x := &c.exec.executeScratchSpace // TODO(arr4n) don't access this directly
+	tranche, evmBlock, err := c.builder.build(ctx, parent, x.chainConfig, &x.gasConfig, chunk)
 	if err != nil {
 		return nil, err
 	}
-	return c.newBlock(b), nil
+	// Block-building is the only time we add a [txTranche] at the same time as
+	// constructing the [Block]. In all other instances it's done in
+	// [Block.Verify].
+	b := c.newBlock(evmBlock)
+	b.tranche = tranche
+	return b, nil
 }
 
 func (c *Chain) SetPreference(ctx context.Context, blkID ids.ID) error {
