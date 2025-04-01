@@ -7,18 +7,19 @@ import (
 	"github.com/google/go-cmp/cmp"
 )
 
-func all[T comparable](t *testing.T, q *FIFO[T]) []T {
+func all[T comparable, Q interface {
+	Len() int
+	Peek() T
+	Pop() T
+}](t *testing.T, q Q) []T {
 	t.Helper()
 
 	var got []T
-	for {
-		peek, peekOK := q.Peek()
-		pop, popOK := q.Pop()
-		if peek != pop || peekOK != popOK {
-			t.Errorf("{%T.Peek() = (%v, %t)} != {Pop() = (%v, %t)}", q, peek, peekOK, pop, popOK)
-		}
-		if !popOK {
-			break
+	for q.Len() > 0 {
+		peek := q.Peek()
+		pop := q.Pop()
+		if peek != pop {
+			t.Errorf("{%T.Peek() = %v} != {Pop() = %v}", q, peek, pop)
 		}
 		got = append(got, pop)
 	}
@@ -54,11 +55,8 @@ func TestFIFO(t *testing.T) {
 			q.Push(i)
 			want = append(want, i)
 
-			if rng.IntN(4) == 0 {
-				x, ok := q.Pop()
-				if ok {
-					got = append(got, x)
-				}
+			if rng.IntN(4) == 0 && q.Len() > 0 {
+				got = append(got, q.Pop())
 			}
 		}
 

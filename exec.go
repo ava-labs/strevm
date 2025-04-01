@@ -191,10 +191,7 @@ func (e *executor) processQueue() {
 				return q.Len() > 0
 			},
 			func(q *queue.FIFO[*Block]) (*Block, error) {
-				// We know that q.Len() > 0 so there's no need to check Pop()'s
-				// boolean.
-				block, _ := q.Pop()
-				return block, nil
+				return q.Pop(), nil
 			},
 		)
 		if errors.Is(err, context.Canceled) {
