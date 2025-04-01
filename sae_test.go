@@ -85,7 +85,7 @@ func TestBasicE2E(t *testing.T) {
 	requiredChunks := ((*txsInBasicE2E)*params.TxGas-1)/uint64(maxGasPerChunk) + 1
 	// TODO(arr4n) change this to wait until the first empty chunk, indicating
 	// that the queue has been processed.
-	lastChunkTime := 100 + uint64(requiredChunks)
+	lastChunkTime := 200 + uint64(requiredChunks)
 
 	t.Logf(
 		"Expecting %s chunks for %s transactions @ %s gas/chunk",
@@ -192,7 +192,10 @@ func TestBasicE2E(t *testing.T) {
 	// Invariants associated with a zero-length builder queue are asserted by
 	// the builder itself and would result in [Chain.BuildBlock] returning an
 	// error.
-	assert.Zero(t, chain.builder.pending.Len(), "block-builder length of pending-tx queue")
+	chain.builder.accepted.Use(ctx, func(q *txTranche) error {
+		assert.Zero(t, q.pending.Len(), "block-builder length of pending-tx queue")
+		return nil
+	})
 }
 
 func newTestPrivateKey(tb testing.TB, seed []byte) *ecdsa.PrivateKey {

@@ -43,13 +43,16 @@ type executor struct {
 	snaps               sink.Monitor[*snapshot.Tree]
 }
 
-func (e *executor) init(ctx context.Context, genesis *core.Genesis) error {
+// init initialises the executor and returns the genesis block, upon which the
+// [Block.Verify] and then [Block.Accept] methods MUST be called once the
+// [blockBuilder] is ready.
+func (e *executor) init(ctx context.Context, genesis *core.Genesis) (*Block, error) {
 	db := rawdb.NewMemoryDatabase()
 	sdb := state.NewDatabase(db)
 	tdb := sdb.TrieDB()
 	chainConfig, genesisHash, err := core.SetupGenesisBlock(db, tdb, genesis)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	genesisBlock := rawdb.ReadBlock(db, genesisHash, 0)
@@ -59,12 +62,12 @@ func (e *executor) init(ctx context.Context, genesis *core.Genesis) error {
 	}
 	snaps, err := snapshot.New(snapConf, db, tdb, genesisBlock.Root())
 	if err != nil {
-		return err
+		return nil, err
 	}
 	e.snaps = sink.NewMonitor(snaps)
 	statedb, err := state.New(genesisBlock.Root(), sdb, snaps)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	e.executeScratchSpace = executionScratchSpace{
@@ -93,14 +96,10 @@ func (e *executor) init(ctx context.Context, genesis *core.Genesis) error {
 	// We call it, instead of constructing the chunk above, to ensure that
 	// expected properties are in place for the first set of transactions.
 	if err := e.nextChunk(ctx, &e.executeScratchSpace, nil /*overflowTx*/); err != nil {
-		return err
+		return nil, err
 	}
+	return e.chain.newBlock(genesisBlock), nil
 
-	b := e.chain.newBlock(genesisBlock)
-	if err := b.Verify(ctx); err != nil {
-		return err
-	}
-	return b.Accept(ctx)
 }
 
 func (e *executor) run(ready chan<- struct{}) {

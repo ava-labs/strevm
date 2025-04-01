@@ -19,13 +19,8 @@ import (
 )
 
 type blockBuilder struct {
-	snaps   sink.Monitor[*snapshot.Tree] // chunk-specific account inspection
-	pending queue.FIFO[*pendingInclusion]
-	// Worst-case bounds at the end of the `pending` queue. If the queue is
-	// empty then these MUST match actual state; i.e. `excess` is the same value
-	// as at the end of the last chunk and `deficits` are all zero.
-	excess   gas.Gas
-	deficits map[common.Address]*uint256.Int // relative to snapshot
+	accepted sink.Mutex[*txTranche]
+	snaps    sink.Monitor[*snapshot.Tree] // chunk-specific account inspection
 
 	log logging.Logger
 
@@ -34,9 +29,78 @@ type blockBuilder struct {
 	rng     *rand.Rand // reproducible blocks
 }
 
-// gasPrice returns the worst-case gas price at the end of the queue.
-func (bb *blockBuilder) gasPrice(cfg *gas.Config) gas.Price {
-	return gas.CalculatePrice(cfg.MinPrice, bb.excess, cfg.ExcessConversionConstant)
+type txTranche struct {
+	prev     *txTranche // nil i.f.f. this is the root tranche, which MUST be `accepted`
+	accepted bool       // if true then all transitive `prev` MUST also be true
+
+	pending queue.FIFO[*pendingTx]
+	// Worst-case bounds at the end of the `pending` queue. If the queue is
+	// empty then these MUST match actual state; i.e. `excess` is the same value
+	// as at the end of the last chunk and `deficits` are all zero.
+	excess   gas.Gas
+	deficits map[common.Address]*uint256.Int // relative to snapshot
+
+	proposed []*types.Transaction // matches `pending`
+	// TODO(arr4n) add fields for skipped (temporary) and rejected (permanent)
+	// transactions.
+}
+
+type pendingTx struct {
+	tx             *types.Transaction
+	from           common.Address
+	costUpperBound *uint256.Int
+}
+
+func newRootTxTranche() *txTranche {
+	// By definition, the root has no parent and is accepted.
+	t := newTxTranche(nil /*parent*/)
+	t.accepted = true
+	return t
+}
+
+func newTxTranche(prev *txTranche) *txTranche {
+	return &txTranche{
+		prev:     prev,
+		deficits: make(map[common.Address]*uint256.Int),
+	}
+}
+
+// gasPrice returns the worst-case gas price at the end of the tranche's queue.
+func (tr *txTranche) gasPrice(cfg *gas.Config) gas.Price {
+	return gas.CalculatePrice(cfg.MinPrice, tr.cumulativeExcess(), cfg.ExcessConversionConstant)
+}
+
+func (tr *txTranche) withHistory(fn func(*txTranche)) {
+	for ; tr != nil; tr = tr.prev {
+		fn(tr)
+	}
+}
+
+func (tr *txTranche) cumulativeExcess() gas.Gas {
+	var sum gas.Gas
+	tr.withHistory(func(tr *txTranche) {
+		sum += tr.excess
+	})
+	return sum
+}
+
+func (tr *txTranche) spend(addr common.Address, amt *uint256.Int) {
+	d, ok := tr.deficits[addr]
+	if !ok {
+		d = new(uint256.Int)
+		tr.deficits[addr] = d
+	}
+	d.Add(d, amt)
+}
+
+func (tr *txTranche) cumulativeDeficit(addr common.Address) *uint256.Int {
+	sum := new(uint256.Int)
+	tr.withHistory(func(tr *txTranche) {
+		if d := tr.deficits[addr]; d != nil {
+			sum.Add(sum, d)
+		}
+	})
+	return sum
 }
 
 func (bb *blockBuilder) build(
@@ -45,18 +109,18 @@ func (bb *blockBuilder) build(
 	chainConfig *params.ChainConfig,
 	gasConfig *gas.Config,
 	chunk *chunk,
-) (*types.Block, error) {
+) (*txTranche, *types.Block, error) {
 	max := bb.rng.IntN(5000)
-	txs := make(types.Transactions, 0, max)
+	pool := make(types.Transactions, 0, max)
 
 BuildLoop:
 	for {
 		select {
 		case <-ctx.Done():
-			return nil, ctx.Err()
+			return nil, nil, ctx.Err()
 		case tx := <-bb.mempool:
-			txs = append(txs, tx)
-			if len(txs) == max {
+			pool = append(pool, tx)
+			if len(pool) == max {
 				break BuildLoop
 			}
 		default:
@@ -64,125 +128,145 @@ BuildLoop:
 		}
 	}
 
-	if err := bb.clearPending(chunk); err != nil {
-		return nil, err
-	}
-	accepted, err := bb.addToPending(ctx, chunk.stateRootPost, types.LatestSigner(chainConfig), txs, gasConfig)
+	root := chunk.stateRootPost
+	signer := types.LatestSigner(chainConfig)
+	tranche, err := bb.makeTranche(ctx, nil /*last accepted tranche*/, root, signer, pool, gasConfig)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
-	return types.NewBlockWithHeader(&types.Header{
+	return tranche, types.NewBlockWithHeader(&types.Header{
 		ParentHash: parent.Hash(),
 		Number:     new(big.Int).SetUint64(parent.NumberU64() + 1),
 		Time:       chunk.timestamp + stateRootDelaySeconds,
-		Root:       chunk.stateRootPost,
+		Root:       root,
 	}).WithBody(types.Body{
-		Transactions: accepted,
+		Transactions: tranche.proposed,
 	}), nil
 }
 
-type pendingInclusion struct {
-	tx             *types.Transaction
-	from           common.Address
-	costUpperBound *uint256.Int
-}
-
-func (bb *blockBuilder) addToPending(ctx context.Context, stateRoot common.Hash, signer types.Signer, txs types.Transactions, cfg *gas.Config) (types.Transactions, error) {
+func (bb *blockBuilder) makeTranche(ctx context.Context, prevTranche *txTranche, stateRoot common.Hash, signer types.Signer, txs types.Transactions, cfg *gas.Config) (*txTranche, error) {
 	return sink.FromMonitor(ctx, bb.snaps,
 		func(t *snapshot.Tree) bool {
 			return t.Snapshot(stateRoot) != nil
 		},
-		func(t *snapshot.Tree) (types.Transactions, error) {
+		func(t *snapshot.Tree) (*txTranche, error) {
 			snap := t.Snapshot(stateRoot)
-
-			for _, tx := range txs {
-				price := bb.gasPrice(cfg)
-				gasLim := gas.Gas(tx.Gas())
-
-				fee := uint256.NewInt(uint64(price))
-				fee.Mul(fee, uint256.NewInt(uint64(gasLim)))
-				cost := new(uint256.Int).Add(fee, uint256.MustFromBig(tx.Value()))
-
-				from, err := types.Sender(signer, tx)
-				if err != nil {
-					return nil, err
+			return sink.FromMutex(ctx, bb.accepted, func(accepted *txTranche) (*txTranche, error) {
+				if prevTranche == nil {
+					prevTranche = accepted
 				}
-				fromHash := crypto.Keccak256Hash(from[:])
-				account, err := snap.Account(fromHash)
-				if err != nil {
-					return nil, err
-				}
+				tranche := newTxTranche(prevTranche)
 
-				deficit, ok := bb.deficits[from]
-				if !ok {
-					deficit = new(uint256.Int)
-					bb.deficits[from] = deficit
-				}
-				if bal := new(uint256.Int).Sub(account.Balance, deficit); bal.Cmp(cost) == -1 {
-					// TODO(arr4n) this will need to change (probably to a
-					// `continue`) when this loop is a filter instead of a
-					// validator of txs.
-					return nil, fmt.Errorf("account %v has insufficient balance (%v) to cover worst-case cost (%v) of tx %#x", from, bal, cost, tx.Hash())
-				}
-				deficit.Add(deficit, cost)
+				for _, tx := range txs {
+					price := tranche.gasPrice(cfg)
+					gasLim := gas.Gas(tx.Gas())
 
-				bb.excess += gasLim >> 1
-				bb.pending.Push(&pendingInclusion{
-					tx:             tx,
-					from:           from,
-					costUpperBound: cost,
-				})
-			}
-			return txs, nil
+					fee := uint256.NewInt(uint64(price))
+					fee.Mul(fee, uint256.NewInt(uint64(gasLim)))
+					cost := new(uint256.Int).Add(fee, uint256.MustFromBig(tx.Value()))
+
+					from, err := types.Sender(signer, tx)
+					if err != nil {
+						return nil, err
+					}
+					fromHash := crypto.Keccak256Hash(from[:])
+					account, err := snap.Account(fromHash)
+					if err != nil {
+						return nil, err
+					}
+
+					if bal := new(uint256.Int).Sub(account.Balance, tranche.cumulativeDeficit(from)); bal.Cmp(cost) == -1 {
+						// TODO(arr4n) this will need to change (probably to a
+						// `continue`) when this loop is a filter instead of a
+						// validator of txs.
+						return nil, fmt.Errorf("account %v has insufficient balance (%v) to cover worst-case cost (%v) of tx %#x", from, bal, cost, tx.Hash())
+					}
+					tranche.spend(from, cost)
+
+					tranche.excess += gasLim >> 1
+					tranche.pending.Push(&pendingTx{
+						tx:             tx,
+						from:           from,
+						costUpperBound: cost,
+					})
+					tranche.proposed = append(tranche.proposed, tx)
+				}
+				return tranche, nil
+			})
 		})
 }
 
-func (bb *blockBuilder) clearPending(chunk *chunk) error {
-	for _, r := range chunk.receipts {
-		if bb.pending.Len() == 0 {
-			return fmt.Errorf("*BUG* empty pending-tx queue when clearing receipt for %#x", r.TxHash)
+func (bb *blockBuilder) acceptTranche(ctx context.Context, tr *txTranche) error {
+	return bb.accepted.Use(ctx, func(root *txTranche) error {
+		if !tr.prev.accepted {
+			return fmt.Errorf("cannot accept %T before its predecessor", tr)
 		}
-		if tx := bb.pending.Peek().tx; tx.Hash() != r.TxHash {
-			return fmt.Errorf("*BUG* receipt for tx %#x when next pending is %#x", r.TxHash, tx.Hash())
+		for tr.pending.Len() > 0 {
+			// TODO(arr4n) implement concatenation on [queue.FIFO]
+			root.pending.Push(tr.pending.Pop())
+		}
+		root.excess += tr.excess
+		for addr, def := range tr.deficits {
+			root.spend(addr, def)
+		}
+		tr.deficits = make(map[common.Address]*uint256.Int)
+		tr.accepted = true
+		return nil
+	})
+}
+
+func (bb *blockBuilder) clearExecuted(ctx context.Context, chunk *chunk) error {
+	return bb.accepted.Use(ctx, func(tranche *txTranche) error {
+		if tranche.prev != nil {
+			return fmt.Errorf("*BUG* only the root %T can be cleared", tranche)
 		}
 
-		clear := bb.pending.Pop()
-		def := bb.deficits[clear.from]
-		if def.Cmp(clear.costUpperBound) == -1 {
-			return fmt.Errorf("*BUG* for account %#x, deficit %s < pending cost to be cleared %s", clear.from, def.String(), clear.costUpperBound.String())
+		for _, r := range chunk.receipts {
+			if tranche.pending.Len() == 0 {
+				return fmt.Errorf("*BUG* empty pending-tx queue when clearing receipt for %#x", r.TxHash)
+			}
+			if tx := tranche.pending.Peek().tx; tx.Hash() != r.TxHash {
+				return fmt.Errorf("*BUG* receipt for tx %#x when next pending is %#x", r.TxHash, tx.Hash())
+			}
+
+			clear := tranche.pending.Pop()
+			def := tranche.deficits[clear.from]
+			if def.Cmp(clear.costUpperBound) == -1 {
+				return fmt.Errorf("*BUG* for account %#x, deficit %s < pending cost to be cleared %s", clear.from, def.String(), clear.costUpperBound.String())
+			}
+			def.Sub(def, clear.costUpperBound)
+			if def.IsZero() {
+				delete(tranche.deficits, clear.from)
+			}
+
+			tranche.excess -= gas.Gas(clear.tx.Gas()>>1 - r.GasUsed>>1)
 		}
-		def.Sub(def, clear.costUpperBound)
-		if def.IsZero() {
-			delete(bb.deficits, clear.from)
+
+		reduce := chunk.excessReduction
+		if tranche.excess < reduce {
+			return fmt.Errorf(
+				"*BUG* chunk at %d reduced gas excess (%s) by more that block builder's worst-case prediction (%s)",
+				chunk.timestamp, human(reduce), human(tranche.excess),
+			)
 		}
+		tranche.excess -= reduce
 
-		bb.excess -= gas.Gas(clear.tx.Gas()>>1 - r.GasUsed>>1)
-	}
-
-	reduce := chunk.excessReduction
-	if bb.excess < reduce {
-		return fmt.Errorf(
-			"*BUG* chunk at %d reduced gas excess (%s) by more that block builder's worst-case prediction (%s)",
-			chunk.timestamp, human(reduce), human(bb.excess),
-		)
-	}
-	bb.excess -= reduce
-
-	emptyQueue := bb.pending.Len() == 0
-	emptyDeficits := len(bb.deficits) == 0
-	if emptyQueue != emptyDeficits {
-		return fmt.Errorf(
-			"*BUG* block-builder deficits must be empty (%t) i.f.f. pending queue is empty (%t)",
-			emptyDeficits, emptyQueue,
-		)
-	}
-	excessMatch := bb.excess == chunk.excessPost
-	if emptyQueue != excessMatch {
-		return fmt.Errorf(
-			"*BUG* block builder's worst-case gas excess must match end of chunk (%t) i.f.f. pending queue is empty (%t)",
-			excessMatch, emptyQueue,
-		)
-	}
-	return nil
+		emptyQueue := tranche.pending.Len() == 0
+		emptyDeficits := len(tranche.deficits) == 0
+		if emptyQueue != emptyDeficits {
+			return fmt.Errorf(
+				"*BUG* block-builder deficits must be empty (%t) i.f.f. pending queue is empty (%t)",
+				emptyDeficits, emptyQueue,
+			)
+		}
+		excessMatch := tranche.excess == chunk.excessPost
+		if emptyQueue != excessMatch {
+			return fmt.Errorf(
+				"*BUG* block builder's worst-case gas excess must match end of chunk (%t) i.f.f. pending queue is empty (%t)",
+				excessMatch, emptyQueue,
+			)
+		}
+		return nil
+	})
 }
