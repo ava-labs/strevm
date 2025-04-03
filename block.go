@@ -63,7 +63,6 @@ func (b *Block) Parent() ids.ID {
 }
 
 func (b *Block) Verify(ctx context.Context) error {
-	root := b.b.Root()
 	x := &b.chain.exec.executeScratchSpace // TODO(arr4n) don't access this directly
 	signer := types.LatestSigner(x.chainConfig)
 	blockTxs := b.b.Transactions()
@@ -73,15 +72,24 @@ func (b *Block) Verify(ctx context.Context) error {
 	// all txs then (a) the block is valid; and (b) our local [blockBuilder]
 	// will be in sync with all peers' (including the proposer) should this
 	// block be accepted.
-	tranche, err := b.chain.builder.makeTranche(ctx, nil, root, signer, blockTxs, &x.gasConfig)
+	cfg := &trancheBuilderConfig{
+		atEndOf: &chunk{
+			timestamp:     clippedSubtract(b.b.Time(), stateRootDelaySeconds),
+			stateRootPost: b.b.Root(),
+		},
+		signer:     signer,
+		candidates: blockTxs,
+		gasConfig:  &x.gasConfig,
+	}
+	tranche, err := b.chain.builder.makeTranche(ctx, cfg)
 	if err != nil {
 		return err
 	}
-	if nTranche, nBlock := len(tranche.proposed), len(blockTxs); nTranche != nBlock {
+	if nTranche, nBlock := len(tranche.rawTxs), len(blockTxs); nTranche != nBlock {
 		return fmt.Errorf("validation %T has %d proposed txs from block's %d", tranche, nTranche, nBlock)
 	}
 	for i, bTx := range blockTxs {
-		if bTx.Hash() != tranche.proposed[i].Hash() {
+		if bTx.Hash() != tranche.rawTxs[i].Hash() {
 			return fmt.Errorf("block and validation %T have mismatched tx[%d]", tranche, i)
 		}
 	}

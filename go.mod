@@ -3,11 +3,12 @@ module github.com/ava-labs/strevm
 go 1.23.7
 
 require (
-	github.com/arr4n/sink v0.0.0-20250327144913-318b074cfd67
+	github.com/arr4n/sink v0.0.0-20250403103946-16570bcdd62c
 	github.com/ava-labs/avalanchego v1.13.0
 	github.com/ava-labs/libevm v1.13.14-0.2.0.rc.3
 	github.com/dustin/go-humanize v1.0.0
 	github.com/google/go-cmp v0.7.0
+	github.com/holiman/uint256 v1.2.4
 	github.com/stretchr/testify v1.10.0
 	go.uber.org/goleak v1.3.0
 	go.uber.org/zap v1.26.0
@@ -53,7 +54,6 @@ require (
 	github.com/grpc-ecosystem/go-grpc-prometheus v1.2.0 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.16.0 // indirect
 	github.com/holiman/bloomfilter/v2 v2.0.3 // indirect
-	github.com/holiman/uint256 v1.2.4 // indirect
 	github.com/klauspost/compress v1.15.15 // indirect
 	github.com/kr/pretty v0.3.1 // indirect
 	github.com/kr/text v0.2.0 // indirect

@@ -192,8 +192,8 @@ func TestBasicE2E(t *testing.T) {
 	// Invariants associated with a zero-length builder queue are asserted by
 	// the builder itself and would result in [Chain.BuildBlock] returning an
 	// error.
-	chain.builder.accepted.Use(ctx, func(q *txTranche) error {
-		assert.Zero(t, q.pending.Len(), "block-builder length of pending-tx queue")
+	chain.builder.tranches.UseThenSignal(ctx, func(trs *tranches) error {
+		assert.Zero(t, trs.accepted.pending.Len(), "block-builder length of pending-tx queue")
 		return nil
 	})
 }

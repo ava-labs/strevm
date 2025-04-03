@@ -19,7 +19,7 @@ import (
 )
 
 type blockBuilder struct {
-	accepted sink.Mutex[*txTranche]
+	tranches sink.Monitor[*tranches]
 	snaps    sink.Monitor[*snapshot.Tree] // chunk-specific account inspection
 
 	log logging.Logger
@@ -29,18 +29,43 @@ type blockBuilder struct {
 	rng     *rand.Rand // reproducible blocks
 }
 
+type tranches struct {
+	// Each [txTranche] has a `prev` pointer that is used to form a tree
+	// (mirroring consensus) with this `accepted` tranche as the root. When a
+	// block is accepted, its tranche is collapsed into the `accepted` one (but
+	// not removed from the block, just emptied).
+	//
+	// From the perspective of a single tranche, there is a linked list of its
+	// ancestors, and methods like [txTranche.cumulativeExcess] traverse the
+	// list.
+	//
+	// When executed chunks are cleared (from the `accepted` tranche's `pending`
+	// queue), we store a "pre-historical" tranche per chunk. In block building
+	// and verification, the `cumulative*` methods can therefore be made to
+	// terminate at any point in time by setting the `prev` pointers
+	// appropriately, terminating the methods when `prev==nil`. It is safe to do
+	// this as these are protected by a mutex, but `accepted` MUST be returned
+	// with a nil `prev`.
+	accepted      *txTranche
+	chunkTranches map[uint64]*txTranche
+}
+
 type txTranche struct {
 	prev     *txTranche // nil i.f.f. this is the root tranche, which MUST be `accepted`
 	accepted bool       // if true then all transitive `prev` MUST also be true
 
 	pending queue.FIFO[*pendingTx]
-	// Worst-case bounds at the end of the `pending` queue. If the queue is
+	// The time *before* the queue is only relevant for extending into
+	// "pre-historic" tranches, allowing the `accepted`` tranche to select the
+	// appropriate `prev`.
+	lastExecutedTimeBeforeQueue uint64
+	// Worst-case bounds at the *end* of the `pending` queue. If the queue is
 	// empty then these MUST match actual state; i.e. `excess` is the same value
 	// as at the end of the last chunk and `deficits` are all zero.
 	excess   gas.Gas
 	deficits map[common.Address]*uint256.Int // relative to snapshot
 
-	proposed []*types.Transaction // matches `pending`
+	rawTxs []*types.Transaction // matches `pending`
 	// TODO(arr4n) add fields for skipped (temporary) and rejected (permanent)
 	// transactions.
 }
@@ -70,7 +95,7 @@ func (tr *txTranche) gasPrice(cfg *gas.Config) gas.Price {
 	return gas.CalculatePrice(cfg.MinPrice, tr.cumulativeExcess(), cfg.ExcessConversionConstant)
 }
 
-func (tr *txTranche) withHistory(fn func(*txTranche)) {
+func (tr *txTranche) callOnAncestry(fn func(*txTranche)) {
 	for ; tr != nil; tr = tr.prev {
 		fn(tr)
 	}
@@ -78,12 +103,14 @@ func (tr *txTranche) withHistory(fn func(*txTranche)) {
 
 func (tr *txTranche) cumulativeExcess() gas.Gas {
 	var sum gas.Gas
-	tr.withHistory(func(tr *txTranche) {
+	tr.callOnAncestry(func(tr *txTranche) {
 		sum += tr.excess
 	})
 	return sum
 }
 
+// spend adds to the deficit for the account; use [txTranche.cumulativeDeficit]
+// to recover the sum of all calls to spend() across the entire tranche history.
 func (tr *txTranche) spend(addr common.Address, amt *uint256.Int) {
 	d, ok := tr.deficits[addr]
 	if !ok {
@@ -95,7 +122,7 @@ func (tr *txTranche) spend(addr common.Address, amt *uint256.Int) {
 
 func (tr *txTranche) cumulativeDeficit(addr common.Address) *uint256.Int {
 	sum := new(uint256.Int)
-	tr.withHistory(func(tr *txTranche) {
+	tr.callOnAncestry(func(tr *txTranche) {
 		if d := tr.deficits[addr]; d != nil {
 			sum.Add(sum, d)
 		}
@@ -106,13 +133,13 @@ func (tr *txTranche) cumulativeDeficit(addr common.Address) *uint256.Int {
 func (bb *blockBuilder) build(
 	ctx context.Context,
 	parent *types.Block,
+	chunk *chunk,
 	chainConfig *params.ChainConfig,
 	gasConfig *gas.Config,
-	chunk *chunk,
 ) (*txTranche, *types.Block, error) {
+
 	max := bb.rng.IntN(5000)
 	pool := make(types.Transactions, 0, max)
-
 BuildLoop:
 	for {
 		select {
@@ -128,9 +155,13 @@ BuildLoop:
 		}
 	}
 
-	root := chunk.stateRootPost
-	signer := types.LatestSigner(chainConfig)
-	tranche, err := bb.makeTranche(ctx, nil /*last accepted tranche*/, root, signer, pool, gasConfig)
+	cfg := &trancheBuilderConfig{
+		atEndOf:    chunk,
+		signer:     types.LatestSigner(chainConfig),
+		candidates: pool,
+		gasConfig:  gasConfig,
+	}
+	tranche, err := bb.makeTranche(ctx, cfg)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -139,128 +170,190 @@ BuildLoop:
 		ParentHash: parent.Hash(),
 		Number:     new(big.Int).SetUint64(parent.NumberU64() + 1),
 		Time:       chunk.timestamp + stateRootDelaySeconds,
-		Root:       root,
+		Root:       chunk.stateRootPost,
 	}).WithBody(types.Body{
-		Transactions: tranche.proposed,
+		Transactions: tranche.rawTxs,
 	}), nil
 }
 
-func (bb *blockBuilder) makeTranche(ctx context.Context, prevTranche *txTranche, stateRoot common.Hash, signer types.Signer, txs types.Transactions, cfg *gas.Config) (*txTranche, error) {
-	return sink.FromMonitor(ctx, bb.snaps,
-		func(t *snapshot.Tree) bool {
-			return t.Snapshot(stateRoot) != nil
+type trancheBuilderConfig struct {
+	// prev allows tranches to be built on top of preferred blocks that aren't
+	// accepted yet. If nil, the tranche will be built on top of
+	// [tranches.accepted] once unlocked from its mutex.
+	prev       *txTranche
+	atEndOf    *chunk
+	signer     types.Signer
+	candidates []*types.Transaction
+	gasConfig  *gas.Config
+}
+
+func (bb *blockBuilder) makeTranche(ctx context.Context, cfg *trancheBuilderConfig) (*txTranche, error) {
+	return sink.FromMonitors(ctx, bb.tranches, bb.snaps,
+		func(trs *tranches) bool {
+			_, ok := trs.chunkTranches[cfg.atEndOf.timestamp]
+			return ok || cfg.atEndOf.isGenesis()
 		},
-		func(t *snapshot.Tree) (*txTranche, error) {
-			snap := t.Snapshot(stateRoot)
-			return sink.FromMutex(ctx, bb.accepted, func(accepted *txTranche) (*txTranche, error) {
-				if prevTranche == nil {
-					prevTranche = accepted
+		func(t *snapshot.Tree) bool {
+			return t.Snapshot(cfg.atEndOf.stateRootPost) != nil
+		},
+		func(trs *tranches, snaps *snapshot.Tree) (*txTranche, error) {
+			defer func() {
+				trs.accepted.prev = nil
+			}()
+			for sentinel := trs.accepted; sentinel.lastExecutedTimeBeforeQueue > cfg.atEndOf.timestamp; {
+				at := sentinel.lastExecutedTimeBeforeQueue - 1
+				before, ok := trs.chunkTranches[at]
+				// TODO(arr4n) at the moment we only build blocks exactly 1
+				// second after the parent so this loop will never be entered.
+				// Additionally, the condition on the tranches [sink.Monitor]
+				// should be set correctly to avoid this. This check is
+				// therefore a defensive mechanism to address when allowing for
+				// blocks with a greater gap.
+				if !ok {
+					return nil, fmt.Errorf("*BUG* chunk tranche at time %d missing while connecting tranche history", at)
 				}
-				tranche := newTxTranche(prevTranche)
+				sentinel.prev = before
+			}
 
-				for _, tx := range txs {
-					price := tranche.gasPrice(cfg)
-					gasLim := gas.Gas(tx.Gas())
+			prev := cfg.prev
+			if prev == nil {
+				prev = trs.accepted
+			}
+			tranche := newTxTranche(prev)
 
-					fee := uint256.NewInt(uint64(price))
-					fee.Mul(fee, uint256.NewInt(uint64(gasLim)))
-					cost := new(uint256.Int).Add(fee, uint256.MustFromBig(tx.Value()))
+			snap := snaps.Snapshot(cfg.atEndOf.stateRootPost)
 
-					from, err := types.Sender(signer, tx)
-					if err != nil {
-						return nil, err
-					}
-					fromHash := crypto.Keccak256Hash(from[:])
-					account, err := snap.Account(fromHash)
-					if err != nil {
-						return nil, err
-					}
+			for _, tx := range cfg.candidates {
+				price := tranche.gasPrice(cfg.gasConfig)
+				gasLim := gas.Gas(tx.Gas())
 
-					if bal := new(uint256.Int).Sub(account.Balance, tranche.cumulativeDeficit(from)); bal.Cmp(cost) == -1 {
-						// TODO(arr4n) this will need to change (probably to a
-						// `continue`) when this loop is a filter instead of a
-						// validator of txs.
-						return nil, fmt.Errorf("account %v has insufficient balance (%v) to cover worst-case cost (%v) of tx %#x", from, bal, cost, tx.Hash())
-					}
-					tranche.spend(from, cost)
+				fee := uint256.NewInt(uint64(price))
+				fee.Mul(fee, uint256.NewInt(uint64(gasLim)))
+				cost := new(uint256.Int).Add(fee, uint256.MustFromBig(tx.Value()))
 
-					tranche.excess += gasLim >> 1
-					tranche.pending.Push(&pendingTx{
-						tx:             tx,
-						from:           from,
-						costUpperBound: cost,
-					})
-					tranche.proposed = append(tranche.proposed, tx)
+				from, err := types.Sender(cfg.signer, tx)
+				if err != nil {
+					return nil, err
 				}
-				return tranche, nil
-			})
-		})
+				fromHash := crypto.Keccak256Hash(from[:])
+				account, err := snap.Account(fromHash)
+				if err != nil {
+					return nil, err
+				}
+
+				if bal := new(uint256.Int).Sub(account.Balance, tranche.cumulativeDeficit(from)); bal.Cmp(cost) == -1 {
+					// TODO(arr4n) this will need to change (probably to a
+					// `continue`) when this loop is a filter instead of a
+					// validator of txs.
+					return nil, fmt.Errorf("account %v has insufficient balance (%v) to cover worst-case cost (%v) of tx %#x", from, bal, cost, tx.Hash())
+				}
+				tranche.spend(from, cost)
+
+				tranche.excess += gasLim >> 1
+				tranche.pending.Push(&pendingTx{
+					tx:             tx,
+					from:           from,
+					costUpperBound: cost,
+				})
+				tranche.rawTxs = append(tranche.rawTxs, tx)
+			}
+			return tranche, nil
+		},
+	)
 }
 
 func (bb *blockBuilder) acceptTranche(ctx context.Context, tr *txTranche) error {
-	return bb.accepted.Use(ctx, func(root *txTranche) error {
+	return bb.tranches.UseThenSignal(ctx, func(trs *tranches) error {
+		// This check needs to be performed inside the lock because tranches
+		// have their `accepted` flag set a few lines down.
 		if !tr.prev.accepted {
 			return fmt.Errorf("cannot accept %T before its predecessor", tr)
 		}
+
+		base := trs.accepted
+		// There MUST be matching but inverse modifications to `base` and `tr`
+		// to result in a "relocation" of pending txs.
 		for tr.pending.Len() > 0 {
 			// TODO(arr4n) implement concatenation on [queue.FIFO]
-			root.pending.Push(tr.pending.Pop())
+			base.pending.Push(tr.pending.Pop())
 		}
-		root.excess += tr.excess
+
+		base.excess += tr.excess
+		tr.excess = 0
+
 		for addr, def := range tr.deficits {
-			root.spend(addr, def)
+			base.spend(addr, def)
 		}
 		tr.deficits = make(map[common.Address]*uint256.Int)
+
 		tr.accepted = true
 		return nil
 	})
 }
 
 func (bb *blockBuilder) clearExecuted(ctx context.Context, chunk *chunk) error {
-	return bb.accepted.Use(ctx, func(tranche *txTranche) error {
-		if tranche.prev != nil {
-			return fmt.Errorf("*BUG* only the root %T can be cleared", tranche)
+	return bb.tranches.UseThenSignal(ctx, func(trs *tranches) error {
+		accepted := trs.accepted
+
+		prev, ok := trs.chunkTranches[chunk.timestamp-1]
+		if !ok && !chunk.isGenesis() { // genesis has no prev
+			return fmt.Errorf("clearing %T @ time %d before its predecessor", chunk, chunk.timestamp)
 		}
+		chunkTranche := newTxTranche(prev)
+		// TODO(arr4n) GC the chunk tranches, probably after [stateRootDelaySeconds]
 
 		for _, r := range chunk.receipts {
-			if tranche.pending.Len() == 0 {
+			if accepted.pending.Len() == 0 {
 				return fmt.Errorf("*BUG* empty pending-tx queue when clearing receipt for %#x", r.TxHash)
 			}
-			if tx := tranche.pending.Peek().tx; tx.Hash() != r.TxHash {
+			if tx := accepted.pending.Peek().tx; tx.Hash() != r.TxHash {
 				return fmt.Errorf("*BUG* receipt for tx %#x when next pending is %#x", r.TxHash, tx.Hash())
 			}
 
-			clear := tranche.pending.Pop()
-			def := tranche.deficits[clear.from]
+			// There MUST be matching but inverse modifications to `accepted`
+			// and `chunkTranche` to result in a "relocation" of executed txs.
+			clear := accepted.pending.Pop()
+			chunkTranche.pending.Push(clear)
+
+			def := accepted.deficits[clear.from]
 			if def.Cmp(clear.costUpperBound) == -1 {
 				return fmt.Errorf("*BUG* for account %#x, deficit %s < pending cost to be cleared %s", clear.from, def.String(), clear.costUpperBound.String())
 			}
 			def.Sub(def, clear.costUpperBound)
+			chunkTranche.spend(clear.from, clear.costUpperBound)
 			if def.IsZero() {
-				delete(tranche.deficits, clear.from)
+				delete(accepted.deficits, clear.from)
 			}
 
-			tranche.excess -= gas.Gas(clear.tx.Gas()>>1 - r.GasUsed>>1)
+			dExcess := gas.Gas(clear.tx.Gas()>>1 - r.GasUsed>>1)
+			accepted.excess -= dExcess
+			chunkTranche.excess += dExcess
 		}
 
 		reduce := chunk.excessReduction
-		if tranche.excess < reduce {
+		if accepted.excess < reduce {
 			return fmt.Errorf(
 				"*BUG* chunk at %d reduced gas excess (%s) by more that block builder's worst-case prediction (%s)",
-				chunk.timestamp, human(reduce), human(tranche.excess),
+				chunk.timestamp, human(reduce), human(accepted.excess),
 			)
 		}
-		tranche.excess -= reduce
+		accepted.excess -= reduce
+		chunkTranche.excess += reduce
 
-		emptyQueue := tranche.pending.Len() == 0
-		emptyDeficits := len(tranche.deficits) == 0
+		accepted.lastExecutedTimeBeforeQueue = chunk.timestamp
+		chunkTranche.lastExecutedTimeBeforeQueue = chunk.timestamp - 1
+
+		trs.chunkTranches[chunk.timestamp] = chunkTranche
+
+		emptyQueue := accepted.pending.Len() == 0
+		emptyDeficits := len(accepted.deficits) == 0
 		if emptyQueue != emptyDeficits {
 			return fmt.Errorf(
 				"*BUG* block-builder deficits must be empty (%t) i.f.f. pending queue is empty (%t)",
 				emptyDeficits, emptyQueue,
 			)
 		}
-		excessMatch := tranche.excess == chunk.excessPost
+		excessMatch := accepted.excess == chunk.excessPost
 		if emptyQueue != excessMatch {
 			return fmt.Errorf(
 				"*BUG* block builder's worst-case gas excess must match end of chunk (%t) i.f.f. pending queue is empty (%t)",

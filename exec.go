@@ -261,6 +261,10 @@ type chunk struct {
 	filledBy time.Time // wall time for metrics
 }
 
+func (c *chunk) isGenesis() bool {
+	return c.timestamp == 0
+}
+
 func (e *executor) execute(ctx context.Context, b *Block) error {
 	x := &e.executeScratchSpace
 
