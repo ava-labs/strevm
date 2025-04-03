@@ -75,7 +75,10 @@ func New() *Chain {
 		preference: sink.NewMutex[ids.ID](ids.Empty),
 		// Block building
 		builder: blockBuilder{
-			accepted: sink.NewMutex(newRootTxTranche()),
+			tranches: sink.NewMonitor(&tranches{
+				accepted:      newRootTxTranche(),
+				chunkTranches: make(map[uint64]*txTranche),
+			}),
 			// Development-only workarounds
 			mempool: make(chan *types.Transaction, 1000), // buffered so tx creation can keep going => load++
 			rng:     rand.New(rand.NewPCG(0, 0)),
@@ -250,7 +253,7 @@ func (c *Chain) BuildBlock(ctx context.Context) (snowman.Block, error) {
 	}
 
 	x := &c.exec.executeScratchSpace // TODO(arr4n) don't access this directly
-	tranche, evmBlock, err := c.builder.build(ctx, parent, x.chainConfig, &x.gasConfig, chunk)
+	tranche, evmBlock, err := c.builder.build(ctx, parent, chunk, x.chainConfig, &x.gasConfig)
 	if err != nil {
 		return nil, err
 	}
