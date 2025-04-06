@@ -3,8 +3,8 @@ package sae
 import (
 	"context"
 	"fmt"
+	"math"
 	"math/big"
-	"math/rand/v2"
 
 	"github.com/arr4n/sink"
 	"github.com/ava-labs/avalanchego/utils/logging"
@@ -24,9 +24,10 @@ type blockBuilder struct {
 
 	log logging.Logger
 
-	// Development double (like a test double, but with alliteration)
-	mempool chan *types.Transaction
-	rng     *rand.Rand // reproducible blocks
+	mempool sink.PriorityMutex[*mempool]
+	newTxs  chan *transaction
+	quit    <-chan struct{}
+	done    chan<- struct{}
 }
 
 type tranches struct {
@@ -137,31 +138,22 @@ func (bb *blockBuilder) build(
 	chainConfig *params.ChainConfig,
 	gasConfig *gas.Config,
 ) (*txTranche, *types.Block, error) {
-
-	max := bb.rng.IntN(5000)
-	pool := make(types.Transactions, 0, max)
-BuildLoop:
-	for {
-		select {
-		case <-ctx.Done():
-			return nil, nil, ctx.Err()
-		case tx := <-bb.mempool:
-			pool = append(pool, tx)
-			if len(pool) == max {
-				break BuildLoop
-			}
-		default:
-			break BuildLoop
+	// The only other use of the mempool is the background worker that adds txs,
+	// so we ignore any attempts at preemption from it. Although that worker
+	// ignores our priority and *always* returns early, we defensively set it as
+	// the highest possible to protect against future refactors.
+	var tranche *txTranche
+	err := bb.mempool.Use(ctx, sink.Priority(math.MaxUint), func(_ <-chan sink.Priority, mp *mempool) error {
+		// TODO(arr4n) implement sink.FromPriorityMutex()
+		cfg := &trancheBuilderConfig{
+			atEndOf:    chunk,
+			candidates: &mp.pool,
+			gasConfig:  gasConfig,
 		}
-	}
-
-	cfg := &trancheBuilderConfig{
-		atEndOf:    chunk,
-		signer:     types.LatestSigner(chainConfig),
-		candidates: pool,
-		gasConfig:  gasConfig,
-	}
-	tranche, err := bb.makeTranche(ctx, cfg)
+		var err error
+		tranche, err = bb.makeTranche(ctx, cfg)
+		return err
+	})
 	if err != nil {
 		return nil, nil, err
 	}
@@ -182,8 +174,7 @@ type trancheBuilderConfig struct {
 	// [tranches.accepted] once unlocked from its mutex.
 	prev       *txTranche
 	atEndOf    *chunk
-	signer     types.Signer
-	candidates []*types.Transaction
+	candidates queue.Queue[*transaction]
 	gasConfig  *gas.Config
 }
 
@@ -223,7 +214,17 @@ func (bb *blockBuilder) makeTranche(ctx context.Context, cfg *trancheBuilderConf
 
 			snap := snaps.Snapshot(cfg.atEndOf.stateRootPost)
 
-			for _, tx := range cfg.candidates {
+			// TODO(arr4n) there's a tradeoff between clearing the mempool and
+			// starting execution, hence the currently arbitrary cap. This needs
+			// to be explored more deeply. It also needs to be removed entirely
+			// for block verification!
+			for i := 0; i < 200 && cfg.candidates.Len() != 0; i++ {
+				poolTx := cfg.candidates.Pop()
+				tx := poolTx.tx
+				// TODO(arr4n) stop returning errors and, instead:
+				// (a) set poolTx.timePriority = time.Now(); and
+				// (b) increment poolTx.retryAttempts, discarding if too high.
+
 				price := tranche.gasPrice(cfg.gasConfig)
 				gasLim := gas.Gas(tx.Gas())
 
@@ -231,20 +232,17 @@ func (bb *blockBuilder) makeTranche(ctx context.Context, cfg *trancheBuilderConf
 				fee.Mul(fee, uint256.NewInt(uint64(gasLim)))
 				cost := new(uint256.Int).Add(fee, uint256.MustFromBig(tx.Value()))
 
-				from, err := types.Sender(cfg.signer, tx)
-				if err != nil {
-					return nil, err
-				}
+				from := poolTx.from
 				fromHash := crypto.Keccak256Hash(from[:])
 				account, err := snap.Account(fromHash)
 				if err != nil {
 					return nil, err
 				}
+				if account == nil {
+					return nil, fmt.Errorf("empty origin account %v can't cover cost of tx %#x", from, tx.Hash())
+				}
 
 				if bal := new(uint256.Int).Sub(account.Balance, tranche.cumulativeDeficit(from)); bal.Cmp(cost) == -1 {
-					// TODO(arr4n) this will need to change (probably to a
-					// `continue`) when this loop is a filter instead of a
-					// validator of txs.
 					return nil, fmt.Errorf("account %v has insufficient balance (%v) to cover worst-case cost (%v) of tx %#x", from, bal, cost, tx.Hash())
 				}
 				tranche.spend(from, cost)

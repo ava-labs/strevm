@@ -8,7 +8,9 @@ import (
 	"fmt"
 	"math"
 	"math/big"
+	"os"
 	"runtime"
+	"runtime/pprof"
 	"sort"
 	"testing"
 	"time"
@@ -43,7 +45,10 @@ func TestMain(m *testing.M) {
 	)
 }
 
-var txsInBasicE2E = flag.Uint64("basic_e2e_tx_count", 100, "Number of transactions to use in TestBasicE2E")
+var (
+	txsInBasicE2E  = flag.Uint64("basic_e2e_tx_count", 100, "Number of transactions to use in TestBasicE2E")
+	cpuProfileDest = flag.String("cpu_profile_out", "", "If non-empty, file to which pprof CPU profile is written")
+)
 
 func TestBasicE2E(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -60,78 +65,107 @@ func TestBasicE2E(t *testing.T) {
 	snowCtx := snowtest.Context(t, ids.Empty)
 	snowCtx.Log = tbLogger{tb: t, level: logging.Debug + 1}
 	chain := New()
+
+	// TODO(arr4n) run multiple goroutines as signing txs is the actual
+	// bottleneck; i.e. if we sign asynchronously then the gas/s metric
+	// decreases!
+	allTxs := make([]*types.Transaction, *txsInBasicE2E)
+	for nonce := range *txsInBasicE2E {
+		allTxs[nonce] = types.MustSignNewTx(key, signer, &types.DynamicFeeTx{
+			Nonce:     nonce,
+			To:        &wethAddr,
+			Value:     big.NewInt(1),
+			Gas:       params.TxGas + params.SstoreSetGas + 50_000, // arbitrary buffer
+			GasTipCap: big.NewInt(0),
+			GasFeeCap: new(big.Int).SetUint64(math.MaxUint64),
+		})
+		chain.builder.newTxs <- &transaction{
+			tx:   allTxs[nonce],
+			from: eoa, // in reality this is populated by an RPC-server goroutine
+		}
+	}
+
 	require.NoErrorf(t, chain.Initialize(
 		ctx, snowCtx,
 		nil, genesisJSON, nil, nil, nil, nil, nil,
 	), "%T.Initialize()", chain)
 
-	allTxs := make([]*types.Transaction, *txsInBasicE2E)
-	allTxsInMempool := make(chan struct{})
+	if d := *cpuProfileDest; d != "" {
+		t.Logf("Writing CPU profile for block acceptance and execution to %q", d)
+		f, err := os.Create(d)
+		require.NoErrorf(t, err, "os.Create(%q) for CPU profiling", d)
+		require.NoError(t, pprof.StartCPUProfile(f), "pprof.StartCPUProfile()")
+		// We don't `defer pprof.StopCPUProfile()` because we want to stop it at
+		// a very specific point.
+	}
+
+	var finalStateRoot common.Hash
+	quitBlockBuilding := make(chan struct{})
+	blockBuildingDone := make(chan struct{})
+	start := time.Now()
 	go func() {
-		defer close(allTxsInMempool)
-		for nonce := range *txsInBasicE2E {
-			allTxs[nonce] = types.MustSignNewTx(key, signer, &types.DynamicFeeTx{
-				Nonce:     nonce,
-				To:        &wethAddr,
-				Value:     big.NewInt(1),
-				Gas:       params.TxGas + params.SstoreSetGas + 50_000, // arbitrary buffer
-				GasTipCap: big.NewInt(0),
-				GasFeeCap: new(big.Int).SetUint64(math.MaxUint64),
-			})
-			chain.builder.mempool <- allTxs[nonce]
+		defer close(blockBuildingDone)
+		var numBlocks int
+	BlockLoop:
+		for ; ; numBlocks++ {
+			select {
+			case <-quitBlockBuilding:
+				break BlockLoop
+			default:
+			}
+
+			b, err := chain.BuildBlock(ctx)
+			require.NoErrorf(t, err, "%T.BuildBlock()", chain)
+			require.NoErrorf(t, b.Verify(ctx), "%T.Verify()", b)
+			require.NoErrorf(t, b.Accept(ctx), "%T.Accept()", b)
+			finalStateRoot = b.(*Block).b.Root()
 		}
+		acceptance := time.Since(start)
+		t.Logf("Built and accepted %s blocks in %v", human(numBlocks), acceptance)
 	}()
 
-	requiredChunks := ((*txsInBasicE2E)*params.TxGas-1)/uint64(maxGasPerChunk) + 1
-	// TODO(arr4n) change this to wait until the first empty chunk, indicating
-	// that the queue has been processed.
-	lastChunkTime := 200 + uint64(requiredChunks)
-
-	t.Logf(
-		"Expecting %s chunks for %s transactions @ %s gas/chunk",
-		human(requiredChunks),
-		human(*txsInBasicE2E),
-		human(maxGasPerChunk),
+	lastTxHash := allTxs[len(allTxs)-1].Hash()
+	chain.exec.chunks.Wait(ctx,
+		func(res *executionResults) bool {
+			_, ok := res.receipts[lastTxHash]
+			return ok
+		},
+		func(res *executionResults) error {
+			close(quitBlockBuilding)
+			return nil
+		},
 	)
-	start := time.Now()
-	for range lastChunkTime {
-		b, err := chain.BuildBlock(ctx)
-		require.NoErrorf(t, err, "%T.BuildBlock()", chain)
-		require.NoErrorf(t, b.Verify(ctx), "%T.Verify()", b)
-		require.NoErrorf(t, b.Accept(ctx), "%T.Accept()", b)
-	}
-	acceptance := time.Since(start)
-	t.Logf("Accepted %s blocks in %v", human(lastChunkTime), acceptance)
+	<-blockBuildingDone
 
 	var (
 		gotReceipts      []*types.Receipt
 		totalGasConsumed gas.Gas
-		finalStateRoot   common.Hash
 		lastFilledBy     time.Time
 	)
-	chain.exec.chunks.Wait(ctx,
-		func(cs map[uint64]*chunk) bool {
-			_, ok := cs[lastChunkTime]
-			return ok
-		},
-		func(cs map[uint64]*chunk) error {
-			for timestamp := range lastChunkTime + 1 {
-				got, ok := cs[timestamp]
-				if !ok {
-					t.Errorf("chunk at time %d not found", timestamp)
-					continue
-				}
-				gotReceipts = append(gotReceipts, got.receipts...)
-				totalGasConsumed += got.consumed
-
-				finalStateRoot = got.stateRootPost
-				if len(got.receipts) > 0 {
-					lastFilledBy = got.filledBy
-				}
+	chain.exec.chunks.UseThenSignal(ctx, func(res *executionResults) error {
+		var lastChunkTime uint64
+		for t := range res.chunks {
+			if t != math.MaxUint64 && t > lastChunkTime {
+				lastChunkTime = t
 			}
-			return nil
-		},
-	)
+		}
+
+		for timestamp := range lastChunkTime + 1 {
+			got, ok := res.chunks[timestamp]
+			if !ok {
+				t.Errorf("chunk at time %d not found", timestamp)
+				continue
+			}
+			gotReceipts = append(gotReceipts, got.receipts...)
+			totalGasConsumed += got.consumed
+
+			if len(got.receipts) > 0 {
+				lastFilledBy = got.filledBy
+			}
+		}
+		return nil
+	})
+	pprof.StopCPUProfile() // docs state "stops the current CPU profile, if any" so ok if we didn't start it
 	if t.Failed() {
 		return
 	}
@@ -152,6 +186,18 @@ func TestBasicE2E(t *testing.T) {
 		t.Run("logs", func(t *testing.T) {
 			var eoaAsHash common.Hash
 			copy(eoaAsHash[12:], eoa[:])
+			// Certain fields will have different meanings (TBD) in SAE so
+			// we ignore them for now.
+			ignore := cmpopts.IgnoreFields(types.Log{}, "BlockNumber", "BlockHash", "Index", "TxIndex")
+			want := []*types.Log{{
+				Address: wethAddr,
+				Topics: []common.Hash{
+					crypto.Keccak256Hash([]byte("Deposit(address,uint256)")),
+					eoaAsHash,
+				},
+				Data: uint256.NewInt(1).PaddedBytes(32),
+				// TxHash to be completed for each receipt
+			}}
 
 			for i, r := range gotReceipts {
 				// Use `require` and `t.Fatalf()` because all receipts should be
@@ -159,19 +205,7 @@ func TestBasicE2E(t *testing.T) {
 				// same way and there's no point being inundated with thousands
 				// of identical errors.
 				require.Truef(t, r.Status == 1, "tx[%d] execution succeeded", i)
-
-				want := []*types.Log{{
-					Address: wethAddr,
-					Topics: []common.Hash{
-						crypto.Keccak256Hash([]byte("Deposit(address,uint256)")),
-						eoaAsHash,
-					},
-					Data:   uint256.NewInt(1).PaddedBytes(32),
-					TxHash: r.TxHash,
-				}}
-				// Certain fields will have different meanings (TBD) in SAE so
-				// we ignore them for now.
-				ignore := cmpopts.IgnoreFields(types.Log{}, "BlockNumber", "BlockHash", "Index", "TxIndex")
+				want[0].TxHash = r.TxHash
 				if diff := cmp.Diff(want, r.Logs, ignore); diff != "" {
 					t.Fatalf("receipt[%d] logs diff (-want +got):\n%s", i, diff)
 				}

@@ -35,12 +35,17 @@ type executor struct {
 	spawned sync.WaitGroup
 
 	queue  sink.Monitor[*queue.FIFO[*Block]]
-	chunks sink.Monitor[map[uint64]*chunk]
+	chunks sink.Monitor[*executionResults]
 
 	// executeScratchSpace MUST NOT be accessed by any methods other than
 	// [executor.init] and [executor.execute].
 	executeScratchSpace executionScratchSpace
 	snaps               sink.Monitor[*snapshot.Tree]
+}
+
+type executionResults struct {
+	chunks   map[uint64]*chunk
+	receipts map[common.Hash]*types.Receipt
 }
 
 // init initialises the executor and returns the genesis block, upon which the
@@ -104,7 +109,10 @@ func (e *executor) init(ctx context.Context, genesis *core.Genesis) (*Block, err
 
 func (e *executor) run(ready chan<- struct{}) {
 	e.queue = sink.NewMonitor(new(queue.FIFO[*Block]))
-	e.chunks = sink.NewMonitor(make(map[uint64]*chunk))
+	e.chunks = sink.NewMonitor(&executionResults{
+		chunks:   make(map[uint64]*chunk),
+		receipts: make(map[common.Hash]*types.Receipt),
+	})
 	e.spawn(e.processQueue)
 
 	close(ready)
@@ -117,7 +125,7 @@ func (e *executor) run(ready chan<- struct{}) {
 	snaps.Disable()
 	snaps.Release()
 
-	close(e.done)
+	e.done <- struct{}{}
 }
 
 func (e *executor) spawn(fn func()) {
@@ -406,8 +414,11 @@ func (e *executor) nextChunk(ctx context.Context, x *executionScratchSpace, over
 		zap.Uint64("gas_capacity", uint64(x.chunkCapacity(prev))),
 		zap.Uint64("gas_consumed", uint64(prev.consumed)),
 	)
-	return e.chunks.UseThenSignal(e.quitCtx(), func(cs map[uint64]*chunk) error {
-		cs[prev.timestamp] = prev
+	return e.chunks.UseThenSignal(e.quitCtx(), func(res *executionResults) error {
+		res.chunks[prev.timestamp] = prev
+		for _, r := range prev.receipts {
+			res.receipts[r.TxHash] = r
+		}
 		return nil
 	})
 }
