@@ -1,5 +1,14 @@
 package queue
 
+// Queue is the common interface shared by implementations.
+type Queue[T any] interface {
+	Len() int
+	Push(T)
+	Peek() T
+	Pop() T
+	Grow(int)
+}
+
 // A FIFO is an unbounded first-in-first-out queue. The zero value is valid.
 type FIFO[T any] struct {
 	list[T]

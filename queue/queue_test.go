@@ -7,11 +7,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 )
 
-func all[T comparable, Q interface {
-	Len() int
-	Peek() T
-	Pop() T
-}](t *testing.T, q Q) []T {
+func all[T comparable, Q Queue[T]](t *testing.T, q Q) []T {
 	t.Helper()
 
 	var got []T

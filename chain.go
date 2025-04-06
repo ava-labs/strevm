@@ -3,7 +3,7 @@ package sae
 import (
 	"context"
 	"encoding/json"
-	"math/rand/v2"
+	"fmt"
 	"net/http"
 	"sync"
 
@@ -43,11 +43,10 @@ type Chain struct {
 	accepted   sink.Mutex[*accepted]
 	preference sink.Mutex[ids.ID]
 
-	builder blockBuilder
-
-	exec        *executor
-	quitExecute chan<- struct{}
-	execDone    <-chan struct{}
+	builder            blockBuilder
+	exec               *executor
+	quit               chan<- struct{}
+	builderAndExecDone <-chan struct{} // receive 2, not closed
 }
 
 type blockMap map[ids.ID]*Block
@@ -79,13 +78,13 @@ func New() *Chain {
 				accepted:      newRootTxTranche(),
 				chunkTranches: make(map[uint64]*txTranche),
 			}),
-			// Development-only workarounds
-			mempool: make(chan *types.Transaction, 1000), // buffered so tx creation can keep going => load++
-			rng:     rand.New(rand.NewPCG(0, 0)),
+			mempool: sink.NewPriorityMutex(new(mempool)),
+			newTxs:  make(chan *transaction, 1e6), // TODO(arr4n) make the buffer configurable
+			quit:    quit,
+			done:    done,
 		},
-		// Execution
-		quitExecute: quit,
-		execDone:    done,
+		quit:               quit, // both builder and executor
+		builderAndExecDone: done, // each will send on this
 	}
 
 	chain.exec = &executor{
@@ -110,6 +109,7 @@ func (c *Chain) Initialize(
 ) error {
 	c.snowCtx = chainCtx
 	c.builder.log = chainCtx.Log
+	go c.builder.startMempool()
 
 	gen := new(core.Genesis)
 	if err := json.Unmarshal(genesisBytes, gen); err != nil {
@@ -160,7 +160,8 @@ func (c *Chain) SetState(ctx context.Context, state snow.State) error {
 }
 
 func (c *Chain) Shutdown(ctx context.Context) error {
-	close(c.quitExecute)
+	c.logger().Debug("Shutting down VM")
+	close(c.quit)
 
 	var wg sync.WaitGroup
 	wg.Add(3)
@@ -178,12 +179,14 @@ func (c *Chain) Shutdown(ctx context.Context) error {
 	}()
 	wg.Wait()
 
-	select {
-	case <-c.execDone:
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
+	for range 2 {
+		select {
+		case <-c.builderAndExecDone:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
 	}
+	return nil
 }
 
 func (c *Chain) Version(context.Context) (string, error) {
@@ -223,8 +226,8 @@ func (c *Chain) BuildBlock(ctx context.Context) (snowman.Block, error) {
 	timestamp := parent.Time() + 1
 	needStateRootAt := clippedSubtract(timestamp, stateRootDelaySeconds)
 	chunk, err := sink.FromMonitor(ctx, c.exec.chunks,
-		func(cs map[uint64]*chunk) bool {
-			_, ok := cs[needStateRootAt]
+		func(res *executionResults) bool {
+			_, ok := res.chunks[needStateRootAt]
 
 			msg := "Waiting for historical state root"
 			if ok {
@@ -238,10 +241,10 @@ func (c *Chain) BuildBlock(ctx context.Context) (snowman.Block, error) {
 
 			return ok
 		},
-		func(cs map[uint64]*chunk) (*chunk, error) {
+		func(res *executionResults) (*chunk, error) {
 			// TODO(arr4n) this needs to be all chunks since the last parent,
 			// but only once blocks have >1s between them.
-			return cs[needStateRootAt], nil
+			return res.chunks[needStateRootAt], nil
 		},
 	)
 

@@ -8,8 +8,10 @@ import (
 	"github.com/ava-labs/avalanchego/ids"
 	"github.com/ava-labs/avalanchego/snow"
 	"github.com/ava-labs/avalanchego/snow/consensus/snowman"
+	"github.com/ava-labs/libevm/core"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/rlp"
+	"github.com/ava-labs/strevm/queue"
 	"go.uber.org/zap"
 )
 
@@ -65,10 +67,26 @@ func (b *Block) Parent() ids.ID {
 func (b *Block) Verify(ctx context.Context) error {
 	x := &b.chain.exec.executeScratchSpace // TODO(arr4n) don't access this directly
 	signer := types.LatestSigner(x.chainConfig)
-	blockTxs := b.b.Transactions()
+
+	txs := b.b.Transactions()
+	// This starts a concurrent, background pre-computation of the results of
+	// [types.Sender], which is cached in each tx.
+	core.SenderCacher.Recover(signer, txs)
+	candidates := new(queue.FIFO[*transaction])
+	candidates.Grow(txs.Len())
+	for _, tx := range txs {
+		from, err := types.Sender(signer, tx)
+		if err != nil {
+			return err
+		}
+		candidates.Push(&transaction{
+			tx:   tx,
+			from: from,
+		})
+	}
 
 	// While block-building tranches sample from the mempool, here we use the
-	// unverified block's transactions as the candidates. If the tranche accepts
+	// unverified block's transactions as the candidates. If the tranche adds
 	// all txs then (a) the block is valid; and (b) our local [blockBuilder]
 	// will be in sync with all peers' (including the proposer) should this
 	// block be accepted.
@@ -77,18 +95,17 @@ func (b *Block) Verify(ctx context.Context) error {
 			timestamp:     clippedSubtract(b.b.Time(), stateRootDelaySeconds),
 			stateRootPost: b.b.Root(),
 		},
-		signer:     signer,
-		candidates: blockTxs,
+		candidates: candidates,
 		gasConfig:  &x.gasConfig,
 	}
 	tranche, err := b.chain.builder.makeTranche(ctx, cfg)
 	if err != nil {
 		return err
 	}
-	if nTranche, nBlock := len(tranche.rawTxs), len(blockTxs); nTranche != nBlock {
+	if nTranche, nBlock := len(tranche.rawTxs), len(txs); nTranche != nBlock {
 		return fmt.Errorf("validation %T has %d proposed txs from block's %d", tranche, nTranche, nBlock)
 	}
-	for i, bTx := range blockTxs {
+	for i, bTx := range txs {
 		if bTx.Hash() != tranche.rawTxs[i].Hash() {
 			return fmt.Errorf("block and validation %T have mismatched tx[%d]", tranche, i)
 		}
