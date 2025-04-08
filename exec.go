@@ -28,9 +28,9 @@ import (
 )
 
 type executor struct {
-	chain *Chain
-	quit  <-chan struct{}
-	done  chan<- struct{}
+	vm   *VM
+	quit <-chan struct{}
+	done chan<- struct{}
 
 	spawned sync.WaitGroup
 
@@ -103,7 +103,7 @@ func (e *executor) init(ctx context.Context, genesis *core.Genesis) (*Block, err
 	if err := e.nextChunk(ctx, &e.executeScratchSpace, nil /*overflowTx*/); err != nil {
 		return nil, err
 	}
-	return e.chain.newBlock(genesisBlock), nil
+	return e.vm.newBlock(genesisBlock), nil
 
 }
 
@@ -148,14 +148,14 @@ func (e *executor) quitCtx() context.Context {
 }
 
 func (e *executor) logger() logging.Logger {
-	return e.chain.snowCtx.Log
+	return e.vm.snowCtx.Log
 }
 
 // enqueueAccepted is intended to be called by [Block.Accept], passing itself
 // as the first argument. The `parent` MAY be nil i.f.f `block` is the genesis.
 func (e *executor) enqueueAccepted(ctx context.Context, block, parent *Block) error {
 	var blocks []*Block
-	if block.b.NumberU64() == 0 {
+	if block.NumberU64() == 0 {
 		// Genesis, by definition, has no previous blocks but we still need to
 		// trigger the chunk for its timestamp.
 		blocks = []*Block{block}
@@ -166,15 +166,15 @@ func (e *executor) enqueueAccepted(ctx context.Context, block, parent *Block) er
 		// accepted block and the last one, we nudge the execution stream
 		// with empty pseudo-blocks that can trigger its chunk-filling
 		// criterion for an exhausted queue.
-		lastTime := parent.b.Time()
-		gap := block.b.Time() - lastTime
+		lastTime := parent.Time()
+		gap := block.Time() - lastTime
 
 		blocks = make([]*Block, gap)
 		blocks[gap-1] = block
 
 		for i := range uint64(gap - 1) {
 			blocks[i] = &Block{
-				b: types.NewBlockWithHeader(&types.Header{
+				Block: types.NewBlockWithHeader(&types.Header{
 					Time: lastTime + i + 1,
 				}),
 			}
@@ -220,8 +220,8 @@ func (e *executor) processQueue() {
 				"Executing accepted block",
 				zap.Error(err),
 				zap.Uint64("height", block.Height()),
-				zap.Uint64("timestamp", block.b.Time()),
-				zap.Any("hash", block.b.Hash()),
+				zap.Uint64("timestamp", block.Time()),
+				zap.Any("hash", block.Hash()),
 			)
 			return
 		}
@@ -276,32 +276,32 @@ func (c *chunk) isGenesis() bool {
 func (e *executor) execute(ctx context.Context, b *Block) error {
 	x := &e.executeScratchSpace
 
-	if bTime := b.b.Time(); bTime > x.chunk.timestamp {
+	if bTime := b.Time(); bTime > x.chunk.timestamp {
 		e.logger().Fatal(
 			"BUG: chunk executing the future",
 			zap.Uint64("block time", bTime),
 			zap.Uint64("chunk time", x.chunk.timestamp),
 		)
 	}
-	header := types.CopyHeader(b.b.Header())
+	header := types.CopyHeader(b.Header())
 	header.BaseFee = new(big.Int)
 
 	e.logger().Debug(
 		"Executing accepted block",
 		zap.Uint64("height", b.Height()),
 		zap.Uint64("timestamp", header.Time),
-		zap.Int("transactions", len(b.b.Transactions())),
+		zap.Int("transactions", len(b.Transactions())),
 	)
 
 	gasPool := core.GasPool(math.MaxUint64) // required by geth but irrelevant so max it out
 
-	for ti, tx := range b.b.Transactions() {
+	for ti, tx := range b.Transactions() {
 		header.BaseFee.SetUint64(uint64(x.gasPrice()))
 		x.statedb.SetTxContext(tx.Hash(), ti) // TODO(arr4n) `ti` is not correct here
 
 		receipt, err := core.ApplyTransaction(
 			x.chainConfig,
-			e.chain,
+			e.vm,
 			&header.Coinbase,
 			&gasPool,
 			x.statedb,

@@ -11,9 +11,7 @@ import (
 	"github.com/ava-labs/avalanchego/database"
 	"github.com/ava-labs/avalanchego/ids"
 	"github.com/ava-labs/avalanchego/snow"
-	"github.com/ava-labs/avalanchego/snow/consensus/snowman"
 	"github.com/ava-labs/avalanchego/snow/engine/common"
-	"github.com/ava-labs/avalanchego/snow/engine/snowman/block"
 	"github.com/ava-labs/avalanchego/utils/logging"
 	"github.com/ava-labs/avalanchego/version"
 	ethcommon "github.com/ava-labs/libevm/common"
@@ -21,21 +19,20 @@ import (
 	"github.com/ava-labs/libevm/core"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/rlp"
+	"github.com/ava-labs/strevm/adaptor"
 	"go.uber.org/zap"
 )
 
 func init() {
 	var (
-		chain *Chain
-		_     common.VM         = chain
-		_     block.Getter      = chain
-		_     block.Parser      = chain
-		_     block.ChainVM     = chain
-		_     core.ChainContext = chain
+		vm *VM
+		_  common.VM               = vm
+		_  core.ChainContext       = vm
+		_  adaptor.ChainVM[*Block] = vm
 	)
 }
 
-type Chain struct {
+type VM struct {
 	snowCtx *snow.Context
 	common.AppHandler
 
@@ -60,12 +57,12 @@ func (a *accepted) last() *Block {
 	return a.all[a.lastID]
 }
 
-func New() *Chain {
+func New() *VM {
 	quit := make(chan struct{})
 	done := make(chan struct{})
 
-	chain := &Chain{
-		// Chain and chain state
+	vm := &VM{
+		// VM
 		AppHandler: common.NewNoOpAppHandler(logging.NoLog{}),
 		blocks:     sink.NewMutex(make(blockMap)),
 		accepted: sink.NewMutex(&accepted{
@@ -87,16 +84,16 @@ func New() *Chain {
 		builderAndExecDone: done, // each will send on this
 	}
 
-	chain.exec = &executor{
-		chain: chain,
-		quit:  quit,
-		done:  done,
+	vm.exec = &executor{
+		vm:   vm,
+		quit: quit,
+		done: done,
 	}
 
-	return chain
+	return vm
 }
 
-func (c *Chain) Initialize(
+func (vm *VM) Initialize(
 	ctx context.Context,
 	chainCtx *snow.Context,
 	db database.Database,
@@ -107,81 +104,83 @@ func (c *Chain) Initialize(
 	fxs []*common.Fx,
 	appSender common.AppSender,
 ) error {
-	c.snowCtx = chainCtx
-	c.builder.log = chainCtx.Log
-	go c.builder.startMempool()
+	vm.snowCtx = chainCtx
+	vm.builder.log = chainCtx.Log
+	go vm.builder.startMempool()
 
 	gen := new(core.Genesis)
 	if err := json.Unmarshal(genesisBytes, gen); err != nil {
 		return err
 	}
-	genBlock, err := c.exec.init(ctx, gen)
+	genBlock, err := vm.exec.init(ctx, gen)
 	if err != nil {
 		return err
 	}
 	// The genesis block can't be processed until the [blockBuilder] is
 	// initialised with access to the just-initialised [executor] snapshots.
-	c.builder.snaps = c.exec.snaps // safe to copy a [sink.Mutex]
-	if err := genBlock.Verify(ctx); err != nil {
+	vm.builder.snaps = vm.exec.snaps // safe to copy a [sink.Mutex]
+	if err := vm.VerifyBlock(ctx, genBlock); err != nil {
 		return err
 	}
-	return genBlock.Accept(ctx)
+	if err := vm.AcceptBlock(ctx, genBlock); err != nil {
+		return err
+	}
+	return vm.afterInitialize(ctx, toEngine)
 }
 
-func (c *Chain) newBlock(b *types.Block) *Block {
+func (vm *VM) newBlock(b *types.Block) *Block {
 	return &Block{
-		b:     b,
-		chain: c,
+		Block: b,
 	}
 }
 
-func (c *Chain) logger() logging.Logger {
-	return c.snowCtx.Log
+func (vm *VM) logger() logging.Logger {
+	return vm.snowCtx.Log
 }
 
-func (c *Chain) HealthCheck(context.Context) (any, error) {
+func (vm *VM) HealthCheck(context.Context) (any, error) {
 	return nil, nil
 }
 
-func (c *Chain) Connected(
+func (vm *VM) Connected(
 	ctx context.Context,
 	nodeID ids.NodeID,
 	nodeVersion *version.Application,
 ) error {
-	return errUnimplemented
-}
-
-func (c *Chain) Disconnected(ctx context.Context, nodeID ids.NodeID) error {
-	return errUnimplemented
-}
-
-func (c *Chain) SetState(ctx context.Context, state snow.State) error {
 	return nil
 }
 
-func (c *Chain) Shutdown(ctx context.Context) error {
-	c.logger().Debug("Shutting down VM")
-	close(c.quit)
+func (vm *VM) Disconnected(ctx context.Context, nodeID ids.NodeID) error {
+	return nil
+}
+
+func (vm *VM) SetState(ctx context.Context, state snow.State) error {
+	return nil
+}
+
+func (vm *VM) Shutdown(ctx context.Context) error {
+	vm.logger().Debug("Shutting down VM")
+	close(vm.quit)
 
 	var wg sync.WaitGroup
 	wg.Add(3)
 	go func() {
-		c.blocks.Close()
+		vm.blocks.Close()
 		wg.Done()
 	}()
 	go func() {
-		c.accepted.Close()
+		vm.accepted.Close()
 		wg.Done()
 	}()
 	go func() {
-		c.preference.Close()
+		vm.preference.Close()
 		wg.Done()
 	}()
 	wg.Wait()
 
 	for range 2 {
 		select {
-		case <-c.builderAndExecDone:
+		case <-vm.builderAndExecDone:
 		case <-ctx.Done():
 			return ctx.Err()
 		}
@@ -189,16 +188,16 @@ func (c *Chain) Shutdown(ctx context.Context) error {
 	return nil
 }
 
-func (c *Chain) Version(context.Context) (string, error) {
+func (vm *VM) Version(context.Context) (string, error) {
 	return "0", nil
 }
 
-func (c *Chain) CreateHandlers(context.Context) (map[string]http.Handler, error) {
+func (vm *VM) CreateHandlers(context.Context) (map[string]http.Handler, error) {
 	return nil, nil
 }
 
-func (c *Chain) GetBlock(ctx context.Context, blkID ids.ID) (snowman.Block, error) {
-	return sink.FromMutex(ctx, c.blocks, func(blocks blockMap) (snowman.Block, error) {
+func (vm *VM) GetBlock(ctx context.Context, blkID ids.ID) (*Block, error) {
+	return sink.FromMutex(ctx, vm.blocks, func(blocks blockMap) (*Block, error) {
 		b, ok := blocks[blkID]
 		if !ok {
 			return nil, database.ErrNotFound
@@ -207,17 +206,17 @@ func (c *Chain) GetBlock(ctx context.Context, blkID ids.ID) (snowman.Block, erro
 	})
 }
 
-func (c *Chain) ParseBlock(ctx context.Context, blockBytes []byte) (snowman.Block, error) {
+func (vm *VM) ParseBlock(ctx context.Context, blockBytes []byte) (*Block, error) {
 	b := new(types.Block)
 	if err := rlp.DecodeBytes(blockBytes, b); err != nil {
 		return nil, err
 	}
-	return c.newBlock(b), nil
+	return vm.newBlock(b), nil
 }
 
-func (c *Chain) BuildBlock(ctx context.Context) (snowman.Block, error) {
-	parent, err := sink.FromMutex(ctx, c.accepted, func(a *accepted) (*types.Block, error) {
-		return a.last().b, nil
+func (vm *VM) BuildBlock(ctx context.Context) (*Block, error) {
+	parent, err := sink.FromMutex(ctx, vm.accepted, func(a *accepted) (*types.Block, error) {
+		return a.last().Block, nil
 	})
 	if err != nil {
 		return nil, err
@@ -225,7 +224,7 @@ func (c *Chain) BuildBlock(ctx context.Context) (snowman.Block, error) {
 
 	timestamp := parent.Time() + 1
 	needStateRootAt := clippedSubtract(timestamp, stateRootDelaySeconds)
-	chunk, err := sink.FromMonitor(ctx, c.exec.chunks,
+	chunk, err := sink.FromMonitor(ctx, vm.exec.chunks,
 		func(res *executionResults) bool {
 			_, ok := res.chunks[needStateRootAt]
 
@@ -233,7 +232,7 @@ func (c *Chain) BuildBlock(ctx context.Context) (snowman.Block, error) {
 			if ok {
 				msg = "Received historical state root"
 			}
-			c.logger().Debug(
+			vm.logger().Debug(
 				msg,
 				zap.Uint64("block_timestamp", timestamp),
 				zap.Uint64("chunk_timestamp", needStateRootAt),
@@ -251,41 +250,43 @@ func (c *Chain) BuildBlock(ctx context.Context) (snowman.Block, error) {
 	// TODO(arr4n) this needs to be done immediately upon filling of the chunk,
 	// but only once the [blockBuilder] keeps chunk tranches for historical
 	// lookback.
-	if err := c.builder.clearExecuted(ctx, chunk); err != nil {
+	if err := vm.builder.clearExecuted(ctx, chunk); err != nil {
 		return nil, err
 	}
 
-	x := &c.exec.executeScratchSpace // TODO(arr4n) don't access this directly
-	tranche, evmBlock, err := c.builder.build(ctx, parent, chunk, x.chainConfig, &x.gasConfig)
+	x := &vm.exec.executeScratchSpace // TODO(arr4n) don't access this directly
+	tranche, evmBlock, err := vm.builder.build(ctx, parent, chunk, x.chainConfig, &x.gasConfig)
 	if err != nil {
 		return nil, err
 	}
 	// Block-building is the only time we add a [txTranche] at the same time as
 	// constructing the [Block]. In all other instances it's done in
 	// [Block.Verify].
-	b := c.newBlock(evmBlock)
+	b := vm.newBlock(evmBlock)
 	b.tranche = tranche
 	return b, nil
 }
 
-func (c *Chain) SetPreference(ctx context.Context, blkID ids.ID) error {
-	return c.preference.Replace(ctx, func(ids.ID) (ids.ID, error) {
+func (vm *VM) SetPreference(ctx context.Context, blkID ids.ID) error {
+	return vm.preference.Replace(ctx, func(ids.ID) (ids.ID, error) {
 		return blkID, nil
 	})
 }
 
-func (c *Chain) LastAccepted(context.Context) (ids.ID, error) {
-	return ids.ID{}, errUnimplemented
+func (vm *VM) LastAccepted(ctx context.Context) (ids.ID, error) {
+	return sink.FromMutex(ctx, vm.accepted, func(a *accepted) (ids.ID, error) {
+		return a.lastID, nil
+	})
 }
 
-func (c *Chain) GetBlockIDAtHeight(ctx context.Context, height uint64) (ids.ID, error) {
-	return ids.Empty, errUnimplemented
+func (vm *VM) GetBlockIDAtHeight(ctx context.Context, height uint64) (ids.ID, error) {
+	return ids.Empty, fmt.Errorf("%w: %T.GetBlockIDAtHeight()", errUnimplemented, vm)
 }
 
-func (*Chain) Engine() consensus.Engine {
+func (*VM) Engine() consensus.Engine {
 	return nil
 }
 
-func (c *Chain) GetHeader(ethcommon.Hash, uint64) *types.Header {
+func (*VM) GetHeader(ethcommon.Hash, uint64) *types.Header {
 	panic(errUnimplemented)
 }

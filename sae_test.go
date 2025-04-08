@@ -25,6 +25,7 @@ import (
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/crypto"
 	"github.com/ava-labs/libevm/params"
+	"github.com/ava-labs/strevm/adaptor"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/holiman/uint256"
@@ -64,7 +65,8 @@ func TestBasicE2E(t *testing.T) {
 
 	snowCtx := snowtest.Context(t, ids.Empty)
 	snowCtx.Log = tbLogger{tb: t, level: logging.Debug + 1}
-	chain := New()
+	vm := New()
+	snowCompatVM := adaptor.Convert(vm)
 
 	// TODO(arr4n) run multiple goroutines as signing txs is the actual
 	// bottleneck; i.e. if we sign asynchronously then the gas/s metric
@@ -79,16 +81,16 @@ func TestBasicE2E(t *testing.T) {
 			GasTipCap: big.NewInt(0),
 			GasFeeCap: new(big.Int).SetUint64(math.MaxUint64),
 		})
-		chain.builder.newTxs <- &transaction{
+		vm.builder.newTxs <- &transaction{
 			tx:   allTxs[nonce],
 			from: eoa, // in reality this is populated by an RPC-server goroutine
 		}
 	}
 
-	require.NoErrorf(t, chain.Initialize(
+	require.NoErrorf(t, vm.Initialize(
 		ctx, snowCtx,
 		nil, genesisJSON, nil, nil, nil, nil, nil,
-	), "%T.Initialize()", chain)
+	), "%T.Initialize()", vm)
 
 	if d := *cpuProfileDest; d != "" {
 		t.Logf("Writing CPU profile for block acceptance and execution to %q", d)
@@ -114,18 +116,21 @@ func TestBasicE2E(t *testing.T) {
 			default:
 			}
 
-			b, err := chain.BuildBlock(ctx)
-			require.NoErrorf(t, err, "%T.BuildBlock()", chain)
+			b, err := snowCompatVM.BuildBlock(ctx)
+			require.NoErrorf(t, err, "%T.BuildBlock()", snowCompatVM)
 			require.NoErrorf(t, b.Verify(ctx), "%T.Verify()", b)
 			require.NoErrorf(t, b.Accept(ctx), "%T.Accept()", b)
-			finalStateRoot = b.(*Block).b.Root()
+
+			bb, ok := snowCompatVM.AsRawBlock(b)
+			require.Truef(t, ok, "Extracting %T from snowman.Block", bb)
+			finalStateRoot = bb.Root()
 		}
 		acceptance := time.Since(start)
 		t.Logf("Built and accepted %s blocks in %v", human(numBlocks), acceptance)
 	}()
 
 	lastTxHash := allTxs[len(allTxs)-1].Hash()
-	chain.exec.chunks.Wait(ctx,
+	vm.exec.chunks.Wait(ctx,
 		func(res *executionResults) bool {
 			_, ok := res.receipts[lastTxHash]
 			return ok
@@ -142,7 +147,7 @@ func TestBasicE2E(t *testing.T) {
 		totalGasConsumed gas.Gas
 		lastFilledBy     time.Time
 	)
-	chain.exec.chunks.UseThenSignal(ctx, func(res *executionResults) error {
+	vm.exec.chunks.UseThenSignal(ctx, func(res *executionResults) error {
 		var lastChunkTime uint64
 		for t := range res.chunks {
 			if t != math.MaxUint64 && t > lastChunkTime {
@@ -169,7 +174,7 @@ func TestBasicE2E(t *testing.T) {
 	if t.Failed() {
 		return
 	}
-	require.NoError(t, chain.Shutdown(ctx))
+	require.NoError(t, vm.Shutdown(ctx))
 
 	t.Run("tx_receipts", func(t *testing.T) {
 		require.Equalf(t, len(allTxs), len(gotReceipts), "# %T == # %T", &types.Receipt{}, &types.Transaction{})
@@ -214,7 +219,7 @@ func TestBasicE2E(t *testing.T) {
 	})
 
 	t.Run("state", func(t *testing.T) {
-		db := chain.exec.executeScratchSpace.db
+		db := vm.exec.executeScratchSpace.db
 		statedb, err := state.New(finalStateRoot, state.NewDatabase(db), nil)
 		require.NoError(t, err, "state.New() at last chunk's state root")
 
@@ -224,9 +229,9 @@ func TestBasicE2E(t *testing.T) {
 	})
 
 	// Invariants associated with a zero-length builder queue are asserted by
-	// the builder itself and would result in [Chain.BuildBlock] returning an
+	// the builder itself and would result in [VM.BuildBlock] returning an
 	// error.
-	chain.builder.tranches.UseThenSignal(ctx, func(trs *tranches) error {
+	vm.builder.tranches.UseThenSignal(ctx, func(trs *tranches) error {
 		assert.Zero(t, trs.accepted.pending.Len(), "block-builder length of pending-tx queue")
 		return nil
 	})
