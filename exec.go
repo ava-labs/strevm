@@ -20,7 +20,6 @@ import (
 	"github.com/ava-labs/libevm/core/state/snapshot"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/core/vm"
-	"github.com/ava-labs/libevm/ethdb"
 	"github.com/ava-labs/libevm/params"
 	"go.uber.org/zap"
 
@@ -33,6 +32,9 @@ type executor struct {
 	done chan<- struct{}
 
 	spawned sync.WaitGroup
+
+	chainConfig *params.ChainConfig
+	gasConfig   gas.Config
 
 	queue  sink.Monitor[*queue.FIFO[*Block]]
 	chunks sink.Monitor[*executionResults]
@@ -52,20 +54,26 @@ type executionResults struct {
 // [Block.Verify] and then [Block.Accept] methods MUST be called once the
 // [blockBuilder] is ready.
 func (e *executor) init(ctx context.Context, genesis *core.Genesis) (*Block, error) {
-	db := rawdb.NewMemoryDatabase()
-	sdb := state.NewDatabase(db)
+	sdb := state.NewDatabase(e.vm.db)
 	tdb := sdb.TrieDB()
-	chainConfig, genesisHash, err := core.SetupGenesisBlock(db, tdb, genesis)
+	chainConfig, genesisHash, err := core.SetupGenesisBlock(e.vm.db, tdb, genesis)
 	if err != nil {
 		return nil, err
 	}
 
-	genesisBlock := rawdb.ReadBlock(db, genesisHash, 0)
+	e.chainConfig = chainConfig
+	e.gasConfig = gas.Config{
+		MinPrice:                 params.GWei,
+		MaxPerSecond:             maxGasPerChunk,
+		ExcessConversionConstant: 20_000_000, // TODO(arr4n)
+	}
+
+	genesisBlock := rawdb.ReadBlock(e.vm.db, genesisHash, 0)
 	snapConf := snapshot.Config{
 		CacheSize:  128, // MB
 		AsyncBuild: false,
 	}
-	snaps, err := snapshot.New(snapConf, db, tdb, genesisBlock.Root())
+	snaps, err := snapshot.New(snapConf, e.vm.db, tdb, genesisBlock.Root())
 	if err != nil {
 		return nil, err
 	}
@@ -76,15 +84,8 @@ func (e *executor) init(ctx context.Context, genesis *core.Genesis) (*Block, err
 	}
 
 	e.executeScratchSpace = executionScratchSpace{
-		chainConfig: chainConfig,
-		db:          db,
-		stateCache:  sdb,
-		statedb:     statedb,
-		gasConfig: gas.Config{
-			MinPrice:                 params.GWei,
-			MaxPerSecond:             maxGasPerChunk,
-			ExcessConversionConstant: 20_000_000, // TODO(arr4n)
-		},
+		stateCache: sdb,
+		statedb:    statedb,
 		chunk: &chunk{ // pre-genesis
 			// The below call to [executor.nextChunk] will use this as its
 			// parent. The time will be incremented so it's ok if the -1
@@ -229,25 +230,22 @@ func (e *executor) processQueue() {
 }
 
 type executionScratchSpace struct {
-	chainConfig *params.ChainConfig
-	db          ethdb.Database
-	stateCache  state.Database
-	statedb     *state.StateDB
+	stateCache state.Database
+	statedb    *state.StateDB
 
-	chunk     *chunk
-	gasConfig gas.Config
-	excess    gas.Gas
+	chunk  *chunk
+	excess gas.Gas
 }
 
-func (x *executionScratchSpace) chunkCapacity(c *chunk) gas.Gas {
-	return c.donation + x.gasConfig.MaxPerSecond
+func (e *executor) chunkCapacity(c *chunk) gas.Gas {
+	return c.donation + e.gasConfig.MaxPerSecond
 }
 
-func (x *executionScratchSpace) gasPrice() gas.Price {
+func (e *executor) gasPrice(excess gas.Gas) gas.Price {
 	return gas.CalculatePrice(
-		x.gasConfig.MinPrice,
-		x.excess,
-		x.gasConfig.ExcessConversionConstant,
+		e.gasConfig.MinPrice,
+		excess,
+		e.gasConfig.ExcessConversionConstant,
 	)
 }
 
@@ -296,11 +294,11 @@ func (e *executor) execute(ctx context.Context, b *Block) error {
 	gasPool := core.GasPool(math.MaxUint64) // required by geth but irrelevant so max it out
 
 	for ti, tx := range b.Transactions() {
-		header.BaseFee.SetUint64(uint64(x.gasPrice()))
+		header.BaseFee.SetUint64(uint64(e.gasPrice(x.excess)))
 		x.statedb.SetTxContext(tx.Hash(), ti) // TODO(arr4n) `ti` is not correct here
 
 		receipt, err := core.ApplyTransaction(
-			x.chainConfig,
+			e.chainConfig,
 			e.vm,
 			&header.Coinbase,
 			&gasPool,
@@ -319,7 +317,7 @@ func (e *executor) execute(ctx context.Context, b *Block) error {
 		x.excess += gas.Gas(receipt.GasUsed >> 1) // see ACP for details
 
 		// Criterion (2) of the ACP is not met so continue filling.
-		if x.chunk.consumed < x.chunkCapacity(x.chunk) {
+		if x.chunk.consumed < e.chunkCapacity(x.chunk) {
 			x.chunk.receipts = append(x.chunk.receipts, receipt)
 			continue
 		}
@@ -374,9 +372,9 @@ func (e *executor) nextChunk(ctx context.Context, x *executionScratchSpace, over
 		return err
 	}
 
-	surplus, err := safemath.Sub(x.chunkCapacity(prev), prev.consumed)
+	surplus, err := safemath.Sub(e.chunkCapacity(prev), prev.consumed)
 	if err != nil {
-		return fmt.Errorf("*BUG* over-filled chunk at timestamp %d consumed %d of %d gas", prev.timestamp, prev.consumed, x.chunkCapacity(prev))
+		return fmt.Errorf("*BUG* over-filled chunk at timestamp %d consumed %d of %d gas", prev.timestamp, prev.consumed, e.chunkCapacity(prev))
 	}
 	x.chunk = &chunk{
 		timestamp: prev.timestamp + 1,
@@ -389,7 +387,7 @@ func (e *executor) nextChunk(ctx context.Context, x *executionScratchSpace, over
 		// MUST NOT count as a reduction in gas excess.
 		curr.donation = surplus
 		curr.consumed += gas.Gas(overflowTx.GasUsed)
-		if x.chunkCapacity(curr) < gas.Gas(overflowTx.GasUsed) {
+		if e.chunkCapacity(curr) < gas.Gas(overflowTx.GasUsed) {
 			e.logger().Fatal("unimplemented: empty interim chunk for XL tx")
 		}
 		curr.receipts = []*types.Receipt{overflowTx}
@@ -411,7 +409,7 @@ func (e *executor) nextChunk(ctx context.Context, x *executionScratchSpace, over
 		zap.Uint64("timestamp", prev.timestamp),
 		zap.Int("receipts", len(prev.receipts)),
 		zap.Bool("queue_exhausted", overflowTx == nil),
-		zap.Uint64("gas_capacity", uint64(x.chunkCapacity(prev))),
+		zap.Uint64("gas_capacity", uint64(e.chunkCapacity(prev))),
 		zap.Uint64("gas_consumed", uint64(prev.consumed)),
 	)
 	return e.chunks.UseThenSignal(e.quitCtx(), func(res *executionResults) error {

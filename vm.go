@@ -16,7 +16,9 @@ import (
 	ethcommon "github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/consensus"
 	"github.com/ava-labs/libevm/core"
+	"github.com/ava-labs/libevm/core/rawdb"
 	"github.com/ava-labs/libevm/core/types"
+	"github.com/ava-labs/libevm/ethdb"
 	"github.com/ava-labs/libevm/rlp"
 	"github.com/ava-labs/strevm/adaptor"
 	"go.uber.org/zap"
@@ -39,6 +41,7 @@ type VM struct {
 	accepted   sink.Mutex[*accepted]
 	preference sink.Mutex[ids.ID]
 
+	db                 ethdb.Database
 	builder            blockBuilder
 	exec               *executor
 	quit               chan<- struct{}
@@ -107,6 +110,7 @@ func (vm *VM) Initialize(
 ) error {
 	vm.snowCtx = chainCtx
 	vm.builder.log = chainCtx.Log
+	vm.db = rawdb.NewMemoryDatabase() // TODO(arr4n) wrap the [database.Database] argument
 	go vm.builder.startMempool()
 
 	gen := new(core.Genesis)
@@ -258,8 +262,7 @@ func (vm *VM) BuildBlock(ctx context.Context) (*Block, error) {
 		return nil, err
 	}
 
-	x := &vm.exec.executeScratchSpace // TODO(arr4n) don't access this directly
-	tranche, evmBlock, err := vm.builder.build(ctx, parent, chunk, x.chainConfig, &x.gasConfig)
+	tranche, evmBlock, err := vm.builder.build(ctx, parent, chunk, vm.exec.chainConfig, &vm.exec.gasConfig)
 	if err != nil {
 		return nil, err
 	}
