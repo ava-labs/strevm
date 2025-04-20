@@ -3,7 +3,6 @@ package sae
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"sync"
 
@@ -49,8 +48,9 @@ type VM struct {
 type blockMap map[ids.ID]*Block
 
 type accepted struct {
-	lastID ids.ID
-	all    blockMap
+	lastID     ids.ID
+	all        blockMap
+	heightToID map[uint64]ids.ID
 }
 
 func (a *accepted) last() *Block {
@@ -66,7 +66,8 @@ func New() *VM {
 		AppHandler: common.NewNoOpAppHandler(logging.NoLog{}),
 		blocks:     sink.NewMutex(make(blockMap)),
 		accepted: sink.NewMutex(&accepted{
-			all: make(blockMap),
+			all:        make(blockMap),
+			heightToID: make(map[uint64]ids.ID),
 		}),
 		preference: sink.NewMutex[ids.ID](ids.Empty),
 		// Block building
@@ -246,6 +247,9 @@ func (vm *VM) BuildBlock(ctx context.Context) (*Block, error) {
 			return res.chunks[needStateRootAt], nil
 		},
 	)
+	if err != nil {
+		return nil, err
+	}
 
 	// TODO(arr4n) this needs to be done immediately upon filling of the chunk,
 	// but only once the [blockBuilder] keeps chunk tranches for historical
@@ -280,7 +284,13 @@ func (vm *VM) LastAccepted(ctx context.Context) (ids.ID, error) {
 }
 
 func (vm *VM) GetBlockIDAtHeight(ctx context.Context, height uint64) (ids.ID, error) {
-	return ids.Empty, fmt.Errorf("%w: %T.GetBlockIDAtHeight()", errUnimplemented, vm)
+	return sink.FromMutex(ctx, vm.accepted, func(a *accepted) (ids.ID, error) {
+		id, ok := a.heightToID[height]
+		if !ok {
+			return ids.Empty, database.ErrNotFound
+		}
+		return id, nil
+	})
 }
 
 func (*VM) Engine() consensus.Engine {

@@ -3,7 +3,6 @@ package sae
 import (
 	"context"
 	"crypto/ecdsa"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"math"
@@ -20,7 +19,6 @@ import (
 	"github.com/ava-labs/avalanchego/utils/logging"
 	"github.com/ava-labs/avalanchego/vms/components/gas"
 	"github.com/ava-labs/libevm/common"
-	"github.com/ava-labs/libevm/core"
 	"github.com/ava-labs/libevm/core/state"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/crypto"
@@ -60,9 +58,6 @@ func TestBasicE2E(t *testing.T) {
 	chainConfig := params.TestChainConfig
 	signer := types.LatestSigner(chainConfig)
 
-	genesisJSON, err := json.Marshal(genesis(t, chainConfig, eoa))
-	require.NoErrorf(t, err, "json.Marshal(%T)", &core.Genesis{})
-
 	snowCtx := snowtest.Context(t, ids.Empty)
 	snowCtx.Log = tbLogger{tb: t, level: logging.Debug + 1}
 	vm := New()
@@ -89,7 +84,7 @@ func TestBasicE2E(t *testing.T) {
 
 	require.NoErrorf(t, vm.Initialize(
 		ctx, snowCtx,
-		nil, genesisJSON, nil, nil, nil, nil, nil,
+		nil, genesisJSON(t, chainConfig, eoa), nil, nil, nil, nil, nil,
 	), "%T.Initialize()", vm)
 
 	if d := *cpuProfileDest; d != "" {
