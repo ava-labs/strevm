@@ -214,7 +214,7 @@ func TestBasicE2E(t *testing.T) {
 	})
 
 	t.Run("state", func(t *testing.T) {
-		db := vm.exec.executeScratchSpace.db
+		db := vm.db
 		statedb, err := state.New(finalStateRoot, state.NewDatabase(db), nil)
 		require.NoError(t, err, "state.New() at last chunk's state root")
 

@@ -59,8 +59,7 @@ func (b *Block) Parent() ids.ID {
 }
 
 func (vm *VM) VerifyBlock(ctx context.Context, b *Block) error {
-	x := &vm.exec.executeScratchSpace // TODO(arr4n) don't access this directly
-	signer := types.LatestSigner(x.chainConfig)
+	signer := types.LatestSigner(vm.exec.chainConfig)
 
 	txs := b.Transactions()
 	// This starts a concurrent, background pre-computation of the results of
@@ -90,7 +89,7 @@ func (vm *VM) VerifyBlock(ctx context.Context, b *Block) error {
 			stateRootPost: b.Root(),
 		},
 		candidates: candidates,
-		gasConfig:  &x.gasConfig,
+		gasConfig:  &vm.exec.gasConfig,
 	}
 	tranche, err := vm.builder.makeTranche(ctx, cfg)
 	if err != nil {
