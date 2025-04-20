@@ -34,6 +34,7 @@ func (vm *VM) AcceptBlock(ctx context.Context, b *Block) error {
 
 		a.all[b.ID()] = b
 		a.lastID = b.ID()
+		a.heightToID[b.NumberU64()] = b.ID()
 
 		vm.logger().Debug(
 			"Accepted block",

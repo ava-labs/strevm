@@ -2,6 +2,7 @@ package sae
 
 import (
 	"encoding/hex"
+	"encoding/json"
 	"math/big"
 	"testing"
 
@@ -16,6 +17,13 @@ import (
 var (
 	wethAddr = common.HexToAddress("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2")
 )
+
+func genesisJSON(tb testing.TB, config *params.ChainConfig, eoas ...common.Address) []byte {
+	tb.Helper()
+	buf, err := json.Marshal(genesis(tb, config, eoas...))
+	require.NoErrorf(tb, err, "json.Marshal(%T)", &core.Genesis{})
+	return buf
+}
 
 func genesis(tb testing.TB, config *params.ChainConfig, eoas ...common.Address) *core.Genesis {
 	tb.Helper()
