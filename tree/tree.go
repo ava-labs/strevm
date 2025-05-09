@@ -216,22 +216,22 @@ func (t *Tree) getIDToSettle(parentID ID, timestamp uint64) (ID, bool) {
 	// if the next block to execute can be settle-able. If it is possible for
 	// the next block to be settle-able, we must wait for its execution results.
 
-	var b Block
+	var nextBlockToExecute Block
 	if len(t.Accepted) > 0 {
-		b = t.Accepted[0]
+		nextBlockToExecute = t.Accepted[0]
 	} else {
 		var ok bool
-		b, ok = t.Processing[parentID]
+		nextBlockToExecute, ok = t.Processing[parentID]
 		if !ok {
 			// The parentID is one of the executed blocks.
 			return executed.Block.ID, true
 		}
 		for {
-			newB, ok := t.Processing[b.ParentID]
+			newB, ok := t.Processing[nextBlockToExecute.ParentID]
 			if !ok {
 				break
 			}
-			b = newB
+			nextBlockToExecute = newB
 		}
 	}
 
@@ -239,8 +239,15 @@ func (t *Tree) getIDToSettle(parentID ID, timestamp uint64) (ID, bool) {
 	// minimum amount of gas was executed.
 	minimumExecutionTimestamp := executed.Timestamp
 	minimumExecutionTimestamp.Max(ExecutionTimestamp{
-		Timestamp: b.Timestamp,
+		Timestamp: nextBlockToExecute.Timestamp,
 	})
+	// Can choose to apply the minimum gas charged rule here to further advance
+	// this time. (We should do this)
+	//
+	// We could also introspect into block execution if the next block to
+	// execute is accepted (and is therefore currently being executed) to even
+	// further advance this time. (We should probably leave this as a future
+	// improvement)
 	if minimumExecutionTimestamp.Timestamp+settlementDelay < timestamp {
 		return ID{}, false
 	}
