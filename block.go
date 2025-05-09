@@ -85,7 +85,7 @@ func (vm *VM) VerifyBlock(ctx context.Context, b *Block) error {
 	// block be accepted.
 	cfg := &trancheBuilderConfig{
 		atEndOf: &chunk{
-			timestamp:     clippedSubtract(b.Time(), stateRootDelaySeconds),
+			timestamp:     boundedSubtract(b.Time(), stateRootDelaySeconds, vm.exec.genesisTimestamp),
 			stateRootPost: b.Root(),
 		},
 		candidates: candidates,

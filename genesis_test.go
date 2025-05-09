@@ -30,7 +30,7 @@ func genesis(tb testing.TB, config *params.ChainConfig, eoas ...common.Address) 
 
 	g := &core.Genesis{
 		Config:     config,
-		Timestamp:  0,
+		Timestamp:  1,             // anything non-zero is supported
 		Difficulty: big.NewInt(0), // required by geth
 		Alloc: types.GenesisAlloc{
 			wethAddr: {

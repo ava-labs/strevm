@@ -182,7 +182,7 @@ func (bb *blockBuilder) makeTranche(ctx context.Context, cfg *trancheBuilderConf
 	return sink.FromMonitors(ctx, bb.tranches, bb.snaps,
 		func(trs *tranches) bool {
 			_, ok := trs.chunkTranches[cfg.atEndOf.timestamp]
-			return ok || cfg.atEndOf.isGenesis()
+			return ok
 		},
 		func(t *snapshot.Tree) bool {
 			return t.Snapshot(cfg.atEndOf.stateRootPost) != nil
@@ -294,7 +294,7 @@ func (bb *blockBuilder) clearExecuted(ctx context.Context, chunk *chunk) error {
 		accepted := trs.accepted
 
 		prev, ok := trs.chunkTranches[chunk.timestamp-1]
-		if !ok && !chunk.isGenesis() { // genesis has no prev
+		if !ok {
 			return fmt.Errorf("clearing %T @ time %d before its predecessor", chunk, chunk.timestamp)
 		}
 		chunkTranche := newTxTranche(prev)

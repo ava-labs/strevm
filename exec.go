@@ -33,8 +33,9 @@ type executor struct {
 
 	spawned sync.WaitGroup
 
-	chainConfig *params.ChainConfig
-	gasConfig   gas.Config
+	genesisTimestamp uint64
+	chainConfig      *params.ChainConfig
+	gasConfig        gas.Config
 
 	queue  sink.Monitor[*queue.FIFO[*Block]]
 	chunks sink.Monitor[*executionResults]
@@ -54,6 +55,11 @@ type executionResults struct {
 // [Block.Verify] and then [Block.Accept] methods MUST be called once the
 // [blockBuilder] is ready.
 func (e *executor) init(ctx context.Context, genesis *core.Genesis) (*Block, error) {
+	if genesis.Timestamp == 0 {
+		return nil, errors.New("zero genesis timestamp")
+	}
+	e.genesisTimestamp = genesis.Timestamp
+
 	sdb := state.NewDatabase(e.vm.db)
 	tdb := sdb.TrieDB()
 	chainConfig, genesisHash, err := core.SetupGenesisBlock(e.vm.db, tdb, genesis)
@@ -87,9 +93,6 @@ func (e *executor) init(ctx context.Context, genesis *core.Genesis) (*Block, err
 		stateCache: sdb,
 		statedb:    statedb,
 		chunk: &chunk{ // pre-genesis
-			// The below call to [executor.nextChunk] will use this as its
-			// parent. The time will be incremented so it's ok if the -1
-			// underflows here.
 			timestamp: genesis.Timestamp - 1,
 		},
 	}
@@ -100,8 +103,9 @@ func (e *executor) init(ctx context.Context, genesis *core.Genesis) (*Block, err
 
 	// This is effectively a constructor for the scratch space's current chunk.
 	// We call it, instead of constructing the chunk above, to ensure that
-	// expected properties are in place for the first set of transactions.
-	if err := e.nextChunk(ctx, &e.executeScratchSpace, nil /*overflowTx*/); err != nil {
+	// expected properties are in place for the first set of transactions. Note
+	// that t+1 completes the chunk at t, but only readies the one at t+1.
+	if err := e.fastForwardChunk(ctx, &e.executeScratchSpace, genesis.Timestamp+1); err != nil {
 		return nil, err
 	}
 	return e.vm.newBlock(genesisBlock), nil
@@ -267,20 +271,12 @@ type chunk struct {
 	filledBy time.Time // wall time for metrics
 }
 
-func (c *chunk) isGenesis() bool {
-	return c.timestamp == 0
-}
-
 func (e *executor) execute(ctx context.Context, b *Block) error {
 	x := &e.executeScratchSpace
-
-	if bTime := b.Time(); bTime > x.chunk.timestamp {
-		e.logger().Fatal(
-			"BUG: chunk executing the future",
-			zap.Uint64("block time", bTime),
-			zap.Uint64("chunk time", x.chunk.timestamp),
-		)
+	if err := e.fastForwardChunk(ctx, x, b.Time()); err != nil {
+		return err
 	}
+
 	header := types.CopyHeader(b.Header())
 	header.BaseFee = new(big.Int)
 
@@ -330,14 +326,17 @@ func (e *executor) execute(ctx context.Context, b *Block) error {
 		}
 	}
 
-	// Let C and B be the timestamps of the chunk and the block (header),
-	// respectively:
-	//
-	// * B < C: execution is slower than blocks so the queue is not exhausted
-	// * C == B: queue exhausted per criterion (1) of the ACP
-	// * B > C: invalid execution of unknown future consensus (enforced earlier)
-	if x.chunk.timestamp == header.Time {
-		if err := e.nextChunk(ctx, x, nil); err != nil {
+	// Even though we appear to have depleted the queue, we have no such
+	// guarantee as the next block might still be at the same timestamp. This is
+	// why the chunks are advanced at the *beginning* of this method (instead of
+	// here) dependent on the new block's timestamp.
+
+	return nil
+}
+
+func (e *executor) fastForwardChunk(ctx context.Context, x *executionScratchSpace, toTime uint64) error {
+	for x.chunk.timestamp < toTime {
+		if err := e.nextChunk(ctx, x, nil /*overflowTx*/); err != nil {
 			return err
 		}
 	}
@@ -399,7 +398,7 @@ func (e *executor) nextChunk(ctx context.Context, x *executionScratchSpace, over
 		// we MUST NOT donate the surplus to the next chunk because the
 		// execution stream is now dormant.
 		old := x.excess
-		x.excess = clippedSubtract(x.excess, surplus>>1)
+		x.excess = boundedSubtract(x.excess, surplus>>1, 0)
 		prev.excessReduction = old - x.excess
 		prev.excessPost = x.excess
 	}

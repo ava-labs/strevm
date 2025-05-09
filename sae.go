@@ -15,10 +15,10 @@ const (
 
 var errUnimplemented = errors.New("unimplemented")
 
-// clippedSubtract returns max(0,a-b) without underflow.
-func clippedSubtract[T constraints.Unsigned](a, b T) T {
-	if b >= a {
-		return 0
+// boundedSubtract returns max(floor,a-b) without underflow.
+func boundedSubtract[T constraints.Unsigned](a, b, floor T) T {
+	if aLim := floor + b; aLim < b /*overflowed*/ || a <= aLim {
+		return floor
 	}
 	return a - b
 }

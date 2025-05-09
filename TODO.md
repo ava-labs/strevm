@@ -1,6 +1,6 @@
-* [ ] Stop using empty blocks, instead calling `nextChunk()` in `execute()` until at correct timestamp
+* [x] Stop using empty blocks, instead calling `nextChunk()` in `execute()` until at correct timestamp
 * [ ] Restart from last-accepted block
-* [ ] Genesis block at non-zero time
+* [x] Genesis block at non-zero time
 * [ ] Pre-genesis pseudo chunks (same root with no receipts)
 * [ ] Arbitrary inter-block period
   * [ ] Chunk recovery from database (with GC?)

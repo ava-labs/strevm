@@ -3,6 +3,7 @@ package sae
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"sync"
 
@@ -119,16 +120,16 @@ func (vm *VM) Initialize(
 	}
 	genBlock, err := vm.exec.init(ctx, gen)
 	if err != nil {
-		return err
+		return fmt.Errorf("initialise executor: %w", err)
 	}
 	// The genesis block can't be processed until the [blockBuilder] is
 	// initialised with access to the just-initialised [executor] snapshots.
 	vm.builder.snaps = vm.exec.snaps // safe to copy a [sink.Mutex]
 	if err := vm.VerifyBlock(ctx, genBlock); err != nil {
-		return err
+		return fmt.Errorf("verify genesis block: %w", err)
 	}
 	if err := vm.AcceptBlock(ctx, genBlock); err != nil {
-		return err
+		return fmt.Errorf("accept genesis block: %w", err)
 	}
 	return vm.afterInitialize(ctx, toEngine)
 }
@@ -228,7 +229,7 @@ func (vm *VM) BuildBlock(ctx context.Context) (*Block, error) {
 	}
 
 	timestamp := parent.Time() + 1
-	needStateRootAt := clippedSubtract(timestamp, stateRootDelaySeconds)
+	needStateRootAt := boundedSubtract(timestamp, stateRootDelaySeconds, vm.exec.genesisTimestamp)
 	chunk, err := sink.FromMonitor(ctx, vm.exec.chunks,
 		func(res *executionResults) bool {
 			_, ok := res.chunks[needStateRootAt]
