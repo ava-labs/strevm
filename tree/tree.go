@@ -1,20 +1,10 @@
 package tree
 
 import (
-	"maps"
 	"slices"
 )
 
-type State struct {
-	Accounts  map[Address]Account
-	Block     Block
-	Timestamp ExecutionTimestamp
-}
-
-type Account struct {
-	Nonce   uint64
-	Balance uint64
-}
+const settlementDelay = 5
 
 type Block struct {
 	ID                 ID
@@ -40,17 +30,17 @@ type ID [32]byte
 type Address [20]byte
 
 type Tree struct {
-	Settled    State
-	Executed   []State
+	Settled    *State
+	Executed   []*State
 	Accepted   []Block
 	Processing map[ID]Block
 }
 
-func (t *Tree) LatestSettled() State {
+func (t *Tree) LatestSettled() *State {
 	return t.Settled
 }
 
-func (t *Tree) LatestExecuted() State {
+func (t *Tree) LatestExecuted() *State {
 	if e, ok := last(t.Executed); ok {
 		return e
 	}
@@ -64,29 +54,16 @@ func (t *Tree) LatestAccepted() Block {
 	return t.LatestExecuted().Block
 }
 
-func (t *Tree) Settle(id ID) bool {
-	var (
-		toSettle []State
-		found    bool
-	)
+func (t *Tree) getState(id ID) (*State, bool) {
+	if t.Settled.Block.ID == id {
+		return t.Settled, true
+	}
 	for _, s := range t.Executed {
-		toSettle = append(toSettle, s)
 		if s.Block.ID == id {
-			found = true
-			break
+			return s, true
 		}
 	}
-	if !found {
-		return false
-	}
-
-	for _, s := range toSettle {
-		maps.Copy(t.Settled.Accounts, s.Accounts)
-		t.Settled.Block = s.Block
-		t.Settled.Timestamp = s.Timestamp
-	}
-	t.Executed = t.Executed[len(toSettle):]
-	return true
+	return nil, false
 }
 
 func (t *Tree) ExecuteNext() bool {
@@ -100,16 +77,18 @@ func (t *Tree) ExecuteNext() bool {
 	nextState := execute(
 		next,
 		prev,
-		func(a Address) Account {
-			acc, found := t.GetExecutedAccountAt(a, prev.Block.ID)
-			if !found {
-				// Assumes the ID is either executed or settled.
-				panic("couldn't find executed ID")
-			}
-			return acc
-		},
-		func(t Transaction) uint64 {
-			return t.GasUsed
+		func(tx Transaction, s *State, gasPrice, gasPerSecond uint64) {
+			from := s.Account(tx.From)
+			from.Balance -= tx.GasUsed * gasPrice
+			from.Balance -= tx.Amount
+			from.Nonce++
+			s.Accounts[tx.From] = from
+
+			to := s.Account(tx.To)
+			to.Balance += tx.Amount
+			s.Accounts[tx.To] = to
+
+			s.Timestamp.Add(tx.GasUsed, gasPerSecond)
 		},
 	)
 
@@ -118,58 +97,38 @@ func (t *Tree) ExecuteNext() bool {
 	return true
 }
 
-func (t *Tree) GetExecutedAccountAt(a Address, id ID) (Account, bool) {
-	var found bool
-	for i := len(t.Executed) - 1; i >= 0; i++ {
-		s := t.Executed[i]
-		found = found || s.Block.ID == id
-		if !found {
-			continue
-		}
-
-		if a, ok := s.Accounts[a]; ok {
-			return a, true
-		}
-	}
-	return t.Settled.Accounts[a], !found && t.Settled.Block.ID != id
-}
-
 func gasTargetToGasPerSecond(gasTarget uint64) uint64 {
 	return 2 * gasTarget // From ACP-176
 }
 
-func (t *Tree) GetWorstCaseState(a Address, settledID ID, id ID) (State, bool) {
+func (t *Tree) GetWorstCaseState(settledID ID, id ID) (*State, bool) {
 	toExecute, ok := t.getQueue(settledID, id)
 	if !ok {
-		return State{}, false
+		return nil, false
 	}
 
 	prev, ok := t.getState(settledID)
 	if !ok {
-		return State{}, false
+		return nil, false
 	}
 
-	accounts := make(map[Address]Account)
+	prev = prev.NewChild()
 	for _, next := range toExecute {
 		prev = execute(
 			next,
 			prev,
-			func(a Address) Account {
-				if acc, ok := accounts[a]; ok {
-					return acc
-				}
-				acc, found := t.GetExecutedAccountAt(a, settledID)
-				if !found {
-					// Assumes the ID is either executed or settled.
-					panic("couldn't find executed ID")
-				}
-				return acc
-			},
-			func(t Transaction) uint64 {
-				return t.GasLimit
+			func(tx Transaction, s *State, gasPrice, gasPerSecond uint64) {
+				from := s.Account(tx.From)
+				from.Balance -= tx.GasLimit * gasPrice
+				from.Balance -= tx.Amount
+				from.Nonce++
+				s.Accounts[tx.From] = from
+
+				s.Timestamp.Add(tx.GasLimit, gasPerSecond)
 			},
 		)
-		maps.Copy(accounts, prev.Accounts)
+		prev.ApplyToParent()
+		prev = prev.Parent
 	}
 
 	return prev, true
@@ -225,21 +184,89 @@ func (t *Tree) getQueue(start ID, end ID) ([]Block, bool) {
 	return nil, false
 }
 
-func (t *Tree) getState(id ID) (State, bool) {
-	if t.Settled.Block.ID == id {
-		return t.Settled, true
-	}
-	for _, s := range t.Executed {
-		if s.Block.ID == id {
-			return s, true
+func (t *Tree) settle(id ID) bool {
+	for i, s := range t.Executed {
+		if s.Block.ID != id {
+			continue
 		}
+
+		s.Settle()
+		t.Settled = s
+		t.Executed = t.Executed[i+1:]
+		return true
 	}
-	return State{}, false
+	return false
 }
 
-// func (t *Tree) Verify(b Block) bool {
-// 	return false
-// }
+func (t *Tree) getIDToSettle(parentID ID, timestamp uint64) (ID, bool) {
+	executed := t.Settled
+	for _, e := range t.Executed {
+		if e.Timestamp.Timestamp+settlementDelay < timestamp {
+			// This state was finished executing at least settlementDelay ago
+			executed = e
+		} else {
+			// This state hasn't finished waiting for the settlementDelay yet,
+			// so the previous execution result is the most recent one that can
+			// be settled.
+			return executed.Block.ID, true
+		}
+	}
+
+	// The last executed block is settle-able by this block, so we need to check
+	// if the next block to execute can be settle-able. If it is possible for
+	// the next block to be settle-able, we must wait for its execution results.
+
+	var b Block
+	if len(t.Accepted) > 0 {
+		b = t.Accepted[0]
+	} else {
+		var ok bool
+		b, ok = t.Processing[parentID]
+		if !ok {
+			// The parentID is one of the executed blocks.
+			return executed.Block.ID, true
+		}
+		for {
+			newB, ok := t.Processing[b.ParentID]
+			if !ok {
+				break
+			}
+			b = newB
+		}
+	}
+
+	// This aligns with the start of block processing. It should act as if the
+	// minimum amount of gas was executed.
+	minimumExecutionTimestamp := executed.Timestamp
+	minimumExecutionTimestamp.Max(ExecutionTimestamp{
+		Timestamp: b.Timestamp,
+	})
+	if minimumExecutionTimestamp.Timestamp+settlementDelay < timestamp {
+		return ID{}, false
+	}
+	// The minimum possible timestamp that this block will be settle-able at
+	// is after the provided timestamp. So, we can settle the previously
+	// found block without issue.
+	return executed.Block.ID, true
+}
+
+func (t *Tree) Verify(b Block) bool {
+	toSettle, ok := t.getIDToSettle(b.ParentID, b.Timestamp)
+	if !ok {
+		// We currently don't know what blocks are settle-able for this block,
+		// so we consider it invalid.
+		return false
+	}
+
+	worstCaseState, ok := t.GetWorstCaseState(toSettle, b.ParentID)
+	if !ok {
+		// The parentID isn't processing.
+		return false
+	}
+	// Try to generate the worst state after executing this block
+	_ = worstCaseState
+	return true
+}
 
 func (t *Tree) Accept(id ID) bool {
 	b, ok := t.Processing[id]
@@ -263,66 +290,55 @@ func (t *Tree) Reject(id ID) bool {
 	return ok
 }
 
+// execute the provided block on top of the previous state and return a new
+// state.
 func execute(
 	next Block,
-	prev State,
-	getAccount func(Address) Account,
-	executeTx func(Transaction) uint64,
-) State {
-	// TODO: Doesn't handle fixed delay correctly
-	timestamp := prev.Timestamp
-	timestamp.Max(ExecutionTimestamp{
-		Timestamp: next.Timestamp,
-	})
-
+	prev *State,
+	executeTx func(
+		Transaction,
+		*State,
+		uint64,
+		uint64,
+	),
+) *State {
 	// TODO: Calculate the gas price
 	const gasPrice = 1
 
 	// Execute the block
 	var (
-		accounts             = make(map[Address]Account)
-		getOverriddenAccount = func(a Address) Account {
-			if acc, ok := accounts[a]; ok {
-				return acc
-			}
-			return getAccount(a)
-		}
+		diff = &State{
+			Parent: prev,
 
-		blockGasUsed uint64
+			Accounts:  make(map[Address]Account),
+			Block:     next,
+			Timestamp: prev.Timestamp,
+		}
+		currentGasPerSecond = gasTargetToGasPerSecond(prev.Block.GasTargetPerSecond)
 	)
 
+	diff.Timestamp.Max(ExecutionTimestamp{
+		Timestamp: next.Timestamp,
+	})
+
 	for _, tx := range next.Txs {
-		txGasUsed := executeTx(tx)
-
-		from := getOverriddenAccount(tx.From)
-		from.Balance -= txGasUsed * gasPrice
-		from.Balance -= tx.Amount
-		from.Nonce++
-		accounts[tx.From] = from
-
-		to := getOverriddenAccount(tx.To)
-		to.Balance += tx.Amount
-		accounts[tx.To] = to
-
-		blockGasUsed += txGasUsed
+		executeTx(
+			tx,
+			diff,
+			gasPrice,
+			currentGasPerSecond,
+		)
 	}
-
-	currentGasPerSecond := gasTargetToGasPerSecond(prev.Block.GasTargetPerSecond)
-	timestamp.Add(blockGasUsed, currentGasPerSecond)
 
 	// Fix timestamp if needed
 	// TODO: This really isn't handled correctly, by including gas in the
 	// timestamp it inherently assumes there is a constant relationship between
 	// gas and time. But the relationship is dynamic.
 	nextGasPerSecond := gasTargetToGasPerSecond(next.GasTargetPerSecond)
-	if timestamp.AdditionalGasExecuted > nextGasPerSecond {
-		timestamp.Timestamp++
-		timestamp.AdditionalGasExecuted = 0
+	if diff.Timestamp.AdditionalGasExecuted > nextGasPerSecond {
+		diff.Timestamp.Timestamp++
+		diff.Timestamp.AdditionalGasExecuted = 0
 	}
 
-	return State{
-		Accounts:  accounts,
-		Block:     next,
-		Timestamp: timestamp,
-	}
+	return diff
 }
