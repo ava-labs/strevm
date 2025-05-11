@@ -262,7 +262,7 @@ func (vm *VM) BuildBlock(ctx context.Context) (*Block, error) {
 		return nil, err
 	}
 
-	tranche, evmBlock, err := vm.builder.build(ctx, parent, chunk, vm.exec.chainConfig, &vm.exec.gasConfig)
+	tranche, evmBlock, err := vm.builder.build(ctx, parent, chunk, vm.exec.chainConfig, &vm.exec.gasClock.config)
 	if err != nil {
 		return nil, err
 	}

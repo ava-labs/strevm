@@ -3,9 +3,11 @@ package sae
 import (
 	"context"
 	"fmt"
+	"sync/atomic"
 	"time"
 
 	"github.com/ava-labs/avalanchego/ids"
+	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/rlp"
@@ -18,7 +20,17 @@ var _ adaptor.Block = (*Block)(nil)
 
 type Block struct {
 	*types.Block
-	tranche *txTranche
+	parent, lastSettled *Block
+
+	accepted, executed atomic.Bool
+
+	execution struct { // valid and immutable i.f.f. `executed == true`
+		by            gasClock
+		receipts      types.Receipts
+		stateRootPost common.Hash
+	}
+
+	tranche *txTranche // TODO(arr4n): remove this
 }
 
 func (b *Block) ID() ids.ID {
@@ -46,7 +58,11 @@ func (vm *VM) AcceptBlock(ctx context.Context, b *Block) error {
 	}
 
 	// Synchronises our [blockBuilder] with those of other validators.
-	return vm.builder.acceptTranche(ctx, b.tranche)
+	if err := vm.builder.acceptTranche(ctx, b.tranche); err != nil {
+		return err
+	}
+	b.accepted.Store(true)
+	return nil
 }
 
 func (*VM) RejectBlock(context.Context, *Block) error {
@@ -89,7 +105,7 @@ func (vm *VM) VerifyBlock(ctx context.Context, b *Block) error {
 			stateRootPost: b.Root(),
 		},
 		candidates: candidates,
-		gasConfig:  &vm.exec.gasConfig,
+		gasConfig:  &vm.exec.gasClock.config,
 	}
 	tranche, err := vm.builder.makeTranche(ctx, cfg)
 	if err != nil {
