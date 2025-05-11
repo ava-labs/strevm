@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"math/big"
+	"math/bits"
 	"sync"
 	"time"
 
@@ -22,6 +23,7 @@ import (
 	"github.com/ava-labs/libevm/core/vm"
 	"github.com/ava-labs/libevm/params"
 	"go.uber.org/zap"
+	"golang.org/x/exp/constraints"
 
 	"github.com/ava-labs/strevm/queue"
 )
@@ -34,7 +36,7 @@ type executor struct {
 	spawned sync.WaitGroup
 
 	chainConfig *params.ChainConfig
-	gasConfig   gas.Config
+	gasClock    gasClock
 
 	queue  sink.Monitor[*queue.FIFO[*Block]]
 	chunks sink.Monitor[*executionResults]
@@ -62,10 +64,14 @@ func (e *executor) init(ctx context.Context, genesis *core.Genesis) (*Block, err
 	}
 
 	e.chainConfig = chainConfig
-	e.gasConfig = gas.Config{
-		MinPrice:                 params.GWei,
-		MaxPerSecond:             maxGasPerChunk,
-		ExcessConversionConstant: 20_000_000, // TODO(arr4n)
+	e.gasClock = gasClock{
+		time: genesis.Timestamp,
+		config: gas.Config{
+			MinPrice:                 params.GWei,
+			MaxPerSecond:             maxGasPerChunk,
+			TargetPerSecond:          maxGasPerChunk / 2,
+			ExcessConversionConstant: 20_000_000, // TODO(arr4n)
+		},
 	}
 
 	genesisBlock := rawdb.ReadBlock(e.vm.db, genesisHash, 0)
@@ -104,7 +110,11 @@ func (e *executor) init(ctx context.Context, genesis *core.Genesis) (*Block, err
 	if err := e.nextChunk(ctx, &e.executeScratchSpace, nil /*overflowTx*/); err != nil {
 		return nil, err
 	}
-	return e.vm.newBlock(genesisBlock), nil
+
+	b := e.vm.newBlock(genesisBlock)
+	b.accepted.Store(true)
+	b.executed.Store(true)
+	return b, nil
 
 }
 
@@ -238,15 +248,67 @@ type executionScratchSpace struct {
 }
 
 func (e *executor) chunkCapacity(c *chunk) gas.Gas {
-	return c.donation + e.gasConfig.MaxPerSecond
+	return c.donation + e.gasClock.config.MaxPerSecond
 }
 
 func (e *executor) gasPrice(excess gas.Gas) gas.Price {
 	return gas.CalculatePrice(
-		e.gasConfig.MinPrice,
+		e.gasClock.config.MinPrice,
 		excess,
-		e.gasConfig.ExcessConversionConstant,
+		e.gasClock.config.ExcessConversionConstant,
 	)
+}
+
+type gasClock struct {
+	time     uint64
+	consumed gas.Gas // this second
+	excess   gas.Gas
+
+	config gas.Config
+}
+
+func (c gasClock) clone() gasClock {
+	return c
+}
+
+func (c *gasClock) consume(g gas.Gas) {
+	c.consumed += g
+	c.time += uint64(c.consumed / c.config.MaxPerSecond)
+	c.consumed %= c.config.MaxPerSecond
+
+	// The ACP describes the increase in excess in terms of `p`, a rational
+	// number, where R=pT. Substituting p for R/T, we get an increase of
+	// g(R-T)/R.
+	quo, _ := mulDiv(g, c.config.MaxPerSecond-c.config.TargetPerSecond, c.config.MaxPerSecond)
+	c.excess += gas.Gas(quo)
+}
+
+func (c *gasClock) fastForward(to uint64) {
+	if to <= c.time {
+		return
+	}
+
+	surplus := c.config.MaxPerSecond - c.consumed
+	surplus += gas.Gas(to-c.time-1) * c.config.MaxPerSecond // -1 avoids double-counting gas remaining this second
+	// By similar reasoning to that in [gasClock.consume], we get a decrease in
+	// excess of sT/R.
+	quo, _ := mulDiv(surplus, c.config.TargetPerSecond, c.config.MaxPerSecond)
+	c.excess = boundedSubtract(c.excess, quo, 0)
+
+	c.time = to
+	c.consumed = 0
+}
+
+func (c *gasClock) remainingGasThisSecond() gas.Gas {
+	// TODO(arr4n) NB! this MUST be modified to account for ACP-176
+	// functionality allowing validators to change the config.
+	return c.config.MaxPerSecond - c.consumed
+}
+
+func mulDiv(a, b, c gas.Gas) (quo, rem gas.Gas) {
+	hi, lo := bits.Mul64(uint64(a), uint64(b))
+	q, r := bits.Div64(hi, lo, uint64(c))
+	return gas.Gas(q), gas.Gas(r)
 }
 
 type chunk struct {
@@ -271,8 +333,27 @@ func (c *chunk) isGenesis() bool {
 	return c.timestamp == 0
 }
 
+func eqAndPrintOrPanic[T constraints.Integer](desc string, a, b T) {
+	if a != b {
+		panic(fmt.Sprintf("%s: %d != %d", desc, a, b))
+	}
+	// fmt.Println(desc, a, b)
+}
+
 func (e *executor) execute(ctx context.Context, b *Block) error {
 	x := &e.executeScratchSpace
+
+	e.gasClock.fastForward(b.Time())
+
+	// This is a temporary check for equality between the gas-clock and
+	// per-second-chunk approaches, which will be deleted when the latter is
+	// removed.
+	assertClockEquality := func() {
+		eqAndPrintOrPanic("time", x.chunk.timestamp, e.gasClock.time)
+		eqAndPrintOrPanic("excess", x.excess, e.gasClock.excess)
+		eqAndPrintOrPanic("consumed", x.chunk.consumed-x.chunk.donation, e.gasClock.consumed)
+	}
+	assertClockEquality()
 
 	if bTime := b.Time(); bTime > x.chunk.timestamp {
 		e.logger().Fatal(
@@ -295,7 +376,7 @@ func (e *executor) execute(ctx context.Context, b *Block) error {
 
 	for ti, tx := range b.Transactions() {
 		header.BaseFee.SetUint64(uint64(e.gasPrice(x.excess)))
-		x.statedb.SetTxContext(tx.Hash(), ti) // TODO(arr4n) `ti` is not correct here
+		x.statedb.SetTxContext(tx.Hash(), ti)
 
 		receipt, err := core.ApplyTransaction(
 			e.chainConfig,
@@ -314,8 +395,14 @@ func (e *executor) execute(ctx context.Context, b *Block) error {
 		// TODO(arr4n) add tips here
 		receipt.EffectiveGasPrice = new(big.Int).Set(header.BaseFee)
 
+		// TODO(arr4n) this results in rounding down excess relative to doing it
+		// at the end of a block.
 		x.excess += gas.Gas(receipt.GasUsed >> 1) // see ACP for details
+		e.gasClock.consume(gas.Gas(receipt.GasUsed))
 
+		// TODO(arr4n) add a receipt cache to the [executor] to allow API calls
+		// to access them before the end of the block.
+		b.execution.receipts = append(b.execution.receipts, receipt)
 		// Criterion (2) of the ACP is not met so continue filling.
 		if x.chunk.consumed < e.chunkCapacity(x.chunk) {
 			x.chunk.receipts = append(x.chunk.receipts, receipt)
@@ -328,7 +415,16 @@ func (e *executor) execute(ctx context.Context, b *Block) error {
 		if err := e.nextChunk(ctx, x, receipt); err != nil {
 			return err
 		}
+		assertClockEquality()
 	}
+
+	b.execution.by = e.gasClock.clone()
+	root, err := e.commitState(ctx, x, b.NumberU64())
+	if err != nil {
+		return err
+	}
+	b.execution.stateRootPost = root
+	b.executed.Store(true)
 
 	// Let C and B be the timestamps of the chunk and the block (header),
 	// respectively:
@@ -344,23 +440,20 @@ func (e *executor) execute(ctx context.Context, b *Block) error {
 	return nil
 }
 
-func (e *executor) nextChunk(ctx context.Context, x *executionScratchSpace, overflowTx *types.Receipt) error {
-	prev := x.chunk
-	x.chunk = nil // avoid accidentally using it before replacement
-
-	if err := e.snaps.UseThenSignal(ctx, func(snaps *snapshot.Tree) error {
+func (e *executor) commitState(ctx context.Context, x *executionScratchSpace, blockNum uint64) (common.Hash, error) {
+	var root common.Hash
+	err := e.snaps.UseThenSignal(ctx, func(snaps *snapshot.Tree) error {
 		// Commit() will call [snapshot.Tree.Cap] so we call it while holding
 		// `snaps` even though we only explicitly use `snaps` until a few lines
 		// down. Cue the Rustaceans.
-		root, err := x.statedb.Commit(prev.timestamp, true)
+		var err error
+		root, err = x.statedb.Commit(blockNum, true)
 		if err != nil {
-			return fmt.Errorf("%T.Commit() at end of chunk at time %d: %w", x.statedb, prev.timestamp, err)
+			return fmt.Errorf("%T.Commit() at end of chunk at time %d: %w", x.statedb, blockNum, err)
 		}
 		if err := x.stateCache.TrieDB().Commit(root, false); err != nil {
 			return err
 		}
-		prev.stateRootPost = root
-		prev.filledBy = time.Now()
 
 		db, err := state.New(root, x.stateCache, snaps)
 		if err != nil {
@@ -368,9 +461,20 @@ func (e *executor) nextChunk(ctx context.Context, x *executionScratchSpace, over
 		}
 		x.statedb = db
 		return nil
-	}); err != nil {
+	})
+	return root, err
+}
+
+func (e *executor) nextChunk(ctx context.Context, x *executionScratchSpace, overflowTx *types.Receipt) error {
+	prev := x.chunk
+	x.chunk = nil // avoid accidentally using it before replacement
+
+	root, err := e.commitState(ctx, x, prev.timestamp)
+	if err != nil {
 		return err
 	}
+	prev.stateRootPost = root
+	prev.filledBy = time.Now()
 
 	surplus, err := safemath.Sub(e.chunkCapacity(prev), prev.consumed)
 	if err != nil {
