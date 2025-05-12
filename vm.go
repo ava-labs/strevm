@@ -75,10 +75,6 @@ func New() *VM {
 		preference: sink.NewMutex[ids.ID](ids.Empty),
 		// Block building
 		builder: blockBuilder{
-			tranches: sink.NewMonitor(&tranches{
-				accepted:      newRootTxTranche(),
-				chunkTranches: make(map[uint64]*txTranche),
-			}),
 			mempool: sink.NewPriorityMutex(new(mempool)),
 			newTxs:  make(chan *transaction, 1e6), // TODO(arr4n) make the buffer configurable
 			quit:    quit,
@@ -124,12 +120,29 @@ func (vm *VM) Initialize(
 	// The genesis block can't be processed until the [blockBuilder] is
 	// initialised with access to the just-initialised [executor] snapshots.
 	vm.builder.snaps = vm.exec.snaps // safe to copy a [sink.Mutex]
-	if err := vm.VerifyBlock(ctx, genBlock); err != nil {
+	vm.builder.genesisTimestamp = gen.Timestamp
+
+	vm.logger().Debug(
+		"Genesis block",
+		zap.Uint64("timestamp", genBlock.Time()),
+		zap.Stringer("hash", genBlock.Hash()),
+	)
+	if err := vm.blocks.Use(ctx, func(bm blockMap) error {
+		bm[genBlock.ID()] = genBlock
+		return nil
+	}); err != nil {
 		return err
 	}
-	if err := vm.AcceptBlock(ctx, genBlock); err != nil {
+	if err := vm.accepted.Use(ctx, func(a *accepted) error {
+		id := genBlock.ID()
+		a.all[id] = genBlock
+		a.lastID = id
+		a.heightToID[0] = id
+		return nil
+	}); err != nil {
 		return err
 	}
+
 	return vm.afterInitialize(ctx, toEngine)
 }
 
@@ -220,58 +233,15 @@ func (vm *VM) ParseBlock(ctx context.Context, blockBytes []byte) (*Block, error)
 }
 
 func (vm *VM) BuildBlock(ctx context.Context) (*Block, error) {
-	parent, err := sink.FromMutex(ctx, vm.accepted, func(a *accepted) (*types.Block, error) {
-		return a.last().Block, nil
+	parent, err := sink.FromMutex(ctx, vm.accepted, func(a *accepted) (*Block, error) {
+		return a.last(), nil
 	})
 	if err != nil {
 		return nil, err
 	}
 
 	timestamp := parent.Time() + 1
-	needStateRootAt := clippedSubtract(timestamp, stateRootDelaySeconds)
-	chunk, err := sink.FromMonitor(ctx, vm.exec.chunks,
-		func(res *executionResults) bool {
-			_, ok := res.chunks[needStateRootAt]
-
-			msg := "Waiting for historical state root"
-			if ok {
-				msg = "Received historical state root"
-			}
-			vm.logger().Debug(
-				msg,
-				zap.Uint64("block_timestamp", timestamp),
-				zap.Uint64("chunk_timestamp", needStateRootAt),
-			)
-
-			return ok
-		},
-		func(res *executionResults) (*chunk, error) {
-			// TODO(arr4n) this needs to be all chunks since the last parent,
-			// but only once blocks have >1s between them.
-			return res.chunks[needStateRootAt], nil
-		},
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	// TODO(arr4n) this needs to be done immediately upon filling of the chunk,
-	// but only once the [blockBuilder] keeps chunk tranches for historical
-	// lookback.
-	if err := vm.builder.clearExecuted(ctx, chunk); err != nil {
-		return nil, err
-	}
-
-	tranche, evmBlock, err := vm.builder.build(ctx, parent, chunk, vm.exec.chainConfig, &vm.exec.gasClock.config)
-	if err != nil {
-		return nil, err
-	}
-	// Block-building is the only time we add a [txTranche] at the same time as
-	// constructing the [Block]. In all other instances it's done in
-	// [Block.Verify].
-	b := vm.newBlock(evmBlock)
-	b.tranche = tranche
-	return b, nil
+	return vm.builder.buildBlock(ctx, timestamp, parent)
 }
 
 func (vm *VM) SetPreference(ctx context.Context, blkID ids.ID) error {
