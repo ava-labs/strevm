@@ -6,6 +6,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/arr4n/sink"
 	"github.com/ava-labs/avalanchego/ids"
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core"
@@ -26,11 +27,10 @@ type Block struct {
 
 	execution struct { // valid and immutable i.f.f. `executed == true`
 		by            gasClock
+		byTime        time.Time
 		receipts      types.Receipts
 		stateRootPost common.Hash
 	}
-
-	tranche *txTranche // TODO(arr4n): remove this
 }
 
 func (b *Block) ID() ids.ID {
@@ -38,9 +38,8 @@ func (b *Block) ID() ids.ID {
 }
 
 func (vm *VM) AcceptBlock(ctx context.Context, b *Block) error {
-	if err := vm.accepted.Use(ctx, func(a *accepted) error {
-		parent := a.last() // nil i.f.f. `b` is genesis, but that's allowed
-		if err := vm.exec.enqueueAccepted(ctx, b, parent); err != nil {
+	return vm.accepted.Use(ctx, func(a *accepted) error {
+		if err := vm.exec.enqueueAccepted(ctx, b); err != nil {
 			return err
 		}
 
@@ -48,21 +47,15 @@ func (vm *VM) AcceptBlock(ctx context.Context, b *Block) error {
 		a.lastID = b.ID()
 		a.heightToID[b.NumberU64()] = b.ID()
 
+		b.accepted.Store(true)
+
 		vm.logger().Debug(
 			"Accepted block",
 			zap.Uint64("height", b.Height()),
+			zap.Stringer("hash", b.Hash()),
 		)
 		return nil
-	}); err != nil {
-		return err
-	}
-
-	// Synchronises our [blockBuilder] with those of other validators.
-	if err := vm.builder.acceptTranche(ctx, b.tranche); err != nil {
-		return err
-	}
-	b.accepted.Store(true)
-	return nil
+	})
 }
 
 func (*VM) RejectBlock(context.Context, *Block) error {
@@ -94,36 +87,24 @@ func (vm *VM) VerifyBlock(ctx context.Context, b *Block) error {
 		})
 	}
 
-	// While block-building tranches sample from the mempool, here we use the
-	// unverified block's transactions as the candidates. If the tranche adds
-	// all txs then (a) the block is valid; and (b) our local [blockBuilder]
-	// will be in sync with all peers' (including the proposer) should this
-	// block be accepted.
-	cfg := &trancheBuilderConfig{
-		atEndOf: &chunk{
-			timestamp:     clippedSubtract(b.Time(), stateRootDelaySeconds),
-			stateRootPost: b.Root(),
-		},
-		candidates: candidates,
-		gasConfig:  &vm.exec.gasClock.config,
-	}
-	tranche, err := vm.builder.makeTranche(ctx, cfg)
+	parent, err := sink.FromMutex(ctx, vm.blocks, func(bm blockMap) (*Block, error) {
+		p, ok := bm[b.Parent()]
+		if !ok {
+			return nil, fmt.Errorf("block parent %#x not found (presumed height %d)", b.ParentHash(), b.Height()-1)
+		}
+		return p, nil
+	})
 	if err != nil {
 		return err
 	}
-	if nTranche, nBlock := len(tranche.rawTxs), len(txs); nTranche != nBlock {
-		return fmt.Errorf("validation %T has %d proposed txs from block's %d", tranche, nTranche, nBlock)
-	}
-	for i, bTx := range txs {
-		if bTx.Hash() != tranche.rawTxs[i].Hash() {
-			return fmt.Errorf("block and validation %T have mismatched tx[%d]", tranche, i)
-		}
-	}
 
-	// The tranche will be appended to the builder's i.f.f. [Block.Accept] is
-	// called later, but for now it matches the proposer's tranche from
-	// block-building.
-	b.tranche = tranche
+	bb, err := vm.builder.buildBlockWithCandidateTxs(b.Time(), parent, candidates)
+	if err != nil {
+		return err
+	}
+	// TODO(arr4n) compare `b` and `bb`
+	_ = bb
+
 	return vm.blocks.Use(ctx, func(bm blockMap) error {
 		bm[b.ID()] = b
 		return nil

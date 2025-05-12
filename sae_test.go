@@ -3,6 +3,7 @@ package sae
 import (
 	"context"
 	"crypto/ecdsa"
+	"errors"
 	"flag"
 	"fmt"
 	"math"
@@ -96,7 +97,6 @@ func TestBasicE2E(t *testing.T) {
 		// a very specific point.
 	}
 
-	var finalStateRoot common.Hash
 	quitBlockBuilding := make(chan struct{})
 	blockBuildingDone := make(chan struct{})
 	start := time.Now()
@@ -112,74 +112,74 @@ func TestBasicE2E(t *testing.T) {
 			}
 
 			b, err := snowCompatVM.BuildBlock(ctx)
+			if errors.Is(err, errWaitingForExecution) {
+				numBlocks--
+				continue
+			}
 			require.NoErrorf(t, err, "%T.BuildBlock()", snowCompatVM)
 			require.NoErrorf(t, b.Verify(ctx), "%T.Verify()", b)
 			require.NoErrorf(t, b.Accept(ctx), "%T.Accept()", b)
 
 			bb, ok := snowCompatVM.AsRawBlock(b)
 			require.Truef(t, ok, "Extracting %T from snowman.Block", bb)
-			finalStateRoot = bb.Root()
 		}
 		acceptance := time.Since(start)
 		t.Logf("Built and accepted %s blocks in %v", human(numBlocks), acceptance)
 	}()
 
 	lastTxHash := allTxs[len(allTxs)-1].Hash()
-	vm.exec.chunks.Wait(ctx,
-		func(res *executionResults) bool {
-			_, ok := res.receipts[lastTxHash]
+	vm.exec.receipts.Wait(ctx,
+		func(r map[common.Hash]*types.Receipt) bool {
+			_, ok := r[lastTxHash]
 			return ok
 		},
-		func(res *executionResults) error {
+		func(map[common.Hash]*types.Receipt) error {
 			close(quitBlockBuilding)
 			return nil
 		},
 	)
 	<-blockBuildingDone
 
+	lastID, err := vm.LastAccepted(ctx)
+	require.NoErrorf(t, err, "%T.LastAccepted()", vm)
+	lastBlock, err := vm.GetBlock(ctx, lastID)
+	require.NoErrorf(t, err, "%T.GetBlock(LastAccepted())", vm)
+
+	// There's no need in production to block on execution being completed so
+	// it's unnecessary to change this to a channel that gets closed.
+	for !lastBlock.executed.Load() {
+		runtime.Gosched()
+	}
+
+	lastExecutedBy := lastBlock.execution.byTime
+	finalStateRoot := lastBlock.execution.stateRootPost
+
 	var (
 		gotReceipts      []*types.Receipt
 		totalGasConsumed gas.Gas
-		lastFilledBy     time.Time
 	)
-	vm.exec.chunks.UseThenSignal(ctx, func(res *executionResults) error {
-		var lastChunkTime uint64
-		for t := range res.chunks {
-			if t != math.MaxUint64 && t > lastChunkTime {
-				lastChunkTime = t
-			}
+	for ; lastBlock != nil; lastBlock = lastBlock.parent {
+		gotReceipts = append(lastBlock.execution.receipts, gotReceipts...)
+		for _, r := range lastBlock.execution.receipts {
+			totalGasConsumed += gas.Gas(r.GasUsed)
 		}
+	}
 
-		for timestamp := range lastChunkTime + 1 {
-			got, ok := res.chunks[timestamp]
-			if !ok {
-				t.Errorf("chunk at time %d not found", timestamp)
-				continue
-			}
-			gotReceipts = append(gotReceipts, got.receipts...)
-			totalGasConsumed += got.consumed
-
-			if len(got.receipts) > 0 {
-				lastFilledBy = got.filledBy
-			}
-		}
-		return nil
-	})
 	pprof.StopCPUProfile() // docs state "stops the current CPU profile, if any" so ok if we didn't start it
 	if t.Failed() {
 		return
 	}
-	require.NoError(t, vm.Shutdown(ctx))
+	require.NoErrorf(t, vm.Shutdown(ctx), "%T.Shutdown()", vm)
 
 	t.Run("tx_receipts", func(t *testing.T) {
 		require.Equalf(t, len(allTxs), len(gotReceipts), "# %T == # %T", &types.Receipt{}, &types.Transaction{})
-		t.Logf("Executed %s txs (%s gas) in %v", human(len(gotReceipts)), human(totalGasConsumed), lastFilledBy.Sub(start))
+		t.Logf("Executed %s txs (%s gas) in %v", human(len(gotReceipts)), human(totalGasConsumed), lastExecutedBy.Sub(start))
 
 		var wantReceipts []*types.Receipt
 		for _, tx := range allTxs {
 			wantReceipts = append(wantReceipts, &types.Receipt{TxHash: tx.Hash()})
 		}
-		if diff := cmp.Diff(wantReceipts, gotReceipts, chunkCmpOpts()); diff != "" {
+		if diff := cmp.Diff(wantReceipts, gotReceipts, cmpReceiptsByHash()); diff != "" {
 			t.Errorf("Execution results diff (-want +got): \n%s", diff)
 		}
 
@@ -216,19 +216,11 @@ func TestBasicE2E(t *testing.T) {
 	t.Run("state", func(t *testing.T) {
 		db := vm.db
 		statedb, err := state.New(finalStateRoot, state.NewDatabase(db), nil)
-		require.NoError(t, err, "state.New() at last chunk's state root")
+		require.NoError(t, err, "state.New() at last block's state root")
 
 		nTxs := uint64(len(allTxs))
 		assert.Equal(t, nTxs, statedb.GetNonce(eoa), "Nonce of EOA sending txs")
 		assert.Equal(t, uint256.NewInt(nTxs), statedb.GetBalance(wethAddr), "Balance of WETH contract")
-	})
-
-	// Invariants associated with a zero-length builder queue are asserted by
-	// the builder itself and would result in [VM.BuildBlock] returning an
-	// error.
-	vm.builder.tranches.UseThenSignal(ctx, func(trs *tranches) error {
-		assert.Zero(t, trs.accepted.pending.Len(), "block-builder length of pending-tx queue")
-		return nil
 	})
 }
 
@@ -241,9 +233,8 @@ func newTestPrivateKey(tb testing.TB, seed []byte) *ecdsa.PrivateKey {
 	return key
 }
 
-func chunkCmpOpts() cmp.Options {
+func cmpReceiptsByHash() cmp.Options {
 	return cmp.Options{
-		cmp.AllowUnexported(chunk{}),
 		cmp.Transformer("receiptHash", func(r *types.Receipt) common.Hash {
 			if r == nil {
 				return common.Hash{}
