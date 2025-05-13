@@ -59,11 +59,11 @@ func (e *executor) init(ctx context.Context, genesis *core.Genesis) (*Block, err
 	e.chainConfig = chainConfig
 	e.gasClock = gasClock{
 		time: genesis.Timestamp,
-		config: gas.Config{
-			MinPrice:                 params.GWei,
-			MaxPerSecond:             maxGasPerSecond,
-			TargetPerSecond:          maxGasPerSecond / 2,
-			ExcessConversionConstant: 20_000_000, // TODO(arr4n)
+		config: gasConfig{
+			minPrice:                 params.GWei,
+			capPerSecond:             maxGasPerSecond,
+			targetPerSecond:          maxGasPerSecond / 2,
+			excessConversionConstant: 20_000_000, // TODO(arr4n)
 		},
 	}
 
@@ -192,13 +192,21 @@ type executionScratchSpace struct {
 	statedb    *state.StateDB
 }
 
-type gasClock struct {
-	time     uint64
-	consumed gas.Gas // this second
-	excess   gas.Gas
+type (
+	gasClock struct {
+		config gasConfig
 
-	config gas.Config
-}
+		time     uint64
+		consumed gas.Gas // this second
+		excess   gas.Gas
+	}
+
+	gasConfig struct {
+		capPerSecond, targetPerSecond gas.Gas   // R, T
+		minPrice                      gas.Price // M
+		excessConversionConstant      gas.Gas   // K
+	}
+)
 
 func (c gasClock) clone() gasClock {
 	return c
@@ -206,21 +214,21 @@ func (c gasClock) clone() gasClock {
 
 func (c *gasClock) gasPrice() gas.Price {
 	return gas.CalculatePrice(
-		c.config.MinPrice,
+		c.config.minPrice,
 		c.excess,
-		c.config.ExcessConversionConstant,
+		c.config.excessConversionConstant,
 	)
 }
 
 func (c *gasClock) consume(g gas.Gas) {
 	c.consumed += g
-	c.time += uint64(c.consumed / c.config.MaxPerSecond)
-	c.consumed %= c.config.MaxPerSecond
+	c.time += uint64(c.consumed / c.config.capPerSecond)
+	c.consumed %= c.config.capPerSecond
 
 	// The ACP describes the increase in excess in terms of `p`, a rational
 	// number, where R=pT. Substituting p for R/T, we get an increase of
 	// g(R-T)/R.
-	quo, _ := mulDiv(g, c.config.MaxPerSecond-c.config.TargetPerSecond, c.config.MaxPerSecond)
+	quo, _ := mulDiv(g, c.config.capPerSecond-c.config.targetPerSecond, c.config.capPerSecond)
 	c.excess += gas.Gas(quo)
 }
 
@@ -229,11 +237,11 @@ func (c *gasClock) fastForward(to uint64) {
 		return
 	}
 
-	surplus := c.config.MaxPerSecond - c.consumed
-	surplus += gas.Gas(to-c.time-1) * c.config.MaxPerSecond // -1 avoids double-counting gas remaining this second
+	surplus := c.config.capPerSecond - c.consumed
+	surplus += gas.Gas(to-c.time-1) * c.config.capPerSecond // -1 avoids double-counting gas remaining this second
 	// By similar reasoning to that in [gasClock.consume], we get a decrease in
 	// excess of sT/R.
-	quo, _ := mulDiv(surplus, c.config.TargetPerSecond, c.config.MaxPerSecond)
+	quo, _ := mulDiv(surplus, c.config.targetPerSecond, c.config.capPerSecond)
 	c.excess = boundedSubtract(c.excess, quo, 0)
 
 	c.time = to
@@ -243,7 +251,7 @@ func (c *gasClock) fastForward(to uint64) {
 func (c *gasClock) remainingGasThisSecond() gas.Gas {
 	// TODO(arr4n) NB! this MUST be modified to account for ACP-176
 	// functionality allowing validators to change the config.
-	return c.config.MaxPerSecond - c.consumed
+	return c.config.capPerSecond - c.consumed
 }
 
 func mulDiv(a, b, c gas.Gas) (quo, rem gas.Gas) {
