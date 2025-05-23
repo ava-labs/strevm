@@ -65,10 +65,6 @@ func (vm *VM) startMempool() {
 	}
 }
 
-type mempool struct {
-	pool queue.Priority[*pendingTx]
-}
-
 type txAndSender struct {
 	tx   *types.Transaction
 	from common.Address
