@@ -64,6 +64,11 @@ func TestBasicE2E(t *testing.T) {
 	vm := New()
 	snowCompatVM := adaptor.Convert(vm)
 
+	require.NoErrorf(t, vm.Initialize(
+		ctx, snowCtx,
+		nil, genesisJSON(t, chainConfig, eoa), nil, nil, nil, nil, nil,
+	), "%T.Initialize()", vm)
+
 	// TODO(arr4n) run multiple goroutines as signing txs is the actual
 	// bottleneck; i.e. if we sign asynchronously then the gas/s metric
 	// decreases!
@@ -77,16 +82,8 @@ func TestBasicE2E(t *testing.T) {
 			GasTipCap: big.NewInt(0),
 			GasFeeCap: new(big.Int).SetUint64(math.MaxUint64),
 		})
-		vm.builder.newTxs <- &transaction{
-			tx:   allTxs[nonce],
-			from: eoa, // in reality this is populated by an RPC-server goroutine
-		}
+		vm.newTxs <- allTxs[nonce]
 	}
-
-	require.NoErrorf(t, vm.Initialize(
-		ctx, snowCtx,
-		nil, genesisJSON(t, chainConfig, eoa), nil, nil, nil, nil, nil,
-	), "%T.Initialize()", vm)
 
 	if d := *cpuProfileDest; d != "" {
 		t.Logf("Writing CPU profile for block acceptance and execution to %q", d)
@@ -111,12 +108,15 @@ func TestBasicE2E(t *testing.T) {
 			default:
 			}
 
-			b, err := snowCompatVM.BuildBlock(ctx)
+			proposed, err := snowCompatVM.BuildBlock(ctx)
 			if errors.Is(err, errWaitingForExecution) {
 				numBlocks--
 				continue
 			}
 			require.NoErrorf(t, err, "%T.BuildBlock()", snowCompatVM)
+
+			b, err := snowCompatVM.ParseBlock(ctx, proposed.Bytes())
+			require.NoErrorf(t, err, "%T.ParseBlock()", snowCompatVM)
 			require.NoErrorf(t, b.Verify(ctx), "%T.Verify()", b)
 			require.NoErrorf(t, b.Accept(ctx), "%T.Accept()", b)
 
@@ -139,17 +139,16 @@ func TestBasicE2E(t *testing.T) {
 		},
 	)
 	<-blockBuildingDone
+	pprof.StopCPUProfile() // docs state "stops the current CPU profile, if any" so ok if we didn't start it
+	if t.Failed() {
+		return
+	}
 
 	lastID, err := vm.LastAccepted(ctx)
 	require.NoErrorf(t, err, "%T.LastAccepted()", vm)
 	lastBlock, err := vm.GetBlock(ctx, lastID)
 	require.NoErrorf(t, err, "%T.GetBlock(LastAccepted())", vm)
-
-	// There's no need in production to block on execution being completed so
-	// it's unnecessary to change this to a channel that gets closed.
-	for !lastBlock.executed.Load() {
-		runtime.Gosched()
-	}
+	require.Eventuallyf(t, lastBlock.executed.Load, time.Second, 10*time.Millisecond, "executed.Load() on last %T", lastBlock)
 
 	lastExecutedBy := lastBlock.execution.byTime
 	finalStateRoot := lastBlock.execution.stateRootPost
@@ -163,11 +162,6 @@ func TestBasicE2E(t *testing.T) {
 		for _, r := range lastBlock.execution.receipts {
 			totalGasConsumed += gas.Gas(r.GasUsed)
 		}
-	}
-
-	pprof.StopCPUProfile() // docs state "stops the current CPU profile, if any" so ok if we didn't start it
-	if t.Failed() {
-		return
 	}
 	require.NoErrorf(t, vm.Shutdown(ctx), "%T.Shutdown()", vm)
 

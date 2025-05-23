@@ -2,11 +2,11 @@ package sae
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync/atomic"
 	"time"
 
-	"github.com/arr4n/sink"
 	"github.com/ava-labs/avalanchego/ids"
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core"
@@ -68,42 +68,43 @@ func (b *Block) Parent() ids.ID {
 }
 
 func (vm *VM) VerifyBlock(ctx context.Context, b *Block) error {
-	signer := types.LatestSigner(vm.exec.chainConfig)
+	parent, err := vm.GetBlock(ctx, ids.ID(b.ParentHash()))
+	if err != nil {
+		return fmt.Errorf("block parent %#x not found (presumed height %d)", b.ParentHash(), b.Height()-1)
+	}
+	b.parent = parent
 
+	signer := vm.signer()
 	txs := b.Transactions()
 	// This starts a concurrent, background pre-computation of the results of
 	// [types.Sender], which is cached in each tx.
-	core.SenderCacher.Recover(signer, txs)
-	candidates := new(queue.FIFO[*transaction])
+	core.SenderCacher.Recover(vm.signer(), b.Transactions())
+
+	candidates := new(queue.FIFO[*pendingTx])
 	candidates.Grow(txs.Len())
 	for _, tx := range txs {
 		from, err := types.Sender(signer, tx)
 		if err != nil {
 			return err
 		}
-		candidates.Push(&transaction{
-			tx:   tx,
-			from: from,
+		candidates.Push(&pendingTx{
+			txAndSender: txAndSender{
+				tx:   tx,
+				from: from,
+			},
 		})
 	}
 
-	parent, err := sink.FromMutex(ctx, vm.blocks, func(bm blockMap) (*Block, error) {
-		p, ok := bm[b.Parent()]
-		if !ok {
-			return nil, fmt.Errorf("block parent %#x not found (presumed height %d)", b.ParentHash(), b.Height()-1)
-		}
-		return p, nil
-	})
+	bb, err := vm.buildBlockWithCandidateTxs(b.Time(), parent, vm.db, candidates)
 	if err != nil {
 		return err
+	}
+	if b.Hash() != bb.Hash() {
+		// TODO(arr4n): add fine-grained checks to aid in debugging
+		return errors.New("block built internally doesn't match one being verified")
 	}
 
-	bb, err := vm.builder.buildBlockWithCandidateTxs(b.Time(), parent, candidates)
-	if err != nil {
-		return err
-	}
-	// TODO(arr4n) compare `b` and `bb`
-	_ = bb
+	b.lastSettled = bb.lastSettled
 
 	return vm.blocks.Use(ctx, func(bm blockMap) error {
 		bm[b.ID()] = b
@@ -114,7 +115,6 @@ func (vm *VM) VerifyBlock(ctx context.Context, b *Block) error {
 func (b *Block) Bytes() []byte {
 	buf, err := rlp.EncodeToBytes(b)
 	if err != nil {
-		// b.chain.logger().Error("rlp.EncodeToBytes(Block)", zap.Error(err))
 		return nil
 	}
 	return buf

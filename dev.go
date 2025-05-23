@@ -8,9 +8,9 @@ import (
 
 	"github.com/arr4n/sink"
 	"github.com/ava-labs/avalanchego/snow/engine/common"
-	ethcommon "github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/rlp"
+	"github.com/ava-labs/strevm/queue"
 	"go.uber.org/zap"
 
 	_ "embed"
@@ -25,24 +25,16 @@ func (vm *VM) afterInitialize(ctx context.Context, toEngine chan<- common.Messag
 	if err := rlp.DecodeBytes(tx0, tx); err != nil {
 		return err
 	}
-	if err := vm.builder.mempool.Use(ctx, 0, func(_ <-chan sink.Priority, mp *mempool) error {
-		mp.pool.Push(&transaction{
-			tx:   tx,
-			from: ethcommon.HexToAddress("0x9cce34f7ab185c7aba1b7c8140d620b4bda941d6"),
-		})
-		return nil
-	}); err != nil {
-		return err
-	}
+	vm.newTxs <- tx
 
 	go func() {
 		time.Sleep(10 * time.Second)
 		vm.logger().Info("##### Signalling pending txs")
 		toEngine <- common.PendingTxs
-		vm.builder.mempool.Use(context.Background(), 0, func(_ <-chan sink.Priority, mp *mempool) error {
+		vm.mempool.Use(ctx, 0, func(_ <-chan sink.Priority, mp *queue.Priority[*pendingTx]) error {
 			vm.logger().Info(
 				"##### Mempool has pending txs",
-				zap.Int("length", mp.pool.Len()),
+				zap.Int("length", mp.Len()),
 			)
 			return nil
 		})

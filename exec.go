@@ -42,7 +42,6 @@ type executor struct {
 	// executeScratchSpace MUST NOT be accessed by any methods other than
 	// [executor.init] and [executor.execute].
 	executeScratchSpace executionScratchSpace
-	snaps               sink.Monitor[*snapshot.Tree]
 }
 
 // init initialises the executor and returns the genesis block, upon which the
@@ -68,22 +67,23 @@ func (e *executor) init(ctx context.Context, genesis *core.Genesis) (*Block, err
 	}
 
 	genesisBlock := rawdb.ReadBlock(e.vm.db, genesisHash, 0)
+	stateRoot := genesisBlock.Root()
+
 	snapConf := snapshot.Config{
 		CacheSize:  128, // MB
 		AsyncBuild: false,
 	}
-	snaps, err := snapshot.New(snapConf, e.vm.db, tdb, genesisBlock.Root())
+	snaps, err := snapshot.New(snapConf, e.vm.db, tdb, stateRoot)
 	if err != nil {
 		return nil, err
 	}
-	e.snaps = sink.NewMonitor(snaps)
-	statedb, err := state.New(genesisBlock.Root(), sdb, snaps)
+	statedb, err := state.New(stateRoot, sdb, snaps)
 	if err != nil {
 		return nil, err
 	}
-
 	e.executeScratchSpace = executionScratchSpace{
 		stateCache: sdb,
+		snaps:      snaps,
 		statedb:    statedb,
 	}
 
@@ -94,6 +94,8 @@ func (e *executor) init(ctx context.Context, genesis *core.Genesis) (*Block, err
 	b := e.vm.newBlock(genesisBlock)
 	b.accepted.Store(true)
 	b.executed.Store(true)
+	b.execution.by.time = genesisBlock.Time()
+	b.execution.stateRootPost = genesisBlock.Root()
 	return b, nil
 
 }
@@ -109,7 +111,8 @@ func (e *executor) run(ready chan<- struct{}) {
 	e.spawned.Wait()
 	e.receipts.Close()
 	e.queue.Close()
-	snaps := e.snaps.Close()
+
+	snaps := e.executeScratchSpace.snaps
 	snaps.Disable()
 	snaps.Release()
 
@@ -189,6 +192,7 @@ func (e *executor) processQueue() {
 
 type executionScratchSpace struct {
 	stateCache state.Database
+	snaps      *snapshot.Tree
 	statedb    *state.StateDB
 }
 
@@ -314,12 +318,15 @@ func (e *executor) execute(ctx context.Context, b *Block) error {
 	}
 	b.execution.stateRootPost = root
 	b.executed.Store(true)
+
 	e.logger().Debug(
 		"Block execution complete",
 		zap.Uint64("height", b.Height()),
-		zap.Uint64("in_unix_second", e.gasClock.time),
+		zap.Uint64("gas_time", e.gasClock.time),
 		zap.Uint64("gas_remaining_in_second", uint64(e.gasClock.remainingGasThisSecond())),
+		zap.Time("wall_time", b.execution.byTime),
 	)
+
 	return e.receipts.UseThenSignal(e.quitCtx(), func(rs map[common.Hash]*types.Receipt) error {
 		for _, r := range b.execution.receipts {
 			rs[r.TxHash] = r
@@ -329,26 +336,18 @@ func (e *executor) execute(ctx context.Context, b *Block) error {
 }
 
 func (e *executor) commitState(ctx context.Context, x *executionScratchSpace, blockNum uint64) (common.Hash, error) {
-	var root common.Hash
-	err := e.snaps.UseThenSignal(ctx, func(snaps *snapshot.Tree) error {
-		// Commit() will call [snapshot.Tree.Cap] so we call it while holding
-		// `snaps` even though we only explicitly use `snaps` until a few lines
-		// down. Cue the Rustaceans.
-		var err error
-		root, err = x.statedb.Commit(blockNum, true)
-		if err != nil {
-			return fmt.Errorf("%T.Commit() at end of block %d: %w", x.statedb, blockNum, err)
-		}
-		if err := x.stateCache.TrieDB().Commit(root, false); err != nil {
-			return err
-		}
+	root, err := x.statedb.Commit(blockNum, true)
+	if err != nil {
+		return common.Hash{}, fmt.Errorf("%T.Commit() at end of block %d: %w", x.statedb, blockNum, err)
+	}
+	if err := x.stateCache.TrieDB().Commit(root, false); err != nil {
+		return common.Hash{}, err
+	}
 
-		db, err := state.New(root, x.stateCache, snaps)
-		if err != nil {
-			return err
-		}
-		x.statedb = db
-		return nil
-	})
-	return root, err
+	db, err := state.New(root, x.stateCache, x.snaps)
+	if err != nil {
+		return common.Hash{}, err
+	}
+	x.statedb = db
+	return root, nil
 }

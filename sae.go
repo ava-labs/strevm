@@ -9,8 +9,10 @@ import (
 )
 
 const (
-	maxGasPerSecond       = gas.Gas(50e6) // C-Chain goal of 50Mg/s by September
+	maxGasPerSecond       = gas.Gas(50e6)
 	stateRootDelaySeconds = 5
+	lambda                = 1
+	maxGasSecondsPerBlock = 2
 )
 
 var errUnimplemented = errors.New("unimplemented")

@@ -21,6 +21,7 @@ import (
 	"github.com/ava-labs/libevm/ethdb"
 	"github.com/ava-labs/libevm/rlp"
 	"github.com/ava-labs/strevm/adaptor"
+	"github.com/ava-labs/strevm/queue"
 	"go.uber.org/zap"
 )
 
@@ -41,11 +42,15 @@ type VM struct {
 	accepted   sink.Mutex[*accepted]
 	preference sink.Mutex[ids.ID]
 
-	db                 ethdb.Database
-	builder            blockBuilder
+	db ethdb.Database
+
+	genesisTimestamp uint64
+	mempool          sink.PriorityMutex[*queue.Priority[*pendingTx]]
+	newTxs           chan *types.Transaction
+
 	exec               *executor
-	quit               chan<- struct{}
-	builderAndExecDone <-chan struct{} // receive 2, not closed
+	quit               chan struct{}
+	mempoolAndExecDone chan struct{} // receive 2, not closed
 }
 
 type blockMap map[ids.ID]*Block
@@ -74,14 +79,10 @@ func New() *VM {
 		}),
 		preference: sink.NewMutex[ids.ID](ids.Empty),
 		// Block building
-		builder: blockBuilder{
-			mempool: sink.NewPriorityMutex(new(mempool)),
-			newTxs:  make(chan *transaction, 1e6), // TODO(arr4n) make the buffer configurable
-			quit:    quit,
-			done:    done,
-		},
-		quit:               quit, // both builder and executor
-		builderAndExecDone: done, // each will send on this
+		mempool:            sink.NewPriorityMutex(new(queue.Priority[*pendingTx])),
+		newTxs:             make(chan *types.Transaction, 10), // TODO(arr4n) make the buffer configurable
+		quit:               quit,                              // both mempool and executor
+		mempoolAndExecDone: done,                              // each will send on this
 	}
 
 	vm.exec = &executor{
@@ -105,9 +106,7 @@ func (vm *VM) Initialize(
 	appSender common.AppSender,
 ) error {
 	vm.snowCtx = chainCtx
-	vm.builder.log = chainCtx.Log
 	vm.db = rawdb.NewMemoryDatabase() // TODO(arr4n) wrap the [database.Database] argument
-	go vm.builder.startMempool()
 
 	gen := new(core.Genesis)
 	if err := json.Unmarshal(genesisBytes, gen); err != nil {
@@ -117,10 +116,9 @@ func (vm *VM) Initialize(
 	if err != nil {
 		return err
 	}
-	// The genesis block can't be processed until the [blockBuilder] is
-	// initialised with access to the just-initialised [executor] snapshots.
-	vm.builder.snaps = vm.exec.snaps // safe to copy a [sink.Mutex]
-	vm.builder.genesisTimestamp = gen.Timestamp
+	vm.genesisTimestamp = gen.Timestamp
+
+	go vm.startMempool(vm.quit, vm.mempoolAndExecDone)
 
 	vm.logger().Debug(
 		"Genesis block",
@@ -198,7 +196,7 @@ func (vm *VM) Shutdown(ctx context.Context) error {
 
 	for range 2 {
 		select {
-		case <-vm.builderAndExecDone:
+		case <-vm.mempoolAndExecDone:
 		case <-ctx.Done():
 			return ctx.Err()
 		}
@@ -241,7 +239,11 @@ func (vm *VM) BuildBlock(ctx context.Context) (*Block, error) {
 	}
 
 	timestamp := parent.Time() + 1
-	return vm.builder.buildBlock(ctx, timestamp, parent)
+	return vm.buildBlock(ctx, timestamp, parent, vm.db)
+}
+
+func (vm *VM) signer() types.Signer {
+	return types.LatestSigner(vm.exec.chainConfig)
 }
 
 func (vm *VM) SetPreference(ctx context.Context, blkID ids.ID) error {

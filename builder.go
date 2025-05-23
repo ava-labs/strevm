@@ -9,46 +9,28 @@ import (
 	"slices"
 
 	"github.com/arr4n/sink"
-	"github.com/ava-labs/avalanchego/utils/logging"
 	"github.com/ava-labs/avalanchego/vms/components/gas"
 	"github.com/ava-labs/libevm/common"
-	"github.com/ava-labs/libevm/core/state/snapshot"
+	"github.com/ava-labs/libevm/core/state"
 	"github.com/ava-labs/libevm/core/types"
+	"github.com/ava-labs/libevm/ethdb"
 	"github.com/ava-labs/libevm/trie"
 	"github.com/ava-labs/strevm/queue"
 	"github.com/holiman/uint256"
 	"go.uber.org/zap"
 )
 
-type blockBuilder struct {
-	genesisTimestamp uint64
-	snaps            sink.Monitor[*snapshot.Tree] // block-specific account inspection
-
-	log logging.Logger
-
-	mempool sink.PriorityMutex[*mempool]
-	newTxs  chan *transaction
-	quit    <-chan struct{}
-	done    chan<- struct{}
-}
-
-type pendingTx struct {
-	tx             *types.Transaction
-	from           common.Address
-	costUpperBound *uint256.Int
-}
-
-func (bb *blockBuilder) buildBlock(ctx context.Context, timestamp uint64, parent *Block) (*Block, error) {
+func (vm *VM) buildBlock(ctx context.Context, timestamp uint64, parent *Block, db ethdb.Database) (*Block, error) {
 	// TODO(arr4n) implement sink.FromPriorityMutex()
 	var block *Block
-	if err := bb.mempool.Use(ctx, sink.Priority(math.MaxUint64), func(preempt <-chan sink.Priority, mp *mempool) error {
+	if err := vm.mempool.Use(ctx, sink.Priority(math.MaxUint64), func(preempt <-chan sink.Priority, pool *queue.Priority[*pendingTx]) error {
 		var err error
-		block, err = bb.buildBlockWithCandidateTxs(timestamp, parent, &mp.pool)
+		block, err = vm.buildBlockWithCandidateTxs(timestamp, parent, db, pool)
 		return err
 	}); err != nil {
 		return nil, err
 	}
-	bb.log.Debug(
+	vm.logger().Debug(
 		"Built block",
 		zap.Uint64("timestamp", timestamp),
 		zap.Uint64("height", block.Height()),
@@ -59,17 +41,17 @@ func (bb *blockBuilder) buildBlock(ctx context.Context, timestamp uint64, parent
 
 var errWaitingForExecution = errors.New("waiting for execution when building block")
 
-func (bb *blockBuilder) buildBlockWithCandidateTxs(timestamp uint64, parent *Block, candidateTxs queue.Queue[*transaction]) (*Block, error) {
-	toSettle, ok := bb.lastBlockToSettleAt(timestamp, parent)
+func (vm *VM) buildBlockWithCandidateTxs(timestamp uint64, parent *Block, db ethdb.Database, candidateTxs queue.Queue[*pendingTx]) (*Block, error) {
+	toSettle, ok := vm.lastBlockToSettleAt(timestamp, parent)
 	if !ok {
-		bb.log.Warn(
+		vm.logger().Warn(
 			"Block building waiting for execution",
 			zap.Uint64("timestamp", timestamp),
 			zap.Stringer("parent", parent.Hash()),
 		)
 		return nil, fmt.Errorf("%w: parent %#x at time %d", errWaitingForExecution, parent.Hash(), timestamp)
 	}
-	bb.log.Debug(
+	vm.logger().Debug(
 		"Settlement candidate",
 		zap.Uint64("timestamp", timestamp),
 		zap.Stringer("parent", parent.Hash()),
@@ -90,18 +72,9 @@ func (bb *blockBuilder) buildBlockWithCandidateTxs(timestamp uint64, parent *Blo
 	}
 	slices.Reverse(receipts)
 
-	// TODO(arr4n) setting `gasUsed` (i.e. historical) based on receipts and
-	// `gasLimit` (future-looking) based on the enqueued transactions follows
-	// naturally from all of the other changes. However it will be possible to
-	// have `gasUsed>gasLimit`, which may break some systems.
-	var gasLimit uint64
-
-	var txs types.Transactions
-	for i := 0; i < 200 && candidateTxs.Len() > 0; i++ {
-		// TODO(arr4n) worst-case validity checks go here.
-		tx := candidateTxs.Pop().tx
-		gasLimit += tx.Gas()
-		txs = append(txs, tx)
+	txs, gasLimit, err := vm.buildBlockOnHistory(toSettle, parent, db, candidateTxs)
+	if err != nil {
+		return nil, err
 	}
 
 	return &Block{
@@ -124,12 +97,110 @@ func (bb *blockBuilder) buildBlockWithCandidateTxs(timestamp uint64, parent *Blo
 	}, nil
 }
 
-func (bb *blockBuilder) lastBlockToSettleAt(timestamp uint64, parent *Block) (*Block, bool) {
+func (vm *VM) buildBlockOnHistory(lastSettled, parent *Block, db ethdb.Database, candidateTxs queue.Queue[*pendingTx]) (types.Transactions, uint64, error) {
+	var history []*Block
+	for b := parent; b.ID() != lastSettled.ID(); b = b.parent {
+		history = append(history, b)
+	}
+	slices.Reverse(history)
+
+	sdb, err := state.New(lastSettled.execution.stateRootPost, state.NewDatabase(db), nil)
+	if err != nil {
+		return nil, 0, err
+	}
+	signer := vm.signer()
+	checker := validityChecker{
+		db:       sdb,
+		gasClock: lastSettled.execution.by.clone(),
+		nonces:   make(map[common.Address]uint64),
+		balances: make(map[common.Address]*uint256.Int),
+	}
+
+	// TODO(arr4n): investigate caching values to avoid having to replay the
+	// entire history.
+	for _, b := range history {
+		for _, tx := range b.Transactions() {
+			from, err := types.Sender(signer, tx)
+			if err != nil {
+				return nil, 0, err
+			}
+
+			valid, err := checker.addTxToQueue(txAndSender{tx, from})
+			if err != nil || valid != includeTx {
+				vm.logger().Error(
+					"Invalid transaction when replaying history",
+					zap.Stringer("block", b.Hash()),
+					zap.Stringer("tx", tx.Hash()),
+					zap.Error(err),
+					zap.Stringer("validity", valid),
+				)
+				return nil, 0, err
+			}
+		}
+	}
+
+	var (
+		txs types.Transactions
+		// TODO(arr4n) setting `gasUsed` (i.e. historical) based on receipts and
+		// `gasLimit` (future-looking) based on the enqueued transactions
+		// follows naturally from all of the other changes. However it will be
+		// possible to have `gasUsed>gasLimit`, which may break some systems.
+		gasLimit uint64
+		delayed  []*pendingTx
+	)
+
+TxLoop:
+	for candidateTxs.Len() > 0 {
+		candidate := candidateTxs.Pop()
+		tx := candidate.tx
+
+		validity, err := checker.addTxToQueue(candidate.txAndSender)
+		if err != nil {
+			return nil, 0, err
+		}
+
+		switch validity {
+		case includeTx:
+			// TODO(arr4n) parameterise the max block and queue sizes.
+			if gl := gasLimit + tx.Gas(); gl <= uint64(maxGasPerSecond*maxGasSecondsPerBlock) {
+				gasLimit = gl
+				txs = append(txs, tx)
+			} else {
+				delayed = append(delayed, candidate)
+				break TxLoop
+			}
+
+		case delayTx, queueFull:
+			delayed = append(delayed, candidate)
+			vm.logger().Debug(
+				"Delaying transaction until later block-building",
+				zap.Stringer("hash", tx.Hash()),
+			)
+			if validity == queueFull {
+				break TxLoop
+			}
+
+		case discardTx:
+			vm.logger().Debug(
+				"Discarding transaction",
+				zap.Stringer("hash", tx.Hash()),
+			)
+
+		}
+	}
+	for _, tx := range delayed {
+		candidateTxs.Push(tx)
+	}
+
+	return txs, gasLimit, nil
+}
+
+func (vm *VM) lastBlockToSettleAt(timestamp uint64, parent *Block) (*Block, bool) {
 	// These variables are only abstracted for clarity; they are not needed
 	// beyond the scope of the `for` loop.
 	var block, child *Block
 	block = parent // therefore `child` remains nil
-	settleAt := boundedSubtract(timestamp, stateRootDelaySeconds, bb.genesisTimestamp)
+	settleAt := boundedSubtract(timestamp, stateRootDelaySeconds, vm.genesisTimestamp)
 
 	for ; ; block, child = block.parent, block {
 		if block.parent == nil {

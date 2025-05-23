@@ -13,32 +13,49 @@ import (
 	"go.uber.org/zap"
 )
 
-func (bb *blockBuilder) startMempool() {
+func (vm *VM) startMempool(quit <-chan struct{}, done chan<- struct{}) {
 	go func() {
 		ctx, cancel := context.WithCancel(context.Background())
 		go func() {
-			<-bb.quit
+			<-quit
 			cancel()
 		}()
-		bb.acceptToMempool(ctx)
-		bb.done <- struct{}{}
+		vm.acceptToMempool(ctx)
+		done <- struct{}{}
 	}()
 }
 
-func (bb *blockBuilder) acceptToMempool(ctx context.Context) {
+func (vm *VM) acceptToMempool(ctx context.Context) {
 	for {
-		err := bb.mempool.Use(ctx, 0, func(preempt <-chan sink.Priority, mp *mempool) error {
+		err := vm.mempool.Use(ctx, 0, func(preempt <-chan sink.Priority, pool *queue.Priority[*pendingTx]) error {
+			signer := vm.signer()
 			for {
 				select {
 				case <-ctx.Done():
 					return ctx.Err()
 				case <-preempt:
 					return nil
-				case tx, ok := <-bb.newTxs:
+				case tx, ok := <-vm.newTxs:
 					if !ok {
 						return fmt.Errorf("new-transaction channel closed unexpectedly")
 					}
-					mp.pool.Push(tx)
+
+					from, err := types.Sender(signer, tx)
+					if err != nil {
+						vm.logger().Debug(
+							"Dropped tx due to failed sender recovery",
+							zap.Stringer("hash", tx.Hash()),
+							zap.Error(err),
+						)
+						continue
+					}
+					pool.Push(&pendingTx{
+						txAndSender: txAndSender{
+							tx:   tx,
+							from: from,
+						},
+						timePriority: time.Now(),
+					})
 				}
 			}
 		})
@@ -47,7 +64,7 @@ func (bb *blockBuilder) acceptToMempool(ctx context.Context) {
 			return
 		}
 		if err != nil {
-			bb.log.Error("Accepting to mempool", zap.Error(err))
+			vm.logger().Error("Accepting to mempool", zap.Error(err))
 		}
 		// err == nil -> wait for high-priority mempool user to finish
 		_ = 0 // visual coverage aid
@@ -55,12 +72,16 @@ func (bb *blockBuilder) acceptToMempool(ctx context.Context) {
 }
 
 type mempool struct {
-	pool queue.Priority[*transaction]
+	pool queue.Priority[*pendingTx]
 }
 
-type transaction struct {
+type txAndSender struct {
 	tx   *types.Transaction
 	from common.Address
+}
+
+type pendingTx struct {
+	txAndSender
 
 	// timePriority is initially the time at which the tx was first seen, and is
 	// updated to the current time whenever the tx is placed back in the queue
@@ -69,7 +90,7 @@ type transaction struct {
 	retryAttempts uint
 }
 
-func (tx *transaction) LessThan(u *transaction) bool {
+func (tx *pendingTx) LessThan(u *pendingTx) bool {
 	if tx.from != u.from {
 		return tx.timePriority.Before(u.timePriority)
 	}
