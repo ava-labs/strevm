@@ -29,7 +29,6 @@ import (
 type executor struct {
 	vm   *VM
 	quit <-chan struct{}
-	done chan<- struct{}
 
 	spawned sync.WaitGroup
 
@@ -44,9 +43,8 @@ type executor struct {
 	executeScratchSpace executionScratchSpace
 }
 
-// init initialises the executor and returns the genesis block, upon which the
-// [Block.Verify] and then [Block.Accept] methods MUST be called once the
-// [blockBuilder] is ready.
+// init initialises the executor and returns the genesis block, which MUST be
+// added to the VM's set of accepted blocks.
 func (e *executor) init(ctx context.Context, genesis *core.Genesis) (*Block, error) {
 	sdb := state.NewDatabase(e.vm.db)
 	tdb := sdb.TrieDB()
@@ -87,17 +85,12 @@ func (e *executor) init(ctx context.Context, genesis *core.Genesis) (*Block, err
 		statedb:    statedb,
 	}
 
-	running := make(chan struct{})
-	go e.run(running)
-	<-running
-
 	b := e.vm.newBlock(genesisBlock)
 	b.accepted.Store(true)
 	b.executed.Store(true)
 	b.execution.by.time = genesisBlock.Time()
 	b.execution.stateRootPost = genesisBlock.Root()
 	return b, nil
-
 }
 
 func (e *executor) run(ready chan<- struct{}) {
@@ -115,8 +108,6 @@ func (e *executor) run(ready chan<- struct{}) {
 	snaps := e.executeScratchSpace.snaps
 	snaps.Disable()
 	snaps.Release()
-
-	e.done <- struct{}{}
 }
 
 func (e *executor) spawn(fn func()) {

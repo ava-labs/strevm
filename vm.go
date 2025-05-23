@@ -38,19 +38,20 @@ type VM struct {
 	snowCtx *snow.Context
 	common.AppHandler
 
-	blocks     sink.Mutex[blockMap]
-	accepted   sink.Mutex[*accepted]
-	preference sink.Mutex[ids.ID]
+	blocks           sink.Mutex[blockMap]
+	accepted         sink.Mutex[*accepted]
+	preference       sink.Mutex[ids.ID]
+	genesisTimestamp uint64
 
 	db ethdb.Database
 
-	genesisTimestamp uint64
-	mempool          sink.PriorityMutex[*queue.Priority[*pendingTx]]
-	newTxs           chan *types.Transaction
+	newTxs  chan *types.Transaction
+	mempool sink.PriorityMutex[*queue.Priority[*pendingTx]]
 
-	exec               *executor
-	quit               chan struct{}
-	mempoolAndExecDone chan struct{} // receive 2, not closed
+	exec *executor
+
+	quit             chan struct{}
+	mempoolAndExecWG sync.WaitGroup
 }
 
 type blockMap map[ids.ID]*Block
@@ -67,7 +68,6 @@ func (a *accepted) last() *Block {
 
 func New() *VM {
 	quit := make(chan struct{})
-	done := make(chan struct{})
 
 	vm := &VM{
 		// VM
@@ -79,16 +79,14 @@ func New() *VM {
 		}),
 		preference: sink.NewMutex[ids.ID](ids.Empty),
 		// Block building
-		mempool:            sink.NewPriorityMutex(new(queue.Priority[*pendingTx])),
-		newTxs:             make(chan *types.Transaction, 10), // TODO(arr4n) make the buffer configurable
-		quit:               quit,                              // both mempool and executor
-		mempoolAndExecDone: done,                              // each will send on this
+		newTxs:  make(chan *types.Transaction, 10), // TODO(arr4n) make the buffer configurable
+		mempool: sink.NewPriorityMutex(new(queue.Priority[*pendingTx])),
+		quit:    quit, // both mempool and executor
 	}
 
 	vm.exec = &executor{
 		vm:   vm,
 		quit: quit,
-		done: done,
 	}
 
 	return vm
@@ -118,7 +116,18 @@ func (vm *VM) Initialize(
 	}
 	vm.genesisTimestamp = gen.Timestamp
 
-	go vm.startMempool(vm.quit, vm.mempoolAndExecDone)
+	wg := &vm.mempoolAndExecWG
+	wg.Add(2)
+	execReady := make(chan struct{})
+	go func() {
+		vm.exec.run(execReady)
+		wg.Done()
+	}()
+	go func() {
+		vm.startMempool()
+		wg.Done()
+	}()
+	<-execReady
 
 	vm.logger().Debug(
 		"Genesis block",
@@ -194,13 +203,7 @@ func (vm *VM) Shutdown(ctx context.Context) error {
 	}()
 	wg.Wait()
 
-	for range 2 {
-		select {
-		case <-vm.mempoolAndExecDone:
-		case <-ctx.Done():
-			return ctx.Err()
-		}
-	}
+	vm.mempoolAndExecWG.Wait()
 	return nil
 }
 

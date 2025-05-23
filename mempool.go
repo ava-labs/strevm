@@ -13,19 +13,13 @@ import (
 	"go.uber.org/zap"
 )
 
-func (vm *VM) startMempool(quit <-chan struct{}, done chan<- struct{}) {
+func (vm *VM) startMempool() {
+	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
-		ctx, cancel := context.WithCancel(context.Background())
-		go func() {
-			<-quit
-			cancel()
-		}()
-		vm.acceptToMempool(ctx)
-		done <- struct{}{}
+		<-vm.quit
+		cancel()
 	}()
-}
 
-func (vm *VM) acceptToMempool(ctx context.Context) {
 	for {
 		err := vm.mempool.Use(ctx, 0, func(preempt <-chan sink.Priority, pool *queue.Priority[*pendingTx]) error {
 			signer := vm.signer()
