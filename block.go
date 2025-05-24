@@ -4,12 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"sync/atomic"
 	"time"
 
 	"github.com/ava-labs/avalanchego/ids"
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core"
+	"github.com/ava-labs/libevm/core/rawdb"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/rlp"
 	"github.com/ava-labs/strevm/adaptor"
@@ -47,7 +49,17 @@ func (vm *VM) AcceptBlock(ctx context.Context, b *Block) error {
 		a.lastID = b.ID()
 		a.heightToID[b.NumberU64()] = b.ID()
 
+		rawdb.WriteCanonicalHash(vm.db, b.Hash(), b.NumberU64())
 		b.accepted.Store(true)
+
+		settle := b.settles()
+		for _, s := range settle {
+			rawdb.WriteReceipts(vm.db, s.Hash(), s.NumberU64(), s.execution.receipts)
+			rawdb.WriteTxLookupEntriesByBlock(vm.db, s.Block)
+		}
+		if n := len(settle); n > 0 {
+			rawdb.WriteFinalizedBlockHash(vm.db, settle[n-1].Hash())
+		}
 
 		vm.logger().Debug(
 			"Accepted block",
@@ -106,6 +118,7 @@ func (vm *VM) VerifyBlock(ctx context.Context, b *Block) error {
 
 	b.lastSettled = bb.lastSettled
 
+	rawdb.WriteBlock(vm.db, b.Block)
 	return vm.blocks.Use(ctx, func(bm blockMap) error {
 		bm[b.ID()] = b
 		return nil
@@ -126,4 +139,25 @@ func (b *Block) Height() uint64 {
 
 func (b *Block) Timestamp() time.Time {
 	return time.Unix(int64(b.Time()), 0)
+}
+
+// settles returns the executed blocks that `b` settles. If `x` is the block
+// height of the last-settled block of b's parent and `y` is the height of the
+// last-settled of `b`, then settles returns blocks in the half-open range (x,y]
+// or an empty slice iff x==y.
+func (b *Block) settles() []*Block {
+	return settling(b.parent.lastSettled, b.lastSettled)
+}
+
+// settling returns all the blocks after `lastOfParent` up to and including
+// `lastOfCurr`, each of which are expected to be the block last-settled by a
+// respective block-and-parent pair. It returns an empty slice if the two
+// arguments have the same block hash.
+func settling(lastOfParent, lastOfCurr *Block) []*Block {
+	var settling []*Block
+	for s := lastOfCurr; s.parent != nil && s.Hash() != lastOfParent.Hash(); s = s.parent {
+		settling = append(settling, s)
+	}
+	slices.Reverse(settling)
+	return settling
 }

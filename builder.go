@@ -62,13 +62,12 @@ func (vm *VM) buildBlockWithCandidateTxs(timestamp uint64, parent *Block, candid
 		receipts []types.Receipts
 		gasUsed  uint64
 	)
-	for b := toSettle; b.parent != nil && b.ID() != parent.lastSettled.ID(); b = b.parent {
+	for _, b := range settling(parent.lastSettled, toSettle) {
 		receipts = append(receipts, b.execution.receipts)
 		for _, r := range b.execution.receipts {
 			gasUsed += r.GasUsed
 		}
 	}
-	slices.Reverse(receipts)
 
 	txs, gasLimit, err := vm.buildBlockOnHistory(toSettle, parent, candidateTxs)
 	if err != nil {

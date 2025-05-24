@@ -15,16 +15,19 @@ import (
 	"testing"
 	"time"
 
+	"github.com/arr4n/sink"
 	"github.com/ava-labs/avalanchego/ids"
 	"github.com/ava-labs/avalanchego/snow/snowtest"
 	"github.com/ava-labs/avalanchego/utils/logging"
 	"github.com/ava-labs/avalanchego/vms/components/gas"
 	"github.com/ava-labs/libevm/common"
+	"github.com/ava-labs/libevm/core/rawdb"
 	"github.com/ava-labs/libevm/core/state"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/crypto"
 	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/strevm/adaptor"
+	"github.com/ava-labs/strevm/queue"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/holiman/uint256"
@@ -46,7 +49,7 @@ func TestMain(m *testing.M) {
 }
 
 var (
-	txsInBasicE2E  = flag.Uint64("basic_e2e_tx_count", 100, "Number of transactions to use in TestBasicE2E")
+	txsInBasicE2E  = flag.Uint64("basic_e2e_tx_count", 1_000, "Number of transactions to use in TestBasicE2E")
 	cpuProfileDest = flag.String("cpu_profile_out", "", "If non-empty, file to which pprof CPU profile is written")
 )
 
@@ -69,9 +72,6 @@ func TestBasicE2E(t *testing.T) {
 		nil, genesisJSON(t, chainConfig, eoa), nil, nil, nil, nil, nil,
 	), "%T.Initialize()", vm)
 
-	// TODO(arr4n) run multiple goroutines as signing txs is the actual
-	// bottleneck; i.e. if we sign asynchronously then the gas/s metric
-	// decreases!
 	allTxs := make([]*types.Transaction, *txsInBasicE2E)
 	for nonce := range *txsInBasicE2E {
 		allTxs[nonce] = types.MustSignNewTx(key, signer, &types.DynamicFeeTx{
@@ -85,6 +85,20 @@ func TestBasicE2E(t *testing.T) {
 		vm.newTxs <- allTxs[nonce]
 	}
 
+	numPendingTxs := func(ctx context.Context) (int, error) {
+		return sink.FromPriorityMutex(
+			ctx, vm.mempool, sink.MaxPriority,
+			func(_ <-chan sink.Priority, mp *queue.Priority[*pendingTx]) (int, error) {
+				return mp.Len(), nil
+			},
+		)
+	}
+	mempoolPopulated := func() bool {
+		n, err := numPendingTxs(ctx)
+		return err == nil && n == len(allTxs)
+	}
+	require.Eventually(t, mempoolPopulated, time.Second, 5*time.Millisecond, "mempool populated")
+
 	if d := *cpuProfileDest; d != "" {
 		t.Logf("Writing CPU profile for block acceptance and execution to %q", d)
 		f, err := os.Create(d)
@@ -94,51 +108,41 @@ func TestBasicE2E(t *testing.T) {
 		// a very specific point.
 	}
 
-	quitBlockBuilding := make(chan struct{})
-	blockBuildingDone := make(chan struct{})
-	start := time.Now()
-	go func() {
-		defer close(blockBuildingDone)
-		var numBlocks int
-	BlockLoop:
-		for ; ; numBlocks++ {
-			select {
-			case <-quitBlockBuilding:
-				break BlockLoop
-			default:
-			}
-
-			proposed, err := snowCompatVM.BuildBlock(ctx)
-			if errors.Is(err, errWaitingForExecution) {
-				numBlocks--
-				continue
-			}
-			require.NoErrorf(t, err, "%T.BuildBlock()", snowCompatVM)
-
-			b, err := snowCompatVM.ParseBlock(ctx, proposed.Bytes())
-			require.NoErrorf(t, err, "%T.ParseBlock()", snowCompatVM)
-			require.NoErrorf(t, b.Verify(ctx), "%T.Verify()", b)
-			require.NoErrorf(t, b.Accept(ctx), "%T.Accept()", b)
-
-			bb, ok := snowCompatVM.AsRawBlock(b)
-			require.Truef(t, ok, "Extracting %T from snowman.Block", bb)
-		}
-		acceptance := time.Since(start)
-		t.Logf("Built and accepted %s blocks in %v", human(numBlocks), acceptance)
-	}()
-
-	lastTxHash := allTxs[len(allTxs)-1].Hash()
-	vm.exec.receipts.Wait(ctx,
-		func(r map[common.Hash]*types.Receipt) bool {
-			_, ok := r[lastTxHash]
-			return ok
-		},
-		func(map[common.Hash]*types.Receipt) error {
-			close(quitBlockBuilding)
-			return nil
-		},
+	var (
+		acceptedBlocks  []*Block
+		blockWithLastTx *Block
 	)
-	<-blockBuildingDone
+	start := time.Now()
+	for numBlocks := 0; ; numBlocks++ {
+		proposed, err := snowCompatVM.BuildBlock(ctx)
+		if errors.Is(err, errWaitingForExecution) {
+			numBlocks--
+			continue
+		}
+		require.NoErrorf(t, err, "%T.BuildBlock()", snowCompatVM)
+
+		b, err := snowCompatVM.ParseBlock(ctx, proposed.Bytes())
+		require.NoErrorf(t, err, "%T.ParseBlock()", snowCompatVM)
+		require.NoErrorf(t, b.Verify(ctx), "%T.Verify()", b)
+		require.NoErrorf(t, b.Accept(ctx), "%T.Accept()", b)
+
+		bb, ok := snowCompatVM.AsRawBlock(b)
+		require.Truef(t, ok, "Extracting %T from snowman.Block", bb)
+		acceptedBlocks = append(acceptedBlocks, bb)
+
+		n, err := numPendingTxs(ctx)
+		require.NoError(t, err, "inspect mempool for num pending txs")
+		if n > 0 {
+			continue
+		}
+		if blockWithLastTx == nil {
+			blockWithLastTx = bb
+		} else if s := bb.lastSettled; s != nil && s.Hash() == blockWithLastTx.Hash() {
+			t.Logf("Built and accepted %s blocks in %v", human(numBlocks), time.Since(start))
+			break
+		}
+	}
+
 	pprof.StopCPUProfile() // docs state "stops the current CPU profile, if any" so ok if we didn't start it
 	if t.Failed() {
 		return
@@ -150,34 +154,77 @@ func TestBasicE2E(t *testing.T) {
 	require.NoErrorf(t, err, "%T.GetBlock(LastAccepted())", vm)
 	require.Eventuallyf(t, lastBlock.executed.Load, time.Second, 10*time.Millisecond, "executed.Load() on last %T", lastBlock)
 
-	lastExecutedBy := lastBlock.execution.byTime
-	finalStateRoot := lastBlock.execution.stateRootPost
+	t.Run("persisted_block_hashes", func(t *testing.T) {
+		t.Parallel()
 
-	var (
-		gotReceipts      []*types.Receipt
-		totalGasConsumed gas.Gas
-	)
-	for ; lastBlock != nil; lastBlock = lastBlock.parent {
-		gotReceipts = append(lastBlock.execution.receipts, gotReceipts...)
-		for _, r := range lastBlock.execution.receipts {
-			totalGasConsumed += gas.Gas(r.GasUsed)
+		t.Run("last_tx", func(t *testing.T) {
+			b := blockWithLastTx
+			// We stop building blocks once the block including the last tx has
+			// been settled (i.e. is the "finalized" block).
+			assert.Equal(t, b.Hash(), rawdb.ReadFinalizedBlockHash(vm.db), "rawdb.ReadFinalizedBlockHash()")
+
+			// The following tests that [rawdb.WriteTxLookupEntriesByBlock] has
+			// been called correctly.
+			_, gotHash, _, gotIdx := rawdb.ReadTransaction(vm.db, allTxs[len(allTxs)-1].Hash())
+			assert.Equal(t, b.Hash(), gotHash, "block hash of last tx")
+			assert.Equal(t, uint64(len(b.Transactions())-1), gotIdx, "index of last tx")
+		})
+
+		_, got := rawdb.ReadAllCanonicalHashes(vm.db, 1, lastBlock.NumberU64()+1, math.MaxInt)
+		var want []common.Hash
+		for _, b := range acceptedBlocks {
+			want = append(want, b.Hash())
 		}
-	}
-	require.NoErrorf(t, vm.Shutdown(ctx), "%T.Shutdown()", vm)
+		assert.Equal(t, want, got, "rawdb.ReadAllCanonicalHashes(1...)")
+	})
 
 	t.Run("tx_receipts", func(t *testing.T) {
+		t.Parallel()
+		var (
+			gotReceipts      []*types.Receipt
+			totalGasConsumed gas.Gas
+		)
+		for b := lastBlock; b != nil; b = b.parent {
+			gotReceipts = append(b.execution.receipts, gotReceipts...)
+			for _, r := range b.execution.receipts {
+				totalGasConsumed += gas.Gas(r.GasUsed)
+			}
+		}
+
 		require.Equalf(t, len(allTxs), len(gotReceipts), "# %T == # %T", &types.Receipt{}, &types.Transaction{})
+		lastExecutedBy := blockWithLastTx.execution.byTime
 		t.Logf("Executed %s txs (%s gas) in %v", human(len(gotReceipts)), human(totalGasConsumed), lastExecutedBy.Sub(start))
 
-		var wantReceipts []*types.Receipt
-		for _, tx := range allTxs {
-			wantReceipts = append(wantReceipts, &types.Receipt{TxHash: tx.Hash()})
-		}
-		if diff := cmp.Diff(wantReceipts, gotReceipts, cmpReceiptsByHash()); diff != "" {
-			t.Errorf("Execution results diff (-want +got): \n%s", diff)
-		}
+		t.Run("memory", func(t *testing.T) {
+			t.Parallel()
+
+			var wantReceipts []*types.Receipt
+			for _, tx := range allTxs {
+				wantReceipts = append(wantReceipts, &types.Receipt{TxHash: tx.Hash()})
+			}
+			if diff := cmp.Diff(wantReceipts, gotReceipts, cmpReceiptsByHash()); diff != "" {
+				t.Errorf("Execution results diff (-want +got): \n%s", diff)
+			}
+		})
+
+		t.Run("persisted", func(t *testing.T) {
+			t.Parallel()
+
+			for _, b := range acceptedBlocks {
+				got := rawdb.ReadReceipts(vm.db, b.Hash(), b.NumberU64(), b.Time(), vm.exec.chainConfig)
+				want := b.Transactions()
+				if diff := cmp.Diff(txHashes(want), txHashes(got)); diff != "" {
+					t.Errorf("rawdb.ReadReceipts(..., block=%d, ...) diff (-want +got):\n%s", b.NumberU64(), diff)
+				}
+				if b.Hash() == blockWithLastTx.Hash() {
+					break
+				}
+			}
+		})
 
 		t.Run("logs", func(t *testing.T) {
+			t.Parallel()
+
 			var eoaAsHash common.Hash
 			copy(eoaAsHash[12:], eoa[:])
 			// Certain fields will have different meanings (TBD) in SAE so
@@ -207,9 +254,11 @@ func TestBasicE2E(t *testing.T) {
 		})
 	})
 
+	require.NoErrorf(t, vm.Shutdown(ctx), "%T.Shutdown()", vm)
+
 	t.Run("state", func(t *testing.T) {
 		db := vm.db
-		statedb, err := state.New(finalStateRoot, state.NewDatabase(db), nil)
+		statedb, err := state.New(lastBlock.execution.stateRootPost, state.NewDatabase(db), nil)
 		require.NoError(t, err, "state.New() at last block's state root")
 
 		nTxs := uint64(len(allTxs))
@@ -225,6 +274,21 @@ func newTestPrivateKey(tb testing.TB, seed []byte) *ecdsa.PrivateKey {
 	key, err := ecdsa.GenerateKey(crypto.S256(), s)
 	require.NoErrorf(tb, err, "ecdsa.GenerateKey(%T, %T)", crypto.S256(), s)
 	return key
+}
+
+func txHashes[T interface {
+	*types.Transaction | *types.Receipt
+}](xs []T) []common.Hash {
+	hashes := make([]common.Hash, len(xs))
+	for i, x := range xs {
+		switch x := any(x).(type) {
+		case *types.Transaction:
+			hashes[i] = x.Hash()
+		case *types.Receipt:
+			hashes[i] = x.TxHash
+		}
+	}
+	return hashes
 }
 
 func cmpReceiptsByHash() cmp.Options {

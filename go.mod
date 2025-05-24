@@ -2,10 +2,12 @@ module github.com/ava-labs/strevm
 
 go 1.23.7
 
+replace github.com/ava-labs/libevm => ../libevm
+
 require (
 	github.com/arr4n/sink v0.0.0-20250524105858-43bc1efdcbc4
 	github.com/ava-labs/avalanchego v1.13.0
-	github.com/ava-labs/libevm v1.13.14-0.2.0.release
+	github.com/ava-labs/libevm v0.0.0-00010101000000-000000000000
 	github.com/dustin/go-humanize v1.0.0
 	github.com/google/go-cmp v0.7.0
 	github.com/holiman/uint256 v1.2.4
