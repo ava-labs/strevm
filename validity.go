@@ -47,6 +47,7 @@ func (vc *validityChecker) addTxToQueue(t txAndSender) (txValidity, error) {
 	}
 
 	gasCost := new(uint256.Int).Mul(
+		// TODO(arr4n): IMPORTANT change gas pricing to per-block basis.
 		uint256.NewInt(uint64(vc.gasClock.gasPrice())),
 		uint256.NewInt(tx.Gas()),
 	)
