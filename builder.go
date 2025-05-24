@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math"
 	"math/big"
 	"slices"
 
@@ -13,21 +12,20 @@ import (
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core/state"
 	"github.com/ava-labs/libevm/core/types"
-	"github.com/ava-labs/libevm/ethdb"
 	"github.com/ava-labs/libevm/trie"
 	"github.com/ava-labs/strevm/queue"
 	"github.com/holiman/uint256"
 	"go.uber.org/zap"
 )
 
-func (vm *VM) buildBlock(ctx context.Context, timestamp uint64, parent *Block, db ethdb.Database) (*Block, error) {
-	// TODO(arr4n) implement sink.FromPriorityMutex()
-	var block *Block
-	if err := vm.mempool.Use(ctx, sink.Priority(math.MaxUint64), func(preempt <-chan sink.Priority, pool *queue.Priority[*pendingTx]) error {
-		var err error
-		block, err = vm.buildBlockWithCandidateTxs(timestamp, parent, db, pool)
-		return err
-	}); err != nil {
+func (vm *VM) buildBlock(ctx context.Context, timestamp uint64, parent *Block) (*Block, error) {
+	block, err := sink.FromPriorityMutex(
+		ctx, vm.mempool, sink.MaxPriority,
+		func(_ <-chan sink.Priority, pool *queue.Priority[*pendingTx]) (*Block, error) {
+			return vm.buildBlockWithCandidateTxs(timestamp, parent, pool)
+		},
+	)
+	if err != nil {
 		return nil, err
 	}
 	vm.logger().Debug(
@@ -41,7 +39,7 @@ func (vm *VM) buildBlock(ctx context.Context, timestamp uint64, parent *Block, d
 
 var errWaitingForExecution = errors.New("waiting for execution when building block")
 
-func (vm *VM) buildBlockWithCandidateTxs(timestamp uint64, parent *Block, db ethdb.Database, candidateTxs queue.Queue[*pendingTx]) (*Block, error) {
+func (vm *VM) buildBlockWithCandidateTxs(timestamp uint64, parent *Block, candidateTxs queue.Queue[*pendingTx]) (*Block, error) {
 	toSettle, ok := vm.lastBlockToSettleAt(timestamp, parent)
 	if !ok {
 		vm.logger().Warn(
@@ -72,7 +70,7 @@ func (vm *VM) buildBlockWithCandidateTxs(timestamp uint64, parent *Block, db eth
 	}
 	slices.Reverse(receipts)
 
-	txs, gasLimit, err := vm.buildBlockOnHistory(toSettle, parent, db, candidateTxs)
+	txs, gasLimit, err := vm.buildBlockOnHistory(toSettle, parent, candidateTxs)
 	if err != nil {
 		return nil, err
 	}
@@ -97,14 +95,14 @@ func (vm *VM) buildBlockWithCandidateTxs(timestamp uint64, parent *Block, db eth
 	}, nil
 }
 
-func (vm *VM) buildBlockOnHistory(lastSettled, parent *Block, db ethdb.Database, candidateTxs queue.Queue[*pendingTx]) (types.Transactions, uint64, error) {
+func (vm *VM) buildBlockOnHistory(lastSettled, parent *Block, candidateTxs queue.Queue[*pendingTx]) (types.Transactions, uint64, error) {
 	var history []*Block
 	for b := parent; b.ID() != lastSettled.ID(); b = b.parent {
 		history = append(history, b)
 	}
 	slices.Reverse(history)
 
-	sdb, err := state.New(lastSettled.execution.stateRootPost, state.NewDatabase(db), nil)
+	sdb, err := state.New(lastSettled.execution.stateRootPost, state.NewDatabase(vm.db), nil)
 	if err != nil {
 		return nil, 0, err
 	}

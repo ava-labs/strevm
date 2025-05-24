@@ -95,7 +95,7 @@ func (vm *VM) VerifyBlock(ctx context.Context, b *Block) error {
 		})
 	}
 
-	bb, err := vm.buildBlockWithCandidateTxs(b.Time(), parent, vm.db, candidates)
+	bb, err := vm.buildBlockWithCandidateTxs(b.Time(), parent, candidates)
 	if err != nil {
 		return err
 	}

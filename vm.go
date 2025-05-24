@@ -242,7 +242,7 @@ func (vm *VM) BuildBlock(ctx context.Context) (*Block, error) {
 	}
 
 	timestamp := parent.Time() + 1
-	return vm.buildBlock(ctx, timestamp, parent, vm.db)
+	return vm.buildBlock(ctx, timestamp, parent)
 }
 
 func (vm *VM) signer() types.Signer {

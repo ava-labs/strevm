@@ -21,38 +21,41 @@ func (vm *VM) startMempool() {
 	}()
 
 	for {
-		err := vm.mempool.Use(ctx, 0, func(preempt <-chan sink.Priority, pool *queue.Priority[*pendingTx]) error {
-			signer := vm.signer()
-			for {
-				select {
-				case <-ctx.Done():
-					return ctx.Err()
-				case <-preempt:
-					return nil
-				case tx, ok := <-vm.newTxs:
-					if !ok {
-						return fmt.Errorf("new-transaction channel closed unexpectedly")
-					}
+		err := vm.mempool.Use(
+			ctx, sink.MinPriority,
+			func(preempt <-chan sink.Priority, pool *queue.Priority[*pendingTx]) error {
+				signer := vm.signer()
+				for {
+					select {
+					case <-ctx.Done():
+						return ctx.Err()
+					case <-preempt:
+						return nil
+					case tx, ok := <-vm.newTxs:
+						if !ok {
+							return fmt.Errorf("new-transaction channel closed unexpectedly")
+						}
 
-					from, err := types.Sender(signer, tx)
-					if err != nil {
-						vm.logger().Debug(
-							"Dropped tx due to failed sender recovery",
-							zap.Stringer("hash", tx.Hash()),
-							zap.Error(err),
-						)
-						continue
+						from, err := types.Sender(signer, tx)
+						if err != nil {
+							vm.logger().Debug(
+								"Dropped tx due to failed sender recovery",
+								zap.Stringer("hash", tx.Hash()),
+								zap.Error(err),
+							)
+							continue
+						}
+						pool.Push(&pendingTx{
+							txAndSender: txAndSender{
+								tx:   tx,
+								from: from,
+							},
+							timePriority: time.Now(),
+						})
 					}
-					pool.Push(&pendingTx{
-						txAndSender: txAndSender{
-							tx:   tx,
-							from: from,
-						},
-						timePriority: time.Now(),
-					})
 				}
-			}
-		})
+			},
+		)
 
 		if errors.Is(err, context.Canceled) {
 			return
