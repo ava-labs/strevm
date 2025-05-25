@@ -110,7 +110,7 @@ func (vm *VM) Initialize(
 	if err := json.Unmarshal(genesisBytes, gen); err != nil {
 		return err
 	}
-	genBlock, err := vm.exec.init(ctx, gen)
+	genBlock, err := vm.exec.init(ctx, gen, vm.db)
 	if err != nil {
 		return err
 	}

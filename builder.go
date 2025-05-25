@@ -101,7 +101,7 @@ func (vm *VM) buildBlockOnHistory(lastSettled, parent *Block, candidateTxs queue
 	}
 	slices.Reverse(history)
 
-	sdb, err := state.New(lastSettled.execution.stateRootPost, state.NewDatabase(vm.db), nil)
+	sdb, err := state.New(lastSettled.execution.stateRootPost, vm.exec.stateCache, nil)
 	if err != nil {
 		return nil, 0, err
 	}

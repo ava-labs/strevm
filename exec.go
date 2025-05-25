@@ -20,6 +20,7 @@ import (
 	"github.com/ava-labs/libevm/core/state/snapshot"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/core/vm"
+	"github.com/ava-labs/libevm/ethdb"
 	"github.com/ava-labs/libevm/params"
 	"go.uber.org/zap"
 
@@ -38,6 +39,7 @@ type executor struct {
 	queue    sink.Monitor[*queue.FIFO[*Block]]
 	receipts sink.Monitor[map[common.Hash]*types.Receipt] // TODO(arr4n) make this an LRU, or similar.
 
+	stateCache state.Database
 	// executeScratchSpace MUST NOT be accessed by any methods other than
 	// [executor.init] and [executor.execute].
 	executeScratchSpace executionScratchSpace
@@ -45,8 +47,10 @@ type executor struct {
 
 // init initialises the executor and returns the genesis block, which MUST be
 // added to the VM's set of accepted blocks.
-func (e *executor) init(ctx context.Context, genesis *core.Genesis) (*Block, error) {
-	sdb := state.NewDatabase(e.vm.db)
+func (e *executor) init(ctx context.Context, genesis *core.Genesis, db ethdb.Database) (*Block, error) {
+	e.stateCache = state.NewDatabase(db)
+
+	sdb := e.stateCache
 	tdb := sdb.TrieDB()
 	chainConfig, genesisHash, err := core.SetupGenesisBlock(e.vm.db, tdb, genesis)
 	if err != nil {
@@ -80,9 +84,8 @@ func (e *executor) init(ctx context.Context, genesis *core.Genesis) (*Block, err
 		return nil, err
 	}
 	e.executeScratchSpace = executionScratchSpace{
-		stateCache: sdb,
-		snaps:      snaps,
-		statedb:    statedb,
+		snaps:   snaps,
+		statedb: statedb,
 	}
 
 	b := e.vm.newBlock(genesisBlock)
@@ -182,9 +185,8 @@ func (e *executor) processQueue() {
 }
 
 type executionScratchSpace struct {
-	stateCache state.Database
-	snaps      *snapshot.Tree
-	statedb    *state.StateDB
+	snaps   *snapshot.Tree
+	statedb *state.StateDB
 }
 
 type (
@@ -331,11 +333,8 @@ func (e *executor) commitState(ctx context.Context, x *executionScratchSpace, bl
 	if err != nil {
 		return common.Hash{}, fmt.Errorf("%T.Commit() at end of block %d: %w", x.statedb, blockNum, err)
 	}
-	if err := x.stateCache.TrieDB().Commit(root, false); err != nil {
-		return common.Hash{}, err
-	}
 
-	db, err := state.New(root, x.stateCache, x.snaps)
+	db, err := state.New(root, e.stateCache, x.snaps)
 	if err != nil {
 		return common.Hash{}, err
 	}

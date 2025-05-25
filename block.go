@@ -53,12 +53,16 @@ func (vm *VM) AcceptBlock(ctx context.Context, b *Block) error {
 		b.accepted.Store(true)
 
 		settle := b.settles()
-		for _, s := range settle {
+		for i, s := range settle {
 			rawdb.WriteReceipts(vm.db, s.Hash(), s.NumberU64(), s.execution.receipts)
 			rawdb.WriteTxLookupEntriesByBlock(vm.db, s.Block)
-		}
-		if n := len(settle); n > 0 {
-			rawdb.WriteFinalizedBlockHash(vm.db, settle[n-1].Hash())
+			if err := vm.exec.stateCache.TrieDB().Commit(s.execution.stateRootPost, false); err != nil {
+				return err
+			}
+
+			if i+1 == len(settle) {
+				rawdb.WriteFinalizedBlockHash(vm.db, s.Hash())
+			}
 		}
 
 		vm.logger().Debug(

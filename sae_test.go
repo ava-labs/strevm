@@ -137,6 +137,7 @@ func TestBasicE2E(t *testing.T) {
 		}
 		if blockWithLastTx == nil {
 			blockWithLastTx = bb
+			t.Logf("Last tx included in block %d", bb.NumberU64())
 		} else if s := bb.lastSettled; s != nil && s.Hash() == blockWithLastTx.Hash() {
 			t.Logf("Built and accepted %s blocks in %v", human(numBlocks), time.Since(start))
 			break
@@ -257,8 +258,7 @@ func TestBasicE2E(t *testing.T) {
 	require.NoErrorf(t, vm.Shutdown(ctx), "%T.Shutdown()", vm)
 
 	t.Run("state", func(t *testing.T) {
-		db := vm.db
-		statedb, err := state.New(lastBlock.execution.stateRootPost, state.NewDatabase(db), nil)
+		statedb, err := state.New(blockWithLastTx.execution.stateRootPost, state.NewDatabase(vm.db), nil)
 		require.NoError(t, err, "state.New() at last block's state root")
 
 		nTxs := uint64(len(allTxs))
