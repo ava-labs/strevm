@@ -212,7 +212,9 @@ func (vm *VM) Version(context.Context) (string, error) {
 }
 
 func (vm *VM) CreateHandlers(context.Context) (map[string]http.Handler, error) {
-	return nil, nil
+	return map[string]http.Handler{
+		"sae": vm.ethRPCHandler(),
+	}, nil
 }
 
 func (vm *VM) GetBlock(ctx context.Context, blkID ids.ID) (*Block, error) {
