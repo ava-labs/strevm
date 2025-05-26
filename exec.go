@@ -24,6 +24,7 @@ import (
 	"github.com/ava-labs/libevm/params"
 	"go.uber.org/zap"
 
+	"github.com/ava-labs/strevm/acp176"
 	"github.com/ava-labs/strevm/queue"
 )
 
@@ -59,12 +60,15 @@ func (e *executor) init(ctx context.Context, genesis *core.Genesis, db ethdb.Dat
 
 	e.chainConfig = chainConfig
 	e.gasClock = gasClock{
+		// TODO(arr4n): all of the explicitly set values will need to be
+		// inherited from the last synchronous block, which will be equivalent
+		// to a genesis block.
 		time: genesis.Timestamp,
-		config: gasConfig{
-			minPrice:                 params.GWei,
-			capPerSecond:             maxGasPerSecond,
-			targetPerSecond:          maxGasPerSecond / 2,
-			excessConversionConstant: 20_000_000, // TODO(arr4n)
+		state: acp176.State{
+			Gas: gas.State{
+				Excess: 0,
+			},
+			TargetExcess: acp176.DesiredTargetExcess(maxGasPerSecond / acp176.TargetToMax),
 		},
 	}
 
@@ -91,7 +95,7 @@ func (e *executor) init(ctx context.Context, genesis *core.Genesis, db ethdb.Dat
 	b := e.vm.newBlock(genesisBlock)
 	b.accepted.Store(true)
 	b.execution = &executionResults{
-		by:            gasClock{time: genesisBlock.Time()},
+		by:            e.gasClock.clone(),
 		stateRootPost: genesisBlock.Root(),
 	}
 	b.executed.Store(true)
@@ -193,17 +197,14 @@ type executionScratchSpace struct {
 
 type (
 	gasClock struct {
-		config gasConfig
-
 		time     uint64
 		consumed gas.Gas // this second
-		excess   gas.Gas
+
+		state acp176.State
 	}
 
-	gasConfig struct {
-		capPerSecond, targetPerSecond gas.Gas   // R, T
-		minPrice                      gas.Price // M
-		excessConversionConstant      gas.Gas   // K
+	gasParams struct {
+		T, R gas.Gas
 	}
 )
 
@@ -212,28 +213,34 @@ func (c gasClock) clone() gasClock {
 }
 
 func (c *gasClock) gasPrice() gas.Price {
-	return gas.CalculatePrice(
-		c.config.minPrice,
-		c.excess,
-		c.config.excessConversionConstant,
-	)
+	return c.state.GasPrice()
+}
+
+func (c *gasClock) params() gasParams {
+	T := c.state.Target()
+	return gasParams{
+		R: 2 * T,
+		T: T,
+	}
 }
 
 func (c *gasClock) asTime() time.Time {
-	nsec, _ /*remainder*/ := mulDiv(c.consumed, c.config.capPerSecond, 1e9)
+	nsec, _ /*remainder*/ := mulDiv(c.consumed, c.params().R, 1e9)
 	return time.Unix(int64(c.time), int64(nsec))
 }
 
 func (c *gasClock) consume(g gas.Gas) {
+	params := c.params()
+
 	c.consumed += g
-	c.time += uint64(c.consumed / c.config.capPerSecond)
-	c.consumed %= c.config.capPerSecond
+	c.time += uint64(c.consumed / params.R)
+	c.consumed %= params.R
 
 	// The ACP describes the increase in excess in terms of `p`, a rational
 	// number, where R=pT. Substituting p for R/T, we get an increase of
 	// g(R-T)/R.
-	quo, _ := mulDiv(g, c.config.capPerSecond-c.config.targetPerSecond, c.config.capPerSecond)
-	c.excess += gas.Gas(quo)
+	quo, _ := mulDiv(g, params.R-params.T, params.R)
+	c.state.Gas.Excess += gas.Gas(quo)
 }
 
 func (c *gasClock) fastForward(to uint64) {
@@ -241,12 +248,13 @@ func (c *gasClock) fastForward(to uint64) {
 		return
 	}
 
-	surplus := c.config.capPerSecond - c.consumed
-	surplus += gas.Gas(to-c.time-1) * c.config.capPerSecond // -1 avoids double-counting gas remaining this second
+	params := c.params()
+	surplus := params.R - c.consumed
+	surplus += gas.Gas(to-c.time-1) * params.R // -1 avoids double-counting gas remaining this second
 	// By similar reasoning to that in [gasClock.consume], we get a decrease in
 	// excess of sT/R.
-	quo, _ := mulDiv(surplus, c.config.targetPerSecond, c.config.capPerSecond)
-	c.excess = boundedSubtract(c.excess, quo, 0)
+	quo, _ := mulDiv(surplus, params.T, params.R)
+	c.state.Gas.Excess = boundedSubtract(c.state.Gas.Excess, quo, 0)
 
 	c.time = to
 	c.consumed = 0
@@ -268,7 +276,7 @@ func (c *gasClock) remainingGasUntil(timestamp uint64) (_ gas.Gas, isFuture bool
 	if timestamp <= c.time {
 		return 0, false
 	}
-	return gas.Gas(timestamp-c.time)*c.config.capPerSecond - c.consumed, true
+	return gas.Gas(timestamp-c.time)*c.params().R - c.consumed, true
 }
 
 func mulDiv(a, b, c gas.Gas) (quo, rem gas.Gas) {

@@ -69,7 +69,7 @@ func (vm *VM) buildBlockWithCandidateTxs(timestamp uint64, parent *Block, candid
 		}
 	}
 
-	txs, gasLimit, err := vm.buildBlockOnHistory(toSettle, parent, candidateTxs)
+	txs, gasLimit, err := vm.buildBlockOnHistory(toSettle, parent, timestamp, candidateTxs)
 	if err != nil {
 		return nil, err
 	}
@@ -94,7 +94,7 @@ func (vm *VM) buildBlockWithCandidateTxs(timestamp uint64, parent *Block, candid
 	}, nil
 }
 
-func (vm *VM) buildBlockOnHistory(lastSettled, parent *Block, candidateTxs queue.Queue[*pendingTx]) (types.Transactions, uint64, error) {
+func (vm *VM) buildBlockOnHistory(lastSettled, parent *Block, timestamp uint64, candidateTxs queue.Queue[*pendingTx]) (types.Transactions, uint64, error) {
 	var history []*Block
 	for b := parent; b.ID() != lastSettled.ID(); b = b.parent {
 		history = append(history, b)
@@ -112,10 +112,14 @@ func (vm *VM) buildBlockOnHistory(lastSettled, parent *Block, candidateTxs queue
 		nonces:   make(map[common.Address]uint64),
 		balances: make(map[common.Address]*uint256.Int),
 	}
+	clock := &checker.gasClock
 
 	// TODO(arr4n): investigate caching values to avoid having to replay the
 	// entire history.
 	for _, b := range history {
+		clock.fastForward(b.Time())
+
+		var consumed gas.Gas
 		for _, tx := range b.Transactions() {
 			from, err := types.Sender(signer, tx)
 			if err != nil {
@@ -133,7 +137,9 @@ func (vm *VM) buildBlockOnHistory(lastSettled, parent *Block, candidateTxs queue
 				)
 				return nil, 0, err
 			}
+			consumed += gas.Gas(tx.Gas())
 		}
+		clock.consume(consumed)
 	}
 
 	var (
@@ -146,6 +152,7 @@ func (vm *VM) buildBlockOnHistory(lastSettled, parent *Block, candidateTxs queue
 		delayed  []*pendingTx
 	)
 
+	clock.fastForward(timestamp)
 TxLoop:
 	for candidateTxs.Len() > 0 {
 		candidate := candidateTxs.Pop()
