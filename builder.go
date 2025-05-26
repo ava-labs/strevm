@@ -205,40 +205,24 @@ func (vm *VM) lastBlockToSettleAt(timestamp uint64, parent *Block) (*Block, bool
 			// be "settled".
 			return block, true
 		}
-
-		if block.executed.Load() {
-			if block.execution.by.time > settleAt {
-				continue
-			}
-		} else if block.Time() <= settleAt {
-			// TODO(arr4n) loosen this criterion, possibly introspecting the
-			// current state of execution to check if the block can't execute in
-			// time.
-			return nil, false
-		} else {
+		if block.Time() > settleAt {
 			continue
 		}
 
-		if block == parent {
-			// Since the next block would be the one currently being built,
-			// which we know to be at least [stateRootDelaySeconds] later,
-			// `parent` would be the last one to execute in time for settlement.
+		if block.executed.Load() {
+			if block.execution.by.after(settleAt) {
+				continue
+			}
 			return block, true
 		}
 
-		if child.executed.Load() { // implies settled at `t > settleAt`
-			// `block` is already known to be the last one to execute in time
-			// for settlement.
-			return block, true
-		}
+		// TODO(arr4n) more fine-grained checks are possible for scenarios where
+		// (a) `block` could never execute before `settleAt` so we would
+		// `continue`; and (b) `block` will definitely execute in time and
+		// `child` could never, in which case return `nil, false`.
+		_ = child
 
-		if child.mightFitWithinGasLimit(block.execution.by.remainingGasThisSecond()) {
-			// If we were to call this function again after `child` finishes
-			// executing, `child` might be the return value. The result is
-			// therefore uncertain.
-			return nil, false
-		}
-		return block, true
+		return nil, false
 	}
 }
 

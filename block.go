@@ -21,19 +21,22 @@ import (
 
 var _ adaptor.Block = (*Block)(nil)
 
-type Block struct {
-	*types.Block
-	parent, lastSettled *Block
+type (
+	Block struct {
+		*types.Block
+		parent, lastSettled *Block
 
-	accepted, executed atomic.Bool
+		accepted, executed atomic.Bool
+		execution          *executionResults // non-nil and immutable i.f.f. `executed == true`
+	}
 
-	execution struct { // valid and immutable i.f.f. `executed == true`
+	executionResults struct {
 		by            gasClock
 		byTime        time.Time
 		receipts      types.Receipts
 		stateRootPost common.Hash
 	}
-}
+)
 
 func (b *Block) ID() ids.ID {
 	return ids.ID(b.Hash())
@@ -50,16 +53,15 @@ func (vm *VM) AcceptBlock(ctx context.Context, b *Block) error {
 		a.heightToID[b.NumberU64()] = b.ID()
 
 		rawdb.WriteCanonicalHash(vm.db, b.Hash(), b.NumberU64())
+		rawdb.WriteTxLookupEntriesByBlock(vm.db, b.Block)
 		b.accepted.Store(true)
 
 		settle := b.settles()
 		for i, s := range settle {
 			rawdb.WriteReceipts(vm.db, s.Hash(), s.NumberU64(), s.execution.receipts)
-			rawdb.WriteTxLookupEntriesByBlock(vm.db, s.Block)
 			if err := vm.exec.stateCache.TrieDB().Commit(s.execution.stateRootPost, false); err != nil {
 				return err
 			}
-
 			if i+1 == len(settle) {
 				rawdb.WriteFinalizedBlockHash(vm.db, s.Hash())
 			}

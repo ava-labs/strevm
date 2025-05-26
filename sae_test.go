@@ -62,9 +62,11 @@ func TestBasicE2E(t *testing.T) {
 	chainConfig := params.TestChainConfig
 	signer := types.LatestSigner(chainConfig)
 
+	now := time.Unix(0, 0)
+
 	snowCtx := snowtest.Context(t, ids.Empty)
 	snowCtx.Log = tbLogger{tb: t, level: logging.Debug + 1}
-	vm := New()
+	vm := New(func() time.Time { return now })
 	snowCompatVM := adaptor.Convert(vm)
 
 	require.NoErrorf(t, vm.Initialize(
@@ -109,26 +111,32 @@ func TestBasicE2E(t *testing.T) {
 	}
 
 	var (
-		acceptedBlocks  []*Block
-		blockWithLastTx *Block
+		acceptedBlocks      []*Block
+		blockWithLastTx     *Block
+		waitingForExecution int
 	)
 	start := time.Now()
 	for numBlocks := 0; ; numBlocks++ {
 		proposed, err := snowCompatVM.BuildBlock(ctx)
 		if errors.Is(err, errWaitingForExecution) {
 			numBlocks--
+			waitingForExecution++
 			continue
 		}
 		require.NoErrorf(t, err, "%T.BuildBlock()", snowCompatVM)
 
 		b, err := snowCompatVM.ParseBlock(ctx, proposed.Bytes())
 		require.NoErrorf(t, err, "%T.ParseBlock()", snowCompatVM)
+		require.Equal(t, now.Truncate(time.Second), b.Timestamp())
+
 		require.NoErrorf(t, b.Verify(ctx), "%T.Verify()", b)
 		require.NoErrorf(t, b.Accept(ctx), "%T.Accept()", b)
 
 		bb, ok := snowCompatVM.AsRawBlock(b)
 		require.Truef(t, ok, "Extracting %T from snowman.Block", bb)
 		acceptedBlocks = append(acceptedBlocks, bb)
+
+		now = now.Add(900 * time.Millisecond)
 
 		n, err := numPendingTxs(ctx)
 		require.NoError(t, err, "inspect mempool for num pending txs")
@@ -138,8 +146,9 @@ func TestBasicE2E(t *testing.T) {
 		if blockWithLastTx == nil {
 			blockWithLastTx = bb
 			t.Logf("Last tx included in block %d", bb.NumberU64())
-		} else if s := bb.lastSettled; s != nil && s.Hash() == blockWithLastTx.Hash() {
+		} else if s := bb.lastSettled; s != nil && s.NumberU64() >= blockWithLastTx.NumberU64() {
 			t.Logf("Built and accepted %s blocks in %v", human(numBlocks), time.Since(start))
+			t.Logf("Consensus waited for execution %s times", human(waitingForExecution))
 			break
 		}
 	}
@@ -160,9 +169,13 @@ func TestBasicE2E(t *testing.T) {
 
 		t.Run("last_tx", func(t *testing.T) {
 			b := blockWithLastTx
-			// We stop building blocks once the block including the last tx has
-			// been settled (i.e. is the "finalized" block).
-			assert.Equal(t, b.Hash(), rawdb.ReadFinalizedBlockHash(vm.db), "rawdb.ReadFinalizedBlockHash()")
+
+			t.Run("last_settled_block", func(t *testing.T) {
+				settled := rawdb.ReadHeaderNumber(vm.db, rawdb.ReadFinalizedBlockHash(vm.db))
+				require.NotNil(t, settled, "rawdb.ReadHeaderNumber(rawdb.ReadFinalizedBlockHash())")
+				assert.GreaterOrEqual(t, *settled, b.NumberU64(), "last-settled height >= block including last tx")
+			})
+			assert.Equalf(t, b.execution.stateRootPost, lastBlock.Root(), "%T.Root() of last block must be post-execution root of block including last tx", lastBlock)
 
 			// The following tests that [rawdb.WriteTxLookupEntriesByBlock] has
 			// been called correctly.

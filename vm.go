@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/arr4n/sink"
 	"github.com/ava-labs/avalanchego/database"
@@ -37,6 +38,7 @@ func init() {
 type VM struct {
 	snowCtx *snow.Context
 	common.AppHandler
+	now func() time.Time
 
 	blocks           sink.Mutex[blockMap]
 	accepted         sink.Mutex[*accepted]
@@ -66,12 +68,13 @@ func (a *accepted) last() *Block {
 	return a.all[a.lastID]
 }
 
-func New() *VM {
+func New(now func() time.Time) *VM {
 	quit := make(chan struct{})
 
 	vm := &VM{
 		// VM
 		AppHandler: common.NewNoOpAppHandler(logging.NoLog{}),
+		now:        now,
 		blocks:     sink.NewMutex(make(blockMap)),
 		accepted: sink.NewMutex(&accepted{
 			all:        make(blockMap),
@@ -243,8 +246,7 @@ func (vm *VM) BuildBlock(ctx context.Context) (*Block, error) {
 		return nil, err
 	}
 
-	timestamp := parent.Time() + 1
-	return vm.buildBlock(ctx, timestamp, parent)
+	return vm.buildBlock(ctx, uint64(vm.now().Unix()), parent)
 }
 
 func (vm *VM) signer() types.Signer {

@@ -90,9 +90,11 @@ func (e *executor) init(ctx context.Context, genesis *core.Genesis, db ethdb.Dat
 
 	b := e.vm.newBlock(genesisBlock)
 	b.accepted.Store(true)
+	b.execution = &executionResults{
+		by:            gasClock{time: genesisBlock.Time()},
+		stateRootPost: genesisBlock.Root(),
+	}
 	b.executed.Store(true)
-	b.execution.by.time = genesisBlock.Time()
-	b.execution.stateRootPost = genesisBlock.Root()
 	return b, nil
 }
 
@@ -217,6 +219,11 @@ func (c *gasClock) gasPrice() gas.Price {
 	)
 }
 
+func (c *gasClock) asTime() time.Time {
+	nsec, _ /*remainder*/ := mulDiv(c.consumed, c.config.capPerSecond, 1e9)
+	return time.Unix(int64(c.time), int64(nsec))
+}
+
 func (c *gasClock) consume(g gas.Gas) {
 	c.consumed += g
 	c.time += uint64(c.consumed / c.config.capPerSecond)
@@ -245,10 +252,23 @@ func (c *gasClock) fastForward(to uint64) {
 	c.consumed = 0
 }
 
-func (c *gasClock) remainingGasThisSecond() gas.Gas {
+func (c *gasClock) after(timestamp uint64) bool {
+	return timestamp < c.time || (timestamp == c.time && c.consumed > 0)
+}
+
+// remainingGasUntil returns the amount of gas that `c` would need to consume to
+// reach `timestamp`, and a boolean indicating whether the timestamp is in the
+// future relative to the clock.
+func (c *gasClock) remainingGasUntil(timestamp uint64) (_ gas.Gas, isFuture bool) {
 	// TODO(arr4n) NB! this MUST be modified to account for ACP-176
 	// functionality allowing validators to change the config.
-	return c.config.capPerSecond - c.consumed
+	if timestamp == c.time && c.consumed == 0 {
+		return 0, true
+	}
+	if timestamp <= c.time {
+		return 0, false
+	}
+	return gas.Gas(timestamp-c.time)*c.config.capPerSecond - c.consumed, true
 }
 
 func mulDiv(a, b, c gas.Gas) (quo, rem gas.Gas) {
@@ -275,6 +295,7 @@ func (e *executor) execute(ctx context.Context, b *Block) error {
 	gasPool := core.GasPool(math.MaxUint64) // required by geth but irrelevant so max it out
 	var blockGasConsumed uint64
 
+	receipts := make([]*types.Receipt, len(b.Transactions()))
 	for ti, tx := range b.Transactions() {
 		x.statedb.SetTxContext(tx.Hash(), ti)
 
@@ -300,24 +321,28 @@ func (e *executor) execute(ctx context.Context, b *Block) error {
 		e.gasClock.consume(gas.Gas(receipt.GasUsed))
 		// TODO(arr4n) add a receipt cache to the [executor] to allow API calls
 		// to access them before the end of the block.
-		b.execution.receipts = append(b.execution.receipts, receipt)
+		receipts[ti] = receipt
 	}
+	endTime := time.Now()
 
-	b.execution.byTime = time.Now()
-	b.execution.by = e.gasClock.clone()
 	root, err := e.commitState(ctx, x, b.NumberU64())
 	if err != nil {
 		return err
 	}
-	b.execution.stateRootPost = root
+	b.execution = &executionResults{
+		by:            e.gasClock.clone(),
+		byTime:        endTime,
+		receipts:      receipts,
+		stateRootPost: root,
+	}
 	b.executed.Store(true)
 
 	e.logger().Debug(
 		"Block execution complete",
 		zap.Uint64("height", b.Height()),
-		zap.Uint64("gas_time", e.gasClock.time),
-		zap.Uint64("gas_remaining_in_second", uint64(e.gasClock.remainingGasThisSecond())),
-		zap.Time("wall_time", b.execution.byTime),
+		zap.Time("gas_time", e.gasClock.asTime()),
+		zap.Time("wall_time", endTime),
+		zap.Int("tx_count", len(b.Transactions())),
 	)
 
 	return e.receipts.UseThenSignal(e.quitCtx(), func(rs map[common.Hash]*types.Receipt) error {
