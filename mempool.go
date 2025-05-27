@@ -7,11 +7,14 @@ import (
 	"time"
 
 	"github.com/arr4n/sink"
+	snowcommon "github.com/ava-labs/avalanchego/snow/engine/common"
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/strevm/queue"
 	"go.uber.org/zap"
 )
+
+var errReceivedQuitSig = errors.New("quit")
 
 func (vm *VM) startMempool() {
 	ctx, cancel := context.WithCancel(context.Background())
@@ -21,43 +24,8 @@ func (vm *VM) startMempool() {
 	}()
 
 	for {
-		err := vm.mempool.Use(
-			ctx, sink.MinPriority,
-			func(preempt <-chan sink.Priority, pool *queue.Priority[*pendingTx]) error {
-				signer := vm.signer()
-				for {
-					select {
-					case <-ctx.Done():
-						return ctx.Err()
-					case <-preempt:
-						return nil
-					case tx, ok := <-vm.newTxs:
-						if !ok {
-							return fmt.Errorf("new-transaction channel closed unexpectedly")
-						}
-
-						from, err := types.Sender(signer, tx)
-						if err != nil {
-							vm.logger().Debug(
-								"Dropped tx due to failed sender recovery",
-								zap.Stringer("hash", tx.Hash()),
-								zap.Error(err),
-							)
-							continue
-						}
-						pool.Push(&pendingTx{
-							txAndSender: txAndSender{
-								tx:   tx,
-								from: from,
-							},
-							timePriority: time.Now(),
-						})
-					}
-				}
-			},
-		)
-
-		if errors.Is(err, context.Canceled) {
+		err := vm.mempool.Use(ctx, sink.MinPriority, vm.receiveTxs)
+		if errors.Is(err, errReceivedQuitSig) {
 			return
 		}
 		if err != nil {
@@ -65,6 +33,46 @@ func (vm *VM) startMempool() {
 		}
 		// err == nil -> wait for high-priority mempool user to finish
 		_ = 0 // visual coverage aid
+	}
+}
+
+func (vm *VM) receiveTxs(preempt <-chan sink.Priority, pool *queue.Priority[*pendingTx]) error {
+	signer := vm.signer()
+	for {
+		select {
+		case <-vm.quit:
+			return errReceivedQuitSig
+		case <-preempt:
+			return nil
+		case tx, ok := <-vm.newTxs:
+			if !ok {
+				return fmt.Errorf("new-transaction channel closed unexpectedly")
+			}
+
+			from, err := types.Sender(signer, tx)
+			if err != nil {
+				vm.logger().Debug(
+					"Dropped tx due to failed sender recovery",
+					zap.Stringer("hash", tx.Hash()),
+					zap.Error(err),
+				)
+				continue
+			}
+			pool.Push(&pendingTx{
+				txAndSender: txAndSender{
+					tx:   tx,
+					from: from,
+				},
+				timePriority: time.Now(),
+			})
+
+			select {
+			case vm.toEngine <- snowcommon.PendingTxs:
+			default:
+				p := snowcommon.PendingTxs
+				vm.logger().Debug(fmt.Sprintf("%T(%s) dropped", p, p))
+			}
+		}
 	}
 }
 

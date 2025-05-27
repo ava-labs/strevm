@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/arr4n/sink"
@@ -38,12 +39,16 @@ func init() {
 type VM struct {
 	snowCtx *snow.Context
 	common.AppHandler
-	now func() time.Time
+	toEngine chan<- common.Message
+	now      func() time.Time
 
 	blocks           sink.Mutex[blockMap]
-	accepted         sink.Mutex[*accepted]
-	preference       sink.Mutex[ids.ID]
+	preference       atomic.Pointer[Block]
 	genesisTimestamp uint64
+
+	last struct {
+		accepted, executed, settled atomic.Pointer[Block]
+	}
 
 	db ethdb.Database
 
@@ -58,16 +63,6 @@ type VM struct {
 
 type blockMap map[ids.ID]*Block
 
-type accepted struct {
-	lastID     ids.ID
-	all        blockMap
-	heightToID map[uint64]ids.ID
-}
-
-func (a *accepted) last() *Block {
-	return a.all[a.lastID]
-}
-
 func New(now func() time.Time) *VM {
 	quit := make(chan struct{})
 
@@ -76,11 +71,6 @@ func New(now func() time.Time) *VM {
 		AppHandler: common.NewNoOpAppHandler(logging.NoLog{}),
 		now:        now,
 		blocks:     sink.NewMutex(make(blockMap)),
-		accepted: sink.NewMutex(&accepted{
-			all:        make(blockMap),
-			heightToID: make(map[uint64]ids.ID),
-		}),
-		preference: sink.NewMutex[ids.ID](ids.Empty),
 		// Block building
 		newTxs:  make(chan *types.Transaction, 10), // TODO(arr4n) make the buffer configurable
 		mempool: sink.NewPriorityMutex(new(queue.Priority[*pendingTx])),
@@ -108,6 +98,7 @@ func (vm *VM) Initialize(
 ) error {
 	vm.snowCtx = chainCtx
 	vm.db = rawdb.NewMemoryDatabase() // TODO(arr4n) wrap the [database.Database] argument
+	vm.toEngine = toEngine
 
 	gen := new(core.Genesis)
 	if err := json.Unmarshal(genesisBytes, gen); err != nil {
@@ -130,30 +121,25 @@ func (vm *VM) Initialize(
 		vm.startMempool()
 		wg.Done()
 	}()
-	<-execReady
+	defer func() { <-execReady }()
 
 	vm.logger().Debug(
 		"Genesis block",
 		zap.Uint64("timestamp", genBlock.Time()),
 		zap.Stringer("hash", genBlock.Hash()),
 	)
+
 	if err := vm.blocks.Use(ctx, func(bm blockMap) error {
 		bm[genBlock.ID()] = genBlock
 		return nil
 	}); err != nil {
 		return err
 	}
-	if err := vm.accepted.Use(ctx, func(a *accepted) error {
-		id := genBlock.ID()
-		a.all[id] = genBlock
-		a.lastID = id
-		a.heightToID[0] = id
-		return nil
-	}); err != nil {
-		return err
-	}
+	vm.last.accepted.Store(genBlock)
+	vm.last.executed.Store(genBlock)
+	vm.last.settled.Store(genBlock)
 
-	return vm.afterInitialize(ctx, toEngine)
+	return nil
 }
 
 func (vm *VM) newBlock(b *types.Block) *Block {
@@ -190,22 +176,7 @@ func (vm *VM) Shutdown(ctx context.Context) error {
 	vm.logger().Debug("Shutting down VM")
 	close(vm.quit)
 
-	var wg sync.WaitGroup
-	wg.Add(3)
-	go func() {
-		vm.blocks.Close()
-		wg.Done()
-	}()
-	go func() {
-		vm.accepted.Close()
-		wg.Done()
-	}()
-	go func() {
-		vm.preference.Close()
-		wg.Done()
-	}()
-	wg.Wait()
-
+	vm.blocks.Close()
 	vm.mempoolAndExecWG.Wait()
 	return nil
 }
@@ -214,9 +185,11 @@ func (vm *VM) Version(context.Context) (string, error) {
 	return "0", nil
 }
 
+const httpHandlerKey = "sae"
+
 func (vm *VM) CreateHandlers(context.Context) (map[string]http.Handler, error) {
 	return map[string]http.Handler{
-		"sae": vm.ethRPCHandler(),
+		httpHandlerKey: vm.ethRPCHandler(),
 	}, nil
 }
 
@@ -239,14 +212,7 @@ func (vm *VM) ParseBlock(ctx context.Context, blockBytes []byte) (*Block, error)
 }
 
 func (vm *VM) BuildBlock(ctx context.Context) (*Block, error) {
-	parent, err := sink.FromMutex(ctx, vm.accepted, func(a *accepted) (*Block, error) {
-		return a.last(), nil
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	return vm.buildBlock(ctx, uint64(vm.now().Unix()), parent)
+	return vm.buildBlock(ctx, uint64(vm.now().Unix()), vm.last.accepted.Load())
 }
 
 func (vm *VM) signer() types.Signer {
@@ -254,25 +220,26 @@ func (vm *VM) signer() types.Signer {
 }
 
 func (vm *VM) SetPreference(ctx context.Context, blkID ids.ID) error {
-	return vm.preference.Replace(ctx, func(ids.ID) (ids.ID, error) {
-		return blkID, nil
+	return vm.blocks.Use(ctx, func(bm blockMap) error {
+		b, ok := bm[blkID]
+		if !ok {
+			return database.ErrNotFound
+		}
+		vm.preference.Store(b)
+		return nil
 	})
 }
 
 func (vm *VM) LastAccepted(ctx context.Context) (ids.ID, error) {
-	return sink.FromMutex(ctx, vm.accepted, func(a *accepted) (ids.ID, error) {
-		return a.lastID, nil
-	})
+	return vm.last.accepted.Load().ID(), nil
 }
 
 func (vm *VM) GetBlockIDAtHeight(ctx context.Context, height uint64) (ids.ID, error) {
-	return sink.FromMutex(ctx, vm.accepted, func(a *accepted) (ids.ID, error) {
-		id, ok := a.heightToID[height]
-		if !ok {
-			return ids.Empty, database.ErrNotFound
-		}
-		return id, nil
-	})
+	h := rawdb.ReadCanonicalHash(vm.db, height)
+	if h == (ethcommon.Hash{}) {
+		return ids.Empty, database.ErrNotFound
+	}
+	return ids.ID(h), nil
 }
 
 func (*VM) Engine() consensus.Engine {

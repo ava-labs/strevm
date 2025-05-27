@@ -8,9 +8,11 @@ import (
 	"fmt"
 	"math"
 	"math/big"
+	"net/http/httptest"
 	"os"
 	"runtime"
 	"runtime/pprof"
+	"slices"
 	"sort"
 	"testing"
 	"time"
@@ -25,7 +27,9 @@ import (
 	"github.com/ava-labs/libevm/core/state"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/crypto"
+	"github.com/ava-labs/libevm/ethclient"
 	"github.com/ava-labs/libevm/params"
+	"github.com/ava-labs/libevm/rpc"
 	"github.com/ava-labs/strevm/adaptor"
 	"github.com/ava-labs/strevm/queue"
 	"github.com/google/go-cmp/cmp"
@@ -74,6 +78,15 @@ func TestBasicE2E(t *testing.T) {
 		nil, genesisJSON(t, chainConfig, eoa), nil, nil, nil, nil, nil,
 	), "%T.Initialize()", vm)
 
+	handlers, err := vm.CreateHandlers(ctx)
+	require.NoErrorf(t, err, "%T.CreateHandlers()", vm)
+	rpcServer := httptest.NewServer(handlers[httpHandlerKey])
+	t.Cleanup(rpcServer.Close)
+
+	rpcClient, err := ethclient.Dial(rpcServer.URL)
+	require.NoErrorf(t, err, "ethclient.Dial(%T.URL = %q)", rpcServer, rpcServer.URL)
+	t.Cleanup(rpcClient.Close)
+
 	allTxs := make([]*types.Transaction, *txsInBasicE2E)
 	for nonce := range *txsInBasicE2E {
 		allTxs[nonce] = types.MustSignNewTx(key, signer, &types.DynamicFeeTx{
@@ -84,7 +97,7 @@ func TestBasicE2E(t *testing.T) {
 			GasTipCap: big.NewInt(0),
 			GasFeeCap: new(big.Int).SetUint64(math.MaxUint64),
 		})
-		vm.newTxs <- allTxs[nonce]
+		require.NoError(t, rpcClient.SendTransaction(ctx, allTxs[nonce]))
 	}
 
 	numPendingTxs := func(ctx context.Context) (int, error) {
@@ -158,6 +171,8 @@ func TestBasicE2E(t *testing.T) {
 		return
 	}
 
+	ctx = context.Background() // original ctx had a timeout in case of execution deadlock, but we're past that
+
 	lastID, err := vm.LastAccepted(ctx)
 	require.NoErrorf(t, err, "%T.LastAccepted()", vm)
 	lastBlock, err := vm.GetBlock(ctx, lastID)
@@ -167,13 +182,15 @@ func TestBasicE2E(t *testing.T) {
 	t.Run("persisted_block_hashes", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("last_tx", func(t *testing.T) {
+		t.Run("with_last_tx", func(t *testing.T) {
 			b := blockWithLastTx
 
 			t.Run("last_settled_block", func(t *testing.T) {
-				settled := rawdb.ReadHeaderNumber(vm.db, rawdb.ReadFinalizedBlockHash(vm.db))
-				require.NotNil(t, settled, "rawdb.ReadHeaderNumber(rawdb.ReadFinalizedBlockHash())")
-				assert.GreaterOrEqual(t, *settled, b.NumberU64(), "last-settled height >= block including last tx")
+				f := rpc.FinalizedBlockNumber
+				settled, err := rpcClient.HeaderByNumber(ctx, big.NewInt(f.Int64()))
+				require.NoErrorf(t, err, "%T.HeaderByNumber(%d %q)", rpcClient, f, f)
+
+				assert.GreaterOrEqual(t, settled.Number.Cmp(b.Number()), 0, "last-settled height >= block including last tx")
 			})
 			assert.Equalf(t, b.execution.stateRootPost, lastBlock.Root(), "%T.Root() of last block must be post-execution root of block including last tx", lastBlock)
 
@@ -192,79 +209,91 @@ func TestBasicE2E(t *testing.T) {
 		assert.Equal(t, want, got, "rawdb.ReadAllCanonicalHashes(1...)")
 	})
 
-	t.Run("tx_receipts", func(t *testing.T) {
+	t.Run("api", func(t *testing.T) {
 		t.Parallel()
-		var (
-			gotReceipts      []*types.Receipt
-			totalGasConsumed gas.Gas
-		)
-		for b := lastBlock; b != nil; b = b.parent {
-			gotReceipts = append(b.execution.receipts, gotReceipts...)
-			for _, r := range b.execution.receipts {
-				totalGasConsumed += gas.Gas(r.GasUsed)
-			}
-		}
-
-		require.Equalf(t, len(allTxs), len(gotReceipts), "# %T == # %T", &types.Receipt{}, &types.Transaction{})
-		lastExecutedBy := blockWithLastTx.execution.byTime
-		t.Logf("Executed %s txs (%s gas) in %v", human(len(gotReceipts)), human(totalGasConsumed), lastExecutedBy.Sub(start))
-
-		t.Run("memory", func(t *testing.T) {
+		t.Run("tx_receipts", func(t *testing.T) {
 			t.Parallel()
+			var (
+				gotReceipts      []types.Receipts
+				totalGasConsumed gas.Gas
+			)
+			for i := range lastBlock.NumberU64() {
+				rs, err := rpcClient.BlockReceipts(ctx, rpc.BlockNumberOrHashWithNumber(rpc.BlockNumber(i)))
+				require.NoErrorf(t, err, "%T.BlockReceipts(%d)", rpcClient, i)
+				gotReceipts = append(gotReceipts, rs)
 
-			var wantReceipts []*types.Receipt
-			for _, tx := range allTxs {
-				wantReceipts = append(wantReceipts, &types.Receipt{TxHash: tx.Hash()})
-			}
-			if diff := cmp.Diff(wantReceipts, gotReceipts, cmpReceiptsByHash()); diff != "" {
-				t.Errorf("Execution results diff (-want +got): \n%s", diff)
-			}
-		})
-
-		t.Run("persisted", func(t *testing.T) {
-			t.Parallel()
-
-			for _, b := range acceptedBlocks {
-				got := rawdb.ReadReceipts(vm.db, b.Hash(), b.NumberU64(), b.Time(), vm.exec.chainConfig)
-				want := b.Transactions()
-				if diff := cmp.Diff(txHashes(want), txHashes(got)); diff != "" {
-					t.Errorf("rawdb.ReadReceipts(..., block=%d, ...) diff (-want +got):\n%s", b.NumberU64(), diff)
-				}
-				if b.Hash() == blockWithLastTx.Hash() {
-					break
+				for _, r := range rs {
+					totalGasConsumed += gas.Gas(r.GasUsed)
 				}
 			}
-		})
+			gotReceiptsConcat := slices.Concat(gotReceipts...)
 
-		t.Run("logs", func(t *testing.T) {
-			t.Parallel()
+			require.Equalf(t, len(allTxs), len(gotReceiptsConcat), "# %T == # %T", &types.Receipt{}, &types.Transaction{})
+			lastExecutedBy := blockWithLastTx.execution.byTime
+			t.Logf("Executed %s txs (%s gas) in %v", human(len(gotReceiptsConcat)), human(totalGasConsumed), lastExecutedBy.Sub(start))
 
-			var eoaAsHash common.Hash
-			copy(eoaAsHash[12:], eoa[:])
-			// Certain fields will have different meanings (TBD) in SAE so
-			// we ignore them for now.
-			ignore := cmpopts.IgnoreFields(types.Log{}, "BlockNumber", "BlockHash", "Index", "TxIndex")
-			want := []*types.Log{{
-				Address: wethAddr,
-				Topics: []common.Hash{
-					crypto.Keccak256Hash([]byte("Deposit(address,uint256)")),
-					eoaAsHash,
-				},
-				Data: uint256.NewInt(1).PaddedBytes(32),
-				// TxHash to be completed for each receipt
-			}}
+			t.Run("vs_sent_txs", func(t *testing.T) {
+				t.Parallel()
 
-			for i, r := range gotReceipts {
-				// Use `require` and `t.Fatalf()` because all receipts should be
-				// the same; if one fails then they'll all probably fail in the
-				// same way and there's no point being inundated with thousands
-				// of identical errors.
-				require.Truef(t, r.Status == 1, "tx[%d] execution succeeded", i)
-				want[0].TxHash = r.TxHash
-				if diff := cmp.Diff(want, r.Logs, ignore); diff != "" {
-					t.Fatalf("receipt[%d] logs diff (-want +got):\n%s", i, diff)
+				var wantReceipts types.Receipts
+				for _, tx := range allTxs {
+					wantReceipts = append(wantReceipts, &types.Receipt{TxHash: tx.Hash()})
 				}
-			}
+				if diff := cmp.Diff(wantReceipts, gotReceiptsConcat, cmpReceiptsByHash()); diff != "" {
+					t.Errorf("Execution results diff (-want +got): \n%s", diff)
+				}
+			})
+
+			t.Run("vs_block_contents", func(t *testing.T) {
+				t.Parallel()
+
+				for i, b := range acceptedBlocks {
+					fromAPI := gotReceipts[i+1 /*skips genesis*/]
+					fromDB := rawdb.ReadReceipts(vm.db, b.Hash(), b.NumberU64(), b.Time(), vm.exec.chainConfig)
+
+					if diff := cmp.Diff(fromDB, fromAPI, cmpBigInts()); diff != "" {
+						t.Errorf("Block %d receipts diff vs db: -rawdb.ReadReceipts() +%T.BlockReceipts():\n%s", b.NumberU64(), rpcClient, diff)
+					}
+					if diff := cmp.Diff(txHashes(b.Transactions()), txHashes(fromAPI)); diff != "" {
+						t.Errorf("Block %d receipt hashes diff vs proposed block: -%T.Transactions() +%T.BlockReceipts():\n%s", b.NumberU64(), b, rpcClient, diff)
+					}
+
+					if b.Hash() == blockWithLastTx.Hash() {
+						break
+					}
+				}
+			})
+
+			t.Run("logs", func(t *testing.T) {
+				t.Parallel()
+
+				var eoaAsHash common.Hash
+				copy(eoaAsHash[12:], eoa[:])
+				// Certain fields will have different meanings (TBD) in SAE so
+				// we ignore them for now.
+				ignore := cmpopts.IgnoreFields(types.Log{}, "BlockNumber", "BlockHash", "Index", "TxIndex")
+				want := []*types.Log{{
+					Address: wethAddr,
+					Topics: []common.Hash{
+						crypto.Keccak256Hash([]byte("Deposit(address,uint256)")),
+						eoaAsHash,
+					},
+					Data: uint256.NewInt(1).PaddedBytes(32),
+					// TxHash to be completed for each receipt
+				}}
+
+				for i, r := range slices.Concat(gotReceipts...) {
+					// Use `require` and `t.Fatalf()` because all receipts should be
+					// the same; if one fails then they'll all probably fail in the
+					// same way and there's no point being inundated with thousands
+					// of identical errors.
+					require.Truef(t, r.Status == 1, "tx[%d] execution succeeded", i)
+					want[0].TxHash = r.TxHash
+					if diff := cmp.Diff(want, r.Logs, ignore); diff != "" {
+						t.Fatalf("receipt[%d] logs diff (-want +got):\n%s", i, diff)
+					}
+				}
+			})
 		})
 	})
 
@@ -311,6 +340,17 @@ func cmpReceiptsByHash() cmp.Options {
 				return common.Hash{}
 			}
 			return r.TxHash
+		}),
+	}
+}
+
+func cmpBigInts() cmp.Options {
+	return cmp.Options{
+		cmp.Comparer(func(a, b *big.Int) bool {
+			if a == nil || b == nil {
+				return a == nil && b == nil
+			}
+			return a.Cmp(b) == 0
 		}),
 	}
 }

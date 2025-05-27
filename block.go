@@ -43,40 +43,42 @@ func (b *Block) ID() ids.ID {
 }
 
 func (vm *VM) AcceptBlock(ctx context.Context, b *Block) error {
-	return vm.accepted.Use(ctx, func(a *accepted) error {
-		if err := vm.exec.enqueueAccepted(ctx, b); err != nil {
+	if err := vm.exec.enqueueAccepted(ctx, b); err != nil {
+		return err
+	}
+
+	rawdb.WriteCanonicalHash(vm.db, b.Hash(), b.NumberU64())
+	rawdb.WriteTxLookupEntriesByBlock(vm.db, b.Block) // i.e. canonical tx inclusion
+	b.accepted.Store(true)
+	vm.last.accepted.Store(b)
+
+	settle := b.settles()
+	for i, s := range settle {
+		rawdb.WriteReceipts(vm.db, s.Hash(), s.NumberU64(), s.execution.receipts)
+		if err := vm.exec.stateCache.TrieDB().Commit(s.execution.stateRootPost, false); err != nil {
 			return err
 		}
-
-		a.all[b.ID()] = b
-		a.lastID = b.ID()
-		a.heightToID[b.NumberU64()] = b.ID()
-
-		rawdb.WriteCanonicalHash(vm.db, b.Hash(), b.NumberU64())
-		rawdb.WriteTxLookupEntriesByBlock(vm.db, b.Block)
-		b.accepted.Store(true)
-
-		settle := b.settles()
-		for i, s := range settle {
-			rawdb.WriteReceipts(vm.db, s.Hash(), s.NumberU64(), s.execution.receipts)
-			if err := vm.exec.stateCache.TrieDB().Commit(s.execution.stateRootPost, false); err != nil {
-				return err
-			}
-			if i+1 == len(settle) {
-				rawdb.WriteFinalizedBlockHash(vm.db, s.Hash())
-			}
+		if i+1 == len(settle) {
+			rawdb.WriteFinalizedBlockHash(vm.db, s.Hash())
+			vm.last.settled.Store(s)
 		}
+	}
 
-		vm.logger().Debug(
-			"Accepted block",
-			zap.Uint64("height", b.Height()),
-			zap.Stringer("hash", b.Hash()),
-		)
-		return nil
-	})
+	vm.logger().Debug(
+		"Accepted block",
+		zap.Uint64("height", b.Height()),
+		zap.Stringer("hash", b.Hash()),
+	)
+
+	// TODO(arr4n): prune [VM.blocks] old ones can be GCd. Blocks before the
+	// last-settled one can be deleted, but it has a reference to its parent and
+	// its own last-settled Block, which form a linked-list; DO NOT simply clear
+	// these pointers as they're used elsewhere.
+	return nil
 }
 
-func (*VM) RejectBlock(context.Context, *Block) error {
+func (vm *VM) RejectBlock(ctx context.Context, b *Block) error {
+	rawdb.DeleteBlock(vm.db, b.Hash(), b.NumberU64())
 	// TODO(arr4n) add the transactions back to the mempool if necessary.
 	return nil
 }

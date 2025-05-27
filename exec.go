@@ -37,8 +37,7 @@ type executor struct {
 	chainConfig *params.ChainConfig
 	gasClock    gasClock
 
-	queue    sink.Monitor[*queue.FIFO[*Block]]
-	receipts sink.Monitor[map[common.Hash]*types.Receipt] // TODO(arr4n) make this an LRU, or similar.
+	queue sink.Monitor[*queue.FIFO[*Block]]
 
 	stateCache state.Database
 	// executeScratchSpace MUST NOT be accessed by any methods other than
@@ -104,14 +103,12 @@ func (e *executor) init(ctx context.Context, genesis *core.Genesis, db ethdb.Dat
 
 func (e *executor) run(ready chan<- struct{}) {
 	e.queue = sink.NewMonitor(new(queue.FIFO[*Block]))
-	e.receipts = sink.NewMonitor(make(map[common.Hash]*types.Receipt))
 	e.spawn(e.processQueue)
 
 	close(ready)
 
 	<-e.quit
 	e.spawned.Wait()
-	e.receipts.Close()
 	e.queue.Close()
 
 	snaps := e.executeScratchSpace.snaps
@@ -333,6 +330,7 @@ func (e *executor) execute(ctx context.Context, b *Block) error {
 	}
 	endTime := time.Now()
 
+	rawdb.WriteHeadBlockHash(e.vm.db, b.Hash())
 	root, err := e.commitState(ctx, x, b.NumberU64())
 	if err != nil {
 		return err
@@ -343,7 +341,10 @@ func (e *executor) execute(ctx context.Context, b *Block) error {
 		receipts:      receipts,
 		stateRootPost: root,
 	}
+	// TODO(arr4n) add canoto fields to [executionResults] and persist the gas
+	// time and state root in the database.
 	b.executed.Store(true)
+	e.vm.last.executed.Store(b)
 
 	e.logger().Debug(
 		"Block execution complete",
@@ -352,13 +353,7 @@ func (e *executor) execute(ctx context.Context, b *Block) error {
 		zap.Time("wall_time", endTime),
 		zap.Int("tx_count", len(b.Transactions())),
 	)
-
-	return e.receipts.UseThenSignal(e.quitCtx(), func(rs map[common.Hash]*types.Receipt) error {
-		for _, r := range b.execution.receipts {
-			rs[r.TxHash] = r
-		}
-		return nil
-	})
+	return nil
 }
 
 func (e *executor) commitState(ctx context.Context, x *executionScratchSpace, blockNum uint64) (common.Hash, error) {
