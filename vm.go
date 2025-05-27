@@ -185,11 +185,11 @@ func (vm *VM) Version(context.Context) (string, error) {
 	return "0", nil
 }
 
-const httpHandlerKey = "sae"
+const HTTPHandlerKey = "sae"
 
 func (vm *VM) CreateHandlers(context.Context) (map[string]http.Handler, error) {
 	return map[string]http.Handler{
-		httpHandlerKey: vm.ethRPCHandler(),
+		HTTPHandlerKey: vm.ethRPCHandler(),
 	}, nil
 }
 
@@ -243,7 +243,15 @@ func (vm *VM) GetBlockIDAtHeight(ctx context.Context, height uint64) (ids.ID, er
 }
 
 func (*VM) Engine() consensus.Engine {
-	return nil
+	return engine{}
+}
+
+type engine struct {
+	consensus.Engine
+}
+
+func (engine) Author(h *types.Header) (ethcommon.Address, error) {
+	return ethcommon.Address{}, nil
 }
 
 func (*VM) GetHeader(ethcommon.Hash, uint64) *types.Header {

@@ -8,11 +8,16 @@ import (
 	"math/big"
 	"net/http"
 	"sync/atomic"
+	"time"
 
 	"github.com/ava-labs/avalanchego/database"
 	"github.com/ava-labs/libevm/common"
+	"github.com/ava-labs/libevm/consensus"
+	"github.com/ava-labs/libevm/core"
 	"github.com/ava-labs/libevm/core/rawdb"
+	"github.com/ava-labs/libevm/core/state"
 	"github.com/ava-labs/libevm/core/types"
+	"github.com/ava-labs/libevm/core/vm"
 	"github.com/ava-labs/libevm/libevm/ethapi"
 	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/rpc"
@@ -59,12 +64,12 @@ func (b *ethAPIBackend) CurrentBlock() *types.Header {
 	return bb.Header()
 }
 
-func (b *ethAPIBackend) BlockByNumberOrHash(ctx context.Context, blockNrOrHash rpc.BlockNumberOrHash) (*types.Block, error) {
-	if n, ok := blockNrOrHash.Number(); ok {
+func (b *ethAPIBackend) BlockByNumberOrHash(ctx context.Context, numOrHash rpc.BlockNumberOrHash) (*types.Block, error) {
+	if n, ok := numOrHash.Number(); ok {
 		return b.resolveBlockNumber(ctx, n)
 	}
 
-	h, ok := blockNrOrHash.Hash()
+	h, ok := numOrHash.Hash()
 	if !ok {
 		return nil, errors.New("neither block number nor hash specified")
 	}
@@ -88,6 +93,18 @@ func (b *ethAPIBackend) HeaderByNumber(ctx context.Context, num rpc.BlockNumber)
 	return bl.Header(), nil
 }
 
+func (b *ethAPIBackend) HeaderByHash(ctx context.Context, hash common.Hash) (*types.Header, error) {
+	num := rawdb.ReadHeaderNumber(b.vm.db, hash)
+	if num == nil {
+		return nil, fmt.Errorf("read block number for %#x: %w", hash, database.ErrNotFound)
+	}
+	hdr := rawdb.ReadHeader(b.vm.db, hash, *num)
+	if hdr == nil {
+		return nil, fmt.Errorf("read canonical block %d (%#x): %w", *num, hash, database.ErrNotFound)
+	}
+	return hdr, nil
+}
+
 func (b *ethAPIBackend) resolveBlockNumber(ctx context.Context, num rpc.BlockNumber) (*types.Block, error) {
 	var ptr *atomic.Pointer[Block]
 
@@ -96,6 +113,9 @@ func (b *ethAPIBackend) resolveBlockNumber(ctx context.Context, num rpc.BlockNum
 	// * pending execution	=> accepted
 	// * latest execution	=> executed
 	// * safe/finalized		=> settled
+	//
+	// Note that the only way safe/finalized can result in different state to
+	// latest is if there was a hard drive corruption.
 	case rpc.PendingBlockNumber:
 		ptr = &b.vm.last.accepted
 	case rpc.LatestBlockNumber:
@@ -120,23 +140,73 @@ func (b *ethAPIBackend) GetReceipts(ctx context.Context, hash common.Hash) (type
 	// TODO(arr4n): add an LRU to the VM for faster access to recently executed
 	// txs and blocks.
 
-	num := rawdb.ReadHeaderNumber(b.vm.db, hash)
-	if num == nil {
-		return nil, fmt.Errorf("block number for %#x: %w", hash, database.ErrNotFound)
+	hdr, err := b.HeaderByHash(ctx, hash)
+	if err != nil {
+		return nil, err
 	}
-	if *num > b.vm.last.executed.Load().NumberU64() {
-		return nil, fmt.Errorf("block %d (%#x) not executed yet", *num, hash)
+
+	if !hdr.Number.IsUint64() {
+		return nil, fmt.Errorf("block number %s for %#x overflows uint64", hdr.Number.String(), hash)
 	}
+	num := hdr.Number.Uint64()
+
+	if num > b.vm.last.executed.Load().NumberU64() {
+		return nil, fmt.Errorf("block %s (%#x) not executed yet", hdr.Number.String(), hash)
+	}
+
 	return rawdb.ReadReceipts(
 		b.vm.db,
 		hash,
-		*num,
+		num,
 		// Time is used to construct a [types.Signer] in
 		// [types.Receipts.DeriveFields] so it MUST be the block's time, not the
 		// execution time of the receipts.
-		rawdb.ReadHeader(b.vm.db, hash, *num).Time,
+		hdr.Time,
 		b.vm.exec.chainConfig,
 	), nil
+}
+
+func (b *ethAPIBackend) StateAndHeaderByNumberOrHash(ctx context.Context, numOrHash rpc.BlockNumberOrHash) (*state.StateDB, *types.Header, error) {
+	bl, err := b.BlockByNumberOrHash(ctx, numOrHash)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// TODO(arr4n): this uses the settled root but SHOULD be the post-execution
+	// root of the block, which we don't yet store in the database.
+	db, err := state.New(bl.Root(), b.vm.exec.stateCache, nil)
+	if err != nil {
+		return nil, nil, err
+	}
+	return db, bl.Header(), nil
+}
+
+func (*ethAPIBackend) RPCEVMTimeout() time.Duration {
+	return 100 * time.Millisecond
+}
+
+func (*ethAPIBackend) RPCGasCap() uint64 {
+	return uint64(maxGasPerSecond)
+}
+
+func (b *ethAPIBackend) Engine() consensus.Engine {
+	return b.vm.Engine()
+}
+
+func (b *ethAPIBackend) GetEVM(ctx context.Context, msg *core.Message, db *state.StateDB, hdr *types.Header, config *vm.Config, context *vm.BlockContext) *vm.EVM {
+	txCtx := vm.TxContext{
+		Origin:   msg.From,
+		GasPrice: big.NewInt(0), // TODO(arr4n) query the end of the queue
+	}
+	return vm.NewEVM(*context, txCtx, db, b.vm.exec.chainConfig, *config)
+}
+
+func (b *ethAPIBackend) GetTransaction(ctx context.Context, txHash common.Hash) (bool, *types.Transaction, common.Hash, uint64, uint64, error) {
+	tx, blockHash, blockNum, index := rawdb.ReadTransaction(b.vm.db, txHash)
+	if tx == nil {
+		return false, nil, common.Hash{}, 0, 0, nil
+	}
+	return true, tx, blockHash, blockNum, index, nil
 }
 
 // GetTd is required by the API frontend for unmarshalling a [types.Block], but

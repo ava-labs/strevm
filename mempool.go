@@ -65,6 +65,12 @@ func (vm *VM) receiveTxs(preempt <-chan sink.Priority, pool *queue.Priority[*pen
 				},
 				timePriority: time.Now(),
 			})
+			vm.logger().Debug(
+				"New tx in mempool",
+				zap.Stringer("hash", tx.Hash()),
+				zap.Stringer("from", from),
+				zap.Uint64("nonce", tx.Nonce()),
+			)
 
 			select {
 			case vm.toEngine <- snowcommon.PendingTxs:

@@ -46,8 +46,12 @@ func (vc *validityChecker) addTxToQueue(t txAndSender) (txValidity, error) {
 		return delayTx, nil
 	}
 
+	price := uint256.NewInt(uint64(vc.gasClock.gasPrice()))
+	if tx.GasFeeCap().Cmp(price.ToBig()) < 0 {
+		return delayTx, nil
+	}
 	gasCost := new(uint256.Int).Mul(
-		uint256.NewInt(uint64(vc.gasClock.gasPrice())),
+		price,
 		uint256.NewInt(tx.Gas()),
 	)
 	cost := gasCost.Add(gasCost, uint256.MustFromBig(tx.Value()))

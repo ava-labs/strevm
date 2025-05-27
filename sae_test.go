@@ -24,7 +24,6 @@ import (
 	"github.com/ava-labs/avalanchego/vms/components/gas"
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core/rawdb"
-	"github.com/ava-labs/libevm/core/state"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/crypto"
 	"github.com/ava-labs/libevm/ethclient"
@@ -32,6 +31,7 @@ import (
 	"github.com/ava-labs/libevm/rpc"
 	"github.com/ava-labs/strevm/adaptor"
 	"github.com/ava-labs/strevm/queue"
+	"github.com/ava-labs/strevm/weth"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/holiman/uint256"
@@ -63,16 +63,17 @@ func TestBasicE2E(t *testing.T) {
 
 	key := newTestPrivateKey(t, nil)
 	eoa := crypto.PubkeyToAddress(key.PublicKey)
+	t.Logf("Sending all txs as EOA %v", eoa)
 	chainConfig := params.TestChainConfig
 	signer := types.LatestSigner(chainConfig)
 
 	now := time.Unix(0, 0)
 
-	snowCtx := snowtest.Context(t, ids.Empty)
-	snowCtx.Log = tbLogger{tb: t, level: logging.Debug + 1}
 	vm := New(func() time.Time { return now })
 	snowCompatVM := adaptor.Convert(vm)
 
+	snowCtx := snowtest.Context(t, ids.Empty)
+	snowCtx.Log = tbLogger{tb: t, level: logging.Debug + 1}
 	require.NoErrorf(t, vm.Initialize(
 		ctx, snowCtx,
 		nil, genesisJSON(t, chainConfig, eoa), nil, nil, nil, nil, nil,
@@ -80,7 +81,7 @@ func TestBasicE2E(t *testing.T) {
 
 	handlers, err := vm.CreateHandlers(ctx)
 	require.NoErrorf(t, err, "%T.CreateHandlers()", vm)
-	rpcServer := httptest.NewServer(handlers[httpHandlerKey])
+	rpcServer := httptest.NewServer(handlers[HTTPHandlerKey])
 	t.Cleanup(rpcServer.Close)
 
 	rpcClient, err := ethclient.Dial(rpcServer.URL)
@@ -196,9 +197,11 @@ func TestBasicE2E(t *testing.T) {
 
 			// The following tests that [rawdb.WriteTxLookupEntriesByBlock] has
 			// been called correctly.
-			_, gotHash, _, gotIdx := rawdb.ReadTransaction(vm.db, allTxs[len(allTxs)-1].Hash())
-			assert.Equal(t, b.Hash(), gotHash, "block hash of last tx")
-			assert.Equal(t, uint64(len(b.Transactions())-1), gotIdx, "index of last tx")
+			lastTxHash := allTxs[len(allTxs)-1].Hash()
+			got, err := rpcClient.TransactionReceipt(ctx, lastTxHash)
+			require.NoErrorf(t, err, "%T.TransactionReceipt(%#x [last tx])", rpcClient, lastTxHash)
+			assert.Equal(t, b.Hash(), got.BlockHash, "block hash of last tx")
+			assert.Equal(t, uint(len(b.Transactions())-1), got.TransactionIndex, "index of last tx")
 		})
 
 		_, got := rawdb.ReadAllCanonicalHashes(vm.db, 1, lastBlock.NumberU64()+1, math.MaxInt)
@@ -299,13 +302,27 @@ func TestBasicE2E(t *testing.T) {
 
 	require.NoErrorf(t, vm.Shutdown(ctx), "%T.Shutdown()", vm)
 
-	t.Run("state", func(t *testing.T) {
-		statedb, err := state.New(blockWithLastTx.execution.stateRootPost, state.NewDatabase(vm.db), nil)
-		require.NoError(t, err, "state.New() at last block's state root")
+	t.Run("accounts_and_storage", func(t *testing.T) {
+		want := uint64(len(allTxs))
+		// TODO(arr4n) iterate over all accepted blocks, using the cumulative tx
+		// count as expected value when performing the below tests at different
+		// block numbers.
 
-		nTxs := uint64(len(allTxs))
-		assert.Equal(t, nTxs, statedb.GetNonce(eoa), "Nonce of EOA sending txs")
-		assert.Equal(t, uint256.NewInt(nTxs), statedb.GetBalance(wethAddr), "Balance of WETH contract")
+		gotNonce, err := rpcClient.NonceAt(ctx, eoa, nil)
+		require.NoErrorf(t, err, "%T.NonceAt(%v, [latest])", rpcClient, eoa)
+		assert.Equal(t, want, gotNonce, "Nonce of EOA sending txs")
+
+		contract, err := weth.NewWeth(wethAddr, rpcClient)
+		require.NoError(t, err, "bind WETH contract")
+		gotWrapped, err := contract.BalanceOf(nil, eoa)
+		require.NoErrorf(t, err, "%T.BalanceOf(%v)", contract, eoa)
+		require.Truef(t, gotWrapped.IsUint64(), "%T.BalanceOf(%v).IsUint64()", contract, eoa)
+		assert.Equal(t, want, gotWrapped.Uint64(), "%T.BalanceOf(%v)", contract, eoa)
+
+		gotContractBal, err := rpcClient.BalanceAt(ctx, wethAddr, nil)
+		require.NoError(t, err)
+		require.Truef(t, gotContractBal.IsUint64(), "")
+		assert.Equal(t, want, gotContractBal.Uint64(), "Balance of WETH contract")
 	})
 }
 
