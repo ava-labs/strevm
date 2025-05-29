@@ -3,6 +3,7 @@ module github.com/ava-labs/strevm
 go 1.23.7
 
 require (
+	github.com/StephenButtolph/canoto v0.15.0
 	github.com/arr4n/sink v0.0.0-20250524105858-43bc1efdcbc4
 	github.com/ava-labs/avalanchego v1.13.0
 	github.com/ava-labs/libevm v0.0.0-20250527142935-2d94327f8dae
@@ -19,7 +20,6 @@ require (
 	github.com/BurntSushi/toml v1.5.0 // indirect
 	github.com/DataDog/zstd v1.5.2 // indirect
 	github.com/Microsoft/go-winio v0.6.1 // indirect
-	github.com/StephenButtolph/canoto v0.15.0 // indirect
 	github.com/VictoriaMetrics/fastcache v1.12.1 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/bits-and-blooms/bitset v1.10.0 // indirect

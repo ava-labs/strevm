@@ -60,80 +60,120 @@ func (b *ethAPIBackend) SendTx(ctx context.Context, tx *types.Transaction) error
 }
 
 func (b *ethAPIBackend) CurrentBlock() *types.Header {
+	return b.CurrentHeader()
+}
+
+func (b *ethAPIBackend) CurrentHeader() *types.Header {
 	bb := b.vm.last.executed.Load()
-	return bb.Header()
+	return types.CopyHeader(bb.Header())
+}
+
+func (b *ethAPIBackend) SuggestGasTipCap(context.Context) (*big.Int, error) {
+	// TODO(arr4n) the API adds this value to the base fee from
+	// [ethAPIBackend.CurrentHeader] to get the recommended gas price, so that
+	// value needs to be subtracted from the tip of the queue and the difference
+	// returned.
+	return big.NewInt(10 * params.GWei), nil
 }
 
 func (b *ethAPIBackend) BlockByNumberOrHash(ctx context.Context, numOrHash rpc.BlockNumberOrHash) (*types.Block, error) {
 	if n, ok := numOrHash.Number(); ok {
-		return b.resolveBlockNumber(ctx, n)
+		return b.blockByNumber(ctx, n)
 	}
 
 	h, ok := numOrHash.Hash()
 	if !ok {
-		return nil, errors.New("neither block number nor hash specified")
+		return nil, errors.New("neither block number nor hash specified when fetching block")
 	}
-	_ = h
-	return nil, errors.New("block by hash unimplemented")
+	return b.BlockByHash(ctx, h)
+}
+
+func (b *ethAPIBackend) HeaderByNumberOrHash(ctx context.Context, numOrHash rpc.BlockNumberOrHash) (*types.Header, error) {
+	if n, ok := numOrHash.Number(); ok {
+		return b.HeaderByNumber(ctx, n)
+	}
+
+	h, ok := numOrHash.Hash()
+	if !ok {
+		return nil, errors.New("neither block number nor hash specified when fetching header")
+	}
+	return b.HeaderByHash(ctx, h)
 }
 
 func (b *ethAPIBackend) BlockByNumber(ctx context.Context, num rpc.BlockNumber) (*types.Block, error) {
-	bl, err := b.resolveBlockNumber(ctx, num)
-	if err != nil {
-		return nil, err
-	}
-	return bl, nil
+	return b.blockByNumber(ctx, num)
 }
 
 func (b *ethAPIBackend) HeaderByNumber(ctx context.Context, num rpc.BlockNumber) (*types.Header, error) {
-	bl, err := b.resolveBlockNumber(ctx, num)
+	bl, err := b.blockByNumber(ctx, num)
 	if err != nil {
 		return nil, err
 	}
 	return bl.Header(), nil
 }
 
-func (b *ethAPIBackend) HeaderByHash(ctx context.Context, hash common.Hash) (*types.Header, error) {
-	num := rawdb.ReadHeaderNumber(b.vm.db, hash)
-	if num == nil {
-		return nil, fmt.Errorf("read block number for %#x: %w", hash, database.ErrNotFound)
+func (b *ethAPIBackend) BlockByHash(ctx context.Context, hash common.Hash) (*types.Block, error) {
+	num, err := b.canonicalHashNumber(hash)
+	if err != nil {
+		return nil, err
 	}
-	hdr := rawdb.ReadHeader(b.vm.db, hash, *num)
-	if hdr == nil {
-		return nil, fmt.Errorf("read canonical block %d (%#x): %w", *num, hash, database.ErrNotFound)
-	}
-	return hdr, nil
+	return b.blockByNumber(ctx, rpc.BlockNumber(num))
 }
 
-func (b *ethAPIBackend) resolveBlockNumber(ctx context.Context, num rpc.BlockNumber) (*types.Block, error) {
-	var ptr *atomic.Pointer[Block]
+func (b *ethAPIBackend) HeaderByHash(ctx context.Context, hash common.Hash) (*types.Header, error) {
+	num, err := b.canonicalHashNumber(hash)
+	if err != nil {
+		return nil, err
+	}
+	return b.HeaderByNumber(ctx, rpc.BlockNumber(num))
+}
 
-	switch num {
-	// Named blocks are resolved relative to their execution status:
-	// * pending execution	=> accepted
-	// * latest execution	=> executed
-	// * safe/finalized		=> settled
-	//
-	// Note that the only way safe/finalized can result in different state to
-	// latest is if there was a hard drive corruption.
-	case rpc.PendingBlockNumber:
-		ptr = &b.vm.last.accepted
-	case rpc.LatestBlockNumber:
-		ptr = &b.vm.last.executed
-	case rpc.SafeBlockNumber, rpc.FinalizedBlockNumber:
-		ptr = &b.vm.last.settled
+func (b *ethAPIBackend) canonicalHashNumber(hash common.Hash) (uint64, error) {
+	num := rawdb.ReadHeaderNumber(b.vm.db, hash)
+	if num == nil {
+		return 0, fmt.Errorf("read block number for %#x: %w", hash, database.ErrNotFound)
+	}
+	return *num, nil
+}
 
-	default: // includes [rpc.EarliestBlockNumber] == 0
-		n := uint64(num)
-		hash := rawdb.ReadCanonicalHash(b.vm.db, n)
-		b := rawdb.ReadBlock(b.vm.db, hash, n)
-		if b == nil {
-			return nil, database.ErrNotFound
-		}
-		return b, nil
+var errUnsupported = errors.New("unsupported")
+
+func (b *ethAPIBackend) blockByNumber(ctx context.Context, blockNum rpc.BlockNumber) (*types.Block, error) {
+	num, hash, err := b.resolveBlockNumber(blockNum)
+	if err != nil {
+		return nil, err
 	}
 
-	return ptr.Load().Block, nil
+	block := rawdb.ReadBlock(b.vm.db, hash, uint64(num))
+	if block == nil {
+		return nil, fmt.Errorf("block %d %w", num, database.ErrNotFound)
+	}
+	return block, nil
+}
+
+func (b *ethAPIBackend) resolveBlockNumber(num rpc.BlockNumber) (uint64, common.Hash, error) {
+	switch {
+	case num == rpc.LatestBlockNumber:
+		return b.blockNumAndHash(&b.vm.last.executed)
+	case num == rpc.SafeBlockNumber:
+		return b.blockNumAndHash(&b.vm.last.settled)
+	case num < 0:
+		// Other labelled blocks: pending, finalized, and future definitions.
+		return 0, common.Hash{}, fmt.Errorf("%s block %w", num.String(), errUnsupported)
+	}
+
+	hash := rawdb.ReadCanonicalHash(b.vm.db, uint64(num))
+	if hash == (common.Hash{}) {
+		return 0, hash, fmt.Errorf("canonical hash for block %d: %w", num, database.ErrNotFound)
+	}
+	return uint64(num), hash, nil
+}
+
+// blockNumAndHash always returns a nil error; the signature is for convenience
+// when used in [ethAPIBackend.resolveBlockNumber].
+func (*ethAPIBackend) blockNumAndHash(block *atomic.Pointer[Block]) (uint64, common.Hash, error) {
+	b := block.Load()
+	return b.NumberU64(), b.Hash(), nil
 }
 
 func (b *ethAPIBackend) GetReceipts(ctx context.Context, hash common.Hash) (types.Receipts, error) {
@@ -144,12 +184,7 @@ func (b *ethAPIBackend) GetReceipts(ctx context.Context, hash common.Hash) (type
 	if err != nil {
 		return nil, err
 	}
-
-	if !hdr.Number.IsUint64() {
-		return nil, fmt.Errorf("block number %s for %#x overflows uint64", hdr.Number.String(), hash)
-	}
 	num := hdr.Number.Uint64()
-
 	if num > b.vm.last.executed.Load().NumberU64() {
 		return nil, fmt.Errorf("block %s (%#x) not executed yet", hdr.Number.String(), hash)
 	}
@@ -166,19 +201,39 @@ func (b *ethAPIBackend) GetReceipts(ctx context.Context, hash common.Hash) (type
 	), nil
 }
 
+// StateAndHeaderByNumberOrHash does NOT return the consensus-agreed
+// [types.Header], but one augmented to reflect the post-execution state of the
+// requested block. Similarly, the returned [state.StateDB] is opened at the
+// post-execution root of the block.
+//
+// This behaviour reflects the expected usage of this method, which is to query
+// state (e.g. balances, nonces, storage) and to perform `eth_call` or
+// `eth_estimateGas` operations. These operations are all performed by tooling
+// that was built for a synchronous execution model, and the method's behaviour
+// mimics such a setup.
 func (b *ethAPIBackend) StateAndHeaderByNumberOrHash(ctx context.Context, numOrHash rpc.BlockNumberOrHash) (*state.StateDB, *types.Header, error) {
-	bl, err := b.BlockByNumberOrHash(ctx, numOrHash)
+	h, err := b.HeaderByNumberOrHash(ctx, numOrHash)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	// TODO(arr4n): this uses the settled root but SHOULD be the post-execution
-	// root of the block, which we don't yet store in the database.
-	db, err := state.New(bl.Root(), b.vm.exec.stateCache, nil)
+	// TODO(arr4n) use a last-synchronous block as the pivot point for async
+	// execution; a genesis block suffices, but so too does a synchronous chain
+	// being upgraded.
+	const lastSynchronousBlockHeight = 0
+	if num := h.Number.Uint64(); num > lastSynchronousBlockHeight {
+		res, err := b.vm.readPostExecutionState(num)
+		if err != nil {
+			return nil, nil, err
+		}
+		h.Root = res.stateRootPost
+	}
+
+	db, err := state.New(h.Root, b.vm.exec.stateCache, nil)
 	if err != nil {
 		return nil, nil, err
 	}
-	return db, bl.Header(), nil
+	return db, h, nil
 }
 
 func (*ethAPIBackend) RPCEVMTimeout() time.Duration {
@@ -186,7 +241,7 @@ func (*ethAPIBackend) RPCEVMTimeout() time.Duration {
 }
 
 func (*ethAPIBackend) RPCGasCap() uint64 {
-	return uint64(maxGasPerSecond)
+	return uint64(10 * maxGasPerSecond)
 }
 
 func (b *ethAPIBackend) Engine() consensus.Engine {

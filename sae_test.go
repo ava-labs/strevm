@@ -187,9 +187,9 @@ func TestBasicE2E(t *testing.T) {
 			b := blockWithLastTx
 
 			t.Run("last_settled_block", func(t *testing.T) {
-				f := rpc.FinalizedBlockNumber
-				settled, err := rpcClient.HeaderByNumber(ctx, big.NewInt(f.Int64()))
-				require.NoErrorf(t, err, "%T.HeaderByNumber(%d %q)", rpcClient, f, f)
+				safe := rpc.SafeBlockNumber
+				settled, err := rpcClient.HeaderByNumber(ctx, big.NewInt(safe.Int64()))
+				require.NoErrorf(t, err, "%T.HeaderByNumber(%d %q)", rpcClient, safe, safe)
 
 				assert.GreaterOrEqual(t, settled.Number.Cmp(b.Number()), 0, "last-settled height >= block including last tx")
 			})
@@ -221,7 +221,8 @@ func TestBasicE2E(t *testing.T) {
 				totalGasConsumed gas.Gas
 			)
 			for i := range lastBlock.NumberU64() {
-				rs, err := rpcClient.BlockReceipts(ctx, rpc.BlockNumberOrHashWithNumber(rpc.BlockNumber(i)))
+				num := rpc.BlockNumberOrHashWithNumber(rpc.BlockNumber(i))
+				rs, err := rpcClient.BlockReceipts(ctx, num)
 				require.NoErrorf(t, err, "%T.BlockReceipts(%d)", rpcClient, i)
 				gotReceipts = append(gotReceipts, rs)
 

@@ -4,6 +4,8 @@ import (
 	"errors"
 
 	"github.com/ava-labs/avalanchego/vms/components/gas"
+	"github.com/ava-labs/libevm/core/types"
+	"github.com/ava-labs/libevm/trie"
 	"github.com/dustin/go-humanize"
 	"golang.org/x/exp/constraints"
 )
@@ -32,4 +34,8 @@ func boundedSubtract[T constraints.Unsigned](a, b, floor T) T {
 
 func human[T constraints.Integer](x T) string {
 	return humanize.Comma(int64(x))
+}
+
+func trieHasher() types.TrieHasher {
+	return trie.NewStackTrie(nil)
 }

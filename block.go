@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/ava-labs/avalanchego/ids"
-	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core"
 	"github.com/ava-labs/libevm/core/rawdb"
 	"github.com/ava-labs/libevm/core/types"
@@ -21,22 +20,13 @@ import (
 
 var _ adaptor.Block = (*Block)(nil)
 
-type (
-	Block struct {
-		*types.Block
-		parent, lastSettled *Block
+type Block struct {
+	*types.Block
+	parent, lastSettled *Block
 
-		accepted, executed atomic.Bool
-		execution          *executionResults // non-nil and immutable i.f.f. `executed == true`
-	}
-
-	executionResults struct {
-		by            gasClock
-		byTime        time.Time
-		receipts      types.Receipts
-		stateRootPost common.Hash
-	}
-)
+	accepted, executed atomic.Bool
+	execution          *executionResults // non-nil and immutable i.f.f. `executed == true`
+}
 
 func (b *Block) ID() ids.ID {
 	return ids.ID(b.Hash())
@@ -47,22 +37,30 @@ func (vm *VM) AcceptBlock(ctx context.Context, b *Block) error {
 		return err
 	}
 
-	rawdb.WriteCanonicalHash(vm.db, b.Hash(), b.NumberU64())
-	rawdb.WriteTxLookupEntriesByBlock(vm.db, b.Block) // i.e. canonical tx inclusion
-	b.accepted.Store(true)
-	vm.last.accepted.Store(b)
+	batch := vm.db.NewBatch()
+	rawdb.WriteCanonicalHash(batch, b.Hash(), b.NumberU64())
+	rawdb.WriteTxLookupEntriesByBlock(batch, b.Block) // i.e. canonical tx inclusion
 
 	settle := b.settles()
+	var lastSettled *Block
 	for i, s := range settle {
-		rawdb.WriteReceipts(vm.db, s.Hash(), s.NumberU64(), s.execution.receipts)
 		if err := vm.exec.stateCache.TrieDB().Commit(s.execution.stateRootPost, false); err != nil {
 			return err
 		}
 		if i+1 == len(settle) {
-			rawdb.WriteFinalizedBlockHash(vm.db, s.Hash())
-			vm.last.settled.Store(s)
+			rawdb.WriteFinalizedBlockHash(batch, s.Hash())
+			lastSettled = s
 		}
 	}
+	if err := batch.Write(); err != nil {
+		return err
+	}
+
+	if lastSettled != nil {
+		vm.last.settled.Store(lastSettled)
+	}
+	b.accepted.Store(true)
+	vm.last.accepted.Store(b)
 
 	vm.logger().Debug(
 		"Accepted block",
@@ -94,11 +92,11 @@ func (vm *VM) VerifyBlock(ctx context.Context, b *Block) error {
 	}
 	b.parent = parent
 
-	signer := vm.signer()
+	signer := vm.signer(b.NumberU64(), b.Time())
 	txs := b.Transactions()
 	// This starts a concurrent, background pre-computation of the results of
 	// [types.Sender], which is cached in each tx.
-	core.SenderCacher.Recover(vm.signer(), b.Transactions())
+	core.SenderCacher.Recover(signer, b.Transactions())
 
 	candidates := new(queue.FIFO[*pendingTx])
 	candidates.Grow(txs.Len())

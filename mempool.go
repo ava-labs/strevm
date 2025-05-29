@@ -37,7 +37,6 @@ func (vm *VM) startMempool() {
 }
 
 func (vm *VM) receiveTxs(preempt <-chan sink.Priority, pool *queue.Priority[*pendingTx]) error {
-	signer := vm.signer()
 	for {
 		select {
 		case <-vm.quit:
@@ -49,7 +48,7 @@ func (vm *VM) receiveTxs(preempt <-chan sink.Priority, pool *queue.Priority[*pen
 				return fmt.Errorf("new-transaction channel closed unexpectedly")
 			}
 
-			from, err := types.Sender(signer, tx)
+			from, err := types.Sender(vm.currSigner(), tx)
 			if err != nil {
 				vm.logger().Debug(
 					"Dropped tx due to failed sender recovery",

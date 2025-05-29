@@ -2,6 +2,7 @@ package sae
 
 import (
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"math"
@@ -27,6 +28,8 @@ import (
 	"github.com/ava-labs/strevm/acp176"
 	"github.com/ava-labs/strevm/queue"
 )
+
+//go:generate canoto exec.go
 
 type executor struct {
 	vm   *VM
@@ -192,18 +195,30 @@ type executionScratchSpace struct {
 	statedb *state.StateDB
 }
 
-type (
-	gasClock struct {
-		time     uint64
-		consumed gas.Gas // this second
+type executionResults struct {
+	by       gasClock `canoto:"value,1"`
+	byTime   time.Time
+	receipts types.Receipts
 
-		state acp176.State
-	}
+	gasUsed       gas.Gas     `canoto:"fint64,2"`
+	receiptRoot   common.Hash `canoto:"fixed bytes,3"`
+	stateRootPost common.Hash `canoto:"fixed bytes,4"`
 
-	gasParams struct {
-		T, R gas.Gas
-	}
-)
+	canotoData canotoData_executionResults
+}
+
+type gasClock struct {
+	time     uint64  `canoto:"fint64,1"`
+	consumed gas.Gas `canoto:"fint64,2"` // this second
+
+	state acp176.State
+
+	canotoData canotoData_gasClock `canoto:"noatomic"`
+}
+
+type gasParams struct {
+	T, R gas.Gas
+}
 
 func (c gasClock) clone() gasClock {
 	return c
@@ -298,9 +313,9 @@ func (e *executor) execute(ctx context.Context, b *Block) error {
 	)
 
 	gasPool := core.GasPool(math.MaxUint64) // required by geth but irrelevant so max it out
-	var blockGasConsumed uint64
+	var blockGasConsumed gas.Gas
 
-	receipts := make([]*types.Receipt, len(b.Transactions()))
+	receipts := make(types.Receipts, len(b.Transactions()))
 	for ti, tx := range b.Transactions() {
 		x.statedb.SetTxContext(tx.Hash(), ti)
 
@@ -312,7 +327,7 @@ func (e *executor) execute(ctx context.Context, b *Block) error {
 			x.statedb,
 			header,
 			tx,
-			&blockGasConsumed,
+			(*uint64)(&blockGasConsumed),
 			vm.Config{},
 		)
 		if err != nil {
@@ -321,16 +336,13 @@ func (e *executor) execute(ctx context.Context, b *Block) error {
 		// TODO(arr4n) add tips here
 		receipt.EffectiveGasPrice = new(big.Int).Set(header.BaseFee)
 
-		// TODO(arr4n) this results in rounding down excess relative to doing it
-		// at the end of a block.
-		e.gasClock.consume(gas.Gas(receipt.GasUsed))
 		// TODO(arr4n) add a receipt cache to the [executor] to allow API calls
 		// to access them before the end of the block.
 		receipts[ti] = receipt
 	}
 	endTime := time.Now()
+	e.gasClock.consume(blockGasConsumed)
 
-	rawdb.WriteHeadBlockHash(e.vm.db, b.Hash())
 	root, err := e.commitState(ctx, x, b.NumberU64())
 	if err != nil {
 		return err
@@ -339,10 +351,26 @@ func (e *executor) execute(ctx context.Context, b *Block) error {
 		by:            e.gasClock.clone(),
 		byTime:        endTime,
 		receipts:      receipts,
+		gasUsed:       blockGasConsumed,
+		receiptRoot:   types.DeriveSha(receipts, trieHasher()),
 		stateRootPost: root,
 	}
-	// TODO(arr4n) add canoto fields to [executionResults] and persist the gas
-	// time and state root in the database.
+
+	batch := e.vm.db.NewBatch()
+	rawdb.WriteHeadBlockHash(batch, b.Hash())
+	// TODO(arr4n) move writing of receipts into settlement, where the
+	// associated state root is committed on the trie DB. For now it's done here
+	// to support immediate eth_getTransactionReceipt as the API treats
+	// last-executed as the "latest" block and the upstream API implementation
+	// requires this write.
+	rawdb.WriteReceipts(batch, b.Hash(), b.NumberU64(), receipts)
+	if err := b.writePostExecutionState(batch); err != nil {
+		return err
+	}
+	if err := batch.Write(); err != nil {
+		return err
+	}
+
 	b.executed.Store(true)
 	e.vm.last.executed.Store(b)
 
@@ -368,4 +396,26 @@ func (e *executor) commitState(ctx context.Context, x *executionScratchSpace, bl
 	}
 	x.statedb = db
 	return root, nil
+}
+
+func (b *Block) writePostExecutionState(w ethdb.KeyValueWriter) error {
+	return w.Put(execResultsDBKey(b.NumberU64()), b.execution.MarshalCanoto())
+}
+
+func (vm *VM) readPostExecutionState(blockNum uint64) (*executionResults, error) {
+	buf, err := vm.db.Get(execResultsDBKey(blockNum))
+	if err != nil {
+		return nil, err
+	}
+	r := new(executionResults)
+	if err := r.UnmarshalCanoto(buf); err != nil {
+		return nil, err
+	}
+	return r, nil
+}
+
+func execResultsDBKey(blockNum uint64) []byte {
+	key := []byte("sae-post-exec-12345678")
+	binary.BigEndian.PutUint64(key[14:], blockNum)
+	return key
 }

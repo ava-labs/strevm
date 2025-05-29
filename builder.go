@@ -12,7 +12,6 @@ import (
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core/state"
 	"github.com/ava-labs/libevm/core/types"
-	"github.com/ava-labs/libevm/trie"
 	"github.com/ava-labs/strevm/queue"
 	"github.com/holiman/uint256"
 	"go.uber.org/zap"
@@ -87,7 +86,7 @@ func (vm *VM) buildBlockWithCandidateTxs(timestamp uint64, parent *Block, candid
 			},
 			txs, nil, /*uncles*/
 			slices.Concat(receipts...),
-			trie.NewStackTrie(nil),
+			trieHasher(),
 		),
 		parent:      parent,
 		lastSettled: toSettle,
@@ -105,9 +104,17 @@ func (vm *VM) buildBlockOnHistory(lastSettled, parent *Block, timestamp uint64, 
 	if err != nil {
 		return nil, 0, err
 	}
-	signer := vm.signer()
+
+	blockNum := parent.NumberU64() + 1
+	signer := vm.signer(blockNum, timestamp)
 	checker := validityChecker{
-		db:       sdb,
+		db:  sdb,
+		log: vm.logger(),
+		rules: vm.exec.chainConfig.Rules(
+			new(big.Int).SetUint64(blockNum),
+			true,
+			timestamp,
+		),
 		gasClock: lastSettled.execution.by.clone(),
 		nonces:   make(map[common.Address]uint64),
 		balances: make(map[common.Address]*uint256.Int),

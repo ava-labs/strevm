@@ -3,6 +3,7 @@ package sae
 import (
 	"context"
 	"encoding/json"
+	"math/big"
 	"net/http"
 	"sync"
 	"sync/atomic"
@@ -215,8 +216,12 @@ func (vm *VM) BuildBlock(ctx context.Context) (*Block, error) {
 	return vm.buildBlock(ctx, uint64(vm.now().Unix()), vm.last.accepted.Load())
 }
 
-func (vm *VM) signer() types.Signer {
-	return types.LatestSigner(vm.exec.chainConfig)
+func (vm *VM) signer(blockNum, timestamp uint64) types.Signer {
+	return types.MakeSigner(vm.exec.chainConfig, new(big.Int).SetUint64(blockNum), timestamp)
+}
+
+func (vm *VM) currSigner() types.Signer {
+	return vm.signer(vm.last.accepted.Load().NumberU64()+1, uint64(time.Now().Unix()))
 }
 
 func (vm *VM) SetPreference(ctx context.Context, blkID ids.ID) error {

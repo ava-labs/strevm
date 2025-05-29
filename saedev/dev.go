@@ -54,7 +54,7 @@ func run(ctx context.Context) error {
 		Difficulty: big.NewInt(0),
 		Alloc: types.GenesisAlloc{
 			eoa: {
-				Balance: big.NewInt(1e6),
+				Balance: new(big.Int).Mul(big.NewInt(42), big.NewInt(params.Ether)),
 			},
 		},
 	})
@@ -64,7 +64,7 @@ func run(ctx context.Context) error {
 
 	snowCtx := snowtest.Context(tb{}, ids.Empty)
 	snowCtx.Log = logging.NewLogger("", logging.NewWrappedCore(
-		logging.Debug, os.Stderr, zapcore.NewConsoleEncoder(zapcore.EncoderConfig{
+		logging.Verbo, os.Stderr, zapcore.NewConsoleEncoder(zapcore.EncoderConfig{
 			MessageKey: "msg",
 			TimeKey:    "time",
 			LevelKey:   "level",
