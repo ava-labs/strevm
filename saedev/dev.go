@@ -12,7 +12,6 @@ import (
 	"net/http"
 	"os"
 	"testing"
-	"time"
 
 	"github.com/ava-labs/avalanchego/ids"
 	snowcommon "github.com/ava-labs/avalanchego/snow/engine/common"
@@ -35,7 +34,7 @@ func main() {
 }
 
 func run(ctx context.Context) error {
-	vm := sae.New(time.Now)
+	vm := new(sae.SinceGenesis)
 
 	// test test test test test test test test test test test junk
 	key, err := crypto.HexToECDSA("ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80")

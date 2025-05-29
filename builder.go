@@ -211,7 +211,7 @@ func (vm *VM) lastBlockToSettleAt(timestamp uint64, parent *Block) (*Block, bool
 	// beyond the scope of the `for` loop.
 	var block, child *Block
 	block = parent // therefore `child` remains nil
-	settleAt := boundedSubtract(timestamp, stateRootDelaySeconds, vm.genesisTimestamp)
+	settleAt := boundedSubtract(timestamp, stateRootDelaySeconds, vm.lastSynchronousBlockTime)
 
 	for ; ; block, child = block.parent, block {
 		if block.parent == nil {

@@ -2,7 +2,7 @@ package sae
 
 import (
 	"context"
-	"encoding/json"
+	"fmt"
 	"math/big"
 	"net/http"
 	"sync"
@@ -14,38 +14,36 @@ import (
 	"github.com/ava-labs/avalanchego/ids"
 	"github.com/ava-labs/avalanchego/snow"
 	"github.com/ava-labs/avalanchego/snow/engine/common"
+	snowcommon "github.com/ava-labs/avalanchego/snow/engine/common"
 	"github.com/ava-labs/avalanchego/utils/logging"
 	"github.com/ava-labs/avalanchego/version"
 	ethcommon "github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/consensus"
-	"github.com/ava-labs/libevm/core"
 	"github.com/ava-labs/libevm/core/rawdb"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/ethdb"
+	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/rlp"
 	"github.com/ava-labs/strevm/adaptor"
 	"github.com/ava-labs/strevm/queue"
 	"go.uber.org/zap"
 )
 
-func init() {
-	var (
-		vm *VM
-		_  common.VM               = vm
-		_  core.ChainContext       = vm
-		_  adaptor.ChainVM[*Block] = vm
-	)
-}
+var _ adaptor.ChainVM[*Block] = nil
 
+// VM implements Streaming Asynchronous Execution (SAE) of EVM blocks. It
+// implements all [adaptor.ChainVM] methods except for `Initialize()`, which
+// MUST be handled by a harness implementation to provide the final synchronous
+// block (e.g. [SinceGenesis]).
 type VM struct {
 	snowCtx *snow.Context
 	common.AppHandler
 	toEngine chan<- common.Message
 	now      func() time.Time
 
-	blocks           sink.Mutex[blockMap]
-	preference       atomic.Pointer[Block]
-	genesisTimestamp uint64
+	blocks                   sink.Mutex[blockMap]
+	preference               atomic.Pointer[Block]
+	lastSynchronousBlockTime uint64
 
 	last struct {
 		accepted, executed, settled atomic.Pointer[Block]
@@ -64,52 +62,81 @@ type VM struct {
 
 type blockMap map[ids.ID]*Block
 
-func New(now func() time.Time) *VM {
+type Config struct {
+	ChainConfig          *params.ChainConfig
+	DB                   ethdb.Database
+	LastSynchronousBlock ethcommon.Hash
+
+	ToEngine chan<- snowcommon.Message
+	SnowCtx  *snow.Context
+
+	// Now is optional, defaulting to [time.Now] if nil.
+	Now func() time.Time
+}
+
+func New(ctx context.Context, c Config) (*VM, error) {
 	quit := make(chan struct{})
 
 	vm := &VM{
 		// VM
+		snowCtx:    c.SnowCtx,
+		db:         c.DB,
+		toEngine:   c.ToEngine,
 		AppHandler: common.NewNoOpAppHandler(logging.NoLog{}),
-		now:        now,
+		now:        c.Now,
 		blocks:     sink.NewMutex(make(blockMap)),
 		// Block building
 		newTxs:  make(chan *types.Transaction, 10), // TODO(arr4n) make the buffer configurable
 		mempool: sink.NewPriorityMutex(new(queue.Priority[*pendingTx])),
 		quit:    quit, // both mempool and executor
 	}
-
-	vm.exec = &executor{
-		vm:   vm,
-		quit: quit,
+	if vm.now == nil {
+		vm.now = time.Now
 	}
 
-	return vm
-}
-
-func (vm *VM) Initialize(
-	ctx context.Context,
-	chainCtx *snow.Context,
-	db database.Database,
-	genesisBytes []byte,
-	upgradeBytes []byte,
-	configBytes []byte,
-	toEngine chan<- common.Message,
-	fxs []*common.Fx,
-	appSender common.AppSender,
-) error {
-	vm.snowCtx = chainCtx
-	vm.db = rawdb.NewMemoryDatabase() // TODO(arr4n) wrap the [database.Database] argument
-	vm.toEngine = toEngine
-
-	gen := new(core.Genesis)
-	if err := json.Unmarshal(genesisBytes, gen); err != nil {
-		return err
+	lastSyncNum := rawdb.ReadHeaderNumber(c.DB, c.LastSynchronousBlock)
+	if lastSyncNum == nil {
+		return nil, fmt.Errorf("read number of last synchronous block (%#x): %w", c.LastSynchronousBlock, database.ErrNotFound)
 	}
-	genBlock, err := vm.exec.init(ctx, gen, vm.db)
-	if err != nil {
-		return err
+	genesis := vm.newBlock(rawdb.ReadBlock(c.DB, c.LastSynchronousBlock, *lastSyncNum))
+	if genesis.Block == nil {
+		return nil, fmt.Errorf("read last synchronous block (%#x): %w", c.LastSynchronousBlock, database.ErrNotFound)
 	}
-	vm.genesisTimestamp = gen.Timestamp
+	vm.lastSynchronousBlockTime = genesis.Time()
+	vm.logger().Info(
+		"Last synchronous block before SAE",
+		zap.Uint64("timestamp", genesis.Time()),
+		zap.Stringer("hash", genesis.Hash()),
+	)
+
+	exec := &executor{
+		quit:        quit,
+		chainConfig: c.ChainConfig,
+	}
+	if err := exec.init(vm.db, genesis); err != nil {
+		return nil, err
+	}
+
+	// Yuck!
+	exec.vm = vm
+	vm.exec = exec
+
+	genesis.accepted.Store(true)
+	genesis.execution = &executionResults{
+		by:            exec.gasClock.clone(),
+		stateRootPost: genesis.Root(),
+	}
+	genesis.executed.Store(true)
+
+	if err := vm.blocks.Use(ctx, func(bm blockMap) error {
+		bm[genesis.ID()] = genesis
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	vm.last.accepted.Store(genesis)
+	vm.last.executed.Store(genesis)
+	vm.last.settled.Store(genesis)
 
 	wg := &vm.mempoolAndExecWG
 	wg.Add(2)
@@ -122,25 +149,8 @@ func (vm *VM) Initialize(
 		vm.startMempool()
 		wg.Done()
 	}()
-	defer func() { <-execReady }()
-
-	vm.logger().Debug(
-		"Genesis block",
-		zap.Uint64("timestamp", genBlock.Time()),
-		zap.Stringer("hash", genBlock.Hash()),
-	)
-
-	if err := vm.blocks.Use(ctx, func(bm blockMap) error {
-		bm[genBlock.ID()] = genBlock
-		return nil
-	}); err != nil {
-		return err
-	}
-	vm.last.accepted.Store(genBlock)
-	vm.last.executed.Store(genBlock)
-	vm.last.settled.Store(genBlock)
-
-	return nil
+	<-execReady
+	return vm, nil
 }
 
 func (vm *VM) newBlock(b *types.Block) *Block {

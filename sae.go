@@ -17,7 +17,10 @@ const (
 	maxGasSecondsPerBlock = 2
 )
 
-var errUnimplemented = errors.New("unimplemented")
+var (
+	errUnimplemented = errors.New("unimplemented")
+	errUnsupported   = errors.New("unsupported")
+)
 
 // clippedSubtract returns max(0,a-b) without underflow.
 func clippedSubtract[T constraints.Unsigned](a, b T) T {

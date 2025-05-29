@@ -48,24 +48,36 @@ type executor struct {
 	executeScratchSpace executionScratchSpace
 }
 
-// init initialises the executor and returns the genesis block, which MUST be
-// added to the VM's set of accepted blocks.
-func (e *executor) init(ctx context.Context, genesis *core.Genesis, db ethdb.Database) (*Block, error) {
+// init initialises the executor based of the async genesis, which may be either
+// an actual genesis block or the last synchronous block for a chain upgrading
+// to SAE.
+func (e *executor) init(db ethdb.Database, genesis *Block) error {
 	e.stateCache = state.NewDatabase(db)
 
+	root := genesis.Root()
 	sdb := e.stateCache
 	tdb := sdb.TrieDB()
-	chainConfig, genesisHash, err := core.SetupGenesisBlock(e.vm.db, tdb, genesis)
+
+	snapConf := snapshot.Config{
+		CacheSize:  128, // MB
+		AsyncBuild: true,
+	}
+	snaps, err := snapshot.New(snapConf, db, tdb, root)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
-	e.chainConfig = chainConfig
+	statedb, err := state.New(root, sdb, snaps)
+	if err != nil {
+		return err
+	}
+	e.executeScratchSpace = executionScratchSpace{
+		snaps:   snaps,
+		statedb: statedb,
+	}
+
 	e.gasClock = gasClock{
-		// TODO(arr4n): all of the explicitly set values will need to be
-		// inherited from the last synchronous block, which will be equivalent
-		// to a genesis block.
-		time: genesis.Timestamp,
+		time: genesis.Time(),
 		state: acp176.State{
 			Gas: gas.State{
 				Excess: 0,
@@ -73,35 +85,7 @@ func (e *executor) init(ctx context.Context, genesis *core.Genesis, db ethdb.Dat
 			TargetExcess: acp176.DesiredTargetExcess(maxGasPerSecond / acp176.TargetToMax),
 		},
 	}
-
-	genesisBlock := rawdb.ReadBlock(e.vm.db, genesisHash, 0)
-	stateRoot := genesisBlock.Root()
-
-	snapConf := snapshot.Config{
-		CacheSize:  128, // MB
-		AsyncBuild: false,
-	}
-	snaps, err := snapshot.New(snapConf, e.vm.db, tdb, stateRoot)
-	if err != nil {
-		return nil, err
-	}
-	statedb, err := state.New(stateRoot, sdb, snaps)
-	if err != nil {
-		return nil, err
-	}
-	e.executeScratchSpace = executionScratchSpace{
-		snaps:   snaps,
-		statedb: statedb,
-	}
-
-	b := e.vm.newBlock(genesisBlock)
-	b.accepted.Store(true)
-	b.execution = &executionResults{
-		by:            e.gasClock.clone(),
-		stateRootPost: genesisBlock.Root(),
-	}
-	b.executed.Store(true)
-	return b, nil
+	return nil
 }
 
 func (e *executor) run(ready chan<- struct{}) {

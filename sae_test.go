@@ -69,7 +69,7 @@ func TestBasicE2E(t *testing.T) {
 
 	now := time.Unix(0, 0)
 
-	vm := New(func() time.Time { return now })
+	vm := &SinceGenesis{Now: func() time.Time { return now }}
 	snowCompatVM := adaptor.Convert(vm)
 
 	snowCtx := snowtest.Context(t, ids.Empty)
