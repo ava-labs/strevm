@@ -269,7 +269,7 @@ func (*ethAPIBackend) RPCGasCap() uint64 {
 }
 
 func (b *ethAPIBackend) Engine() consensus.Engine {
-	return b.vm.Engine()
+	return engine{}
 }
 
 // GetTd is required by the API frontend for unmarshalling a [types.Block], but

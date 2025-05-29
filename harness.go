@@ -18,7 +18,6 @@ func init() {
 	var (
 		vm *SinceGenesis
 		_  snowcommon.VM           = vm
-		_  core.ChainContext       = vm
 		_  adaptor.ChainVM[*Block] = vm
 	)
 }

@@ -109,21 +109,20 @@ func New(ctx context.Context, c Config) (*VM, error) {
 		zap.Stringer("hash", genesis.Hash()),
 	)
 
-	exec := &executor{
-		quit:        quit,
-		chainConfig: c.ChainConfig,
+	vm.exec = &executor{
+		quit:         quit,
+		log:          vm.logger(),
+		chainConfig:  c.ChainConfig,
+		db:           vm.db,
+		lastExecuted: &vm.last.executed,
 	}
-	if err := exec.init(vm.db, genesis); err != nil {
+	if err := vm.exec.init(genesis); err != nil {
 		return nil, err
 	}
 
-	// Yuck!
-	exec.vm = vm
-	vm.exec = exec
-
 	genesis.accepted.Store(true)
 	genesis.execution = &executionResults{
-		by:            exec.gasClock.clone(),
+		by:            vm.exec.gasClock.clone(),
 		stateRootPost: genesis.Root(),
 	}
 	genesis.executed.Store(true)
@@ -257,7 +256,9 @@ func (vm *VM) GetBlockIDAtHeight(ctx context.Context, height uint64) (ids.ID, er
 	return ids.ID(h), nil
 }
 
-func (*VM) Engine() consensus.Engine {
+type chainContext struct{}
+
+func (chainContext) Engine() consensus.Engine {
 	return engine{}
 }
 
@@ -269,6 +270,6 @@ func (engine) Author(h *types.Header) (ethcommon.Address, error) {
 	return ethcommon.Address{}, nil
 }
 
-func (*VM) GetHeader(ethcommon.Hash, uint64) *types.Header {
+func (chainContext) GetHeader(ethcommon.Hash, uint64) *types.Header {
 	panic(errUnimplemented)
 }

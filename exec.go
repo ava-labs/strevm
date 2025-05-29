@@ -9,6 +9,7 @@ import (
 	"math/big"
 	"math/bits"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/arr4n/sink"
@@ -32,16 +33,18 @@ import (
 //go:generate canoto exec.go
 
 type executor struct {
-	vm   *VM
 	quit <-chan struct{}
+	log  logging.Logger
 
 	spawned sync.WaitGroup
 
 	chainConfig *params.ChainConfig
 	gasClock    gasClock
 
-	queue sink.Monitor[*queue.FIFO[*Block]]
+	queue        sink.Monitor[*queue.FIFO[*Block]]
+	lastExecuted *atomic.Pointer[Block]
 
+	db         ethdb.Database
 	stateCache state.Database
 	// executeScratchSpace MUST NOT be accessed by any methods other than
 	// [executor.init] and [executor.execute].
@@ -51,8 +54,8 @@ type executor struct {
 // init initialises the executor based of the async genesis, which may be either
 // an actual genesis block or the last synchronous block for a chain upgrading
 // to SAE.
-func (e *executor) init(db ethdb.Database, genesis *Block) error {
-	e.stateCache = state.NewDatabase(db)
+func (e *executor) init(genesis *Block) error {
+	e.stateCache = state.NewDatabase(e.db)
 
 	root := genesis.Root()
 	sdb := e.stateCache
@@ -62,7 +65,7 @@ func (e *executor) init(db ethdb.Database, genesis *Block) error {
 		CacheSize:  128, // MB
 		AsyncBuild: true,
 	}
-	snaps, err := snapshot.New(snapConf, db, tdb, root)
+	snaps, err := snapshot.New(snapConf, e.db, tdb, root)
 	if err != nil {
 		return err
 	}
@@ -122,10 +125,6 @@ func (e *executor) quitCtx() context.Context {
 	return ctx
 }
 
-func (e *executor) logger() logging.Logger {
-	return e.vm.snowCtx.Log
-}
-
 // enqueueAccepted is intended to be called by [Block.Accept], passing itself
 // as the argument.
 func (e *executor) enqueueAccepted(ctx context.Context, block *Block) error {
@@ -154,7 +153,7 @@ func (e *executor) processQueue() {
 			// [sink.Monitor.Wait] will only return the [context.Context] error
 			// or the error returned by its argument, so this is theoretically
 			// impossible but included for completeness to be detected in tests.
-			e.logger().Fatal("BUG: popping from queue", zap.Error(err))
+			e.log.Fatal("BUG: popping from queue", zap.Error(err))
 			return
 		}
 
@@ -162,7 +161,7 @@ func (e *executor) processQueue() {
 		case errors.Is(err, context.Canceled):
 			return
 		case err != nil:
-			e.logger().Fatal(
+			e.log.Fatal(
 				"Executing accepted block",
 				zap.Error(err),
 				zap.Uint64("height", block.Height()),
@@ -289,7 +288,7 @@ func (e *executor) execute(ctx context.Context, b *Block) error {
 	header := types.CopyHeader(b.Header())
 	// TODO(arr4n) set the gas price during block building and just check it here.
 	header.BaseFee = new(big.Int).SetUint64(uint64(e.gasClock.gasPrice()))
-	e.logger().Debug(
+	e.log.Debug(
 		"Executing accepted block",
 		zap.Uint64("height", b.Height()),
 		zap.Uint64("timestamp", header.Time),
@@ -305,7 +304,7 @@ func (e *executor) execute(ctx context.Context, b *Block) error {
 
 		receipt, err := core.ApplyTransaction(
 			e.chainConfig,
-			e.vm,
+			chainContext{},
 			&header.Coinbase,
 			&gasPool,
 			x.statedb,
@@ -340,7 +339,7 @@ func (e *executor) execute(ctx context.Context, b *Block) error {
 		stateRootPost: root,
 	}
 
-	batch := e.vm.db.NewBatch()
+	batch := e.db.NewBatch()
 	rawdb.WriteHeadBlockHash(batch, b.Hash())
 	// TODO(arr4n) move writing of receipts into settlement, where the
 	// associated state root is committed on the trie DB. For now it's done here
@@ -356,9 +355,9 @@ func (e *executor) execute(ctx context.Context, b *Block) error {
 	}
 
 	b.executed.Store(true)
-	e.vm.last.executed.Store(b)
+	e.lastExecuted.Store(b)
 
-	e.logger().Debug(
+	e.log.Debug(
 		"Block execution complete",
 		zap.Uint64("height", b.Height()),
 		zap.Time("gas_time", e.gasClock.asTime()),
