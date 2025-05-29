@@ -42,9 +42,9 @@ func (vc *validityChecker) addTxToQueue(t txAndSender) (txValidity, error) {
 	if newQLength > stateRootDelaySeconds*maxGasPerSecond*lambda {
 		vc.log.Verbo(
 			"Queue full",
-			zap.Uint64("length", uint64(vc.queueLength)),
-			zap.Uint64("tx_gas_limit", t.tx.Gas()),
 			zap.Stringer("tx_hash", t.tx.Hash()),
+			zap.Uint64("tx_gas_limit", t.tx.Gas()),
+			zap.Uint64("curr_queue_length", uint64(vc.queueLength)),
 		)
 		return queueFull, nil
 	}
@@ -52,21 +52,54 @@ func (vc *validityChecker) addTxToQueue(t txAndSender) (txValidity, error) {
 	tx := t.tx
 	from := t.from
 
+	contractCreation := tx.To() == nil
+	intrinsic, err := core.IntrinsicGas(
+		tx.Data(), tx.AccessList(),
+		contractCreation, vc.rules.IsHomestead,
+		vc.rules.IsIstanbul, // EIP-2028
+		vc.rules.IsShanghai, // EIP-3869
+	)
+	if err != nil {
+		vc.log.Debug(
+			"Unable to determine intrinsic gas",
+			zap.Stringer("tx_hash", t.tx.Hash()),
+			zap.Error(err),
+		)
+		return discardTx, err
+	}
+	if tx.Gas() < intrinsic {
+		vc.log.Verbo(
+			"Insufficient intrinsic gas",
+			zap.Stringer("tx_hash", t.tx.Hash()),
+			zap.Uint64("tx", tx.Gas()),
+			zap.Uint64("intrinsic", intrinsic),
+		)
+		return discardTx, nil
+	}
+	if contractCreation && len(tx.Data()) > params.MaxInitCodeSize {
+		vc.log.Verbo(
+			"Contract creation exceeds max init size",
+			zap.Stringer("tx_hash", t.tx.Hash()),
+			zap.Int("data_len", len(tx.Data())),
+		)
+		return discardTx, nil
+	}
+
 	switch nonce, next := tx.Nonce(), vc.nonce(from); {
 	case nonce < next:
 		vc.log.Verbo(
 			"Nonce already used",
+			zap.Stringer("tx_hash", t.tx.Hash()),
 			zap.Uint64("tx", nonce),
 			zap.Uint64("expect", next),
-			zap.Stringer("tx_hash", t.tx.Hash()),
 		)
 		return discardTx, nil
 	case nonce > next:
 		vc.log.Verbo(
 			"Future nonce",
+			zap.Stringer("tx_hash", t.tx.Hash()),
 			zap.Uint64("tx", nonce),
 			zap.Uint64("next", next),
-			zap.Stringer("tx_hash", t.tx.Hash()),
 		)
 		return delayTx, nil
 	}
@@ -75,9 +108,9 @@ func (vc *validityChecker) addTxToQueue(t txAndSender) (txValidity, error) {
 	if tx.GasFeeCap().Cmp(price.ToBig()) < 0 {
 		vc.log.Verbo(
 			"Gas-fee cap below base fee",
+			zap.Stringer("tx_hash", t.tx.Hash()),
 			zap.Stringer("cap", tx.GasFeeCap()),
 			zap.Stringer("base_fee", price),
-			zap.Stringer("tx_hash", t.tx.Hash()),
 		)
 		return delayTx, nil
 	}
@@ -90,9 +123,9 @@ func (vc *validityChecker) addTxToQueue(t txAndSender) (txValidity, error) {
 	if !vc.trySpend(from, cost) {
 		vc.log.Verbo(
 			"Insufficient balance",
-			zap.Stringer("cost", cost),
-			zap.Stringer("balance", vc.balance(from)),
 			zap.Stringer("tx_hash", t.tx.Hash()),
+			zap.Stringer("balance", vc.balance(from)),
+			zap.Stringer("cost", cost),
 		)
 		return delayTx, nil
 	}
