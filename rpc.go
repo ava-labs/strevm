@@ -2,7 +2,6 @@ package sae
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"math"
 	"math/big"
@@ -18,6 +17,7 @@ import (
 	"github.com/ava-labs/libevm/core/state"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/core/vm"
+	"github.com/ava-labs/libevm/ethdb"
 	"github.com/ava-labs/libevm/libevm/ethapi"
 	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/rpc"
@@ -76,79 +76,27 @@ func (b *ethAPIBackend) SuggestGasTipCap(context.Context) (*big.Int, error) {
 	return big.NewInt(10 * params.GWei), nil
 }
 
-func (b *ethAPIBackend) BlockByNumberOrHash(ctx context.Context, numOrHash rpc.BlockNumberOrHash) (*types.Block, error) {
-	if n, ok := numOrHash.Number(); ok {
-		return b.blockByNumber(ctx, n)
-	}
-
-	h, ok := numOrHash.Hash()
-	if !ok {
-		return nil, errors.New("neither block number nor hash specified when fetching block")
-	}
-	return b.BlockByHash(ctx, h)
+type blockOrHeader interface {
+	types.Block | types.Header
 }
 
-func (b *ethAPIBackend) HeaderByNumberOrHash(ctx context.Context, numOrHash rpc.BlockNumberOrHash) (*types.Header, error) {
-	if n, ok := numOrHash.Number(); ok {
-		return b.HeaderByNumber(ctx, n)
-	}
+type blockOrHeaderReader[T blockOrHeader] func(ethdb.Reader, common.Hash, uint64) *T
 
-	h, ok := numOrHash.Hash()
-	if !ok {
-		return nil, errors.New("neither block number nor hash specified when fetching header")
-	}
-	return b.HeaderByHash(ctx, h)
-}
+var (
+	_ blockOrHeaderReader[types.Block]  = rawdb.ReadBlock
+	_ blockOrHeaderReader[types.Header] = rawdb.ReadHeader
+)
 
-func (b *ethAPIBackend) BlockByNumber(ctx context.Context, num rpc.BlockNumber) (*types.Block, error) {
-	return b.blockByNumber(ctx, num)
-}
-
-func (b *ethAPIBackend) HeaderByNumber(ctx context.Context, num rpc.BlockNumber) (*types.Header, error) {
-	bl, err := b.blockByNumber(ctx, num)
-	if err != nil {
-		return nil, err
-	}
-	return bl.Header(), nil
-}
-
-func (b *ethAPIBackend) BlockByHash(ctx context.Context, hash common.Hash) (*types.Block, error) {
-	num, err := b.canonicalHashNumber(hash)
-	if err != nil {
-		return nil, err
-	}
-	return b.blockByNumber(ctx, rpc.BlockNumber(num))
-}
-
-func (b *ethAPIBackend) HeaderByHash(ctx context.Context, hash common.Hash) (*types.Header, error) {
-	num, err := b.canonicalHashNumber(hash)
-	if err != nil {
-		return nil, err
-	}
-	return b.HeaderByNumber(ctx, rpc.BlockNumber(num))
-}
-
-func (b *ethAPIBackend) canonicalHashNumber(hash common.Hash) (uint64, error) {
-	num := rawdb.ReadHeaderNumber(b.vm.db, hash)
-	if num == nil {
-		return 0, fmt.Errorf("read block number for %#x: %w", hash, database.ErrNotFound)
-	}
-	return *num, nil
-}
-
-var errUnsupported = errors.New("unsupported")
-
-func (b *ethAPIBackend) blockByNumber(ctx context.Context, blockNum rpc.BlockNumber) (*types.Block, error) {
+func readBlockOrHeaderByNumber[T blockOrHeader](b *ethAPIBackend, blockNum rpc.BlockNumber, read blockOrHeaderReader[T]) (*T, error) {
 	num, hash, err := b.resolveBlockNumber(blockNum)
 	if err != nil {
 		return nil, err
 	}
-
-	block := rawdb.ReadBlock(b.vm.db, hash, uint64(num))
-	if block == nil {
-		return nil, fmt.Errorf("block %d %w", num, database.ErrNotFound)
+	ret := read(b.vm.db, hash, uint64(num))
+	if ret == nil {
+		return nil, fmt.Errorf("read %T (%s): %w", ret, blockNum, database.ErrNotFound)
 	}
-	return block, nil
+	return ret, nil
 }
 
 func (b *ethAPIBackend) resolveBlockNumber(num rpc.BlockNumber) (uint64, common.Hash, error) {
@@ -176,6 +124,63 @@ func (*ethAPIBackend) blockNumAndHash(block *atomic.Pointer[Block]) (uint64, com
 	return b.NumberU64(), b.Hash(), nil
 }
 
+func (b *ethAPIBackend) BlockByNumber(ctx context.Context, num rpc.BlockNumber) (*types.Block, error) {
+	return readBlockOrHeaderByNumber(b, num, rawdb.ReadBlock)
+}
+
+func (b *ethAPIBackend) HeaderByNumber(ctx context.Context, num rpc.BlockNumber) (*types.Header, error) {
+	return readBlockOrHeaderByNumber(b, num, rawdb.ReadHeader)
+}
+
+func readBlockOrHeaderByHash[T blockOrHeader](b *ethAPIBackend, hash common.Hash, read blockOrHeaderReader[T]) (*T, error) {
+	num, err := b.blockNumFromHash(hash)
+	if err != nil {
+		return nil, err
+	}
+	return readBlockOrHeaderByNumber(b, rpc.BlockNumber(num), read)
+}
+
+func (b *ethAPIBackend) blockNumFromHash(hash common.Hash) (uint64, error) {
+	num := rawdb.ReadHeaderNumber(b.vm.db, hash)
+	if num == nil {
+		return 0, fmt.Errorf("read block number for %#x: %w", hash, database.ErrNotFound)
+	}
+	return *num, nil
+}
+
+func (b *ethAPIBackend) BlockByHash(ctx context.Context, hash common.Hash) (*types.Block, error) {
+	return readBlockOrHeaderByHash(b, hash, rawdb.ReadBlock)
+}
+
+func (b *ethAPIBackend) HeaderByHash(ctx context.Context, hash common.Hash) (*types.Header, error) {
+	return readBlockOrHeaderByHash(b, hash, rawdb.ReadHeader)
+}
+
+func readBlockOrHeader[T blockOrHeader](
+	ctx context.Context,
+	numOrHash rpc.BlockNumberOrHash,
+	byNum func(context.Context, rpc.BlockNumber) (*T, error),
+	byHash func(context.Context, common.Hash) (*T, error),
+) (*T, error) {
+	if n, ok := numOrHash.Number(); ok {
+		return byNum(ctx, n)
+	}
+	h, ok := numOrHash.Hash()
+	if !ok {
+		var zero T
+		return nil, fmt.Errorf("neither number nor hash specified when fetching %T", zero)
+	}
+	return byHash(ctx, h)
+}
+
+func (b *ethAPIBackend) BlockByNumberOrHash(ctx context.Context, numOrHash rpc.BlockNumberOrHash) (*types.Block, error) {
+	return readBlockOrHeader(ctx, numOrHash, b.BlockByNumber, b.BlockByHash)
+}
+
+func (b *ethAPIBackend) HeaderByNumberOrHash(ctx context.Context, numOrHash rpc.BlockNumberOrHash) (*types.Header, error) {
+	return readBlockOrHeader(ctx, numOrHash, b.HeaderByNumber, b.HeaderByHash)
+}
+
 func (b *ethAPIBackend) GetReceipts(ctx context.Context, hash common.Hash) (types.Receipts, error) {
 	// TODO(arr4n): add an LRU to the VM for faster access to recently executed
 	// txs and blocks.
@@ -199,6 +204,14 @@ func (b *ethAPIBackend) GetReceipts(ctx context.Context, hash common.Hash) (type
 		hdr.Time,
 		b.vm.exec.chainConfig,
 	), nil
+}
+
+func (b *ethAPIBackend) GetTransaction(ctx context.Context, txHash common.Hash) (bool, *types.Transaction, common.Hash, uint64, uint64, error) {
+	tx, blockHash, blockNum, index := rawdb.ReadTransaction(b.vm.db, txHash)
+	if tx == nil {
+		return false, nil, common.Hash{}, 0, 0, nil
+	}
+	return true, tx, blockHash, blockNum, index, nil
 }
 
 // StateAndHeaderByNumberOrHash does NOT return the consensus-agreed
@@ -236,6 +249,17 @@ func (b *ethAPIBackend) StateAndHeaderByNumberOrHash(ctx context.Context, numOrH
 	return db, h, nil
 }
 
+func (b *ethAPIBackend) GetEVM(ctx context.Context, msg *core.Message, db *state.StateDB, hdr *types.Header, config *vm.Config, context *vm.BlockContext) *vm.EVM {
+	txCtx := vm.TxContext{
+		Origin:   msg.From,
+		GasPrice: hdr.BaseFee,
+	}
+	if txCtx.GasPrice == nil {
+		txCtx.GasPrice = big.NewInt(0)
+	}
+	return vm.NewEVM(*context, txCtx, db, b.vm.exec.chainConfig, *config)
+}
+
 func (*ethAPIBackend) RPCEVMTimeout() time.Duration {
 	return 100 * time.Millisecond
 }
@@ -246,22 +270,6 @@ func (*ethAPIBackend) RPCGasCap() uint64 {
 
 func (b *ethAPIBackend) Engine() consensus.Engine {
 	return b.vm.Engine()
-}
-
-func (b *ethAPIBackend) GetEVM(ctx context.Context, msg *core.Message, db *state.StateDB, hdr *types.Header, config *vm.Config, context *vm.BlockContext) *vm.EVM {
-	txCtx := vm.TxContext{
-		Origin:   msg.From,
-		GasPrice: big.NewInt(0), // TODO(arr4n) query the end of the queue
-	}
-	return vm.NewEVM(*context, txCtx, db, b.vm.exec.chainConfig, *config)
-}
-
-func (b *ethAPIBackend) GetTransaction(ctx context.Context, txHash common.Hash) (bool, *types.Transaction, common.Hash, uint64, uint64, error) {
-	tx, blockHash, blockNum, index := rawdb.ReadTransaction(b.vm.db, txHash)
-	if tx == nil {
-		return false, nil, common.Hash{}, 0, 0, nil
-	}
-	return true, tx, blockHash, blockNum, index, nil
 }
 
 // GetTd is required by the API frontend for unmarshalling a [types.Block], but
