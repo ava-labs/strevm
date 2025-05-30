@@ -2,7 +2,6 @@ package sae
 
 import (
 	"context"
-	"encoding/binary"
 	"errors"
 	"fmt"
 	"math"
@@ -26,7 +25,6 @@ import (
 	"github.com/ava-labs/libevm/params"
 	"go.uber.org/zap"
 
-	"github.com/ava-labs/strevm/acp176"
 	"github.com/ava-labs/strevm/queue"
 )
 
@@ -81,12 +79,6 @@ func (e *executor) init(genesis *Block) error {
 
 	e.gasClock = gasClock{
 		time: genesis.Time(),
-		state: acp176.State{
-			Gas: gas.State{
-				Excess: 0,
-			},
-			TargetExcess: acp176.DesiredTargetExcess(maxGasPerSecond / acp176.TargetToMax),
-		},
 	}
 	return nil
 }
@@ -193,8 +185,7 @@ type executionResults struct {
 type gasClock struct {
 	time     uint64  `canoto:"fint64,1"`
 	consumed gas.Gas `canoto:"fint64,2"` // this second
-
-	state acp176.State
+	excess   gas.Gas `canoto:"fint64,3"`
 
 	canotoData canotoData_gasClock `canoto:"nocopy"`
 }
@@ -207,16 +198,17 @@ func (c *gasClock) clone() gasClock {
 	return gasClock{
 		time:     c.time,
 		consumed: c.consumed,
-		state:    c.state,
+		excess:   c.excess,
 	}
 }
 
 func (c *gasClock) gasPrice() gas.Price {
-	return c.state.GasPrice()
+	K := targetToPriceUpdateConversion * c.params().T
+	return gas.CalculatePrice(gas.Price(params.GWei), c.excess, K)
 }
 
 func (c *gasClock) params() gasParams {
-	T := c.state.Target()
+	T := maxGasPerSecond / 2
 	return gasParams{
 		R: 2 * T,
 		T: T,
@@ -239,7 +231,7 @@ func (c *gasClock) consume(g gas.Gas) {
 	// number, where R=pT. Substituting p for R/T, we get an increase of
 	// g(R-T)/R.
 	quo, _ := mulDiv(g, params.R-params.T, params.R)
-	c.state.Gas.Excess += gas.Gas(quo)
+	c.excess += gas.Gas(quo)
 }
 
 func (c *gasClock) fastForward(to uint64) {
@@ -253,7 +245,7 @@ func (c *gasClock) fastForward(to uint64) {
 	// By similar reasoning to that in [gasClock.consume], we get a decrease in
 	// excess of sT/R.
 	quo, _ := mulDiv(surplus, params.T, params.R)
-	c.state.Gas.Excess = boundedSubtract(c.state.Gas.Excess, quo, 0)
+	c.excess = boundedSubtract(c.excess, quo, 0)
 
 	c.time = to
 	c.consumed = 0
@@ -345,6 +337,7 @@ func (e *executor) execute(ctx context.Context, b *Block) error {
 
 	batch := e.db.NewBatch()
 	rawdb.WriteHeadBlockHash(batch, b.Hash())
+	rawdb.WriteHeadHeaderHash(batch, b.Hash())
 	// TODO(arr4n) move writing of receipts into settlement, where the
 	// associated state root is committed on the trie DB. For now it's done here
 	// to support immediate eth_getTransactionReceipt as the API treats
@@ -383,26 +376,4 @@ func (e *executor) commitState(ctx context.Context, x *executionScratchSpace, bl
 	}
 	x.statedb = db
 	return root, nil
-}
-
-func (b *Block) writePostExecutionState(w ethdb.KeyValueWriter) error {
-	return w.Put(execResultsDBKey(b.NumberU64()), b.execution.MarshalCanoto())
-}
-
-func (vm *VM) readPostExecutionState(blockNum uint64) (*executionResults, error) {
-	buf, err := vm.db.Get(execResultsDBKey(blockNum))
-	if err != nil {
-		return nil, err
-	}
-	r := new(executionResults)
-	if err := r.UnmarshalCanoto(buf); err != nil {
-		return nil, err
-	}
-	return r, nil
-}
-
-func execResultsDBKey(blockNum uint64) []byte {
-	key := []byte("sae-post-exec-12345678")
-	binary.BigEndian.PutUint64(key[14:], blockNum)
-	return key
 }

@@ -42,23 +42,22 @@ func (vm *VM) AcceptBlock(ctx context.Context, b *Block) error {
 	rawdb.WriteTxLookupEntriesByBlock(batch, b.Block) // i.e. canonical tx inclusion
 
 	settle := b.settles()
-	var lastSettled *Block
 	for i, s := range settle {
 		if err := vm.exec.stateCache.TrieDB().Commit(s.execution.stateRootPost, false); err != nil {
 			return err
 		}
 		if i+1 == len(settle) {
 			rawdb.WriteFinalizedBlockHash(batch, s.Hash())
-			lastSettled = s
 		}
+	}
+	if err := b.writeLastSettledNumber(batch); err != nil {
+		return nil
 	}
 	if err := batch.Write(); err != nil {
 		return err
 	}
 
-	if lastSettled != nil {
-		vm.last.settled.Store(lastSettled)
-	}
+	vm.last.settled.Store(b.lastSettled)
 	b.accepted.Store(true)
 	vm.last.accepted.Store(b)
 
@@ -72,28 +71,41 @@ func (vm *VM) AcceptBlock(ctx context.Context, b *Block) error {
 		// TODO(arr4n) document the rationale here. Keep everything as far back
 		// as the last-settled block, keep it intact, and destroy the parental +
 		// last-settled linked lists.
+
+		prune := func(b *Block) {
+			delete(bm, b.ID())
+			vm.logger().Debug(
+				"Pruning settled block",
+				zap.Stringer("hash", b.Hash()),
+				zap.Uint64("number", b.NumberU64()),
+			)
+		}
+
 		keep := b.lastSettled.ID()
 		for _, s := range settle {
 			if s.ID() == keep {
 				continue
 			}
-			delete(bm, s.ID())
+			prune(s)
 		}
 		if b.parent != nil && b.parent.lastSettled != nil {
-			if ps := b.parent.lastSettled.ID(); ps != keep {
-				delete(bm, ps)
+			if s := b.parent.lastSettled; s.ID() != keep {
+				prune(s)
 			}
 		}
-
-		for _, s := range []*Block{b.lastSettled.parent, b.lastSettled.lastSettled} {
-			if s == nil {
-				continue
-			}
-			s.parent = nil
-			s.lastSettled = nil
-		}
+		b.breakAncestryLinkedLists()
 		return nil
 	})
+}
+
+func (b *Block) breakAncestryLinkedLists() {
+	for _, s := range []*Block{b.lastSettled.parent, b.lastSettled.lastSettled} {
+		if s == nil {
+			continue
+		}
+		s.parent = nil
+		s.lastSettled = nil
+	}
 }
 
 func (vm *VM) RejectBlock(ctx context.Context, b *Block) error {

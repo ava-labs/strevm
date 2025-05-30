@@ -127,6 +127,18 @@ func New(ctx context.Context, c Config) (*VM, error) {
 		by:            vm.exec.gasClock.clone(),
 		stateRootPost: genesis.Root(),
 	}
+	genesis.lastSettled = genesis
+
+	batch := vm.db.NewBatch()
+	if err := genesis.writePostExecutionState(batch); err != nil {
+		return nil, err
+	}
+	if err := genesis.writeLastSettledNumber(batch); err != nil {
+		return nil, err
+	}
+	if err := batch.Write(); err != nil {
+		return nil, err
+	}
 	genesis.executed.Store(true)
 
 	if err := vm.blocks.Use(ctx, func(bm blockMap) error {
@@ -152,6 +164,100 @@ func New(ctx context.Context, c Config) (*VM, error) {
 	}()
 	<-execReady
 	return vm, nil
+}
+
+func (vm *VM) recoverFromDB(ctx context.Context) error {
+	db := vm.db
+
+	lastExecutedHeader := rawdb.ReadHeadHeader(db)
+	lastExecutedHash := lastExecutedHeader.Hash()
+	lastExecutedNum := lastExecutedHeader.Number.Uint64()
+
+	lastSettledHash := rawdb.ReadFinalizedBlockHash(db)
+	lastSettledNum := rawdb.ReadHeaderNumber(db, lastSettledHash)
+	if lastSettledNum == nil {
+		return fmt.Errorf("database in corrupt state: rawdb.ReadHeaderNumber(rawdb.ReadFinalizedBlockHash() = %#x) returned nil", lastSettledHash)
+	}
+
+	from, err := vm.readLastSettledNumber(*lastSettledNum)
+	if err != nil {
+		return err
+	}
+
+	// In [VM.AcceptBlock] we prune all blocks before the last-settled one so
+	// that's all we need to recover.
+	nums, hashes := rawdb.ReadAllCanonicalHashes(vm.db, from, math.MaxUint64, math.MaxInt)
+
+	// [rawdb.ReadAllCanonicalHashes] does not state that it returns blocks in
+	// increasing numerical order. It might, but it doesn't say so on the tin.
+	lastAcceptedNum := *lastSettledNum
+	lastAcceptedHash := lastSettledHash
+	for i, num := range nums {
+		if num <= lastAcceptedNum {
+			continue
+		}
+		lastAcceptedNum = num
+		lastAcceptedHash = hashes[i]
+	}
+
+	return vm.blocks.Replace(ctx, func(blockMap) (blockMap, error) {
+		byID := make(blockMap)
+		byNum := make(map[uint64]*Block)
+
+		for i, num := range nums {
+			hash := hashes[i]
+			b := vm.newBlock(rawdb.ReadBlock(db, hash, num))
+			if b.Block == nil {
+				return nil, fmt.Errorf("rawdb.ReadBlock(%#x, %d) returned nil", hash, num)
+			}
+			byID[b.ID()] = b
+			byNum[num] = b
+
+			b.accepted.Store(true)
+			if num <= lastExecutedNum {
+				state, err := vm.readPostExecutionState(num)
+				if err != nil {
+					return nil, fmt.Errorf("recover post-execution state of block %d: %w", num, err)
+				}
+				b.execution = state
+				b.executed.Store(true)
+			}
+
+			if b.Hash() == lastExecutedHash {
+				vm.last.executed.Store(b)
+			}
+			if b.Hash() == lastSettledHash {
+				vm.last.settled.Store(b)
+			}
+			if b.Hash() == lastAcceptedHash {
+				vm.last.accepted.Store(b)
+			}
+		}
+
+		vm.preference.Store(vm.last.accepted.Load())
+
+		for _, b := range byID {
+			num := b.NumberU64()
+			b.parent = byNum[num-1]
+
+			s, err := vm.readLastSettledNumber(num)
+			if err != nil {
+				return nil, err
+			}
+			b.lastSettled = byNum[s]
+		}
+
+		for _, num := range nums {
+			b := byNum[num]
+			if num < *lastSettledNum {
+				delete(byID, b.ID())
+			} else {
+				b.breakAncestryLinkedLists()
+			}
+		}
+
+		return byID, nil
+	})
 }
 
 // inMemoryBlockCount tracks the number of blocks created with [VM.newBlock]

@@ -15,6 +15,7 @@ import (
 	"runtime/pprof"
 	"slices"
 	"sort"
+	"sync/atomic"
 	"testing"
 	"time"
 	"unsafe"
@@ -31,7 +32,6 @@ import (
 	"github.com/ava-labs/libevm/ethclient"
 	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/rpc"
-	"github.com/ava-labs/strevm/acp176"
 	"github.com/ava-labs/strevm/adaptor"
 	"github.com/ava-labs/strevm/queue"
 	"github.com/ava-labs/strevm/weth"
@@ -313,8 +313,6 @@ func TestBasicE2E(t *testing.T) {
 		})
 	})
 
-	require.NoErrorf(t, vm.Shutdown(ctx), "%T.Shutdown()", vm)
-
 	t.Run("accounts_and_storage", func(t *testing.T) {
 		want := uint64(len(allTxs))
 		// TODO(arr4n) iterate over all accepted blocks, using the cumulative tx
@@ -337,6 +335,35 @@ func TestBasicE2E(t *testing.T) {
 		require.Truef(t, gotContractBal.IsUint64(), "")
 		assert.Equal(t, want, gotContractBal.Uint64(), "Balance of WETH contract")
 	})
+
+	t.Run("recover_from_db", func(t *testing.T) {
+		genesisID, err := vm.GetBlockIDAtHeight(ctx, 0)
+		require.NoError(t, err, "fetch genesis ID from original VM")
+
+		recoverer, err := New(
+			ctx,
+			Config{
+				LastSynchronousBlock: common.Hash(genesisID),
+				DB:                   vm.db,
+				SnowCtx:              snowCtx,
+				ChainConfig:          vm.exec.chainConfig,
+			},
+		)
+		require.NoErrorf(t, err, "New(%T[DB from original VM])", Config{})
+		require.NoErrorf(t, recoverer.recoverFromDB(ctx), "%T.recoverFromDB()", err)
+
+		want, err := sink.FromMutex[blockMap, blockMap](ctx, vm.blocks, func(bm blockMap) (blockMap, error) { return bm, nil })
+		require.NoError(t, err)
+		got, err := sink.FromMutex[blockMap, blockMap](ctx, recoverer.blocks, func(bm blockMap) (blockMap, error) { return bm, nil })
+		require.NoError(t, err)
+
+		if diff := cmp.Diff(want, got, cmpBlocks()); diff != "" {
+			t.Errorf("After recoverFromDB() %T.blocks diff (-want +got):\n%s", recoverer, diff)
+		}
+		require.NoErrorf(t, recoverer.Shutdown(ctx), "%T.Shutdown()", recoverer)
+	})
+
+	require.NoErrorf(t, vm.Shutdown(ctx), "%T.Shutdown()", vm)
 }
 
 func newTestPrivateKey(tb testing.TB, seed []byte) *ecdsa.PrivateKey {
@@ -382,6 +409,31 @@ func cmpBigInts() cmp.Options {
 			}
 			return a.Cmp(b) == 0
 		}),
+	}
+}
+
+func cmpBlocks() cmp.Options {
+	return cmp.Options{
+		cmpBigInts(),
+		cmp.AllowUnexported(Block{}, executionResults{}, gasClock{}),
+		cmp.Comparer(func(a, b *types.Block) bool {
+			return a.Hash() == b.Hash()
+		}),
+		cmpopts.EquateComparable(
+			// We're not running tests concurrently with anything that will
+			// modify [Block.accepted] nor [Block.executed] so this is safe.
+			atomic.Bool{},
+		),
+		cmpopts.IgnoreFields(
+			executionResults{},
+			"byTime", // wall-clock for metrics only
+			"canotoData",
+		),
+		cmpopts.IgnoreFields(
+			gasClock{},
+			"canotoData",
+		),
+		cmpopts.EquateEmpty(),
 	}
 }
 
@@ -473,8 +525,8 @@ func TestGasClockCloneAllFields(t *testing.T) {
 			setField(i, uint64(1))
 		case "consumed":
 			setField(i, gas.Gas(2))
-		case "state":
-			setField(i, acp176.State{TargetExcess: 3})
+		case "excess":
+			setField(i, gas.Gas(3))
 		case "canotoData":
 			// This line deliberately left blank.
 

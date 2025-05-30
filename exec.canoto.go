@@ -304,6 +304,7 @@ func (c *executionResults) MarshalCanotoInto(w canoto.Writer) canoto.Writer {
 const (
 	canoto__gasClock__time__tag     = "\x09" // canoto.Tag(1, canoto.I64)
 	canoto__gasClock__consumed__tag = "\x11" // canoto.Tag(2, canoto.I64)
+	canoto__gasClock__excess__tag   = "\x19" // canoto.Tag(3, canoto.I64)
 )
 
 type canotoData_gasClock struct {
@@ -328,6 +329,14 @@ func (*gasClock) CanotoSpec(...reflect.Type) *canoto.Spec {
 				/*type inference:*/ zero.consumed,
 				/*FieldNumber:   */ 2,
 				/*Name:          */ "consumed",
+				/*FixedLength:   */ 0,
+				/*Repeated:      */ false,
+				/*OneOf:         */ "",
+			),
+			canoto.FieldTypeFromFint(
+				/*type inference:*/ zero.excess,
+				/*FieldNumber:   */ 3,
+				/*Name:          */ "excess",
 				/*FixedLength:   */ 0,
 				/*Repeated:      */ false,
 				/*OneOf:         */ "",
@@ -397,6 +406,17 @@ func (c *gasClock) UnmarshalCanotoFrom(r canoto.Reader) error {
 			if canoto.IsZero(c.consumed) {
 				return canoto.ErrZeroValue
 			}
+		case 3:
+			if wireType != canoto.I64 {
+				return canoto.ErrUnexpectedWireType
+			}
+
+			if err := canoto.ReadFint64(&r, &c.excess); err != nil {
+				return err
+			}
+			if canoto.IsZero(c.excess) {
+				return canoto.ErrZeroValue
+			}
 		default:
 			return canoto.ErrUnknownField
 		}
@@ -432,6 +452,9 @@ func (c *gasClock) CalculateCanotoCache() {
 	}
 	if !canoto.IsZero(c.consumed) {
 		size += uint64(len(canoto__gasClock__consumed__tag)) + canoto.SizeFint64
+	}
+	if !canoto.IsZero(c.excess) {
+		size += uint64(len(canoto__gasClock__excess__tag)) + canoto.SizeFint64
 	}
 	c.canotoData.size.Store(size)
 }
@@ -480,6 +503,10 @@ func (c *gasClock) MarshalCanotoInto(w canoto.Writer) canoto.Writer {
 	if !canoto.IsZero(c.consumed) {
 		canoto.Append(&w, canoto__gasClock__consumed__tag)
 		canoto.AppendFint64(&w, c.consumed)
+	}
+	if !canoto.IsZero(c.excess) {
+		canoto.Append(&w, canoto__gasClock__excess__tag)
+		canoto.AppendFint64(&w, c.excess)
 	}
 	return w
 }
