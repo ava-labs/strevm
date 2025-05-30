@@ -30,7 +30,7 @@ import (
 	"github.com/ava-labs/strevm/queue"
 )
 
-//go:generate canoto exec.go
+//go:generate go run github.com/StephenButtolph/canoto/canoto $GOFILE
 
 type executor struct {
 	quit <-chan struct{}
@@ -187,7 +187,7 @@ type executionResults struct {
 	receiptRoot   common.Hash `canoto:"fixed bytes,3"`
 	stateRootPost common.Hash `canoto:"fixed bytes,4"`
 
-	canotoData canotoData_executionResults
+	canotoData canotoData_executionResults `canoto:"nocopy"`
 }
 
 type gasClock struct {
@@ -196,15 +196,19 @@ type gasClock struct {
 
 	state acp176.State
 
-	canotoData canotoData_gasClock `canoto:"noatomic"`
+	canotoData canotoData_gasClock `canoto:"nocopy"`
 }
 
 type gasParams struct {
 	T, R gas.Gas
 }
 
-func (c gasClock) clone() gasClock {
-	return c
+func (c *gasClock) clone() gasClock {
+	return gasClock{
+		time:     c.time,
+		consumed: c.consumed,
+		state:    c.state,
+	}
 }
 
 func (c *gasClock) gasPrice() gas.Price {

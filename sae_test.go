@@ -10,12 +10,14 @@ import (
 	"math/big"
 	"net/http/httptest"
 	"os"
+	"reflect"
 	"runtime"
 	"runtime/pprof"
 	"slices"
 	"sort"
 	"testing"
 	"time"
+	"unsafe"
 
 	"github.com/arr4n/sink"
 	"github.com/ava-labs/avalanchego/ids"
@@ -29,6 +31,7 @@ import (
 	"github.com/ava-labs/libevm/ethclient"
 	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/rpc"
+	"github.com/ava-labs/strevm/acp176"
 	"github.com/ava-labs/strevm/adaptor"
 	"github.com/ava-labs/strevm/queue"
 	"github.com/ava-labs/strevm/weth"
@@ -446,5 +449,47 @@ func TestBoundedSubtract(t *testing.T) {
 
 	for _, tt := range tests {
 		assert.Equalf(t, tt.want, boundedSubtract(tt.a, tt.b, tt.floor), "max(%d-%d, %d)", tt.a, tt.b, tt.floor)
+	}
+}
+
+func TestGasClockCloneAllFields(t *testing.T) {
+	// Use of `canoto:"nocopy"` means that [gasClock.clone] has to explicitly
+	// copy fields instead of just returning a copy of the struct. Copying
+	// fields is trivial so this test is only to ensure that none are missed.
+
+	in := &gasClock{}
+
+	val := reflect.ValueOf(in).Elem()
+	typ := val.Type()
+	setField := func(i int, to any) {
+		f := val.Field(i)
+		export := reflect.NewAt(f.Type(), unsafe.Pointer(f.UnsafeAddr())).Elem()
+		export.Set(reflect.ValueOf(to))
+	}
+
+	for i, n := 0, typ.NumField(); i < n; i++ {
+		switch n := typ.Field(i).Name; n {
+		case "time":
+			setField(i, uint64(1))
+		case "consumed":
+			setField(i, gas.Gas(2))
+		case "state":
+			setField(i, acp176.State{TargetExcess: 3})
+		case "canotoData":
+			// This line deliberately left blank.
+
+		default:
+			t.Fatalf("%T.%s not populated; add a `case` to the field-name `switch`", in, n)
+		}
+	}
+
+	opts := cmp.Options{
+		cmp.AllowUnexported(gasClock{}),
+		cmpopts.IgnoreFields(gasClock{}, "canotoData"),
+	}
+
+	got := in.clone()
+	if diff := cmp.Diff(in, &got, opts); diff != "" {
+		t.Errorf("%T.clone() diff (-want +got):\n%s", in, diff)
 	}
 }
