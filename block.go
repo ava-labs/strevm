@@ -68,11 +68,32 @@ func (vm *VM) AcceptBlock(ctx context.Context, b *Block) error {
 		zap.Stringer("hash", b.Hash()),
 	)
 
-	// TODO(arr4n): prune [VM.blocks] old ones can be GCd. Blocks before the
-	// last-settled one can be deleted, but it has a reference to its parent and
-	// its own last-settled Block, which form a linked-list; DO NOT simply clear
-	// these pointers as they're used elsewhere.
-	return nil
+	return vm.blocks.Use(ctx, func(bm blockMap) error {
+		// TODO(arr4n) document the rationale here. Keep everything as far back
+		// as the last-settled block, keep it intact, and destroy the parental +
+		// last-settled linked lists.
+		keep := b.lastSettled.ID()
+		for _, s := range settle {
+			if s.ID() == keep {
+				continue
+			}
+			delete(bm, s.ID())
+		}
+		if b.parent != nil && b.parent.lastSettled != nil {
+			if ps := b.parent.lastSettled.ID(); ps != keep {
+				delete(bm, ps)
+			}
+		}
+
+		for _, s := range []*Block{b.lastSettled.parent, b.lastSettled.lastSettled} {
+			if s == nil {
+				continue
+			}
+			s.parent = nil
+			s.lastSettled = nil
+		}
+		return nil
+	})
 }
 
 func (vm *VM) RejectBlock(ctx context.Context, b *Block) error {

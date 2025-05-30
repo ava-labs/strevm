@@ -167,6 +167,15 @@ func TestBasicE2E(t *testing.T) {
 		}
 	}
 
+	t.Cleanup(func() {
+		// See block pruning at the end of [VM.AcceptBlock]
+		n := inMemoryBlockCount.Load()
+		acceptedBlocks = nil
+		blockWithLastTx = nil
+		runtime.GC()
+		t.Logf("After GC, in-memory block count: %d => %d", n, inMemoryBlockCount.Load())
+	})
+
 	pprof.StopCPUProfile() // docs state "stops the current CPU profile, if any" so ok if we didn't start it
 	if t.Failed() {
 		return

@@ -3,8 +3,10 @@ package sae
 import (
 	"context"
 	"fmt"
+	"math"
 	"math/big"
 	"net/http"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -152,10 +154,20 @@ func New(ctx context.Context, c Config) (*VM, error) {
 	return vm, nil
 }
 
+// inMemoryBlockCount tracks the number of blocks created with [VM.newBlock]
+// that are yet to have their GC finalizers run. See block pruning at the end of
+// [VM.AcceptBlock].
+var inMemoryBlockCount atomic.Uint64
+
 func (vm *VM) newBlock(b *types.Block) *Block {
-	return &Block{
+	inMemoryBlockCount.Add(1)
+	bb := &Block{
 		Block: b,
 	}
+	runtime.SetFinalizer(bb, func(*Block) {
+		inMemoryBlockCount.Add(math.MaxUint64) // -1
+	})
+	return bb
 }
 
 func (vm *VM) logger() logging.Logger {
