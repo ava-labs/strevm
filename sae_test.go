@@ -9,6 +9,7 @@ import (
 	"math"
 	"math/big"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"reflect"
 	"runtime"
@@ -25,6 +26,7 @@ import (
 	"github.com/ava-labs/avalanchego/snow/snowtest"
 	"github.com/ava-labs/avalanchego/utils/logging"
 	"github.com/ava-labs/avalanchego/vms/components/gas"
+	ethereum "github.com/ava-labs/libevm"
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core/rawdb"
 	"github.com/ava-labs/libevm/core/types"
@@ -52,6 +54,8 @@ func TestMain(m *testing.M) {
 		goleak.IgnoreCurrent(),
 		// leaky, leaky, very sneaky!
 		goleak.IgnoreTopFunction("github.com/ava-labs/libevm/core/state/snapshot.(*diskLayer).generate"),
+		goleak.IgnoreTopFunction("github.com/ava-labs/libevm/eth/filters.(*FilterAPI).timeoutLoop"),
+		goleak.IgnoreTopFunction("github.com/ava-labs/libevm/eth/filters.(*Subscription).Unsubscribe.func1"),
 	)
 }
 
@@ -84,11 +88,14 @@ func TestBasicE2E(t *testing.T) {
 
 	handlers, err := vm.CreateHandlers(ctx)
 	require.NoErrorf(t, err, "%T.CreateHandlers()", vm)
-	rpcServer := httptest.NewServer(handlers[HTTPHandlerKey])
+	rpcServer := httptest.NewServer(handlers[WSHandlerKey])
 	t.Cleanup(rpcServer.Close)
 
-	rpcClient, err := ethclient.Dial(rpcServer.URL)
-	require.NoErrorf(t, err, "ethclient.Dial(%T.URL = %q)", rpcServer, rpcServer.URL)
+	rpcURL, err := url.Parse(rpcServer.URL)
+	require.NoErrorf(t, err, "url.Parse(%T.URL = %q)", rpcServer, rpcServer.URL)
+	rpcURL.Scheme = "ws"
+	rpcClient, err := ethclient.Dial(rpcURL.String())
+	require.NoErrorf(t, err, "ethclient.Dial(%T(%q))", rpcServer, rpcURL)
 	t.Cleanup(rpcClient.Close)
 
 	allTxs := make([]*types.Transaction, *txsInBasicE2E)
@@ -126,6 +133,15 @@ func TestBasicE2E(t *testing.T) {
 		// We don't `defer pprof.StopCPUProfile()` because we want to stop it at
 		// a very specific point.
 	}
+
+	headEvents := make(chan *types.Header, len(allTxs))
+	headSub, err := rpcClient.SubscribeNewHead(ctx, headEvents)
+	require.NoErrorf(t, err, "%T.SubscribeNewHead()", rpcClient)
+
+	filter := ethereum.FilterQuery{Addresses: []common.Address{wethAddr}}
+	logEvents := make(chan types.Log, len(allTxs))
+	logSub, err := rpcClient.SubscribeFilterLogs(ctx, filter, logEvents)
+	require.NoErrorf(t, err, "%T.SubscribeFilterLogs()", err)
 
 	var (
 		acceptedBlocks      []*Block
@@ -298,6 +314,9 @@ func TestBasicE2E(t *testing.T) {
 					// TxHash to be completed for each receipt
 				}}
 
+				logSub.Unsubscribe()
+				require.NoErrorf(t, <-logSub.Err(), "receive on %T.Err()", logSub)
+
 				for i, r := range slices.Concat(gotReceipts...) {
 					// Use `require` and `t.Fatalf()` because all receipts should be
 					// the same; if one fails then they'll all probably fail in the
@@ -308,6 +327,40 @@ func TestBasicE2E(t *testing.T) {
 					if diff := cmp.Diff(want, r.Logs, ignore); diff != "" {
 						t.Fatalf("receipt[%d] logs diff (-want +got):\n%s", i, diff)
 					}
+					if diff := cmp.Diff(*want[0], <-logEvents, ignore); diff != "" {
+						t.Fatalf("Log subscription receive [%d] diff (-want +got):\n%s", i, diff)
+					}
+				}
+
+				close(logEvents)
+				for extra := range logEvents {
+					t.Errorf("Log subscription received extraneous %T: %[1]v", extra)
+				}
+			})
+		})
+
+		t.Run("subscriptions", func(t *testing.T) {
+			t.Run("head_events", func(t *testing.T) {
+				for n := len(acceptedBlocks); !acceptedBlocks[n-1].executed.Load(); {
+					// There's no need to block on execution in production so
+					// making the executed bool a channel is overkill.
+					runtime.Gosched()
+				}
+
+				headSub.Unsubscribe()
+				require.NoErrorf(t, <-headSub.Err(), "receive on %T.Err()", headSub)
+				close(headEvents)
+
+				var got []common.Hash
+				for hdr := range headEvents {
+					got = append(got, hdr.Hash())
+				}
+				var want []common.Hash
+				for _, b := range acceptedBlocks {
+					want = append(want, b.Hash())
+				}
+				if diff := cmp.Diff(want, got); diff != "" {
+					t.Errorf("Chain-head subscription: block hashes diff (-want +got):\n%s", diff)
 				}
 			})
 		})

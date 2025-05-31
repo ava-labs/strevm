@@ -11,15 +11,17 @@ import (
 )
 
 const (
-	maxGasPerSecond       = gas.Gas(50e6)
-	stateRootDelaySeconds = 5
-	lambda                = 1
-	maxGasSecondsPerBlock = 2
+	maxGasPerSecond               = gas.Gas(50e6)
+	targetToPriceUpdateConversion = 87
+	stateRootDelaySeconds         = 5
+	lambda                        = 1
+	maxGasSecondsPerBlock         = 2
 )
 
 var (
 	errUnimplemented = errors.New("unimplemented")
 	errUnsupported   = errors.New("unsupported")
+	errShutdown      = errors.New("VM shutting down")
 )
 
 // clippedSubtract returns max(0,a-b) without underflow.

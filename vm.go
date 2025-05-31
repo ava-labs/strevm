@@ -313,11 +313,18 @@ func (vm *VM) Version(context.Context) (string, error) {
 	return "0", nil
 }
 
-const HTTPHandlerKey = "sae"
+const (
+	HTTPHandlerKey = "sae_http"
+	WSHandlerKey   = "sae_ws"
+)
 
 func (vm *VM) CreateHandlers(context.Context) (map[string]http.Handler, error) {
+	s := vm.ethRPCServer()
 	return map[string]http.Handler{
-		HTTPHandlerKey: vm.ethRPCHandler(),
+		HTTPHandlerKey: s,
+		WSHandlerKey: s.WebsocketHandler(
+			[]string{"*"}, // TODO(arr4n) make this configurable
+		),
 	}, nil
 }
 

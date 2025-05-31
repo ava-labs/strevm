@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"math"
 	"math/big"
-	"net/http"
 	"sync/atomic"
 	"time"
 
@@ -17,19 +16,33 @@ import (
 	"github.com/ava-labs/libevm/core/state"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/core/vm"
+	"github.com/ava-labs/libevm/eth/filters"
 	"github.com/ava-labs/libevm/ethdb"
+	"github.com/ava-labs/libevm/event"
 	"github.com/ava-labs/libevm/libevm/ethapi"
 	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/rpc"
 )
 
-func (vm *VM) ethRPCHandler() http.Handler {
+func (vm *VM) ethRPCServer() *rpc.Server {
 	b := &ethAPIBackend{vm: vm}
 	s := rpc.NewServer()
 
 	s.RegisterName("eth", ethapi.NewBlockChainAPI(b))
 	s.RegisterName("eth", ethapi.NewTransactionAPI(b, new(ethapi.AddrLocker)))
+	s.RegisterName("eth", filters.NewFilterAPI(
+		filters.NewFilterSystem(b, filters.Config{}),
+		false, // lightMode TODO(arr4n) investigate further
+	))
 	return s
+}
+
+func init() {
+	var (
+		b *ethAPIBackend
+		_ ethapi.Backend  = b
+		_ filters.Backend = b
+	)
 }
 
 type ethAPIBackend struct {
@@ -275,3 +288,38 @@ func (b *ethAPIBackend) Engine() consensus.Engine {
 // GetTd is required by the API frontend for unmarshalling a [types.Block], but
 // the result is never used so we return nil.
 func (b *ethAPIBackend) GetTd(context.Context, common.Hash) *big.Int { return nil }
+
+func (b *ethAPIBackend) SubscribeChainEvent(ch chan<- core.ChainEvent) event.Subscription {
+	return b.vm.exec.chainEvents.Subscribe(ch)
+}
+
+func (b *ethAPIBackend) SubscribeChainHeadEvent(ch chan<- core.ChainHeadEvent) event.Subscription {
+	return b.vm.exec.headEvents.Subscribe(ch)
+}
+
+func (b *ethAPIBackend) SubscribeLogsEvent(ch chan<- []*types.Log) event.Subscription {
+	return b.vm.exec.logEvents.Subscribe(ch)
+}
+
+func (vm *VM) newNoopSubscription() event.Subscription {
+	return event.NewSubscription(func(unsub <-chan struct{}) error {
+		select {
+		case <-unsub:
+			return nil
+		case <-vm.quit:
+			return errShutdown
+		}
+	})
+}
+
+func (b *ethAPIBackend) SubscribeNewTxsEvent(chan<- core.NewTxsEvent) event.Subscription {
+	return b.vm.newNoopSubscription()
+}
+
+func (b *ethAPIBackend) SubscribeRemovedLogsEvent(chan<- core.RemovedLogsEvent) event.Subscription {
+	return b.vm.newNoopSubscription()
+}
+
+func (b *ethAPIBackend) SubscribePendingLogsEvent(chan<- []*types.Log) event.Subscription {
+	return b.vm.newNoopSubscription()
+}

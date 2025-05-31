@@ -22,6 +22,7 @@ import (
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/core/vm"
 	"github.com/ava-labs/libevm/ethdb"
+	"github.com/ava-labs/libevm/event"
 	"github.com/ava-labs/libevm/params"
 	"go.uber.org/zap"
 
@@ -36,14 +37,17 @@ type executor struct {
 
 	spawned sync.WaitGroup
 
-	chainConfig *params.ChainConfig
-	gasClock    gasClock
-
+	gasClock     gasClock
 	queue        sink.Monitor[*queue.FIFO[*Block]]
-	lastExecuted *atomic.Pointer[Block]
+	lastExecuted *atomic.Pointer[Block] // shared with VM
 
-	db         ethdb.Database
-	stateCache state.Database
+	headEvents  event.FeedOf[core.ChainHeadEvent]
+	chainEvents event.FeedOf[core.ChainEvent]
+	logEvents   event.FeedOf[[]*types.Log]
+
+	chainConfig *params.ChainConfig
+	db          ethdb.Database
+	stateCache  state.Database
 	// executeScratchSpace MUST NOT be accessed by any methods other than
 	// [executor.init] and [executor.execute].
 	executeScratchSpace executionScratchSpace
@@ -351,6 +355,7 @@ func (e *executor) execute(ctx context.Context, b *Block) error {
 		return err
 	}
 
+	e.sendPostExecutionEvents(b.Block, receipts)
 	b.executed.Store(true)
 	e.lastExecuted.Store(b)
 
@@ -362,6 +367,21 @@ func (e *executor) execute(ctx context.Context, b *Block) error {
 		zap.Int("tx_count", len(b.Transactions())),
 	)
 	return nil
+}
+
+func (e *executor) sendPostExecutionEvents(b *types.Block, receipts types.Receipts) {
+	e.headEvents.Send(core.ChainHeadEvent{Block: b})
+
+	var logs []*types.Log
+	for _, r := range receipts {
+		logs = append(logs, r.Logs...)
+	}
+	e.chainEvents.Send(core.ChainEvent{
+		Block: b,
+		Hash:  b.Hash(),
+		Logs:  logs,
+	})
+	e.logEvents.Send(logs)
 }
 
 func (e *executor) commitState(ctx context.Context, x *executionScratchSpace, blockNum uint64) (common.Hash, error) {
