@@ -46,7 +46,6 @@ func init() {
 }
 
 type ethAPIBackend struct {
-	ethapi.Backend
 	vm *VM
 }
 
