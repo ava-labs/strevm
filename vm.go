@@ -62,7 +62,7 @@ type VM struct {
 	mempoolAndExecWG sync.WaitGroup
 }
 
-type blockMap map[ids.ID]*Block
+type blockMap map[ethcommon.Hash]*Block
 
 type Config struct {
 	ChainConfig          *params.ChainConfig
@@ -122,17 +122,20 @@ func New(ctx context.Context, c Config) (*VM, error) {
 		return nil, err
 	}
 
-	genesis.accepted.Store(true)
 	genesis.execution = &executionResults{
 		by:            vm.exec.gasClock.clone(),
 		stateRootPost: genesis.Root(),
 	}
-	genesis.lastSettled = genesis
-
 	batch := vm.db.NewBatch()
 	if err := genesis.writePostExecutionState(batch); err != nil {
 		return nil, err
 	}
+	// The last synchronous block (the SAE "genesis") is, by definition, already
+	// settled, so the `parent` and `lastSettled` pointers MUST be nil (see the
+	// invariant documented in [Block]). We do, however, need to write the
+	// last-settled block number to the database so set it temporarily.
+	genesis.lastSettled = genesis
+	defer func() { genesis.lastSettled = nil }()
 	if err := genesis.writeLastSettledNumber(batch); err != nil {
 		return nil, err
 	}
@@ -142,7 +145,7 @@ func New(ctx context.Context, c Config) (*VM, error) {
 	genesis.executed.Store(true)
 
 	if err := vm.blocks.Use(ctx, func(bm blockMap) error {
-		bm[genesis.ID()] = genesis
+		bm[genesis.Hash()] = genesis
 		return nil
 	}); err != nil {
 		return nil, err
@@ -179,6 +182,9 @@ func (vm *VM) recoverFromDB(ctx context.Context) error {
 		return fmt.Errorf("database in corrupt state: rawdb.ReadHeaderNumber(rawdb.ReadFinalizedBlockHash() = %#x) returned nil", lastSettledHash)
 	}
 
+	// Although we won't need all of these blocks, the last-settled of the
+	// last-settled block is a guaranteed and reasonable lower bound on the
+	// blocks to recover.
 	from, err := vm.readLastSettledNumber(*lastSettledNum)
 	if err != nil {
 		return err
@@ -210,15 +216,15 @@ func (vm *VM) recoverFromDB(ctx context.Context) error {
 			if b.Block == nil {
 				return nil, fmt.Errorf("rawdb.ReadBlock(%#x, %d) returned nil", hash, num)
 			}
-			byID[b.ID()] = b
+			byID[b.Hash()] = b
 			byNum[num] = b
 
-			b.accepted.Store(true)
 			if num <= lastExecutedNum {
 				state, err := vm.readPostExecutionState(num)
 				if err != nil {
 					return nil, fmt.Errorf("recover post-execution state of block %d: %w", num, err)
 				}
+				state.receipts = rawdb.ReadReceipts(db, b.Hash(), b.NumberU64(), b.Time(), vm.exec.chainConfig)
 				b.execution = state
 				b.executed.Store(true)
 			}
@@ -233,13 +239,18 @@ func (vm *VM) recoverFromDB(ctx context.Context) error {
 				vm.last.accepted.Store(b)
 			}
 		}
-
 		vm.preference.Store(vm.last.accepted.Load())
 
 		for _, b := range byID {
 			num := b.NumberU64()
-			b.parent = byNum[num-1]
+			if num <= *lastSettledNum {
+				// Once a block is settled, its `parent` and `lastSettled`
+				// pointers are cleared to allow for GC, so we don't reinstate
+				// them here.
+				continue
+			}
 
+			b.parent = byNum[num-1]
 			s, err := vm.readLastSettledNumber(num)
 			if err != nil {
 				return nil, err
@@ -249,10 +260,10 @@ func (vm *VM) recoverFromDB(ctx context.Context) error {
 
 		for _, num := range nums {
 			b := byNum[num]
+			// These were only needed as the last-settled pointers of blocks
+			// that themselves are yet to be settled.
 			if num < *lastSettledNum {
-				delete(byID, b.ID())
-			} else {
-				b.breakAncestryLinkedLists()
+				delete(byID, b.Hash())
 			}
 		}
 
@@ -330,7 +341,7 @@ func (vm *VM) CreateHandlers(context.Context) (map[string]http.Handler, error) {
 
 func (vm *VM) GetBlock(ctx context.Context, blkID ids.ID) (*Block, error) {
 	return sink.FromMutex(ctx, vm.blocks, func(blocks blockMap) (*Block, error) {
-		b, ok := blocks[blkID]
+		b, ok := blocks[ethcommon.Hash(blkID)]
 		if !ok {
 			return nil, database.ErrNotFound
 		}
@@ -360,7 +371,7 @@ func (vm *VM) currSigner() types.Signer {
 
 func (vm *VM) SetPreference(ctx context.Context, blkID ids.ID) error {
 	return vm.blocks.Use(ctx, func(bm blockMap) error {
-		b, ok := bm[blkID]
+		b, ok := bm[ethcommon.Hash(blkID)]
 		if !ok {
 			return database.ErrNotFound
 		}

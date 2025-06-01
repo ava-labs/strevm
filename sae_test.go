@@ -472,9 +472,14 @@ func cmpBlocks() cmp.Options {
 		cmp.Comparer(func(a, b *types.Block) bool {
 			return a.Hash() == b.Hash()
 		}),
+		cmp.Comparer(func(a, b types.Receipts) bool {
+			return types.DeriveSha(a, trieHasher()) == types.DeriveSha(b, trieHasher())
+		}),
 		cmpopts.EquateComparable(
 			// We're not running tests concurrently with anything that will
 			// modify [Block.accepted] nor [Block.executed] so this is safe.
+			// Using a [cmp.Transformer] would make the linter complain about
+			// copying.
 			atomic.Bool{},
 		),
 		cmpopts.IgnoreFields(
@@ -486,7 +491,6 @@ func cmpBlocks() cmp.Options {
 			gasClock{},
 			"canotoData",
 		),
-		cmpopts.EquateEmpty(),
 	}
 }
 

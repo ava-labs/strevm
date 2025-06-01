@@ -39,6 +39,10 @@ func (vm *VM) buildBlock(ctx context.Context, timestamp uint64, parent *Block) (
 var errWaitingForExecution = errors.New("waiting for execution when building block")
 
 func (vm *VM) buildBlockWithCandidateTxs(timestamp uint64, parent *Block, candidateTxs queue.Queue[*pendingTx]) (*Block, error) {
+	if timestamp < parent.Time() {
+		return nil, fmt.Errorf("block at time %d before parent at %d", timestamp, parent.Time())
+	}
+
 	toSettle, ok := vm.lastBlockToSettleAt(timestamp, parent)
 	if !ok {
 		vm.logger().Warn(
@@ -73,24 +77,23 @@ func (vm *VM) buildBlockWithCandidateTxs(timestamp uint64, parent *Block, candid
 		return nil, err
 	}
 
-	return &Block{
-		Block: types.NewBlock(
-			&types.Header{
-				ParentHash: parent.Hash(),
-				Root:       toSettle.execution.stateRootPost,
-				Number:     new(big.Int).Add(parent.Number(), big.NewInt(1)),
-				GasLimit:   gasLimit,
-				GasUsed:    gasUsed,
-				Time:       timestamp,
-				BaseFee:    nil, // TODO(arr4n)
-			},
-			txs, nil, /*uncles*/
-			slices.Concat(receipts...),
-			trieHasher(),
-		),
-		parent:      parent,
-		lastSettled: toSettle,
-	}, nil
+	b := vm.newBlock(types.NewBlock(
+		&types.Header{
+			ParentHash: parent.Hash(),
+			Root:       toSettle.execution.stateRootPost,
+			Number:     new(big.Int).Add(parent.Number(), big.NewInt(1)),
+			GasLimit:   gasLimit,
+			GasUsed:    gasUsed,
+			Time:       timestamp,
+			BaseFee:    nil, // TODO(arr4n)
+		},
+		txs, nil, /*uncles*/
+		slices.Concat(receipts...),
+		trieHasher(),
+	))
+	b.parent = parent
+	b.lastSettled = toSettle
+	return b, nil
 }
 
 func (vm *VM) buildBlockOnHistory(lastSettled, parent *Block, timestamp uint64, candidateTxs queue.Queue[*pendingTx]) (types.Transactions, uint64, error) {
@@ -213,12 +216,15 @@ func (vm *VM) lastBlockToSettleAt(timestamp uint64, parent *Block) (*Block, bool
 	block = parent // therefore `child` remains nil
 	settleAt := boundedSubtract(timestamp, stateRootDelaySeconds, vm.lastSynchronousBlockTime)
 
+	// The only way [Block.parent] can be nil is if it was already settled (see
+	// invariant in [Block]). If a block was already settled then only that or a
+	// later (i.e. unsettled) block can be returned by this loop, therefore we
+	// have a guarantee that the loop update will never result in `block==nil`.
+	// Framed differently, because `settleAt` is >= what it was when this
+	// function was used to build `parent`, if `block.parent==nil` then it will
+	// have already been settled in `parent` and therefore executed by
+	// `<=settleAt` so will be returned here.
 	for ; ; block, child = block.parent, block {
-		if block.parent == nil {
-			// The genesis block, by definition, is the lowest-height block to
-			// be "settled".
-			return block, true
-		}
 		if block.Time() > settleAt {
 			continue
 		}

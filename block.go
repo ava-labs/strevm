@@ -22,10 +22,20 @@ var _ adaptor.Block = (*Block)(nil)
 
 type Block struct {
 	*types.Block
+	// Invariant: `parent` and `lastSettled` are non-nil i.f.f. the block hasn't
+	// itself been settled. However their non-atomic nature means that this is
+	// not a safe way to check if the block has been settled; the invariant is
+	// intended only for guiding other code. The last synchronous block, the SAE
+	// "genesis" is always considered settled.
+	//
+	// Rationale: the ancestral pointers form a linked list that would prevent
+	// garbage collection if not severed. Once a block is settled there is no
+	// need to inspect its history so we sacrifice the ancestors to the GC
+	// Overlord as a sign of our unwavering fealty.
 	parent, lastSettled *Block
 
-	accepted, executed atomic.Bool
-	execution          *executionResults // non-nil and immutable i.f.f. `executed == true`
+	executed  atomic.Bool
+	execution *executionResults // non-nil and immutable i.f.f. `executed == true`
 }
 
 func (b *Block) ID() ids.ID {
@@ -56,9 +66,13 @@ func (vm *VM) AcceptBlock(ctx context.Context, b *Block) error {
 	if err := batch.Write(); err != nil {
 		return err
 	}
+	for _, s := range settle {
+		// See the invariant detailed in [Block].
+		s.parent = nil
+		s.lastSettled = nil
+	}
 
 	vm.last.settled.Store(b.lastSettled)
-	b.accepted.Store(true)
 	vm.last.accepted.Store(b)
 
 	vm.logger().Debug(
@@ -68,12 +82,10 @@ func (vm *VM) AcceptBlock(ctx context.Context, b *Block) error {
 	)
 
 	return vm.blocks.Use(ctx, func(bm blockMap) error {
-		// TODO(arr4n) document the rationale here. Keep everything as far back
-		// as the last-settled block, keep it intact, and destroy the parental +
-		// last-settled linked lists.
-
+		// Same rationale as the invariant described in [Block]. Praised be the
+		// GC!
 		prune := func(b *Block) {
-			delete(bm, b.ID())
+			delete(bm, b.Hash())
 			vm.logger().Debug(
 				"Pruning settled block",
 				zap.Stringer("hash", b.Hash()),
@@ -81,31 +93,21 @@ func (vm *VM) AcceptBlock(ctx context.Context, b *Block) error {
 			)
 		}
 
-		keep := b.lastSettled.ID()
+		keep := b.lastSettled.Hash()
 		for _, s := range settle {
-			if s.ID() == keep {
+			if s.Hash() == keep {
 				continue
 			}
 			prune(s)
 		}
-		if b.parent != nil && b.parent.lastSettled != nil {
-			if s := b.parent.lastSettled; s.ID() != keep {
-				prune(s)
-			}
+		if b.parent == nil {
+			return nil
 		}
-		b.breakAncestryLinkedLists()
+		if s := b.parent.lastSettled; s != nil && s.Hash() != keep {
+			prune(s)
+		}
 		return nil
 	})
-}
-
-func (b *Block) breakAncestryLinkedLists() {
-	for _, s := range []*Block{b.lastSettled.parent, b.lastSettled.lastSettled} {
-		if s == nil {
-			continue
-		}
-		s.parent = nil
-		s.lastSettled = nil
-	}
 }
 
 func (vm *VM) RejectBlock(ctx context.Context, b *Block) error {
@@ -159,7 +161,7 @@ func (vm *VM) VerifyBlock(ctx context.Context, b *Block) error {
 
 	rawdb.WriteBlock(vm.db, b.Block)
 	return vm.blocks.Use(ctx, func(bm blockMap) error {
-		bm[b.ID()] = b
+		bm[b.Hash()] = b
 		return nil
 	})
 }
