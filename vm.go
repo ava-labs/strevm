@@ -17,18 +17,15 @@ import (
 	snowcommon "github.com/ava-labs/avalanchego/snow/engine/common"
 	"github.com/ava-labs/avalanchego/utils/logging"
 	"github.com/ava-labs/avalanchego/version"
-	ethcommon "github.com/ava-labs/libevm/common"
+	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/consensus"
 	"github.com/ava-labs/libevm/core/rawdb"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/ethdb"
 	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/rlp"
-	"github.com/ava-labs/strevm/adaptor"
 	"github.com/ava-labs/strevm/queue"
 )
-
-var _ adaptor.ChainVM[*Block] = nil
 
 // VM implements Streaming Asynchronous Execution (SAE) of EVM blocks. It
 // implements all [adaptor.ChainVM] methods except for `Initialize()`, which
@@ -56,7 +53,7 @@ type VM struct {
 }
 
 type (
-	blockMap map[ethcommon.Hash]*Block
+	blockMap map[common.Hash]*Block
 	last     struct {
 		synchronousTime             uint64
 		accepted, executed, settled atomic.Pointer[Block]
@@ -70,7 +67,7 @@ type Config struct {
 	// last synchronous block MUST be both the "head" and "finalized" block as
 	// retrieved via [rawdb] functions and the database MUST NOT contain any
 	// canonical hashes at greater heights.
-	LastSynchronousBlock ethcommon.Hash
+	LastSynchronousBlock common.Hash
 
 	ToEngine chan<- snowcommon.Message
 	SnowCtx  *snow.Context
@@ -202,7 +199,7 @@ func (vm *VM) CreateHandlers(context.Context) (map[string]http.Handler, error) {
 
 func (vm *VM) GetBlock(ctx context.Context, blkID ids.ID) (*Block, error) {
 	return sink.FromMutex(ctx, vm.blocks, func(blocks blockMap) (*Block, error) {
-		b, ok := blocks[ethcommon.Hash(blkID)]
+		b, ok := blocks[common.Hash(blkID)]
 		if !ok {
 			return nil, database.ErrNotFound
 		}
@@ -232,7 +229,7 @@ func (vm *VM) currSigner() types.Signer {
 
 func (vm *VM) SetPreference(ctx context.Context, blkID ids.ID) error {
 	return vm.blocks.Use(ctx, func(bm blockMap) error {
-		b, ok := bm[ethcommon.Hash(blkID)]
+		b, ok := bm[common.Hash(blkID)]
 		if !ok {
 			return database.ErrNotFound
 		}
@@ -247,7 +244,7 @@ func (vm *VM) LastAccepted(ctx context.Context) (ids.ID, error) {
 
 func (vm *VM) GetBlockIDAtHeight(ctx context.Context, height uint64) (ids.ID, error) {
 	h := rawdb.ReadCanonicalHash(vm.db, height)
-	if h == (ethcommon.Hash{}) {
+	if h == (common.Hash{}) {
 		return ids.Empty, database.ErrNotFound
 	}
 	return ids.ID(h), nil
@@ -263,10 +260,10 @@ type engine struct {
 	consensus.Engine
 }
 
-func (engine) Author(h *types.Header) (ethcommon.Address, error) {
-	return ethcommon.Address{}, nil
+func (engine) Author(h *types.Header) (common.Address, error) {
+	return common.Address{}, nil
 }
 
-func (chainContext) GetHeader(ethcommon.Hash, uint64) *types.Header {
+func (chainContext) GetHeader(common.Hash, uint64) *types.Header {
 	panic(errUnimplemented)
 }

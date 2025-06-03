@@ -9,7 +9,7 @@ import (
 
 	"github.com/ava-labs/avalanchego/database"
 	"github.com/ava-labs/avalanchego/vms/components/gas"
-	ethcommon "github.com/ava-labs/libevm/common"
+	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core/rawdb"
 	"github.com/ava-labs/libevm/ethdb"
 	"github.com/ava-labs/libevm/params"
@@ -71,7 +71,7 @@ func (vm *VM) readLastSettledNumber(blockNum uint64) (uint64, error) {
 	return settled.Uint64(), nil
 }
 
-func (vm *VM) upgradeLastSynchronousBlock(hash ethcommon.Hash) error {
+func (vm *VM) upgradeLastSynchronousBlock(hash common.Hash) error {
 	lastSyncNum := rawdb.ReadHeaderNumber(vm.db, hash)
 	if lastSyncNum == nil {
 		return fmt.Errorf("read number of last synchronous block (%#x): %w", hash, database.ErrNotFound)
