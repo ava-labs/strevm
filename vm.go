@@ -198,13 +198,30 @@ func (vm *VM) CreateHandlers(context.Context) (map[string]http.Handler, error) {
 }
 
 func (vm *VM) GetBlock(ctx context.Context, blkID ids.ID) (*Block, error) {
-	return sink.FromMutex(ctx, vm.blocks, func(blocks blockMap) (*Block, error) {
-		b, ok := blocks[common.Hash(blkID)]
-		if !ok {
-			return nil, database.ErrNotFound
+	b, err := sink.FromMutex(ctx, vm.blocks, func(blocks blockMap) (*Block, error) {
+		if b, ok := blocks[common.Hash(blkID)]; ok {
+			return b, nil
 		}
-		return b, nil
+		return nil, database.ErrNotFound
 	})
+	switch err {
+	case nil:
+		return b, nil
+	case database.ErrNotFound:
+	default:
+		return nil, err
+	}
+
+	hash := common.Hash(blkID)
+	num := rawdb.ReadHeaderNumber(vm.db, hash)
+	if num == nil {
+		return nil, database.ErrNotFound
+	}
+	ethB := rawdb.ReadBlock(vm.db, hash, *num)
+	if ethB == nil {
+		return nil, database.ErrNotFound
+	}
+	return vm.newBlock(ethB), nil
 }
 
 func (vm *VM) ParseBlock(ctx context.Context, blockBytes []byte) (*Block, error) {

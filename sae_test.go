@@ -113,7 +113,9 @@ func TestBasicE2E(t *testing.T) {
 			"executed": &vm.last.executed,
 			"settled":  &vm.last.settled,
 		} {
-			assert.Equalf(t, block, ptr.Load(), "%T.last.%s", vm, k)
+			if diff := cmp.Diff(block, ptr.Load(), cmpBlocks()); diff != "" {
+				t.Errorf("%T.last.%s diff (-want +got):\n%s", vm, k, diff)
+			}
 		}
 	})
 
