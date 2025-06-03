@@ -2,7 +2,6 @@ package sae
 
 import (
 	"context"
-	"fmt"
 	"math"
 	"math/big"
 	"net/http"
@@ -15,7 +14,6 @@ import (
 	"github.com/ava-labs/avalanchego/database"
 	"github.com/ava-labs/avalanchego/ids"
 	"github.com/ava-labs/avalanchego/snow"
-	"github.com/ava-labs/avalanchego/snow/engine/common"
 	snowcommon "github.com/ava-labs/avalanchego/snow/engine/common"
 	"github.com/ava-labs/avalanchego/utils/logging"
 	"github.com/ava-labs/avalanchego/version"
@@ -28,28 +26,23 @@ import (
 	"github.com/ava-labs/libevm/rlp"
 	"github.com/ava-labs/strevm/adaptor"
 	"github.com/ava-labs/strevm/queue"
-	"go.uber.org/zap"
 )
 
 var _ adaptor.ChainVM[*Block] = nil
 
 // VM implements Streaming Asynchronous Execution (SAE) of EVM blocks. It
 // implements all [adaptor.ChainVM] methods except for `Initialize()`, which
-// MUST be handled by a harness implementation to provide the final synchronous
-// block (e.g. [SinceGenesis]).
+// MUST be handled by a harness implementation that provides the final
+// synchronous block, which MAY be a standard genesis block.
 type VM struct {
 	snowCtx *snow.Context
-	common.AppHandler
-	toEngine chan<- common.Message
+	snowcommon.AppHandler
+	toEngine chan<- snowcommon.Message
 	now      func() time.Time
 
-	blocks                   sink.Mutex[blockMap]
-	preference               atomic.Pointer[Block]
-	lastSynchronousBlockTime uint64
-
-	last struct {
-		accepted, executed, settled atomic.Pointer[Block]
-	}
+	blocks     sink.Mutex[blockMap]
+	preference atomic.Pointer[Block]
+	last       last
 
 	db ethdb.Database
 
@@ -62,11 +55,21 @@ type VM struct {
 	mempoolAndExecWG sync.WaitGroup
 }
 
-type blockMap map[ethcommon.Hash]*Block
+type (
+	blockMap map[ethcommon.Hash]*Block
+	last     struct {
+		synchronousTime             uint64
+		accepted, executed, settled atomic.Pointer[Block]
+	}
+)
 
 type Config struct {
-	ChainConfig          *params.ChainConfig
-	DB                   ethdb.Database
+	ChainConfig *params.ChainConfig
+	DB          ethdb.Database
+	// At the point of upgrade from synchronous to asynchronous execution, the
+	// last synchronous block MUST be both the "head" and "finalized" block as
+	// retrieved via [rawdb] functions and the database MUST NOT contain any
+	// canonical hashes at greater heights.
 	LastSynchronousBlock ethcommon.Hash
 
 	ToEngine chan<- snowcommon.Message
@@ -84,7 +87,7 @@ func New(ctx context.Context, c Config) (*VM, error) {
 		snowCtx:    c.SnowCtx,
 		db:         c.DB,
 		toEngine:   c.ToEngine,
-		AppHandler: common.NewNoOpAppHandler(logging.NoLog{}),
+		AppHandler: snowcommon.NewNoOpAppHandler(logging.NoLog{}),
 		now:        c.Now,
 		blocks:     sink.NewMutex(make(blockMap)),
 		// Block building
@@ -96,20 +99,12 @@ func New(ctx context.Context, c Config) (*VM, error) {
 		vm.now = time.Now
 	}
 
-	lastSyncNum := rawdb.ReadHeaderNumber(c.DB, c.LastSynchronousBlock)
-	if lastSyncNum == nil {
-		return nil, fmt.Errorf("read number of last synchronous block (%#x): %w", c.LastSynchronousBlock, database.ErrNotFound)
+	if err := vm.upgradeLastSynchronousBlock(c.LastSynchronousBlock); err != nil {
+		return nil, err
 	}
-	genesis := vm.newBlock(rawdb.ReadBlock(c.DB, c.LastSynchronousBlock, *lastSyncNum))
-	if genesis.Block == nil {
-		return nil, fmt.Errorf("read last synchronous block (%#x): %w", c.LastSynchronousBlock, database.ErrNotFound)
+	if err := vm.recoverFromDB(ctx, c.ChainConfig); err != nil {
+		return nil, err
 	}
-	vm.lastSynchronousBlockTime = genesis.Time()
-	vm.logger().Info(
-		"Last synchronous block before SAE",
-		zap.Uint64("timestamp", genesis.Time()),
-		zap.Stringer("hash", genesis.Hash()),
-	)
 
 	vm.exec = &executor{
 		quit:         quit,
@@ -118,41 +113,9 @@ func New(ctx context.Context, c Config) (*VM, error) {
 		db:           vm.db,
 		lastExecuted: &vm.last.executed,
 	}
-	if err := vm.exec.init(genesis); err != nil {
+	if err := vm.exec.init(); err != nil {
 		return nil, err
 	}
-
-	genesis.execution = &executionResults{
-		by:            vm.exec.gasClock.clone(),
-		stateRootPost: genesis.Root(),
-	}
-	batch := vm.db.NewBatch()
-	if err := genesis.writePostExecutionState(batch); err != nil {
-		return nil, err
-	}
-	// The last synchronous block (the SAE "genesis") is, by definition, already
-	// settled, so the `parent` and `lastSettled` pointers MUST be nil (see the
-	// invariant documented in [Block]). We do, however, need to write the
-	// last-settled block number to the database so set it temporarily.
-	genesis.lastSettled = genesis
-	defer func() { genesis.lastSettled = nil }()
-	if err := genesis.writeLastSettledNumber(batch); err != nil {
-		return nil, err
-	}
-	if err := batch.Write(); err != nil {
-		return nil, err
-	}
-	genesis.executed.Store(true)
-
-	if err := vm.blocks.Use(ctx, func(bm blockMap) error {
-		bm[genesis.Hash()] = genesis
-		return nil
-	}); err != nil {
-		return nil, err
-	}
-	vm.last.accepted.Store(genesis)
-	vm.last.executed.Store(genesis)
-	vm.last.settled.Store(genesis)
 
 	wg := &vm.mempoolAndExecWG
 	wg.Add(2)
@@ -167,108 +130,6 @@ func New(ctx context.Context, c Config) (*VM, error) {
 	}()
 	<-execReady
 	return vm, nil
-}
-
-func (vm *VM) recoverFromDB(ctx context.Context) error {
-	db := vm.db
-
-	lastExecutedHeader := rawdb.ReadHeadHeader(db)
-	lastExecutedHash := lastExecutedHeader.Hash()
-	lastExecutedNum := lastExecutedHeader.Number.Uint64()
-
-	lastSettledHash := rawdb.ReadFinalizedBlockHash(db)
-	lastSettledNum := rawdb.ReadHeaderNumber(db, lastSettledHash)
-	if lastSettledNum == nil {
-		return fmt.Errorf("database in corrupt state: rawdb.ReadHeaderNumber(rawdb.ReadFinalizedBlockHash() = %#x) returned nil", lastSettledHash)
-	}
-
-	// Although we won't need all of these blocks, the last-settled of the
-	// last-settled block is a guaranteed and reasonable lower bound on the
-	// blocks to recover.
-	from, err := vm.readLastSettledNumber(*lastSettledNum)
-	if err != nil {
-		return err
-	}
-
-	// In [VM.AcceptBlock] we prune all blocks before the last-settled one so
-	// that's all we need to recover.
-	nums, hashes := rawdb.ReadAllCanonicalHashes(vm.db, from, math.MaxUint64, math.MaxInt)
-
-	// [rawdb.ReadAllCanonicalHashes] does not state that it returns blocks in
-	// increasing numerical order. It might, but it doesn't say so on the tin.
-	lastAcceptedNum := *lastSettledNum
-	lastAcceptedHash := lastSettledHash
-	for i, num := range nums {
-		if num <= lastAcceptedNum {
-			continue
-		}
-		lastAcceptedNum = num
-		lastAcceptedHash = hashes[i]
-	}
-
-	return vm.blocks.Replace(ctx, func(blockMap) (blockMap, error) {
-		byID := make(blockMap)
-		byNum := make(map[uint64]*Block)
-
-		for i, num := range nums {
-			hash := hashes[i]
-			b := vm.newBlock(rawdb.ReadBlock(db, hash, num))
-			if b.Block == nil {
-				return nil, fmt.Errorf("rawdb.ReadBlock(%#x, %d) returned nil", hash, num)
-			}
-			byID[b.Hash()] = b
-			byNum[num] = b
-
-			if num <= lastExecutedNum {
-				state, err := vm.readPostExecutionState(num)
-				if err != nil {
-					return nil, fmt.Errorf("recover post-execution state of block %d: %w", num, err)
-				}
-				state.receipts = rawdb.ReadReceipts(db, b.Hash(), b.NumberU64(), b.Time(), vm.exec.chainConfig)
-				b.execution = state
-				b.executed.Store(true)
-			}
-
-			if b.Hash() == lastExecutedHash {
-				vm.last.executed.Store(b)
-			}
-			if b.Hash() == lastSettledHash {
-				vm.last.settled.Store(b)
-			}
-			if b.Hash() == lastAcceptedHash {
-				vm.last.accepted.Store(b)
-			}
-		}
-		vm.preference.Store(vm.last.accepted.Load())
-
-		for _, b := range byID {
-			num := b.NumberU64()
-			if num <= *lastSettledNum {
-				// Once a block is settled, its `parent` and `lastSettled`
-				// pointers are cleared to allow for GC, so we don't reinstate
-				// them here.
-				continue
-			}
-
-			b.parent = byNum[num-1]
-			s, err := vm.readLastSettledNumber(num)
-			if err != nil {
-				return nil, err
-			}
-			b.lastSettled = byNum[s]
-		}
-
-		for _, num := range nums {
-			b := byNum[num]
-			// These were only needed as the last-settled pointers of blocks
-			// that themselves are yet to be settled.
-			if num < *lastSettledNum {
-				delete(byID, b.Hash())
-			}
-		}
-
-		return byID, nil
-	})
 }
 
 // inMemoryBlockCount tracks the number of blocks created with [VM.newBlock]

@@ -16,20 +16,20 @@ import (
 
 func init() {
 	var (
-		vm *SinceGenesis
+		vm *sinceGenesis
 		_  snowcommon.VM           = vm
 		_  adaptor.ChainVM[*Block] = vm
 	)
 }
 
-// SinceGenesis is an SAE VM that executes asynchronously immediately,
+// sinceGenesis is an SAE VM that executes asynchronously immediately,
 // stipulating the genesis block as the last synchronous block in [Config].
-type SinceGenesis struct {
+type sinceGenesis struct {
 	*VM                  // Populated by [SinceGenesis.Initialize]
 	Now func() time.Time // Propagated to [Config]
 }
 
-func (s *SinceGenesis) Initialize(
+func (s *sinceGenesis) Initialize(
 	ctx context.Context,
 	chainCtx *snow.Context,
 	db database.Database,
@@ -40,7 +40,7 @@ func (s *SinceGenesis) Initialize(
 	fxs []*snowcommon.Fx,
 	appSender snowcommon.AppSender,
 ) error {
-	ethdb := rawdb.NewMemoryDatabase() // TODO(arr4n) wrap the [database.Database] argument
+	ethdb := rawdb.NewMemoryDatabase()
 
 	genesis := new(core.Genesis)
 	if err := json.Unmarshal(genesisBytes, genesis); err != nil {
@@ -49,6 +49,14 @@ func (s *SinceGenesis) Initialize(
 	sdb := state.NewDatabase(ethdb)
 	chainConfig, genesisHash, err := core.SetupGenesisBlock(ethdb, sdb.TrieDB(), genesis)
 	if err != nil {
+		return err
+	}
+
+	batch := ethdb.NewBatch()
+	// Being both the "head" and "finalized" block is a requirement of [Config].
+	rawdb.WriteHeadBlockHash(batch, genesisHash)
+	rawdb.WriteFinalizedBlockHash(batch, genesisHash)
+	if err := batch.Write(); err != nil {
 		return err
 	}
 

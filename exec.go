@@ -53,13 +53,11 @@ type executor struct {
 	executeScratchSpace executionScratchSpace
 }
 
-// init initialises the executor based of the async genesis, which may be either
-// an actual genesis block or the last synchronous block for a chain upgrading
-// to SAE.
-func (e *executor) init(genesis *Block) error {
-	e.stateCache = state.NewDatabase(e.db)
+func (e *executor) init() error {
+	last := e.lastExecuted.Load()
+	root := last.Root()
 
-	root := genesis.Root()
+	e.stateCache = state.NewDatabase(e.db)
 	sdb := e.stateCache
 	tdb := sdb.TrieDB()
 
@@ -80,10 +78,7 @@ func (e *executor) init(genesis *Block) error {
 		snaps:   snaps,
 		statedb: statedb,
 	}
-
-	e.gasClock = gasClock{
-		time: genesis.Time(),
-	}
+	e.gasClock = last.execution.by.clone()
 	return nil
 }
 

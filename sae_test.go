@@ -23,15 +23,19 @@ import (
 
 	"github.com/arr4n/sink"
 	"github.com/ava-labs/avalanchego/ids"
+	snowcommon "github.com/ava-labs/avalanchego/snow/engine/common"
 	"github.com/ava-labs/avalanchego/snow/snowtest"
 	"github.com/ava-labs/avalanchego/utils/logging"
 	"github.com/ava-labs/avalanchego/vms/components/gas"
 	ethereum "github.com/ava-labs/libevm"
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core/rawdb"
+	"github.com/ava-labs/libevm/core/state"
+	"github.com/ava-labs/libevm/core/state/snapshot"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/crypto"
 	"github.com/ava-labs/libevm/ethclient"
+	"github.com/ava-labs/libevm/ethdb"
 	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/rpc"
 	"github.com/ava-labs/strevm/adaptor"
@@ -76,15 +80,42 @@ func TestBasicE2E(t *testing.T) {
 
 	now := time.Unix(0, 0)
 
-	vm := &SinceGenesis{Now: func() time.Time { return now }}
-	snowCompatVM := adaptor.Convert(vm)
+	harnessVM := &sinceGenesis{Now: func() time.Time { return now }}
+	snowCompatVM := adaptor.Convert(harnessVM)
 
 	snowCtx := snowtest.Context(t, ids.Empty)
 	snowCtx.Log = tbLogger{tb: t, level: logging.Debug + 1}
-	require.NoErrorf(t, vm.Initialize(
+	require.NoErrorf(t, harnessVM.Initialize(
 		ctx, snowCtx,
 		nil, genesisJSON(t, chainConfig, eoa), nil, nil, nil, nil, nil,
-	), "%T.Initialize()", vm)
+	), "%T.Initialize()", harnessVM)
+
+	vm := harnessVM.VM
+
+	t.Run("convert_genesis_to_async", func(t *testing.T) {
+		require.NoError(t, vm.blocks.Use(ctx, func(bm blockMap) error {
+			require.Equal(t, 1, len(bm))
+			return nil
+		}))
+
+		last, err := vm.LastAccepted(ctx)
+		require.NoErrorf(t, err, "%T.LastAccepted()", vm)
+		block, err := vm.GetBlock(ctx, last)
+		require.NoErrorf(t, err, "%T.GetBlock(%[1]T.LastAccepted())", vm)
+
+		assert.Equal(t, uint64(0), block.Height(), "block height")
+		assert.Nil(t, block.parent, "parent")
+		assert.Nil(t, block.lastSettled, "last settled")
+		assert.True(t, block.executed.Load(), "executed")
+
+		for k, ptr := range map[string]*atomic.Pointer[Block]{
+			"accepted": &vm.last.accepted,
+			"executed": &vm.last.executed,
+			"settled":  &vm.last.settled,
+		} {
+			assert.Equalf(t, block, ptr.Load(), "%T.last.%s", vm, k)
+		}
+	})
 
 	handlers, err := vm.CreateHandlers(ctx)
 	require.NoErrorf(t, err, "%T.CreateHandlers()", vm)
@@ -393,27 +424,21 @@ func TestBasicE2E(t *testing.T) {
 		genesisID, err := vm.GetBlockIDAtHeight(ctx, 0)
 		require.NoError(t, err, "fetch genesis ID from original VM")
 
-		recoverer, err := New(
+		recovered, err := New(
 			ctx,
 			Config{
 				LastSynchronousBlock: common.Hash(genesisID),
 				DB:                   vm.db,
 				SnowCtx:              snowCtx,
-				ChainConfig:          vm.exec.chainConfig,
+				ChainConfig:          chainConfig,
 			},
 		)
 		require.NoErrorf(t, err, "New(%T[DB from original VM])", Config{})
-		require.NoErrorf(t, recoverer.recoverFromDB(ctx), "%T.recoverFromDB()", err)
 
-		want, err := sink.FromMutex[blockMap, blockMap](ctx, vm.blocks, func(bm blockMap) (blockMap, error) { return bm, nil })
-		require.NoError(t, err)
-		got, err := sink.FromMutex[blockMap, blockMap](ctx, recoverer.blocks, func(bm blockMap) (blockMap, error) { return bm, nil })
-		require.NoError(t, err)
-
-		if diff := cmp.Diff(want, got, cmpBlocks()); diff != "" {
-			t.Errorf("After recoverFromDB() %T.blocks diff (-want +got):\n%s", recoverer, diff)
+		if diff := cmp.Diff(vm, recovered, cmpVMs(ctx, t)); diff != "" {
+			t.Errorf("%T from used DB diff (-recovered +original):\n%s", vm, diff)
 		}
-		require.NoErrorf(t, recoverer.Shutdown(ctx), "%T.Shutdown()", recoverer)
+		require.NoErrorf(t, recovered.Shutdown(ctx), "%T.Shutdown()", recovered)
 	})
 
 	require.NoErrorf(t, vm.Shutdown(ctx), "%T.Shutdown()", vm)
@@ -468,7 +493,11 @@ func cmpBigInts() cmp.Options {
 func cmpBlocks() cmp.Options {
 	return cmp.Options{
 		cmpBigInts(),
-		cmp.AllowUnexported(Block{}, executionResults{}, gasClock{}),
+		cmp.AllowUnexported(
+			Block{},
+			executionResults{},
+			gasClock{},
+		),
 		cmp.Comparer(func(a, b *types.Block) bool {
 			return a.Hash() == b.Hash()
 		}),
@@ -482,15 +511,56 @@ func cmpBlocks() cmp.Options {
 			// copying.
 			atomic.Bool{},
 		),
+		cmpopts.IgnoreTypes(
+			canotoData_executionResults{},
+			canotoData_gasClock{},
+		),
 		cmpopts.IgnoreFields(
 			executionResults{},
 			"byTime", // wall-clock for metrics only
-			"canotoData",
 		),
-		cmpopts.IgnoreFields(
-			gasClock{},
-			"canotoData",
+	}
+}
+
+func cmpVMs(ctx context.Context, tb testing.TB) cmp.Options {
+	var (
+		zeroVM   VM
+		zeroExec executor
+	)
+
+	return cmp.Options{
+		cmpBlocks(),
+		cmp.AllowUnexported(
+			VM{},
+			last{},
+			executor{},
+			executionScratchSpace{},
 		),
+		cmpopts.IgnoreUnexported(params.ChainConfig{}),
+		cmpopts.IgnoreFields(VM{}, "preference"),
+		cmpopts.IgnoreTypes(
+			zeroVM.snowCtx,
+			zeroVM.mempool,
+			zeroExec.queue,
+			&snapshot.Tree{},
+		),
+		cmpopts.IgnoreInterfaces(struct{ snowcommon.AppHandler }{}),
+		cmpopts.IgnoreInterfaces(struct{ ethdb.Database }{}),
+		cmpopts.IgnoreInterfaces(struct{ logging.Logger }{}),
+		cmpopts.IgnoreInterfaces(struct{ state.Database }{}),
+		cmp.Transformer("block_map_mu", func(mu sink.Mutex[blockMap]) blockMap {
+			bm, err := sink.FromMutex(ctx, mu, func(bm blockMap) (blockMap, error) {
+				return bm, nil
+			})
+			require.NoError(tb, err)
+			return bm
+		}),
+		cmp.Transformer("atomic_block", func(p atomic.Pointer[Block]) *Block {
+			return p.Load()
+		}),
+		cmp.Transformer("state_dump", func(db *state.StateDB) state.Dump {
+			return db.RawDump(&state.DumpConfig{})
+		}),
 	}
 }
 
