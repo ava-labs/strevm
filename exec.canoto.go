@@ -22,7 +22,7 @@ var (
 
 const (
 	canoto__executionResults__by__tag            = "\x0a" // canoto.Tag(1, canoto.Len)
-	canoto__executionResults__gasUsed__tag       = "\x11" // canoto.Tag(2, canoto.I64)
+	canoto__executionResults__gasUsed__tag       = "\x10" // canoto.Tag(2, canoto.Varint)
 	canoto__executionResults__receiptRoot__tag   = "\x1a" // canoto.Tag(3, canoto.Len)
 	canoto__executionResults__stateRootPost__tag = "\x22" // canoto.Tag(4, canoto.Len)
 )
@@ -47,14 +47,12 @@ func (*executionResults) CanotoSpec(types ...reflect.Type) *canoto.Spec {
 				/*OneOf:         */ "",
 				/*types:         */ types,
 			),
-			canoto.FieldTypeFromFint(
-				/*type inference:*/ zero.gasUsed,
-				/*FieldNumber:   */ 2,
-				/*Name:          */ "gasUsed",
-				/*FixedLength:   */ 0,
-				/*Repeated:      */ false,
-				/*OneOf:         */ "",
-			),
+			{
+				FieldNumber: 2,
+				Name:        "gasUsed",
+				OneOf:       "",
+				TypeUint:    canoto.SizeOf(zero.gasUsed),
+			},
 			{
 				FieldNumber:    3,
 				Name:           "receiptRoot",
@@ -135,11 +133,11 @@ func (c *executionResults) UnmarshalCanotoFrom(r canoto.Reader) error {
 			}
 			r.B = remainingBytes
 		case 2:
-			if wireType != canoto.I64 {
+			if wireType != canoto.Varint {
 				return canoto.ErrUnexpectedWireType
 			}
 
-			if err := canoto.ReadFint64(&r, &c.gasUsed); err != nil {
+			if err := canoto.ReadUint(&r, &c.gasUsed); err != nil {
 				return err
 			}
 			if canoto.IsZero(c.gasUsed) {
@@ -233,7 +231,7 @@ func (c *executionResults) CalculateCanotoCache() {
 		size += uint64(len(canoto__executionResults__by__tag)) + canoto.SizeUint(fieldSize) + fieldSize
 	}
 	if !canoto.IsZero(c.gasUsed) {
-		size += uint64(len(canoto__executionResults__gasUsed__tag)) + canoto.SizeFint64
+		size += uint64(len(canoto__executionResults__gasUsed__tag)) + canoto.SizeUint(c.gasUsed)
 	}
 	if !canoto.IsZero(c.receiptRoot) {
 		size += uint64(len(canoto__executionResults__receiptRoot__tag)) + canoto.SizeBytes((&c.receiptRoot)[:])
@@ -288,7 +286,7 @@ func (c *executionResults) MarshalCanotoInto(w canoto.Writer) canoto.Writer {
 	}
 	if !canoto.IsZero(c.gasUsed) {
 		canoto.Append(&w, canoto__executionResults__gasUsed__tag)
-		canoto.AppendFint64(&w, c.gasUsed)
+		canoto.AppendUint(&w, c.gasUsed)
 	}
 	if !canoto.IsZero(c.receiptRoot) {
 		canoto.Append(&w, canoto__executionResults__receiptRoot__tag)
@@ -302,9 +300,9 @@ func (c *executionResults) MarshalCanotoInto(w canoto.Writer) canoto.Writer {
 }
 
 const (
-	canoto__gasClock__time__tag     = "\x09" // canoto.Tag(1, canoto.I64)
-	canoto__gasClock__consumed__tag = "\x11" // canoto.Tag(2, canoto.I64)
-	canoto__gasClock__excess__tag   = "\x19" // canoto.Tag(3, canoto.I64)
+	canoto__gasClock__time__tag     = "\x08" // canoto.Tag(1, canoto.Varint)
+	canoto__gasClock__consumed__tag = "\x10" // canoto.Tag(2, canoto.Varint)
+	canoto__gasClock__params__tag   = "\x1a" // canoto.Tag(3, canoto.Len)
 )
 
 type canotoData_gasClock struct {
@@ -312,34 +310,32 @@ type canotoData_gasClock struct {
 }
 
 // CanotoSpec returns the specification of this canoto message.
-func (*gasClock) CanotoSpec(...reflect.Type) *canoto.Spec {
+func (*gasClock) CanotoSpec(types ...reflect.Type) *canoto.Spec {
+	types = append(types, reflect.TypeOf(gasClock{}))
 	var zero gasClock
 	s := &canoto.Spec{
 		Name: "gasClock",
 		Fields: []canoto.FieldType{
-			canoto.FieldTypeFromFint(
-				/*type inference:*/ zero.time,
-				/*FieldNumber:   */ 1,
-				/*Name:          */ "time",
-				/*FixedLength:   */ 0,
-				/*Repeated:      */ false,
-				/*OneOf:         */ "",
-			),
-			canoto.FieldTypeFromFint(
-				/*type inference:*/ zero.consumed,
-				/*FieldNumber:   */ 2,
-				/*Name:          */ "consumed",
-				/*FixedLength:   */ 0,
-				/*Repeated:      */ false,
-				/*OneOf:         */ "",
-			),
-			canoto.FieldTypeFromFint(
-				/*type inference:*/ zero.excess,
+			{
+				FieldNumber: 1,
+				Name:        "time",
+				OneOf:       "",
+				TypeUint:    canoto.SizeOf(zero.time),
+			},
+			{
+				FieldNumber: 2,
+				Name:        "consumed",
+				OneOf:       "",
+				TypeUint:    canoto.SizeOf(zero.consumed),
+			},
+			canoto.FieldTypeFromField(
+				/*type inference:*/ (&zero.params),
 				/*FieldNumber:   */ 3,
-				/*Name:          */ "excess",
+				/*Name:          */ "params",
 				/*FixedLength:   */ 0,
 				/*Repeated:      */ false,
 				/*OneOf:         */ "",
+				/*types:         */ types,
 			),
 		},
 	}
@@ -385,38 +381,51 @@ func (c *gasClock) UnmarshalCanotoFrom(r canoto.Reader) error {
 
 		switch field {
 		case 1:
-			if wireType != canoto.I64 {
+			if wireType != canoto.Varint {
 				return canoto.ErrUnexpectedWireType
 			}
 
-			if err := canoto.ReadFint64(&r, &c.time); err != nil {
+			if err := canoto.ReadUint(&r, &c.time); err != nil {
 				return err
 			}
 			if canoto.IsZero(c.time) {
 				return canoto.ErrZeroValue
 			}
 		case 2:
-			if wireType != canoto.I64 {
+			if wireType != canoto.Varint {
 				return canoto.ErrUnexpectedWireType
 			}
 
-			if err := canoto.ReadFint64(&r, &c.consumed); err != nil {
+			if err := canoto.ReadUint(&r, &c.consumed); err != nil {
 				return err
 			}
 			if canoto.IsZero(c.consumed) {
 				return canoto.ErrZeroValue
 			}
 		case 3:
-			if wireType != canoto.I64 {
+			if wireType != canoto.Len {
 				return canoto.ErrUnexpectedWireType
 			}
 
-			if err := canoto.ReadFint64(&r, &c.excess); err != nil {
+			// Read the bytes for the field.
+			originalUnsafe := r.Unsafe
+			r.Unsafe = true
+			var msgBytes []byte
+			if err := canoto.ReadBytes(&r, &msgBytes); err != nil {
 				return err
 			}
-			if canoto.IsZero(c.excess) {
+			if len(msgBytes) == 0 {
 				return canoto.ErrZeroValue
 			}
+			r.Unsafe = originalUnsafe
+
+			// Unmarshal the field from the bytes.
+			remainingBytes := r.B
+			r.B = msgBytes
+			if err := (&c.params).UnmarshalCanotoFrom(r); err != nil {
+				return err
+			}
+			r.B = remainingBytes
 		default:
 			return canoto.ErrUnknownField
 		}
@@ -437,6 +446,9 @@ func (c *gasClock) ValidCanoto() bool {
 	if c == nil {
 		return true
 	}
+	if !(&c.params).ValidCanoto() {
+		return false
+	}
 	return true
 }
 
@@ -448,13 +460,14 @@ func (c *gasClock) CalculateCanotoCache() {
 	}
 	var size uint64
 	if !canoto.IsZero(c.time) {
-		size += uint64(len(canoto__gasClock__time__tag)) + canoto.SizeFint64
+		size += uint64(len(canoto__gasClock__time__tag)) + canoto.SizeUint(c.time)
 	}
 	if !canoto.IsZero(c.consumed) {
-		size += uint64(len(canoto__gasClock__consumed__tag)) + canoto.SizeFint64
+		size += uint64(len(canoto__gasClock__consumed__tag)) + canoto.SizeUint(c.consumed)
 	}
-	if !canoto.IsZero(c.excess) {
-		size += uint64(len(canoto__gasClock__excess__tag)) + canoto.SizeFint64
+	(&c.params).CalculateCanotoCache()
+	if fieldSize := (&c.params).CachedCanotoSize(); fieldSize != 0 {
+		size += uint64(len(canoto__gasClock__params__tag)) + canoto.SizeUint(fieldSize) + fieldSize
 	}
 	c.canotoData.size.Store(size)
 }
@@ -498,15 +511,245 @@ func (c *gasClock) MarshalCanotoInto(w canoto.Writer) canoto.Writer {
 	}
 	if !canoto.IsZero(c.time) {
 		canoto.Append(&w, canoto__gasClock__time__tag)
-		canoto.AppendFint64(&w, c.time)
+		canoto.AppendUint(&w, c.time)
 	}
 	if !canoto.IsZero(c.consumed) {
 		canoto.Append(&w, canoto__gasClock__consumed__tag)
-		canoto.AppendFint64(&w, c.consumed)
+		canoto.AppendUint(&w, c.consumed)
 	}
-	if !canoto.IsZero(c.excess) {
-		canoto.Append(&w, canoto__gasClock__excess__tag)
-		canoto.AppendFint64(&w, c.excess)
+	if fieldSize := (&c.params).CachedCanotoSize(); fieldSize != 0 {
+		canoto.Append(&w, canoto__gasClock__params__tag)
+		canoto.AppendUint(&w, fieldSize)
+		w = (&c.params).MarshalCanotoInto(w)
+	}
+	return w
+}
+
+const (
+	canoto__GasParams__T__tag      = "\x08" // canoto.Tag(1, canoto.Varint)
+	canoto__GasParams__R__tag      = "\x10" // canoto.Tag(2, canoto.Varint)
+	canoto__GasParams__Excess__tag = "\x18" // canoto.Tag(3, canoto.Varint)
+	canoto__GasParams__Price__tag  = "\x20" // canoto.Tag(4, canoto.Varint)
+)
+
+type canotoData_GasParams struct {
+	size atomic.Uint64
+}
+
+// CanotoSpec returns the specification of this canoto message.
+func (*GasParams) CanotoSpec(...reflect.Type) *canoto.Spec {
+	var zero GasParams
+	s := &canoto.Spec{
+		Name: "GasParams",
+		Fields: []canoto.FieldType{
+			{
+				FieldNumber: 1,
+				Name:        "T",
+				OneOf:       "",
+				TypeUint:    canoto.SizeOf(zero.T),
+			},
+			{
+				FieldNumber: 2,
+				Name:        "R",
+				OneOf:       "",
+				TypeUint:    canoto.SizeOf(zero.R),
+			},
+			{
+				FieldNumber: 3,
+				Name:        "Excess",
+				OneOf:       "",
+				TypeUint:    canoto.SizeOf(zero.Excess),
+			},
+			{
+				FieldNumber: 4,
+				Name:        "Price",
+				OneOf:       "",
+				TypeUint:    canoto.SizeOf(zero.Price),
+			},
+		},
+	}
+	s.CalculateCanotoCache()
+	return s
+}
+
+// MakeCanoto creates a new empty value.
+func (*GasParams) MakeCanoto() *GasParams {
+	return new(GasParams)
+}
+
+// UnmarshalCanoto unmarshals a Canoto-encoded byte slice into the struct.
+//
+// During parsing, the canoto cache is saved.
+func (c *GasParams) UnmarshalCanoto(bytes []byte) error {
+	r := canoto.Reader{
+		B: bytes,
+	}
+	return c.UnmarshalCanotoFrom(r)
+}
+
+// UnmarshalCanotoFrom populates the struct from a [canoto.Reader]. Most users
+// should just use UnmarshalCanoto.
+//
+// During parsing, the canoto cache is saved.
+//
+// This function enables configuration of reader options.
+func (c *GasParams) UnmarshalCanotoFrom(r canoto.Reader) error {
+	// Zero the struct before unmarshaling.
+	*c = GasParams{}
+	c.canotoData.size.Store(uint64(len(r.B)))
+
+	var minField uint32
+	for canoto.HasNext(&r) {
+		field, wireType, err := canoto.ReadTag(&r)
+		if err != nil {
+			return err
+		}
+		if field < minField {
+			return canoto.ErrInvalidFieldOrder
+		}
+
+		switch field {
+		case 1:
+			if wireType != canoto.Varint {
+				return canoto.ErrUnexpectedWireType
+			}
+
+			if err := canoto.ReadUint(&r, &c.T); err != nil {
+				return err
+			}
+			if canoto.IsZero(c.T) {
+				return canoto.ErrZeroValue
+			}
+		case 2:
+			if wireType != canoto.Varint {
+				return canoto.ErrUnexpectedWireType
+			}
+
+			if err := canoto.ReadUint(&r, &c.R); err != nil {
+				return err
+			}
+			if canoto.IsZero(c.R) {
+				return canoto.ErrZeroValue
+			}
+		case 3:
+			if wireType != canoto.Varint {
+				return canoto.ErrUnexpectedWireType
+			}
+
+			if err := canoto.ReadUint(&r, &c.Excess); err != nil {
+				return err
+			}
+			if canoto.IsZero(c.Excess) {
+				return canoto.ErrZeroValue
+			}
+		case 4:
+			if wireType != canoto.Varint {
+				return canoto.ErrUnexpectedWireType
+			}
+
+			if err := canoto.ReadUint(&r, &c.Price); err != nil {
+				return err
+			}
+			if canoto.IsZero(c.Price) {
+				return canoto.ErrZeroValue
+			}
+		default:
+			return canoto.ErrUnknownField
+		}
+
+		minField = field + 1
+	}
+	return nil
+}
+
+// ValidCanoto validates that the struct can be correctly marshaled into the
+// Canoto format.
+//
+// Specifically, ValidCanoto ensures:
+// 1. All OneOfs are specified at most once.
+// 2. All strings are valid utf-8.
+// 3. All custom fields are ValidCanoto.
+func (c *GasParams) ValidCanoto() bool {
+	if c == nil {
+		return true
+	}
+	return true
+}
+
+// CalculateCanotoCache populates size and OneOf caches based on the current
+// values in the struct.
+func (c *GasParams) CalculateCanotoCache() {
+	if c == nil {
+		return
+	}
+	var size uint64
+	if !canoto.IsZero(c.T) {
+		size += uint64(len(canoto__GasParams__T__tag)) + canoto.SizeUint(c.T)
+	}
+	if !canoto.IsZero(c.R) {
+		size += uint64(len(canoto__GasParams__R__tag)) + canoto.SizeUint(c.R)
+	}
+	if !canoto.IsZero(c.Excess) {
+		size += uint64(len(canoto__GasParams__Excess__tag)) + canoto.SizeUint(c.Excess)
+	}
+	if !canoto.IsZero(c.Price) {
+		size += uint64(len(canoto__GasParams__Price__tag)) + canoto.SizeUint(c.Price)
+	}
+	c.canotoData.size.Store(size)
+}
+
+// CachedCanotoSize returns the previously calculated size of the Canoto
+// representation from CalculateCanotoCache.
+//
+// If CalculateCanotoCache has not yet been called, it will return 0.
+//
+// If the struct has been modified since the last call to CalculateCanotoCache,
+// the returned size may be incorrect.
+func (c *GasParams) CachedCanotoSize() uint64 {
+	if c == nil {
+		return 0
+	}
+	return c.canotoData.size.Load()
+}
+
+// MarshalCanoto returns the Canoto representation of this struct.
+//
+// It is assumed that this struct is ValidCanoto.
+func (c *GasParams) MarshalCanoto() []byte {
+	c.CalculateCanotoCache()
+	w := canoto.Writer{
+		B: make([]byte, 0, c.CachedCanotoSize()),
+	}
+	w = c.MarshalCanotoInto(w)
+	return w.B
+}
+
+// MarshalCanotoInto writes the struct into a [canoto.Writer] and returns the
+// resulting [canoto.Writer]. Most users should just use MarshalCanoto.
+//
+// It is assumed that CalculateCanotoCache has been called since the last
+// modification to this struct.
+//
+// It is assumed that this struct is ValidCanoto.
+func (c *GasParams) MarshalCanotoInto(w canoto.Writer) canoto.Writer {
+	if c == nil {
+		return w
+	}
+	if !canoto.IsZero(c.T) {
+		canoto.Append(&w, canoto__GasParams__T__tag)
+		canoto.AppendUint(&w, c.T)
+	}
+	if !canoto.IsZero(c.R) {
+		canoto.Append(&w, canoto__GasParams__R__tag)
+		canoto.AppendUint(&w, c.R)
+	}
+	if !canoto.IsZero(c.Excess) {
+		canoto.Append(&w, canoto__GasParams__Excess__tag)
+		canoto.AppendUint(&w, c.Excess)
+	}
+	if !canoto.IsZero(c.Price) {
+		canoto.Append(&w, canoto__GasParams__Price__tag)
+		canoto.AppendUint(&w, c.Price)
 	}
 	return w
 }

@@ -35,6 +35,7 @@ type VM struct {
 	snowCtx *snow.Context
 	snowcommon.AppHandler
 	toEngine chan<- snowcommon.Message
+	hooks    Hooks
 	now      func() time.Time
 
 	blocks     sink.Mutex[blockMap]
@@ -61,6 +62,7 @@ type (
 )
 
 type Config struct {
+	Hooks       Hooks
 	ChainConfig *params.ChainConfig
 	DB          ethdb.Database
 	// At the point of upgrade from synchronous to asynchronous execution, the
@@ -84,6 +86,7 @@ func New(ctx context.Context, c Config) (*VM, error) {
 		snowCtx:    c.SnowCtx,
 		db:         c.DB,
 		toEngine:   c.ToEngine,
+		hooks:      c.Hooks,
 		AppHandler: snowcommon.NewNoOpAppHandler(logging.NoLog{}),
 		now:        c.Now,
 		blocks:     sink.NewMutex(make(blockMap)),
@@ -106,6 +109,7 @@ func New(ctx context.Context, c Config) (*VM, error) {
 	vm.exec = &executor{
 		quit:         quit,
 		log:          vm.logger(),
+		hooks:        vm.hooks,
 		chainConfig:  c.ChainConfig,
 		db:           vm.db,
 		lastExecuted: &vm.last.executed,

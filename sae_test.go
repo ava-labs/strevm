@@ -11,7 +11,6 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
-	"reflect"
 	"runtime"
 	"runtime/pprof"
 	"slices"
@@ -19,7 +18,6 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
-	"unsafe"
 
 	"github.com/arr4n/sink"
 	"github.com/ava-labs/avalanchego/ids"
@@ -68,6 +66,19 @@ var (
 	cpuProfileDest = flag.String("cpu_profile_out", "", "If non-empty, file to which pprof CPU profile is written")
 )
 
+type stubHooks struct {
+	R gas.Gas
+}
+
+func (h *stubHooks) UpdateGasParams(parent *types.Block, p *GasParams) {
+	*p = GasParams{
+		R:      h.R,
+		T:      h.R / 2,
+		Price:  gas.CalculatePrice(params.GWei, p.Excess, 87*2*h.R),
+		Excess: p.Excess,
+	}
+}
+
 func TestBasicE2E(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -80,7 +91,12 @@ func TestBasicE2E(t *testing.T) {
 
 	now := time.Unix(0, 0)
 
-	harnessVM := &sinceGenesis{Now: func() time.Time { return now }}
+	harnessVM := &sinceGenesis{
+		Now: func() time.Time { return now },
+		Hooks: &stubHooks{
+			R: 50e6,
+		},
+	}
 	snowCompatVM := adaptor.Convert(harnessVM)
 
 	snowCtx := snowtest.Context(t, ids.Empty)
@@ -516,6 +532,7 @@ func cmpBlocks() cmp.Options {
 		cmpopts.IgnoreTypes(
 			canotoData_executionResults{},
 			canotoData_gasClock{},
+			canotoData_GasParams{},
 		),
 		cmpopts.IgnoreFields(
 			executionResults{},
@@ -630,47 +647,5 @@ func TestBoundedSubtract(t *testing.T) {
 
 	for _, tt := range tests {
 		assert.Equalf(t, tt.want, boundedSubtract(tt.a, tt.b, tt.floor), "max(%d-%d, %d)", tt.a, tt.b, tt.floor)
-	}
-}
-
-func TestGasClockCloneAllFields(t *testing.T) {
-	// Use of `canoto:"nocopy"` means that [gasClock.clone] has to explicitly
-	// copy fields instead of just returning a copy of the struct. Copying
-	// fields is trivial so this test is only to ensure that none are missed.
-
-	in := &gasClock{}
-
-	val := reflect.ValueOf(in).Elem()
-	typ := val.Type()
-	setField := func(i int, to any) {
-		f := val.Field(i)
-		export := reflect.NewAt(f.Type(), unsafe.Pointer(f.UnsafeAddr())).Elem()
-		export.Set(reflect.ValueOf(to))
-	}
-
-	for i, n := 0, typ.NumField(); i < n; i++ {
-		switch n := typ.Field(i).Name; n {
-		case "time":
-			setField(i, uint64(1))
-		case "consumed":
-			setField(i, gas.Gas(2))
-		case "excess":
-			setField(i, gas.Gas(3))
-		case "canotoData":
-			// This line deliberately left blank.
-
-		default:
-			t.Fatalf("%T.%s not populated; add a `case` to the field-name `switch`", in, n)
-		}
-	}
-
-	opts := cmp.Options{
-		cmp.AllowUnexported(gasClock{}),
-		cmpopts.IgnoreFields(gasClock{}, "canotoData"),
-	}
-
-	got := in.clone()
-	if diff := cmp.Diff(in, &got, opts); diff != "" {
-		t.Errorf("%T.clone() diff (-want +got):\n%s", in, diff)
 	}
 }

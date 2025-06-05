@@ -65,6 +65,9 @@ func (vm *VM) buildBlockWithCandidateTxs(timestamp uint64, parent *Block, candid
 		receipts []types.Receipts
 		gasUsed  uint64
 	)
+	// We can never concurrently build and accept a block on the same parent,
+	// which guarantees that `parent` won't be settled, so the [Block] invariant
+	// means that `parent.lastSettled != nil`.
 	for _, b := range settling(parent.lastSettled, toSettle) {
 		receipts = append(receipts, b.execution.receipts)
 		for _, r := range b.execution.receipts {
@@ -82,7 +85,7 @@ func (vm *VM) buildBlockWithCandidateTxs(timestamp uint64, parent *Block, candid
 			ParentHash: parent.Hash(),
 			Root:       toSettle.execution.stateRootPost,
 			Number:     new(big.Int).Add(parent.Number(), big.NewInt(1)),
-			GasLimit:   gasLimit,
+			GasLimit:   uint64(gasLimit),
 			GasUsed:    gasUsed,
 			Time:       timestamp,
 			BaseFee:    nil, // TODO(arr4n)
@@ -96,7 +99,7 @@ func (vm *VM) buildBlockWithCandidateTxs(timestamp uint64, parent *Block, candid
 	return b, nil
 }
 
-func (vm *VM) buildBlockOnHistory(lastSettled, parent *Block, timestamp uint64, candidateTxs queue.Queue[*pendingTx]) (types.Transactions, uint64, error) {
+func (vm *VM) buildBlockOnHistory(lastSettled, parent *Block, timestamp uint64, candidateTxs queue.Queue[*pendingTx]) (types.Transactions, gas.Gas, error) {
 	var history []*Block
 	for b := parent; b.ID() != lastSettled.ID(); b = b.parent {
 		history = append(history, b)
@@ -127,8 +130,7 @@ func (vm *VM) buildBlockOnHistory(lastSettled, parent *Block, timestamp uint64, 
 	// TODO(arr4n): investigate caching values to avoid having to replay the
 	// entire history.
 	for _, b := range history {
-		clock.fastForward(b.Time())
-
+		clock.beforeBlock(b.parent, b.Time(), vm.hooks)
 		var consumed gas.Gas
 		for _, tx := range b.Transactions() {
 			from, err := types.Sender(signer, tx)
@@ -149,7 +151,7 @@ func (vm *VM) buildBlockOnHistory(lastSettled, parent *Block, timestamp uint64, 
 			}
 			consumed += gas.Gas(tx.Gas())
 		}
-		clock.consume(consumed)
+		clock.afterBlock(consumed)
 	}
 
 	var (
@@ -158,11 +160,11 @@ func (vm *VM) buildBlockOnHistory(lastSettled, parent *Block, timestamp uint64, 
 		// `gasLimit` (future-looking) based on the enqueued transactions
 		// follows naturally from all of the other changes. However it will be
 		// possible to have `gasUsed>gasLimit`, which may break some systems.
-		gasLimit uint64
+		gasLimit gas.Gas
 		delayed  []*pendingTx
 	)
 
-	clock.fastForward(timestamp)
+	clock.beforeBlock(parent, timestamp, vm.hooks)
 TxLoop:
 	for candidateTxs.Len() > 0 {
 		candidate := candidateTxs.Pop()
@@ -175,8 +177,7 @@ TxLoop:
 
 		switch validity {
 		case includeTx:
-			// TODO(arr4n) parameterise the max block and queue sizes.
-			if gl := gasLimit + tx.Gas(); gl <= uint64(maxGasPerSecond*maxGasSecondsPerBlock) {
+			if gl := gasLimit + gas.Gas(tx.Gas()); gl <= clock.maxBlockSize() {
 				gasLimit = gl
 				txs = append(txs, tx)
 			} else {
@@ -205,6 +206,7 @@ TxLoop:
 	for _, tx := range delayed {
 		candidateTxs.Push(tx)
 	}
+	clock.afterBlock(gasLimit)
 
 	return txs, gasLimit, nil
 }
@@ -230,7 +232,7 @@ func (vm *VM) lastBlockToSettleAt(timestamp uint64, parent *Block) (*Block, bool
 		}
 
 		if block.executed.Load() {
-			if block.execution.by.after(settleAt) {
+			if block.execution.by.isAfter(settleAt) {
 				continue
 			}
 			return block, true
@@ -255,8 +257,4 @@ func (b *Block) mightFitWithinGasLimit(max gas.Gas) bool {
 		max -= g
 	}
 	return true
-}
-
-func minGasCharged(tx *types.Transaction) gas.Gas {
-	return gas.Gas(tx.Gas()) >> 1
 }

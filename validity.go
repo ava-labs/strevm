@@ -36,10 +36,8 @@ const (
 )
 
 func (vc *validityChecker) addTxToQueue(t txAndSender) (txValidity, error) {
-	// TODO(arr4n) to fix the GMX issue, compare vc.queueLength (without the
-	// addition) instead of `newQLength`.
 	newQLength := vc.queueLength + gas.Gas(t.tx.Gas())
-	if newQLength > stateRootDelaySeconds*maxGasPerSecond*lambda {
+	if newQLength > vc.gasClock.maxQueueLength() {
 		vc.log.Verbo(
 			"Queue full",
 			zap.Stringer("tx_hash", t.tx.Hash()),
@@ -104,7 +102,7 @@ func (vc *validityChecker) addTxToQueue(t txAndSender) (txValidity, error) {
 		return delayTx, nil
 	}
 
-	price := uint256.NewInt(uint64(vc.gasClock.gasPrice()))
+	price := vc.gasClock.params.baseFee()
 	if tx.GasFeeCap().Cmp(price.ToBig()) < 0 {
 		vc.log.Verbo(
 			"Gas-fee cap below base fee",

@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"math/big"
 	"math/bits"
 	"sync"
 	"sync/atomic"
@@ -32,8 +31,9 @@ import (
 //go:generate go run github.com/StephenButtolph/canoto/canoto $GOFILE
 
 type executor struct {
-	quit <-chan struct{}
-	log  logging.Logger
+	quit  <-chan struct{}
+	log   logging.Logger
+	hooks Hooks
 
 	spawned sync.WaitGroup
 
@@ -174,7 +174,7 @@ type executionResults struct {
 	byTime   time.Time
 	receipts types.Receipts
 
-	gasUsed       gas.Gas     `canoto:"fint64,2"`
+	gasUsed       gas.Gas     `canoto:"uint,2"`
 	receiptRoot   common.Hash `canoto:"fixed bytes,3"`
 	stateRootPost common.Hash `canoto:"fixed bytes,4"`
 
@@ -182,55 +182,46 @@ type executionResults struct {
 }
 
 type gasClock struct {
-	time     uint64  `canoto:"fint64,1"`
-	consumed gas.Gas `canoto:"fint64,2"` // this second
-	excess   gas.Gas `canoto:"fint64,3"`
+	time     uint64    `canoto:"uint,1"`
+	consumed gas.Gas   `canoto:"uint,2"` // this second
+	params   GasParams `canoto:"value,3"`
 
 	canotoData canotoData_gasClock `canoto:"nocopy"`
-}
-
-type gasParams struct {
-	T, R gas.Gas
 }
 
 func (c *gasClock) clone() gasClock {
 	return gasClock{
 		time:     c.time,
 		consumed: c.consumed,
-		excess:   c.excess,
+		params:   c.params.clone(),
 	}
 }
 
-func (c *gasClock) gasPrice() gas.Price {
-	K := targetToPriceUpdateConversion * c.params().T
-	return gas.CalculatePrice(gas.Price(params.GWei), c.excess, K)
+type GasParams struct {
+	T      gas.Gas   `canoto:"uint,1"`
+	R      gas.Gas   `canoto:"uint,2"`
+	Excess gas.Gas   `canoto:"uint,3"`
+	Price  gas.Price `canoto:"uint,4"`
+
+	canotoData canotoData_GasParams `canoto:"nocopy"`
 }
 
-func (c *gasClock) params() gasParams {
-	T := maxGasPerSecond / 2
-	return gasParams{
-		R: 2 * T,
-		T: T,
+func (p *GasParams) clone() GasParams {
+	return GasParams{
+		T:      p.T,
+		R:      p.R,
+		Excess: p.Excess,
+		Price:  p.Price,
 	}
 }
 
-func (c *gasClock) asTime() time.Time {
-	nsec, _ /*remainder*/ := mulDiv(c.consumed, c.params().R, 1e9)
-	return time.Unix(int64(c.time), int64(nsec))
+func (c *gasClock) beforeBlock(parent *Block, timestamp uint64, hooks Hooks) {
+	hooks.UpdateGasParams(parent.Block, &c.params)
+	c.fastForward(timestamp)
 }
 
-func (c *gasClock) consume(g gas.Gas) {
-	params := c.params()
-
-	c.consumed += g
-	c.time += uint64(c.consumed / params.R)
-	c.consumed %= params.R
-
-	// The ACP describes the increase in excess in terms of `p`, a rational
-	// number, where R=pT. Substituting p for R/T, we get an increase of
-	// g(R-T)/R.
-	quo, _ := mulDiv(g, params.R-params.T, params.R)
-	c.excess += gas.Gas(quo)
+func (c *gasClock) afterBlock(consumed gas.Gas) {
+	c.consume(consumed)
 }
 
 func (c *gasClock) fastForward(to uint64) {
@@ -238,35 +229,35 @@ func (c *gasClock) fastForward(to uint64) {
 		return
 	}
 
-	params := c.params()
-	surplus := params.R - c.consumed
-	surplus += gas.Gas(to-c.time-1) * params.R // -1 avoids double-counting gas remaining this second
-	// By similar reasoning to that in [gasClock.consume], we get a decrease in
-	// excess of sT/R.
-	quo, _ := mulDiv(surplus, params.T, params.R)
-	c.excess = boundedSubtract(c.excess, quo, 0)
+	R, T := c.params.R, c.params.T
+	surplus := R - c.consumed
+	surplus += gas.Gas(to-c.time-1) * R // -1 avoids double-counting gas remaining this second
+
+	quo, _ := mulDiv(surplus, T, R)
+	c.params.Excess = boundedSubtract(c.params.Excess, quo, 0)
 
 	c.time = to
 	c.consumed = 0
 }
 
-func (c *gasClock) after(timestamp uint64) bool {
+func (c *gasClock) consume(g gas.Gas) {
+	R, T := c.params.R, c.params.T
+
+	c.consumed += g
+	c.time += uint64(c.consumed / R)
+	c.consumed %= R
+
+	quo, _ := mulDiv(g, R-T, R)
+	c.params.Excess += gas.Gas(quo)
+}
+
+func (c *gasClock) isAfter(timestamp uint64) bool {
 	return timestamp < c.time || (timestamp == c.time && c.consumed > 0)
 }
 
-// remainingGasUntil returns the amount of gas that `c` would need to consume to
-// reach `timestamp`, and a boolean indicating whether the timestamp is in the
-// future relative to the clock.
-func (c *gasClock) remainingGasUntil(timestamp uint64) (_ gas.Gas, isFuture bool) {
-	// TODO(arr4n) NB! this MUST be modified to account for ACP-176
-	// functionality allowing validators to change the config.
-	if timestamp == c.time && c.consumed == 0 {
-		return 0, true
-	}
-	if timestamp <= c.time {
-		return 0, false
-	}
-	return gas.Gas(timestamp-c.time)*c.params().R - c.consumed, true
+func (c *gasClock) asTime() time.Time {
+	nsec, _ /*remainder*/ := mulDiv(c.consumed, c.params.R, 1e9)
+	return time.Unix(int64(c.time), int64(nsec))
 }
 
 func mulDiv(a, b, c gas.Gas) (quo, rem gas.Gas) {
@@ -278,11 +269,17 @@ func mulDiv(a, b, c gas.Gas) (quo, rem gas.Gas) {
 func (e *executor) execute(ctx context.Context, b *Block) error {
 	x := &e.executeScratchSpace
 
-	e.gasClock.fastForward(b.Time())
+	// If [VM.AcceptBlock] returns an error after enqueuing the block, we would
+	// receive the same block twice for execution should consensus retry
+	// acceptance.
+	if last, curr := e.lastExecuted.Load().Height(), b.Height(); curr != last+1 {
+		return fmt.Errorf("executing blocks out of order: %d then %d", last, curr)
+	}
+
+	e.gasClock.beforeBlock(b.parent, b.Time(), e.hooks)
 
 	header := types.CopyHeader(b.Header())
-	// TODO(arr4n) set the gas price during block building and just check it here.
-	header.BaseFee = new(big.Int).SetUint64(uint64(e.gasClock.gasPrice()))
+	header.BaseFee = e.gasClock.params.baseFee().ToBig()
 	e.log.Debug(
 		"Executing accepted block",
 		zap.Uint64("height", b.Height()),
@@ -311,15 +308,13 @@ func (e *executor) execute(ctx context.Context, b *Block) error {
 		if err != nil {
 			return fmt.Errorf("tx[%d]: %w", ti, err)
 		}
-		// TODO(arr4n) add tips here
-		receipt.EffectiveGasPrice = new(big.Int).Set(header.BaseFee)
 
 		// TODO(arr4n) add a receipt cache to the [executor] to allow API calls
 		// to access them before the end of the block.
 		receipts[ti] = receipt
 	}
 	endTime := time.Now()
-	e.gasClock.consume(blockGasConsumed)
+	e.gasClock.afterBlock(blockGasConsumed)
 
 	root, err := e.commitState(ctx, x, b.NumberU64())
 	if err != nil {

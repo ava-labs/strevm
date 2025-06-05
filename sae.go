@@ -11,11 +11,9 @@ import (
 )
 
 const (
-	maxGasPerSecond               = gas.Gas(50e6)
-	targetToPriceUpdateConversion = 87
-	stateRootDelaySeconds         = 5
-	lambda                        = 1
-	maxGasSecondsPerBlock         = 2
+	stateRootDelaySeconds = 5
+	lambda                = 1
+	maxGasSecondsPerBlock = 2
 )
 
 var (
@@ -43,4 +41,8 @@ func human[T constraints.Integer](x T) string {
 
 func trieHasher() types.TrieHasher {
 	return trie.NewStackTrie(nil)
+}
+
+func minGasCharged(tx *types.Transaction) gas.Gas {
+	return (gas.Gas(tx.Gas()) + lambda - 1) / lambda
 }

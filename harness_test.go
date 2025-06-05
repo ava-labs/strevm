@@ -25,8 +25,10 @@ func init() {
 // sinceGenesis is an SAE VM that executes asynchronously immediately,
 // stipulating the genesis block as the last synchronous block in [Config].
 type sinceGenesis struct {
-	*VM                  // Populated by [SinceGenesis.Initialize]
-	Now func() time.Time // Propagated to [Config]
+	*VM // Populated by [SinceGenesis.Initialize]
+	// Propagated to [Config]
+	Hooks Hooks
+	Now   func() time.Time
 }
 
 func (s *sinceGenesis) Initialize(
@@ -63,6 +65,7 @@ func (s *sinceGenesis) Initialize(
 	vm, err := New(
 		ctx,
 		Config{
+			Hooks:                s.Hooks,
 			ChainConfig:          chainConfig,
 			DB:                   ethdb,
 			LastSynchronousBlock: genesisHash,
