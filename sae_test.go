@@ -91,7 +91,7 @@ func TestBasicE2E(t *testing.T) {
 
 	now := time.Unix(0, 0)
 
-	harnessVM := &sinceGenesis{
+	harnessVM := &SinceGenesis{
 		Now: func() time.Time { return now },
 		Hooks: &stubHooks{
 			R: 50e6,

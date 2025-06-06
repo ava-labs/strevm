@@ -16,31 +16,37 @@ import (
 
 func init() {
 	var (
-		vm *sinceGenesis
+		vm *SinceGenesis
 		_  snowcommon.VM           = vm
 		_  adaptor.ChainVM[*Block] = vm
 	)
 }
 
-// sinceGenesis is an SAE VM that executes asynchronously immediately,
+// SinceGenesis is an SAE VM that executes asynchronously immediately,
 // stipulating the genesis block as the last synchronous block in [Config].
-type sinceGenesis struct {
+//
+// It is currently only read for use in tests as it creates a new in-memory
+// database for every instance.
+type SinceGenesis struct {
 	*VM // Populated by [SinceGenesis.Initialize]
 	// Propagated to [Config]
 	Hooks Hooks
 	Now   func() time.Time
 }
 
-func (s *sinceGenesis) Initialize(
+// Initialize creates an in-memory database, unmarshals the genesis bytes as
+// [core.Genesis] JSON to create a genesis block, and constructs a new [VM] that
+// provides all other methods.
+func (s *SinceGenesis) Initialize(
 	ctx context.Context,
 	chainCtx *snow.Context,
-	db database.Database,
+	_ database.Database,
 	genesisBytes []byte,
-	upgradeBytes []byte,
-	configBytes []byte,
+	_ []byte,
+	_ []byte,
 	toEngine chan<- snowcommon.Message,
-	fxs []*snowcommon.Fx,
-	appSender snowcommon.AppSender,
+	_ []*snowcommon.Fx,
+	_ snowcommon.AppSender,
 ) error {
 	ethdb := rawdb.NewMemoryDatabase()
 
