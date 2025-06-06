@@ -12,6 +12,7 @@ import (
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core/state"
 	"github.com/ava-labs/libevm/core/types"
+	"github.com/ava-labs/strevm/intmath"
 	"github.com/ava-labs/strevm/queue"
 	"github.com/holiman/uint256"
 	"go.uber.org/zap"
@@ -216,7 +217,7 @@ func (vm *VM) lastBlockToSettleAt(timestamp uint64, parent *Block) (*Block, bool
 	// beyond the scope of the `for` loop.
 	var block, child *Block
 	block = parent // therefore `child` remains nil
-	settleAt := boundedSubtract(timestamp, stateRootDelaySeconds, vm.last.synchronousTime)
+	settleAt := intmath.BoundedSubtract(timestamp, stateRootDelaySeconds, vm.last.synchronousTime)
 
 	// The only way [Block.parent] can be nil is if it was already settled (see
 	// invariant in [Block]). If a block was already settled then only that or a

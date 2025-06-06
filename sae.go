@@ -6,6 +6,7 @@ import (
 	"github.com/ava-labs/avalanchego/vms/components/gas"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/trie"
+	"github.com/ava-labs/strevm/intmath"
 	"github.com/dustin/go-humanize"
 	"golang.org/x/exp/constraints"
 )
@@ -24,15 +25,7 @@ var (
 
 // clippedSubtract returns max(0,a-b) without underflow.
 func clippedSubtract[T constraints.Unsigned](a, b T) T {
-	return boundedSubtract(a, b, 0)
-}
-
-// boundedSubtract returns max(floor,a-b) without underflow.
-func boundedSubtract[T constraints.Unsigned](a, b, floor T) T {
-	if aLim := floor + b; aLim < b /*overflowed*/ || a <= aLim {
-		return floor
-	}
-	return a - b
+	return intmath.BoundedSubtract(a, b, 0)
 }
 
 func human[T constraints.Integer](x T) string {
@@ -44,5 +37,5 @@ func trieHasher() types.TrieHasher {
 }
 
 func minGasCharged(tx *types.Transaction) gas.Gas {
-	return (gas.Gas(tx.Gas()) + lambda - 1) / lambda
+	return intmath.CeilDiv(gas.Gas(tx.Gas()), lambda)
 }

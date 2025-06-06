@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"math/bits"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -25,6 +24,7 @@ import (
 	"github.com/ava-labs/libevm/params"
 	"go.uber.org/zap"
 
+	"github.com/ava-labs/strevm/intmath"
 	"github.com/ava-labs/strevm/queue"
 )
 
@@ -233,8 +233,8 @@ func (c *gasClock) fastForward(to uint64) {
 	surplus := R - c.consumed
 	surplus += gas.Gas(to-c.time-1) * R // -1 avoids double-counting gas remaining this second
 
-	quo, _ := mulDiv(surplus, T, R)
-	c.params.Excess = boundedSubtract(c.params.Excess, quo, 0)
+	quo, _ := intmath.MulDiv(surplus, T, R)
+	c.params.Excess = intmath.BoundedSubtract(c.params.Excess, quo, 0)
 
 	c.time = to
 	c.consumed = 0
@@ -247,7 +247,7 @@ func (c *gasClock) consume(g gas.Gas) {
 	c.time += uint64(c.consumed / R)
 	c.consumed %= R
 
-	quo, _ := mulDiv(g, R-T, R)
+	quo, _ := intmath.MulDiv(g, R-T, R)
 	c.params.Excess += gas.Gas(quo)
 }
 
@@ -256,14 +256,8 @@ func (c *gasClock) isAfter(timestamp uint64) bool {
 }
 
 func (c *gasClock) asTime() time.Time {
-	nsec, _ /*remainder*/ := mulDiv(c.consumed, c.params.R, 1e9)
+	nsec, _ /*remainder*/ := intmath.MulDiv(c.consumed, c.params.R, 1e9)
 	return time.Unix(int64(c.time), int64(nsec))
-}
-
-func mulDiv(a, b, c gas.Gas) (quo, rem gas.Gas) {
-	hi, lo := bits.Mul64(uint64(a), uint64(b))
-	q, r := bits.Div64(hi, lo, uint64(c))
-	return gas.Gas(q), gas.Gas(r)
 }
 
 func (e *executor) execute(ctx context.Context, b *Block) error {

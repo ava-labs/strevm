@@ -634,22 +634,3 @@ func (l tbLogger) handle(when time.Time, level logging.Level, dest func(string, 
 	_, file, line, _ := runtime.Caller(2)
 	dest("[%s] %v %q %v - %s:%d", level, when.UnixNano(), msg, parts, file, line)
 }
-
-func TestBoundedSubtract(t *testing.T) {
-	const max = math.MaxUint64
-	tests := []struct {
-		a, b, floor, want uint64
-	}{
-		{1, 2, 0, 0},
-		{2, 1, 0, 1},
-		{2, 1, 1, 1},
-		{2, 2, 1, 1},
-		{3, 1, 1, 2},
-		{max, 10, max - 9, max - 9},
-		{max, 10, max - 11, max - 10},
-	}
-
-	for _, tt := range tests {
-		assert.Equalf(t, tt.want, boundedSubtract(tt.a, tt.b, tt.floor), "max(%d-%d, %d)", tt.a, tt.b, tt.floor)
-	}
-}
