@@ -8,11 +8,16 @@ import (
 	"github.com/ava-labs/strevm/intmath"
 )
 
+// A Duration is a type parameter for use as the unit of passage of [Time].
+type Duration interface {
+	~uint64
+}
+
 // Time represents an instant in time, its passage measured by an arbitrary unit
 // of duration. It is not thread safe nor is the zero value valid.
-type Time[Duration ~uint64] struct {
+type Time[D Duration] struct {
 	seconds         uint64
-	fraction, hertz Duration // invariant: fraction < hertz
+	fraction, hertz D // invariant: fraction < hertz
 }
 
 // Unix returns tm as a Unix timestamp.
@@ -21,7 +26,7 @@ func (tm *Time[D]) Unix() uint64 { return tm.seconds }
 // A FractionalSecond represents a sub-second duration of time. The numerator is
 // equivalent to a value passed to [Time.Tick] when [Time.Rate] is the
 // denominator.
-type FractionalSecond[D ~uint64] struct {
+type FractionalSecond[D Duration] struct {
 	Numerator, Denominator D
 }
 
@@ -33,7 +38,7 @@ func (tm *Time[D]) Fraction() FractionalSecond[D] {
 
 // New returns a new [Time], set from a Unix timestamp. The passage of `hertz`
 // units is equivalent to a tick of 1 second.
-func New[D ~uint64](unixSeconds uint64, hertz D) *Time[D] {
+func New[D Duration](unixSeconds uint64, hertz D) *Time[D] {
 	return &Time[D]{
 		seconds: unixSeconds,
 		hertz:   hertz,
@@ -47,7 +52,7 @@ func (tm *Time[D]) Copy() *Time[D] {
 }
 
 // Tick advances the time by `d`.
-func (tm *Time[Duration]) Tick(d Duration) {
+func (tm *Time[D]) Tick(d D) {
 	tm.fraction += d
 	tm.seconds += uint64(tm.fraction / tm.hertz)
 	tm.fraction %= tm.hertz

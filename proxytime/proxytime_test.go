@@ -121,3 +121,17 @@ func TestAsTime(t *testing.T) {
 		t.Fatalf("%T.AsTime() after ticking 1/%d (-want +got)\n%s", tm, rate, diff)
 	}
 }
+
+func TestParseBytes(t *testing.T) {
+	const (
+		seconds = 42
+		rate    = 10_000
+		tick    = 1_234
+	)
+	tm := New[uint64](seconds, rate)
+	tm.Tick(tick)
+
+	got, err := Parse[uint64](tm.Bytes())
+	require.NoError(t, err, "Parse(New(...))")
+	got.assertEq(t, fmt.Sprintf("Parse(%T.Bytes())", tm), seconds, frac(tick, rate))
+}
