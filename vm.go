@@ -237,7 +237,7 @@ func (vm *VM) ParseBlock(ctx context.Context, blockBytes []byte) (*Block, error)
 }
 
 func (vm *VM) BuildBlock(ctx context.Context) (*Block, error) {
-	return vm.buildBlock(ctx, uint64(vm.now().Unix()), vm.last.accepted.Load())
+	return vm.buildBlock(ctx, uint64(vm.now().Unix()), vm.preference.Load())
 }
 
 func (vm *VM) signer(blockNum, timestamp uint64) types.Signer {

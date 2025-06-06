@@ -199,6 +199,10 @@ func TestBasicE2E(t *testing.T) {
 	)
 	start := time.Now()
 	for numBlocks := 0; ; numBlocks++ {
+		lastID, err := snowCompatVM.LastAccepted(ctx)
+		require.NoErrorf(t, err, "%T.LastAccepted()", snowCompatVM)
+		require.NoErrorf(t, snowCompatVM.SetPreference(ctx, lastID), "%T.SetPreference(LastAccepted())", snowCompatVM)
+
 		proposed, err := snowCompatVM.BuildBlock(ctx)
 		if errors.Is(err, errWaitingForExecution) {
 			numBlocks--
