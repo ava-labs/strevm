@@ -18,7 +18,7 @@ func frac(num, den uint64) FractionalSecond[uint64] {
 func (tm *Time[D]) assertEq(tb testing.TB, desc string, seconds uint64, fraction FractionalSecond[D]) {
 	tb.Helper()
 	if tm.Unix() != seconds || tm.Fraction() != fraction {
-		tb.Errorf("%s got (seconds, fraction) = (%d, %d); want (%d, %d)", desc, tm.seconds, tm.fraction, seconds, fraction)
+		tb.Errorf("%s got (seconds, fraction) = (%d, %v); want (%d, %v)", desc, tm.Unix(), tm.Fraction(), seconds, fraction)
 	}
 }
 
@@ -81,29 +81,33 @@ func TestSetRate(t *testing.T) {
 	const tick = uint64(100 * divisor)
 	tm.Tick(tick)
 	tm.requireEq(t, "baseline", initSeconds, frac(tick, initRate))
-	require.Equalf(t, initRate, tm.Rate(), "%T.Rate()")
+
+	const initInvariant = 200 * divisor
+	invariant := uint64(initInvariant)
+	tm.SetRateInvariants(&invariant)
 
 	steps := []struct {
 		newRate, wantFraction uint64
 		wantTruncated         FractionalSecond[uint64]
+		wantInvariant         uint64
 	}{
-		{initRate / divisor, tick / divisor, frac(0, 1)}, // no rounding
-		{initRate * 5, tick * 5, frac(0, 1)},             // multiplication never has rounding
-		{15_000, 1_500, frac(0, 1)},                      // same as above, but shows the numbers
-		{75, 7 /*7.5*/, frac(7_500, 15_000)},             // rounded down by half, denominated in the old rate
+		{initRate / divisor, tick / divisor, frac(0, 1), invariant / divisor}, // no rounding
+		{initRate * 5, tick * 5, frac(0, 1), invariant * 5},                   // multiplication never has rounding
+		{15_000, 1_500, frac(0, 1), 3_000},                                    // same as above, but shows the numbers
+		{75, 7 /*7.5*/, frac(7_500, 15_000), 15},                              // rounded down by 0.5, denominated in the old rate
 	}
 
 	for _, s := range steps {
 		old := tm.Rate()
 		gotTruncated := tm.SetRate(s.newRate)
 		tm.requireEq(t, fmt.Sprintf("rate changed from %d to %d", old, s.newRate), initSeconds, frac(s.wantFraction, s.newRate))
-		require.Equalf(t, s.newRate, tm.Rate(), "%T.Rate() after %[1]T.SetRate(%2)", tm, s.newRate)
 
 		if gotTruncated.Numerator == 0 && s.wantTruncated.Numerator == 0 {
 			assert.NotZerof(t, gotTruncated.Denominator, "%T.Denominator")
 		} else {
 			assert.Equalf(t, s.wantTruncated, gotTruncated, "")
 		}
+		assert.Equal(t, s.wantInvariant, invariant)
 	}
 }
 
@@ -134,4 +138,30 @@ func TestParseBytes(t *testing.T) {
 	got, err := Parse[uint64](tm.Bytes())
 	require.NoError(t, err, "Parse(New(...))")
 	got.assertEq(t, fmt.Sprintf("Parse(%T.Bytes())", tm), seconds, frac(tick, rate))
+}
+
+func TestFastForward(t *testing.T) {
+	tm := New(42, uint64(1000))
+
+	steps := []struct {
+		tickBefore, ffTo uint64
+		wantSec          uint64
+		wantFrac         FractionalSecond[uint64]
+	}{
+		{100, 42, 0, frac(0, 1000)},
+		{0, 43, 0, frac(900, 1000)},
+		{0, 44, 1, frac(0, 1000)},
+		{200, 50, 5, frac(800, 1000)},
+	}
+
+	for _, s := range steps {
+		tm.Tick(s.tickBefore)
+		gotSec, gotFrac := tm.FastForward(s.ffTo)
+		assert.Equal(t, s.wantSec, gotSec)
+		assert.Equal(t, s.wantFrac, gotFrac)
+
+		if t.Failed() {
+			break
+		}
+	}
 }

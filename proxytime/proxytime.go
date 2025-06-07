@@ -18,6 +18,17 @@ type Duration interface {
 type Time[D Duration] struct {
 	seconds         uint64
 	fraction, hertz D // invariant: fraction < hertz
+
+	rateInvariants []*D
+}
+
+// New returns a new [Time], set from a Unix timestamp. The passage of `hertz`
+// units is equivalent to a tick of 1 second.
+func New[D Duration](unixSeconds uint64, hertz D) *Time[D] {
+	return &Time[D]{
+		seconds: unixSeconds,
+		hertz:   hertz,
+	}
 }
 
 // Unix returns tm as a Unix timestamp.
@@ -36,13 +47,9 @@ func (tm *Time[D]) Fraction() FractionalSecond[D] {
 	return FractionalSecond[D]{tm.fraction, tm.hertz}
 }
 
-// New returns a new [Time], set from a Unix timestamp. The passage of `hertz`
-// units is equivalent to a tick of 1 second.
-func New[D Duration](unixSeconds uint64, hertz D) *Time[D] {
-	return &Time[D]{
-		seconds: unixSeconds,
-		hertz:   hertz,
-	}
+// Rate returns the proxy duration required for the passage of one second.
+func (tm *Time[D]) Rate() D {
+	return tm.hertz
 }
 
 // Copy returns a copy of the time.
@@ -58,19 +65,54 @@ func (tm *Time[D]) Tick(d D) {
 	tm.fraction %= tm.hertz
 }
 
+// FastForward sets the time to the specified Unix timestamp if it is in the
+// future, returning the integer and fraction number of seconds by which the
+// time was advanced.
+func (tm *Time[D]) FastForward(to uint64) (uint64, FractionalSecond[D]) {
+	if to <= tm.seconds {
+		return 0, FractionalSecond[D]{0, tm.hertz}
+	}
+
+	sec := to - tm.seconds
+	var frac D
+	if tm.fraction > 0 {
+		frac = tm.hertz - tm.fraction
+		sec--
+	}
+
+	tm.seconds = to
+	tm.fraction = 0
+
+	return sec, FractionalSecond[D]{frac, tm.hertz}
+}
+
 // SetRate changes the unit rate at which time passes. The requisite integer
 // division may result in rounding down of the fractional-second component of
 // time, the amount of which is returned.
 func (tm *Time[D]) SetRate(hertz D) (truncated FractionalSecond[D]) {
-	truncated.Denominator = tm.hertz
-	tm.fraction, truncated.Numerator = intmath.MulDiv(tm.fraction, hertz, tm.hertz)
+	tm.fraction, truncated = tm.scale(tm.fraction, hertz)
+
+	for _, v := range tm.rateInvariants {
+		*v, _ = tm.scale(*v, hertz)
+	}
+
 	tm.hertz = hertz
 	return truncated
 }
 
-// Rate returns the proxy duration required for the passage of one second.
-func (tm *Time[D]) Rate() D {
-	return tm.hertz
+// SetRateInvariants sets units that, whenever [Time.SetRate] is called, will be
+// scaled relative to the change in rate. Scaling may be affected by the same
+// truncation described for [Time.SetRate]. Truncation aside, the rational
+// numbers formed by the invariants divided by the rate will each remain equal
+// despite their change in denominator.
+func (tm *Time[D]) SetRateInvariants(inv ...*D) {
+	tm.rateInvariants = inv
+}
+
+func (tm *Time[D]) scale(val, newRate D) (scaled D, truncated FractionalSecond[D]) {
+	truncated.Denominator = tm.hertz
+	scaled, truncated.Numerator = intmath.MulDiv(val, newRate, tm.hertz)
+	return scaled, truncated
 }
 
 // Cmp returns
