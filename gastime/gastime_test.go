@@ -1,0 +1,179 @@
+package gastime
+
+import (
+	"testing"
+
+	"github.com/ava-labs/avalanchego/vms/components/gas"
+	"github.com/ava-labs/strevm/intmath"
+	"github.com/ava-labs/strevm/proxytime"
+	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
+)
+
+type state struct {
+	UnixTime             uint64
+	ConsumedThisSecond   proxytime.FractionalSecond[gas.Gas]
+	Rate, Target, Excess gas.Gas
+	Price                gas.Price
+}
+
+func (tm *Time) state() state {
+	return state{
+		UnixTime:           tm.Unix(),
+		ConsumedThisSecond: tm.Fraction(),
+		Rate:               tm.Rate(),
+		Target:             tm.Target(),
+		Excess:             tm.Excess(),
+		Price:              tm.Price(),
+	}
+}
+
+func (tm *Time) requireState(tb testing.TB, desc string, want state, opts ...cmp.Option) {
+	tb.Helper()
+	if diff := cmp.Diff(want, tm.state(), opts...); diff != "" {
+		tb.Fatalf("%s (-want +got):\n%s", desc, diff)
+	}
+}
+
+func TestScaling(t *testing.T) {
+	const initExcess = gas.Gas(1_234_567_890)
+	tm := New(42, 1_600_000, initExcess)
+
+	// The initial price isn't important in this test; what we care about is
+	// that it's invariant under scaling of the target etc.
+	initPrice := tm.Price()
+	if initPrice == 1 {
+		t.Fatalf("Bad test setup: increase initial excess to achieve %T > 1", initPrice)
+	}
+
+	ignore := cmpopts.IgnoreFields(state{}, "UnixTime", "ConsumedThisSecond")
+
+	tm.requireState(t, "initial", state{
+		Rate:   3.2e6,
+		Target: 1.6e6,
+		Excess: initExcess,
+		Price:  initPrice,
+	}, ignore)
+
+	tm.SetTarget(3.2e6)
+	tm.requireState(t, "after SetTarget()", state{
+		Rate:   6.4e6,
+		Target: 3.2e6,
+		Excess: 2 * initExcess,
+		Price:  initPrice, // unchanged
+	}, ignore)
+
+	// SetRate is equivalent to setting via the target, as long as the rate is
+	// even. Although the documentation states that SetTarget is preferred, we
+	// still need to test SetRate.
+	tm.SetRate(4e6)
+	tm.requireState(t, "after SetRate()", state{
+		Rate:   4e6,
+		Target: 2e6,
+		Excess: (func() gas.Gas {
+			// Scale the _initial_ excess relative to the new and _initial_
+			// rates, not the most recent rate before scaling.
+			x, _ := intmath.MulDiv(initExcess, 4e6, 3.2e6)
+			return x
+		})(),
+		Price: initPrice, // unchanged
+	}, ignore)
+}
+
+func TestExcess(t *testing.T) {
+	const rate = gas.Gas(3.2e6)
+	tm := New(42, rate/2, 0)
+
+	frac := func(num gas.Gas) (f proxytime.FractionalSecond[gas.Gas]) {
+		f.Numerator = num
+		f.Denominator = 3.2e6
+		return f
+	}
+
+	ignore := cmpopts.IgnoreFields(state{}, "Rate", "Target", "Price")
+
+	tm.requireState(t, "initial", state{
+		UnixTime:           42,
+		ConsumedThisSecond: frac(0),
+		Excess:             0,
+	}, ignore)
+
+	// NOTE: when R = 2T, excess increases or decreases by half the passage of
+	// time, depending on whether time was Tick()ed or FastForward()ed,
+	// respectively.
+
+	steps := []struct {
+		desc string
+		// Only one of fast-forwarding or ticking per step.
+		ffToBefore uint64
+		tickBefore gas.Gas
+		want       state
+	}{
+		{
+			desc:       "initial tick 1/2s",
+			tickBefore: rate / 2,
+			want: state{
+				UnixTime:           42,
+				ConsumedThisSecond: frac(rate / 2),
+				Excess:             (rate / 2) / 2,
+			},
+		},
+		{
+			desc:       "total tick 3/4s",
+			tickBefore: rate / 4,
+			want: state{
+				UnixTime:           42,
+				ConsumedThisSecond: frac(3 * rate / 4),
+				Excess:             3 * rate / 8,
+			},
+		},
+		{
+			desc:       "total tick 5/4s",
+			tickBefore: rate / 2,
+			want: state{
+				UnixTime:           43,
+				ConsumedThisSecond: frac(rate / 4),
+				Excess:             5 * rate / 8,
+			},
+		},
+		{
+			desc:       "total tick 11.25s",
+			tickBefore: 10 * rate,
+			want: state{
+				UnixTime:           53,
+				ConsumedThisSecond: frac(rate / 4),
+				Excess:             45 * rate / 8, // (11*4 + 1) quarters of ticking, halved
+			},
+		},
+		{
+			desc:       "no op fast forward",
+			ffToBefore: 53,
+			want: state{ // unchanged
+				UnixTime:           53,
+				ConsumedThisSecond: frac(rate / 4),
+				Excess:             45 * rate / 8,
+			},
+		},
+		{
+			desc:       "fast forward 11.25s to 13s",
+			ffToBefore: 55,
+			want: state{
+				UnixTime:           55,
+				ConsumedThisSecond: frac(0),
+				Excess:             45*rate/8 - 7*rate/8,
+			},
+		},
+	}
+
+	for _, s := range steps {
+		switch ff, tk := s.ffToBefore, s.tickBefore; {
+		case ff > 0 && tk > 0:
+			t.Fatalf("Bad test setup (%q) only FastForward() or Tick() before", s.desc)
+		case ff > 0:
+			tm.FastForward(ff)
+		case tk > 0:
+			tm.Tick(tk)
+		}
+		tm.requireState(t, s.desc, s.want, ignore)
+	}
+}

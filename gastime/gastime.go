@@ -24,11 +24,11 @@ type Time struct {
 // `2*target` units of [gas.Gas] is equivalent to a tick of 1 second.
 func New(unixSeconds uint64, target, startingExcess gas.Gas) *Time {
 	c := &Time{
-		Time:   proxytime.New(0, 2*target),
+		Time:   proxytime.New(unixSeconds, 2*target),
 		target: target,
 		excess: startingExcess,
 	}
-	c.Time.SetRateInvariants(&c.target)
+	c.Time.SetRateInvariants(&c.target, &c.excess)
 	return c
 }
 
