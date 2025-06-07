@@ -28,8 +28,7 @@ func MulDiv[T ~uint64](a, b, den T) (quo, rem T) {
 
 // CeilDiv returns `ceil(num/den)`, i.e. the rounded-up quotient.
 func CeilDiv[T ~uint64](num, den T) T {
-	lo, carry := bits.Add64(uint64(num), uint64(den)-1, 0)
-	hi, _ := bits.Add64(0, 0, carry)
+	lo, hi := bits.Add64(uint64(num), uint64(den)-1, 0)
 	quo, _ := bits.Div64(hi, lo, uint64(den))
 	return T(quo)
 }
