@@ -64,10 +64,10 @@ func (tm *Time) Tick(g gas.Gas) {
 	tm.excess += quo
 }
 
-// Tick is equivalent to [proxytime.Time.FastForward] except that it may also
-// update the gas excess.
-func (tm *Time) FastForward(to uint64) {
-	sec, frac := tm.Time.FastForward(to)
+// FastForwardTo is equivalent to [proxytime.Time.FastForwardTo] except that it
+// may also update the gas excess.
+func (tm *Time) FastForwardTo(to uint64) {
+	sec, frac := tm.Time.FastForwardTo(to)
 	if sec == 0 && frac.Numerator == 0 {
 		return
 	}

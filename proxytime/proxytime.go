@@ -65,10 +65,10 @@ func (tm *Time[D]) Tick(d D) {
 	tm.fraction %= tm.hertz
 }
 
-// FastForward sets the time to the specified Unix timestamp if it is in the
+// FastForwardTo sets the time to the specified Unix timestamp if it is in the
 // future, returning the integer and fraction number of seconds by which the
 // time was advanced.
-func (tm *Time[D]) FastForward(to uint64) (uint64, FractionalSecond[D]) {
+func (tm *Time[D]) FastForwardTo(to uint64) (uint64, FractionalSecond[D]) {
 	if to <= tm.seconds {
 		return 0, FractionalSecond[D]{0, tm.hertz}
 	}
