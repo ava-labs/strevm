@@ -156,7 +156,7 @@ func TestFastForward(t *testing.T) {
 
 	for _, s := range steps {
 		tm.Tick(s.tickBefore)
-		gotSec, gotFrac := tm.FastForward(s.ffTo)
+		gotSec, gotFrac := tm.FastForwardTo(s.ffTo)
 		assert.Equal(t, s.wantSec, gotSec)
 		assert.Equal(t, s.wantFrac, gotFrac)
 

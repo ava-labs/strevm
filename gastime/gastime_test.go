@@ -170,7 +170,7 @@ func TestExcess(t *testing.T) {
 		case ff > 0 && tk > 0:
 			t.Fatalf("Bad test setup (%q) only FastForward() or Tick() before", s.desc)
 		case ff > 0:
-			tm.FastForward(ff)
+			tm.FastForwardTo(ff)
 		case tk > 0:
 			tm.Tick(tk)
 		}
