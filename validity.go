@@ -58,7 +58,7 @@ func (vc *validityChecker) addTxToQueue(t txAndSender) (txValidity, error) {
 		vc.rules.IsShanghai, // EIP-3869
 	)
 	if err != nil {
-		vc.log.Debug(
+		vc.log.Info(
 			"Unable to determine intrinsic gas",
 			zap.Stringer("tx_hash", t.tx.Hash()),
 			zap.Error(err),

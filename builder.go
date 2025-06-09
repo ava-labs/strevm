@@ -8,6 +8,7 @@ import (
 	"slices"
 
 	"github.com/arr4n/sink"
+	snowcommon "github.com/ava-labs/avalanchego/snow/engine/common"
 	"github.com/ava-labs/avalanchego/vms/components/gas"
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core/state"
@@ -23,13 +24,26 @@ func (vm *VM) buildBlock(ctx context.Context, timestamp uint64, parent *Block) (
 	block, err := sink.FromPriorityMutex(
 		ctx, vm.mempool, sink.MaxPriority,
 		func(_ <-chan sink.Priority, pool *queue.Priority[*pendingTx]) (*Block, error) {
-			return vm.buildBlockWithCandidateTxs(timestamp, parent, pool)
+			block, err := vm.buildBlockWithCandidateTxs(timestamp, parent, pool)
+
+			// TODO: This shouldn't be done immediately, there should be some
+			// retry delay if block building failed.
+			if pool.Len() > 0 {
+				select {
+				case vm.toEngine <- snowcommon.PendingTxs:
+				default:
+					p := snowcommon.PendingTxs
+					vm.logger().Info(fmt.Sprintf("%T(%s) dropped", p, p))
+				}
+			}
+
+			return block, err
 		},
 	)
 	if err != nil {
 		return nil, err
 	}
-	vm.logger().Debug(
+	vm.logger().Info(
 		"Built block",
 		zap.Uint64("timestamp", timestamp),
 		zap.Uint64("height", block.Height()),
@@ -54,7 +68,7 @@ func (vm *VM) buildBlockWithCandidateTxs(timestamp uint64, parent *Block, candid
 		)
 		return nil, fmt.Errorf("%w: parent %#x at time %d", errWaitingForExecution, parent.Hash(), timestamp)
 	}
-	vm.logger().Debug(
+	vm.logger().Info(
 		"Settlement candidate",
 		zap.Uint64("timestamp", timestamp),
 		zap.Stringer("parent", parent.Hash()),
@@ -174,6 +188,9 @@ TxLoop:
 
 		validity, err := checker.addTxToQueue(candidate.txAndSender)
 		if err != nil {
+			// TODO: It is not acceptable to return an error here, as all
+			// transactions that have been removed from the mempool will be
+			// dropped and never included.
 			return nil, 0, err
 		}
 
@@ -189,7 +206,7 @@ TxLoop:
 
 		case delayTx, queueFull:
 			delayed = append(delayed, candidate)
-			vm.logger().Debug(
+			vm.logger().Info(
 				"Delaying transaction until later block-building",
 				zap.Stringer("hash", tx.Hash()),
 			)
@@ -198,7 +215,7 @@ TxLoop:
 			}
 
 		case discardTx:
-			vm.logger().Debug(
+			vm.logger().Info(
 				"Discarding transaction",
 				zap.Stringer("hash", tx.Hash()),
 			)

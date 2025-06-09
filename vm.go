@@ -176,7 +176,7 @@ func (vm *VM) SetState(ctx context.Context, state snow.State) error {
 }
 
 func (vm *VM) Shutdown(ctx context.Context) error {
-	vm.logger().Debug("Shutting down VM")
+	vm.logger().Info("Shutting down VM")
 	close(vm.quit)
 
 	vm.blocks.Close()

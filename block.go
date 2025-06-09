@@ -75,7 +75,7 @@ func (vm *VM) AcceptBlock(ctx context.Context, b *Block) error {
 	vm.last.settled.Store(b.lastSettled)
 	vm.last.accepted.Store(b)
 
-	vm.logger().Debug(
+	vm.logger().Info(
 		"Accepted block",
 		zap.Uint64("height", b.Height()),
 		zap.Stringer("hash", b.Hash()),
@@ -86,7 +86,7 @@ func (vm *VM) AcceptBlock(ctx context.Context, b *Block) error {
 		// GC!
 		prune := func(b *Block) {
 			delete(bm, b.Hash())
-			vm.logger().Debug(
+			vm.logger().Info(
 				"Pruning settled block",
 				zap.Stringer("hash", b.Hash()),
 				zap.Uint64("number", b.NumberU64()),
