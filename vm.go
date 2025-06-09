@@ -27,6 +27,8 @@ import (
 	"github.com/ava-labs/strevm/queue"
 )
 
+var VMID = ids.ID{'s', 't', 'r', 'e', 'v', 'm'}
+
 // VM implements Streaming Asynchronous Execution (SAE) of EVM blocks. It
 // implements all [adaptor.ChainVM] methods except for `Initialize()`, which
 // MUST be handled by a harness implementation that provides the final
@@ -187,8 +189,8 @@ func (vm *VM) Version(context.Context) (string, error) {
 }
 
 const (
-	HTTPHandlerKey = "sae_http"
-	WSHandlerKey   = "sae_ws"
+	HTTPHandlerKey = "/sae/http"
+	WSHandlerKey   = "/sae/ws"
 )
 
 func (vm *VM) CreateHandlers(context.Context) (map[string]http.Handler, error) {

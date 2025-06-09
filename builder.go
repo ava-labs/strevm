@@ -19,6 +19,7 @@ import (
 )
 
 func (vm *VM) buildBlock(ctx context.Context, timestamp uint64, parent *Block) (*Block, error) {
+	timestamp = max(timestamp, parent.Time())
 	block, err := sink.FromPriorityMutex(
 		ctx, vm.mempool, sink.MaxPriority,
 		func(_ <-chan sink.Priority, pool *queue.Priority[*pendingTx]) (*Block, error) {
