@@ -55,7 +55,7 @@ func TestTickAndCmp(t *testing.T) {
 
 	var ticked uint64
 	for _, s := range steps {
-		old := tm.Copy()
+		old := tm.Clone()
 
 		tm.Tick(s.tick)
 		ticked += s.tick
@@ -126,7 +126,7 @@ func TestAsTime(t *testing.T) {
 	}
 }
 
-func TestParseBytes(t *testing.T) {
+func TestCanotoRoundTrip(t *testing.T) {
 	const (
 		seconds = 42
 		rate    = 10_000
@@ -135,9 +135,9 @@ func TestParseBytes(t *testing.T) {
 	tm := New[uint64](seconds, rate)
 	tm.Tick(tick)
 
-	got, err := Parse[uint64](tm.Bytes())
-	require.NoError(t, err, "Parse(New(...))")
-	got.assertEq(t, fmt.Sprintf("Parse(%T.Bytes())", tm), seconds, frac(tick, rate))
+	got := new(Time[uint64])
+	require.NoErrorf(t, got.UnmarshalCanoto(tm.MarshalCanoto()), "%T.UnmarshalCanoto(%[1]T.MarshalCanoto())", got)
+	got.assertEq(t, fmt.Sprintf("%T.UnmarshalCanoto(%[1]T.MarshalCanoto())", tm), seconds, frac(tick, rate))
 }
 
 func TestFastForward(t *testing.T) {

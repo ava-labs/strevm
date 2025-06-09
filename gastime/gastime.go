@@ -16,20 +16,37 @@ import (
 // [ACP-176]: https://github.com/avalanche-foundation/ACPs/tree/main/ACPs/176-dynamic-evm-gas-limit-and-price-discovery-updates
 // [ACP-194]: https://github.com/avalanche-foundation/ACPs/tree/main/ACPs/194-streaming-asynchronous-execution
 type Time struct {
-	*proxytime.Time[gas.Gas]
-	target, excess gas.Gas
+	TimeMarshaler
+}
+
+// makeTime is a constructor shared by [New] and [Time.Clone].
+func makeTime(t *proxytime.Time[gas.Gas], target, excess gas.Gas) *Time {
+	tm := &Time{
+		TimeMarshaler: TimeMarshaler{
+			Time:   t,
+			target: target,
+			excess: excess,
+		},
+	}
+	tm.establishInvariants()
+	return tm
+}
+
+func (tm *Time) establishInvariants() {
+	tm.Time.SetRateInvariants(&tm.target, &tm.excess)
 }
 
 // New returns a new [Time], set from a Unix timestamp. The consumption of
 // `2*target` units of [gas.Gas] is equivalent to a tick of 1 second.
 func New(unixSeconds uint64, target, startingExcess gas.Gas) *Time {
-	c := &Time{
-		Time:   proxytime.New(unixSeconds, 2*target),
-		target: target,
-		excess: startingExcess,
-	}
-	c.Time.SetRateInvariants(&c.target, &c.excess)
-	return c
+	return makeTime(proxytime.New(unixSeconds, 2*target), target, startingExcess)
+}
+
+// Clone returns a deep copy of the time.
+func (tm *Time) Clone() *Time {
+	// [proxytime.Time.Clone] explicitly does NOT clone the rate invariants, so
+	// we reestablish them as if we were constructing a new instance.
+	return makeTime(tm.Time.Clone(), tm.target, tm.excess)
 }
 
 // Target returns the `T` parameter of ACP-176.

@@ -27,9 +27,9 @@ func newTxIncluder(tb testing.TB) (*TransactionIncluder, *state.StateDB) {
 	tb.Helper()
 	db := newDB(tb)
 	return NewTxIncluder(
-		db,
-		params.TestChainConfig,
-		big.NewInt(0), 0, gastime.New(0, 1e6, 0), 5, 2,
+		db, params.TestChainConfig,
+		gastime.New(0, 1e6, 0),
+		5, 2,
 	), db
 }
 
@@ -136,6 +136,9 @@ func TestNonContextualTransactionRejection(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			inc, db := newTxIncluder(t)
+			require.NoError(t, inc.StartBlock(&types.Header{
+				Number: big.NewInt(0),
+			}, 1e6), "StartBlock(0, t=0)")
 			if tt.stateSetup != nil {
 				tt.stateSetup(db)
 			}
