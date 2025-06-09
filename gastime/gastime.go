@@ -16,19 +16,24 @@ import (
 // [ACP-176]: https://github.com/avalanche-foundation/ACPs/tree/main/ACPs/176-dynamic-evm-gas-limit-and-price-discovery-updates
 // [ACP-194]: https://github.com/avalanche-foundation/ACPs/tree/main/ACPs/194-streaming-asynchronous-execution
 type Time struct {
-	*proxytime.Time[gas.Gas]
-	target, excess gas.Gas
+	TimeMarshaler
 }
 
-// makeTime is a constructor shared by [New], [Clone], and [FromBytes].
+// makeTime is a constructor shared by [New] and [Time.Clone].
 func makeTime(t *proxytime.Time[gas.Gas], target, excess gas.Gas) *Time {
 	tm := &Time{
-		Time:   t,
-		target: target,
-		excess: excess,
+		TimeMarshaler: TimeMarshaler{
+			Time:   t,
+			target: target,
+			excess: excess,
+		},
 	}
-	tm.Time.SetRateInvariants(&tm.target, &tm.excess)
+	tm.establishInvariants()
 	return tm
+}
+
+func (tm *Time) establishInvariants() {
+	tm.Time.SetRateInvariants(&tm.target, &tm.excess)
 }
 
 // New returns a new [Time], set from a Unix timestamp. The consumption of

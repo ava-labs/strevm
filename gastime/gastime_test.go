@@ -36,6 +36,13 @@ func (tm *Time) requireState(tb testing.TB, desc string, want state, opts ...cmp
 	}
 }
 
+func (tm *Time) cloneViaCanoto(tb testing.TB) *Time {
+	tb.Helper()
+	x := new(Time)
+	require.NoErrorf(tb, x.UnmarshalCanoto(tm.MarshalCanoto()), "%T.UnmarshalCanoto(%[1]T.MarshalCanoto())", tm)
+	return x
+}
+
 func TestScaling(t *testing.T) {
 	const initExcess = gas.Gas(1_234_567_890)
 	tm := New(42, 1_600_000, initExcess)
@@ -97,9 +104,7 @@ func TestScaling(t *testing.T) {
 	})
 
 	t.Run("canoto_roundtrip", func(t *testing.T) {
-		tm, err := FromBytes(tm.Bytes()) // deliberately shadow `tm`
-		require.NoErrorf(t, err, "FromBytes(%T.Bytes())", tm)
-		testPostDuplicate(t, tm)
+		testPostDuplicate(t, tm.cloneViaCanoto(t))
 	})
 }
 
@@ -204,9 +209,7 @@ func TestExcess(t *testing.T) {
 		})
 
 		t.Run("canoto_roundtrip", func(t *testing.T) {
-			tm, err := FromBytes(tm.Bytes())
-			require.NoErrorf(t, err, "FromBytes(%T.Bytes())", tm)
-			tm.requireState(t, s.desc, s.want, ignore)
+			tm.cloneViaCanoto(t).requireState(t, s.desc, s.want, ignore)
 		})
 	}
 }
