@@ -8,6 +8,7 @@ import (
 	"github.com/ava-labs/strevm/proxytime"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
+	"github.com/stretchr/testify/require"
 )
 
 type state struct {
@@ -67,7 +68,7 @@ func TestScaling(t *testing.T) {
 	// even. Although the documentation states that SetTarget is preferred, we
 	// still need to test SetRate.
 	tm.SetRate(4e6)
-	tm.requireState(t, "after SetRate()", state{
+	want := state{
 		Rate:   4e6,
 		Target: 2e6,
 		Excess: (func() gas.Gas {
@@ -77,7 +78,29 @@ func TestScaling(t *testing.T) {
 			return x
 		})(),
 		Price: initPrice, // unchanged
-	}, ignore)
+	}
+	tm.requireState(t, "after SetRate()", want, ignore)
+
+	testPostDuplicate := func(t *testing.T, tm *Time) {
+		want := want
+		tm.requireState(t, "unchanged immediately after", want, ignore)
+
+		tm.SetRate(tm.Rate() * 2)
+		want.Rate *= 2
+		want.Target *= 2
+		want.Excess *= 2
+		tm.requireState(t, "scaled after SetRate()", want, ignore)
+	}
+
+	t.Run("clone", func(t *testing.T) {
+		testPostDuplicate(t, tm.Clone())
+	})
+
+	t.Run("canoto_roundtrip", func(t *testing.T) {
+		tm, err := FromBytes(tm.Bytes()) // deliberately shadow `tm`
+		require.NoErrorf(t, err, "FromBytes(%T.Bytes())", tm)
+		testPostDuplicate(t, tm)
+	})
 }
 
 func TestExcess(t *testing.T) {
@@ -175,5 +198,15 @@ func TestExcess(t *testing.T) {
 			tm.Tick(tk)
 		}
 		tm.requireState(t, s.desc, s.want, ignore)
+
+		t.Run("Clone()", func(t *testing.T) {
+			tm.Clone().requireState(t, s.desc, s.want, ignore)
+		})
+
+		t.Run("canoto_roundtrip", func(t *testing.T) {
+			tm, err := FromBytes(tm.Bytes())
+			require.NoErrorf(t, err, "FromBytes(%T.Bytes())", tm)
+			tm.requireState(t, s.desc, s.want, ignore)
+		})
 	}
 }

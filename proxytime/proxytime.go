@@ -8,6 +8,8 @@ import (
 	"github.com/ava-labs/strevm/intmath"
 )
 
+//go:generate go run github.com/StephenButtolph/canoto/canoto $GOFILE
+
 // A Duration is a type parameter for use as the unit of passage of [Time].
 type Duration interface {
 	~uint64
@@ -16,10 +18,28 @@ type Duration interface {
 // Time represents an instant in time, its passage measured by an arbitrary unit
 // of duration. It is not thread safe nor is the zero value valid.
 type Time[D Duration] struct {
-	seconds         uint64
-	fraction, hertz D // invariant: fraction < hertz
+	seconds uint64 `canoto:"uint,1"`
+	// invariant: fraction < hertz
+	fraction D `canoto:"uint,2"`
+	hertz    D `canoto:"uint,3"`
 
 	rateInvariants []*D
+
+	canotoData canotoData_Time `canoto:"nocopy"`
+}
+
+// IMPORTANT: keep [Time.Clone] next to the struct definition to make it easier
+// to check that all fields are copied.
+
+// Clone returns a copy of the time. Note that it does NOT copy the pointers
+// passed to [Time.SetRateInvariants] as this risks coupling the clone with the
+// wrong invariants.
+func (tm *Time[D]) Clone() *Time[D] {
+	return &Time[D]{
+		seconds:  tm.seconds,
+		fraction: tm.fraction,
+		hertz:    tm.hertz,
+	}
 }
 
 // New returns a new [Time], set from a Unix timestamp. The passage of `hertz`
@@ -50,12 +70,6 @@ func (tm *Time[D]) Fraction() FractionalSecond[D] {
 // Rate returns the proxy duration required for the passage of one second.
 func (tm *Time[D]) Rate() D {
 	return tm.hertz
-}
-
-// Copy returns a copy of the time.
-func (tm *Time[D]) Copy() *Time[D] {
-	t := *tm
-	return &t
 }
 
 // Tick advances the time by `d`.

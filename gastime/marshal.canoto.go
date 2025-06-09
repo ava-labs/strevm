@@ -3,7 +3,7 @@
 // 	canoto v0.17.0
 // source: marshal.go
 
-package proxytime
+package gastime
 
 import (
 	"io"
@@ -21,9 +21,9 @@ var (
 )
 
 const (
-	canoto__timeMarshaler__seconds__tag  = "\x08" // canoto.Tag(1, canoto.Varint)
-	canoto__timeMarshaler__fraction__tag = "\x10" // canoto.Tag(2, canoto.Varint)
-	canoto__timeMarshaler__hertz__tag    = "\x18" // canoto.Tag(3, canoto.Varint)
+	canoto__timeMarshaler__proxy__tag  = "\x0a" // canoto.Tag(1, canoto.Len)
+	canoto__timeMarshaler__target__tag = "\x10" // canoto.Tag(2, canoto.Varint)
+	canoto__timeMarshaler__excess__tag = "\x18" // canoto.Tag(3, canoto.Varint)
 )
 
 type canotoData_timeMarshaler struct {
@@ -31,28 +31,32 @@ type canotoData_timeMarshaler struct {
 }
 
 // CanotoSpec returns the specification of this canoto message.
-func (*timeMarshaler) CanotoSpec(...reflect.Type) *canoto.Spec {
+func (*timeMarshaler) CanotoSpec(types ...reflect.Type) *canoto.Spec {
+	types = append(types, reflect.TypeOf(timeMarshaler{}))
 	var zero timeMarshaler
 	s := &canoto.Spec{
 		Name: "timeMarshaler",
 		Fields: []canoto.FieldType{
-			{
-				FieldNumber: 1,
-				Name:        "seconds",
-				OneOf:       "",
-				TypeUint:    canoto.SizeOf(zero.seconds),
-			},
+			canoto.FieldTypeFromField(
+				/*type inference:*/ (zero.proxy),
+				/*FieldNumber:   */ 1,
+				/*Name:          */ "proxy",
+				/*FixedLength:   */ 0,
+				/*Repeated:      */ false,
+				/*OneOf:         */ "",
+				/*types:         */ types,
+			),
 			{
 				FieldNumber: 2,
-				Name:        "fraction",
+				Name:        "target",
 				OneOf:       "",
-				TypeUint:    canoto.SizeOf(zero.fraction),
+				TypeUint:    canoto.SizeOf(zero.target),
 			},
 			{
 				FieldNumber: 3,
-				Name:        "hertz",
+				Name:        "excess",
 				OneOf:       "",
-				TypeUint:    canoto.SizeOf(zero.hertz),
+				TypeUint:    canoto.SizeOf(zero.excess),
 			},
 		},
 	}
@@ -98,25 +102,39 @@ func (c *timeMarshaler) UnmarshalCanotoFrom(r canoto.Reader) error {
 
 		switch field {
 		case 1:
-			if wireType != canoto.Varint {
+			if wireType != canoto.Len {
 				return canoto.ErrUnexpectedWireType
 			}
 
-			if err := canoto.ReadUint(&r, &c.seconds); err != nil {
+			// Read the bytes for the field.
+			originalUnsafe := r.Unsafe
+			r.Unsafe = true
+			var msgBytes []byte
+			if err := canoto.ReadBytes(&r, &msgBytes); err != nil {
 				return err
 			}
-			if canoto.IsZero(c.seconds) {
+			if len(msgBytes) == 0 {
 				return canoto.ErrZeroValue
 			}
+			r.Unsafe = originalUnsafe
+
+			// Unmarshal the field from the bytes.
+			remainingBytes := r.B
+			r.B = msgBytes
+			c.proxy = canoto.MakePointer(c.proxy)
+			if err := (c.proxy).UnmarshalCanotoFrom(r); err != nil {
+				return err
+			}
+			r.B = remainingBytes
 		case 2:
 			if wireType != canoto.Varint {
 				return canoto.ErrUnexpectedWireType
 			}
 
-			if err := canoto.ReadUint(&r, &c.fraction); err != nil {
+			if err := canoto.ReadUint(&r, &c.target); err != nil {
 				return err
 			}
-			if canoto.IsZero(c.fraction) {
+			if canoto.IsZero(c.target) {
 				return canoto.ErrZeroValue
 			}
 		case 3:
@@ -124,10 +142,10 @@ func (c *timeMarshaler) UnmarshalCanotoFrom(r canoto.Reader) error {
 				return canoto.ErrUnexpectedWireType
 			}
 
-			if err := canoto.ReadUint(&r, &c.hertz); err != nil {
+			if err := canoto.ReadUint(&r, &c.excess); err != nil {
 				return err
 			}
-			if canoto.IsZero(c.hertz) {
+			if canoto.IsZero(c.excess) {
 				return canoto.ErrZeroValue
 			}
 		default:
@@ -150,6 +168,9 @@ func (c *timeMarshaler) ValidCanoto() bool {
 	if c == nil {
 		return true
 	}
+	if c.proxy != nil && !(c.proxy).ValidCanoto() {
+		return false
+	}
 	return true
 }
 
@@ -162,14 +183,17 @@ func (c *timeMarshaler) CalculateCanotoCache() {
 		return
 	}
 	var size uint64
-	if !canoto.IsZero(c.seconds) {
-		size += uint64(len(canoto__timeMarshaler__seconds__tag)) + canoto.SizeUint(c.seconds)
+	if c.proxy != nil {
+		(c.proxy).CalculateCanotoCache()
+		if fieldSize := (c.proxy).CachedCanotoSize(); fieldSize != 0 {
+			size += uint64(len(canoto__timeMarshaler__proxy__tag)) + canoto.SizeUint(fieldSize) + fieldSize
+		}
 	}
-	if !canoto.IsZero(c.fraction) {
-		size += uint64(len(canoto__timeMarshaler__fraction__tag)) + canoto.SizeUint(c.fraction)
+	if !canoto.IsZero(c.target) {
+		size += uint64(len(canoto__timeMarshaler__target__tag)) + canoto.SizeUint(c.target)
 	}
-	if !canoto.IsZero(c.hertz) {
-		size += uint64(len(canoto__timeMarshaler__hertz__tag)) + canoto.SizeUint(c.hertz)
+	if !canoto.IsZero(c.excess) {
+		size += uint64(len(canoto__timeMarshaler__excess__tag)) + canoto.SizeUint(c.excess)
 	}
 	atomic.StoreUint64(&c.canotoData.size, size)
 }
@@ -215,17 +239,20 @@ func (c *timeMarshaler) MarshalCanotoInto(w canoto.Writer) canoto.Writer {
 	if c == nil {
 		return w
 	}
-	if !canoto.IsZero(c.seconds) {
-		canoto.Append(&w, canoto__timeMarshaler__seconds__tag)
-		canoto.AppendUint(&w, c.seconds)
+	if c.proxy != nil {
+		if fieldSize := (c.proxy).CachedCanotoSize(); fieldSize != 0 {
+			canoto.Append(&w, canoto__timeMarshaler__proxy__tag)
+			canoto.AppendUint(&w, fieldSize)
+			w = (c.proxy).MarshalCanotoInto(w)
+		}
 	}
-	if !canoto.IsZero(c.fraction) {
-		canoto.Append(&w, canoto__timeMarshaler__fraction__tag)
-		canoto.AppendUint(&w, c.fraction)
+	if !canoto.IsZero(c.target) {
+		canoto.Append(&w, canoto__timeMarshaler__target__tag)
+		canoto.AppendUint(&w, c.target)
 	}
-	if !canoto.IsZero(c.hertz) {
-		canoto.Append(&w, canoto__timeMarshaler__hertz__tag)
-		canoto.AppendUint(&w, c.hertz)
+	if !canoto.IsZero(c.excess) {
+		canoto.Append(&w, canoto__timeMarshaler__excess__tag)
+		canoto.AppendUint(&w, c.excess)
 	}
 	return w
 }
