@@ -52,7 +52,10 @@ func (vm *VM) buildBlock(ctx context.Context, timestamp uint64, parent *Block) (
 	return block, nil
 }
 
-var errWaitingForExecution = errors.New("waiting for execution when building block")
+var (
+	errWaitingForExecution = errors.New("waiting for execution when building block")
+	errBlockWithoutChanges = errors.New("block contains no changes")
+)
 
 func (vm *VM) buildBlockWithCandidateTxs(timestamp uint64, parent *Block, candidateTxs queue.Queue[*pendingTx]) (*Block, error) {
 	if timestamp < parent.Time() {
@@ -94,6 +97,11 @@ func (vm *VM) buildBlockWithCandidateTxs(timestamp uint64, parent *Block, candid
 	txs, gasLimit, err := vm.buildBlockOnHistory(toSettle, parent, timestamp, candidateTxs)
 	if err != nil {
 		return nil, err
+	}
+
+	if gasUsed == 0 && len(txs) == 0 {
+		vm.logger().Info("Blocks must either settle or include transactions")
+		return nil, fmt.Errorf("%w: parent %#x at time %d", errBlockWithoutChanges, parent.Hash(), timestamp)
 	}
 
 	b := vm.newBlock(types.NewBlock(

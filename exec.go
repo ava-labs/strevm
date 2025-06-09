@@ -256,7 +256,7 @@ func (c *gasClock) isAfter(timestamp uint64) bool {
 }
 
 func (c *gasClock) asTime() time.Time {
-	nsec, _ /*remainder*/ := intmath.MulDiv(c.consumed, c.params.R, 1e9)
+	nsec, _ /*remainder*/ := intmath.MulDiv(c.consumed, 1e9, c.params.R)
 	return time.Unix(int64(c.time), int64(nsec))
 }
 
