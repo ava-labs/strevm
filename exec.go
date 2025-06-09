@@ -161,7 +161,23 @@ func (e *executor) processQueue() {
 			)
 			return
 		}
+
+		// This is a hack to signal anyone blocked on awaitEmpty
+		_ = e.queue.UseThenSignal(ctx, func(*queue.FIFO[*Block]) error { return nil })
 	}
+}
+
+func (e *executor) awaitEmpty(ctx context.Context) error {
+	// This isn't implemented correctly, but I don't know how it is supposed to
+	// work. We should have a mutex with 2 conditions, one where the queue is
+	// empty (and the processing thread is not executing), the other where the
+	// queue isn't empty.
+	return e.queue.Wait(ctx,
+		func(q *queue.FIFO[*Block]) bool {
+			return q.Len() == 0
+		},
+		func(*queue.FIFO[*Block]) error { return nil },
+	)
 }
 
 type executionScratchSpace struct {
