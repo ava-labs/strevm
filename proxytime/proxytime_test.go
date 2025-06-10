@@ -165,3 +165,36 @@ func TestFastForward(t *testing.T) {
 		}
 	}
 }
+
+func TestCmpUnix(t *testing.T) {
+	tests := []struct {
+		tm               *Time[uint64]
+		tick, cmpAgainst uint64
+		want             int
+	}{
+		{
+			tm:         New[uint64](42, 1e6),
+			cmpAgainst: 42,
+			want:       0,
+		},
+		{
+			tm:         New[uint64](42, 1e6),
+			tick:       1,
+			cmpAgainst: 42,
+			want:       1,
+		},
+		{
+			tm:         New[uint64](41, 100),
+			tick:       99,
+			cmpAgainst: 42,
+			want:       -1,
+		},
+	}
+
+	for _, tt := range tests {
+		tt.tm.Tick(tt.tick)
+		if got := tt.tm.CmpUnix(tt.cmpAgainst); got != tt.want {
+			t.Errorf("Time{%d + %d/%d}.CmpUnix(%d) got %d; want %d", tt.tm.Unix(), tt.tm.fraction, tt.tm.hertz, tt.cmpAgainst, got, tt.want)
+		}
+	}
+}

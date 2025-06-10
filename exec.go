@@ -24,7 +24,8 @@ import (
 	"github.com/ava-labs/libevm/params"
 	"go.uber.org/zap"
 
-	"github.com/ava-labs/strevm/intmath"
+	"github.com/ava-labs/strevm/gastime"
+	"github.com/ava-labs/strevm/hook"
 	"github.com/ava-labs/strevm/queue"
 )
 
@@ -37,7 +38,7 @@ type executor struct {
 
 	spawned sync.WaitGroup
 
-	gasClock     gasClock
+	gasClock     gastime.Time
 	queue        sink.Monitor[*queue.FIFO[*Block]]
 	lastExecuted *atomic.Pointer[Block] // shared with VM
 
@@ -78,7 +79,7 @@ func (e *executor) init() error {
 		snaps:   snaps,
 		statedb: statedb,
 	}
-	e.gasClock = last.execution.by.clone()
+	e.gasClock = *last.execution.by.Clone()
 	return nil
 }
 
@@ -170,7 +171,7 @@ type executionScratchSpace struct {
 }
 
 type executionResults struct {
-	by       gasClock `canoto:"value,1"`
+	by       gastime.Time `canoto:"value,1"`
 	byTime   time.Time
 	receipts types.Receipts
 
@@ -179,85 +180,6 @@ type executionResults struct {
 	stateRootPost common.Hash `canoto:"fixed bytes,4"`
 
 	canotoData canotoData_executionResults `canoto:"nocopy"`
-}
-
-type gasClock struct {
-	time     uint64    `canoto:"uint,1"`
-	consumed gas.Gas   `canoto:"uint,2"` // this second
-	params   GasParams `canoto:"value,3"`
-
-	canotoData canotoData_gasClock `canoto:"nocopy"`
-}
-
-func (c *gasClock) clone() gasClock {
-	return gasClock{
-		time:     c.time,
-		consumed: c.consumed,
-		params:   c.params.clone(),
-	}
-}
-
-type GasParams struct {
-	T      gas.Gas   `canoto:"uint,1"`
-	R      gas.Gas   `canoto:"uint,2"`
-	Excess gas.Gas   `canoto:"uint,3"`
-	Price  gas.Price `canoto:"uint,4"`
-
-	canotoData canotoData_GasParams `canoto:"nocopy"`
-}
-
-func (p *GasParams) clone() GasParams {
-	return GasParams{
-		T:      p.T,
-		R:      p.R,
-		Excess: p.Excess,
-		Price:  p.Price,
-	}
-}
-
-func (c *gasClock) beforeBlock(parent *Block, timestamp uint64, hooks Hooks) {
-	hooks.UpdateGasParams(parent.Block, &c.params)
-	c.fastForward(timestamp)
-}
-
-func (c *gasClock) afterBlock(consumed gas.Gas) {
-	c.consume(consumed)
-}
-
-func (c *gasClock) fastForward(to uint64) {
-	if to <= c.time {
-		return
-	}
-
-	R, T := c.params.R, c.params.T
-	surplus := R - c.consumed
-	surplus += gas.Gas(to-c.time-1) * R // -1 avoids double-counting gas remaining this second
-
-	quo, _ := intmath.MulDiv(surplus, T, R)
-	c.params.Excess = intmath.BoundedSubtract(c.params.Excess, quo, 0)
-
-	c.time = to
-	c.consumed = 0
-}
-
-func (c *gasClock) consume(g gas.Gas) {
-	R, T := c.params.R, c.params.T
-
-	c.consumed += g
-	c.time += uint64(c.consumed / R)
-	c.consumed %= R
-
-	quo, _ := intmath.MulDiv(g, R-T, R)
-	c.params.Excess += gas.Gas(quo)
-}
-
-func (c *gasClock) isAfter(timestamp uint64) bool {
-	return timestamp < c.time || (timestamp == c.time && c.consumed > 0)
-}
-
-func (c *gasClock) asTime() time.Time {
-	nsec, _ /*remainder*/ := intmath.MulDiv(c.consumed, c.params.R, 1e9)
-	return time.Unix(int64(c.time), int64(nsec))
 }
 
 func (e *executor) execute(ctx context.Context, b *Block) error {
@@ -270,10 +192,10 @@ func (e *executor) execute(ctx context.Context, b *Block) error {
 		return fmt.Errorf("executing blocks out of order: %d then %d", last, curr)
 	}
 
-	e.gasClock.beforeBlock(b.parent, b.Time(), e.hooks)
+	hook.BeforeBlock(&e.gasClock, b.Header(), e.hooks.GasTarget(b.parent.Block))
 
 	header := types.CopyHeader(b.Header())
-	header.BaseFee = e.gasClock.params.baseFee().ToBig()
+	header.BaseFee = e.gasClock.BaseFee().ToBig()
 	e.log.Debug(
 		"Executing accepted block",
 		zap.Uint64("height", b.Height()),
@@ -308,14 +230,14 @@ func (e *executor) execute(ctx context.Context, b *Block) error {
 		receipts[ti] = receipt
 	}
 	endTime := time.Now()
-	e.gasClock.afterBlock(blockGasConsumed)
+	hook.AfterBlock(&e.gasClock, blockGasConsumed)
 
 	root, err := e.commitState(ctx, x, b.NumberU64())
 	if err != nil {
 		return err
 	}
 	b.execution = &executionResults{
-		by:            e.gasClock.clone(),
+		by:            *e.gasClock.Clone(),
 		byTime:        endTime,
 		receipts:      receipts,
 		gasUsed:       blockGasConsumed,
@@ -346,7 +268,7 @@ func (e *executor) execute(ctx context.Context, b *Block) error {
 	e.log.Debug(
 		"Block execution complete",
 		zap.Uint64("height", b.Height()),
-		zap.Time("gas_time", e.gasClock.asTime()),
+		zap.Time("gas_time", e.gasClock.AsTime()),
 		zap.Time("wall_time", endTime),
 		zap.Int("tx_count", len(b.Transactions())),
 	)

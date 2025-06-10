@@ -37,6 +37,8 @@ import (
 	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/rpc"
 	"github.com/ava-labs/strevm/adaptor"
+	"github.com/ava-labs/strevm/gastime"
+	"github.com/ava-labs/strevm/proxytime"
 	"github.com/ava-labs/strevm/queue"
 	"github.com/ava-labs/strevm/weth"
 	"github.com/google/go-cmp/cmp"
@@ -67,16 +69,11 @@ var (
 )
 
 type stubHooks struct {
-	R gas.Gas
+	T gas.Gas
 }
 
-func (h *stubHooks) UpdateGasParams(parent *types.Block, p *GasParams) {
-	*p = GasParams{
-		R:      h.R,
-		T:      h.R / 2,
-		Price:  gas.CalculatePrice(params.GWei, p.Excess, 87*2*h.R),
-		Excess: p.Excess,
-	}
+func (h *stubHooks) GasTarget(parent *types.Block) gas.Gas {
+	return h.T
 }
 
 func TestBasicE2E(t *testing.T) {
@@ -94,7 +91,7 @@ func TestBasicE2E(t *testing.T) {
 	harnessVM := &SinceGenesis{
 		Now: func() time.Time { return now },
 		Hooks: &stubHooks{
-			R: 50e6,
+			T: 2e6,
 		},
 	}
 	snowCompatVM := adaptor.Convert(harnessVM)
@@ -512,13 +509,24 @@ func cmpBigInts() cmp.Options {
 	}
 }
 
+func cmpTimes() cmp.Options {
+	return cmp.Options{
+		cmp.AllowUnexported(
+			gastime.TimeMarshaler{},
+			proxytime.Time[gas.Gas]{},
+		),
+		cmpopts.IgnoreFields(gastime.TimeMarshaler{}, "canotoData"),
+		cmpopts.IgnoreFields(proxytime.Time[gas.Gas]{}, "canotoData"),
+	}
+}
+
 func cmpBlocks() cmp.Options {
 	return cmp.Options{
 		cmpBigInts(),
+		cmpTimes(),
 		cmp.AllowUnexported(
 			Block{},
 			executionResults{},
-			gasClock{},
 		),
 		cmp.Comparer(func(a, b *types.Block) bool {
 			return a.Hash() == b.Hash()
@@ -535,8 +543,6 @@ func cmpBlocks() cmp.Options {
 		),
 		cmpopts.IgnoreTypes(
 			canotoData_executionResults{},
-			canotoData_gasClock{},
-			canotoData_GasParams{},
 		),
 		cmpopts.IgnoreFields(
 			executionResults{},
