@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/ava-labs/avalanchego/ids"
+	"github.com/ava-labs/avalanchego/snow"
 	"github.com/ava-labs/libevm/core"
 	"github.com/ava-labs/libevm/core/rawdb"
 	"github.com/ava-labs/libevm/core/types"
@@ -45,6 +46,17 @@ func (b *Block) ID() ids.ID {
 func (vm *VM) AcceptBlock(ctx context.Context, b *Block) error {
 	if err := vm.exec.enqueueAccepted(ctx, b); err != nil {
 		return err
+	}
+
+	// When the chain is bootstrapping, avalanchego expects to be able to call
+	// `Verify` and `Accept` in a loop over blocks. Reporting an error during
+	// either `Verify` or `Accept` is considered FATAL during this process.
+	// Therefore, we must ensure that avalanchego does not get too far ahead of
+	// the execution thread and FATAL during block verification.
+	if vm.consensusState.Get() == snow.Bootstrapping {
+		if err := vm.exec.queueCleared.Wait(ctx); err != nil {
+			return fmt.Errorf("waiting for execution during bootstrap: %v", err)
+		}
 	}
 
 	batch := vm.db.NewBatch()

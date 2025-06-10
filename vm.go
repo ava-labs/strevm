@@ -15,6 +15,7 @@ import (
 	"github.com/ava-labs/avalanchego/ids"
 	"github.com/ava-labs/avalanchego/snow"
 	snowcommon "github.com/ava-labs/avalanchego/snow/engine/common"
+	"github.com/ava-labs/avalanchego/utils"
 	"github.com/ava-labs/avalanchego/utils/logging"
 	"github.com/ava-labs/avalanchego/version"
 	"github.com/ava-labs/libevm/common"
@@ -37,6 +38,8 @@ type VM struct {
 	toEngine chan<- snowcommon.Message
 	hooks    Hooks
 	now      func() time.Time
+
+	consensusState utils.Atomic[snow.State]
 
 	blocks     sink.Mutex[blockMap]
 	preference atomic.Pointer[Block]
@@ -170,6 +173,7 @@ func (vm *VM) Disconnected(ctx context.Context, nodeID ids.NodeID) error {
 }
 
 func (vm *VM) SetState(ctx context.Context, state snow.State) error {
+	vm.consensusState.Set(state)
 	return nil
 }
 

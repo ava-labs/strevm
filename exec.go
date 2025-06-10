@@ -42,6 +42,13 @@ type executor struct {
 	queue        sink.Monitor[*queue.FIFO[*Block]]
 	lastExecuted *atomic.Pointer[Block] // shared with VM
 
+	// During bootstrapping we need to know when the queue has been executed to
+	// avoid verification returning an error due to waiting on the execution
+	// stream for settlement. This [sink.Gate] is only valid if *not* waited
+	// upon concurrently with a call to [VM.AcceptBlock] as that may result in a
+	// spurious unblocking with a non-empty queue.
+	queueCleared sink.Gate
+
 	headEvents  event.FeedOf[core.ChainHeadEvent]
 	chainEvents event.FeedOf[core.ChainEvent]
 	logEvents   event.FeedOf[[]*types.Log]
@@ -85,6 +92,7 @@ func (e *executor) init() error {
 
 func (e *executor) run(ready chan<- struct{}) {
 	e.queue = sink.NewMonitor(new(queue.FIFO[*Block]))
+	e.queueCleared = sink.NewGate()
 	e.spawn(e.processQueue)
 
 	close(ready)
@@ -122,6 +130,7 @@ func (e *executor) quitCtx() context.Context {
 func (e *executor) enqueueAccepted(ctx context.Context, block *Block) error {
 	return e.queue.UseThenSignal(ctx, func(q *queue.FIFO[*Block]) error {
 		q.Push(block)
+		e.queueCleared.Block()
 		return nil
 	})
 }
@@ -130,12 +139,21 @@ func (e *executor) processQueue() {
 	ctx := e.quitCtx()
 
 	for {
-		block, err := sink.FromMonitor(ctx, e.queue,
+		type pop struct {
+			block      *Block
+			emptyAfter bool
+		}
+
+		popped, err := sink.FromMonitor(ctx, e.queue,
 			func(q *queue.FIFO[*Block]) bool {
 				return q.Len() > 0
 			},
-			func(q *queue.FIFO[*Block]) (*Block, error) {
-				return q.Pop(), nil
+			func(q *queue.FIFO[*Block]) (pop, error) {
+				b := q.Pop()
+				return pop{
+					block:      b,
+					emptyAfter: q.Len() == 0,
+				}, nil
 			},
 		)
 		if errors.Is(err, context.Canceled) {
@@ -149,6 +167,7 @@ func (e *executor) processQueue() {
 			return
 		}
 
+		block := popped.block
 		switch err := e.execute(ctx, block); {
 		case errors.Is(err, context.Canceled):
 			return
@@ -161,6 +180,13 @@ func (e *executor) processQueue() {
 				zap.Any("hash", block.Hash()),
 			)
 			return
+		}
+
+		// This may race with a concurrent call to [VM.AcceptBlock], but that is
+		// documented and also acceptable as we only ever Wait() inside
+		// [VM.AcceptBlock].
+		if popped.emptyAfter {
+			e.queueCleared.Open()
 		}
 	}
 }

@@ -4,7 +4,7 @@ go 1.23.7
 
 require (
 	github.com/StephenButtolph/canoto v0.17.1
-	github.com/arr4n/sink v0.0.0-20250524105858-43bc1efdcbc4
+	github.com/arr4n/sink v0.0.0-20250610120507-bd1b0fbb19fa
 	github.com/ava-labs/avalanchego v1.13.0
 	github.com/ava-labs/libevm v0.0.0-20250527142935-2d94327f8dae
 	github.com/dustin/go-humanize v1.0.0

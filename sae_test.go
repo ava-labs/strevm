@@ -235,6 +235,7 @@ func TestBasicE2E(t *testing.T) {
 			break
 		}
 	}
+	require.NoError(t, vm.exec.queueCleared.Wait(ctx))
 
 	t.Cleanup(func() {
 		// See block pruning at the end of [VM.AcceptBlock]
