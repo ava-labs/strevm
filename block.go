@@ -73,7 +73,7 @@ func (vm *VM) AcceptBlock(ctx context.Context, b *Block) error {
 		}
 	}
 	if err := b.writeLastSettledNumber(batch); err != nil {
-		return nil
+		return err
 	}
 	if err := batch.Write(); err != nil {
 		return err
