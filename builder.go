@@ -100,7 +100,7 @@ func (vm *VM) buildBlockWithCandidateTxs(timestamp uint64, parent *Block, candid
 	return b, nil
 }
 
-func (vm *VM) buildBlockOnHistory(lastSettled, parent *Block, timestamp uint64, candidateTxs queue.Queue[*pendingTx]) (types.Transactions, gas.Gas, error) {
+func (vm *VM) buildBlockOnHistory(lastSettled, parent *Block, timestamp uint64, candidateTxs queue.Queue[*pendingTx]) (_ types.Transactions, _ gas.Gas, retErr error) {
 	var history []*Block
 	for b := parent; b.ID() != lastSettled.ID(); b = b.parent {
 		history = append(history, b)
@@ -134,9 +134,19 @@ func (vm *VM) buildBlockOnHistory(lastSettled, parent *Block, timestamp uint64, 
 	}
 
 	var (
-		txs     types.Transactions
+		include []*pendingTx
 		delayed []*pendingTx
 	)
+	defer func() {
+		for _, tx := range delayed {
+			candidateTxs.Push(tx)
+		}
+		if retErr != nil {
+			for _, tx := range include {
+				candidateTxs.Push(tx)
+			}
+		}
+	}()
 
 	hdr := &types.Header{
 		Number: new(big.Int).SetUint64(parent.NumberU64() + 1),
@@ -150,7 +160,7 @@ func (vm *VM) buildBlockOnHistory(lastSettled, parent *Block, timestamp uint64, 
 
 		switch err := checker.Include(tx); {
 		case err == nil:
-			txs = append(txs, tx)
+			include = append(include, candidate)
 
 		case errIsOneOf(err, worstcase.ErrBlockTooFull, worstcase.ErrQueueTooFull):
 			delayed = append(delayed, candidate)
@@ -167,8 +177,9 @@ func (vm *VM) buildBlockOnHistory(lastSettled, parent *Block, timestamp uint64, 
 		}
 	}
 
-	for _, tx := range delayed {
-		candidateTxs.Push(tx)
+	txs := make(types.Transactions, len(include))
+	for i, tx := range include {
+		txs[i] = tx.tx
 	}
 
 	// TODO(arr4n) setting `gasUsed` (i.e. historical) based on receipts and
