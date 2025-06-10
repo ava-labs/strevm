@@ -53,7 +53,7 @@ func (vm *VM) buildBlock(ctx context.Context, timestamp uint64, parent *Block) (
 
 var (
 	errWaitingForExecution = errors.New("waiting for execution when building block")
-	errBlockWithoutChanges = errors.New("block contains no changes")
+	errNoopBlock           = errors.New("block does not settle state nor include transactions")
 )
 
 func (vm *VM) buildBlockWithCandidateTxs(timestamp uint64, parent *Block, candidateTxs queue.Queue[*pendingTx]) (*Block, error) {
@@ -97,10 +97,9 @@ func (vm *VM) buildBlockWithCandidateTxs(timestamp uint64, parent *Block, candid
 	if err != nil {
 		return nil, err
 	}
-
 	if gasUsed == 0 && len(txs) == 0 {
 		vm.logger().Info("Blocks must either settle or include transactions")
-		return nil, fmt.Errorf("%w: parent %#x at time %d", errBlockWithoutChanges, parent.Hash(), timestamp)
+		return nil, fmt.Errorf("%w: parent %#x at time %d", errNoopBlock, parent.Hash(), timestamp)
 	}
 
 	b := vm.newBlock(types.NewBlock(
@@ -122,7 +121,7 @@ func (vm *VM) buildBlockWithCandidateTxs(timestamp uint64, parent *Block, candid
 	return b, nil
 }
 
-func (vm *VM) buildBlockOnHistory(lastSettled, parent *Block, timestamp uint64, candidateTxs queue.Queue[*pendingTx]) (types.Transactions, gas.Gas, error) {
+func (vm *VM) buildBlockOnHistory(lastSettled, parent *Block, timestamp uint64, candidateTxs queue.Queue[*pendingTx]) (_ types.Transactions, _ gas.Gas, retErr error) {
 	var history []*Block
 	for b := parent; b.ID() != lastSettled.ID(); b = b.parent {
 		history = append(history, b)
@@ -156,9 +155,19 @@ func (vm *VM) buildBlockOnHistory(lastSettled, parent *Block, timestamp uint64, 
 	}
 
 	var (
-		txs     types.Transactions
+		include []*pendingTx
 		delayed []*pendingTx
 	)
+	defer func() {
+		for _, tx := range delayed {
+			candidateTxs.Push(tx)
+		}
+		if retErr != nil {
+			for _, tx := range include {
+				candidateTxs.Push(tx)
+			}
+		}
+	}()
 
 	hdr := &types.Header{
 		Number: new(big.Int).SetUint64(parent.NumberU64() + 1),
@@ -172,7 +181,7 @@ func (vm *VM) buildBlockOnHistory(lastSettled, parent *Block, timestamp uint64, 
 
 		switch err := checker.Include(tx); {
 		case err == nil:
-			txs = append(txs, tx)
+			include = append(include, candidate)
 
 		case errIsOneOf(err, worstcase.ErrBlockTooFull, worstcase.ErrQueueTooFull):
 			delayed = append(delayed, candidate)
@@ -193,17 +202,15 @@ func (vm *VM) buildBlockOnHistory(lastSettled, parent *Block, timestamp uint64, 
 		}
 	}
 
-	for _, tx := range delayed {
-		candidateTxs.Push(tx)
-	}
-
 	// TODO(arr4n) setting `gasUsed` (i.e. historical) based on receipts and
 	// `gasLimit` (future-looking) based on the enqueued transactions follows
 	// naturally from all of the other changes. However it will be possible to
 	// have `gasUsed>gasLimit`, which may break some systems.
 	var gasLimit gas.Gas
-	for _, tx := range txs {
-		gasLimit += gas.Gas(tx.Gas())
+	txs := make(types.Transactions, len(include))
+	for i, tx := range include {
+		txs[i] = tx.tx
+		gasLimit += gas.Gas(tx.tx.Gas())
 	}
 
 	// TODO(arr4n) return the base fee too, available from the [gastime.Time] in
