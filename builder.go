@@ -37,7 +37,10 @@ func (vm *VM) buildBlock(ctx context.Context, timestamp uint64, parent *Block) (
 	return block, nil
 }
 
-var errWaitingForExecution = errors.New("waiting for execution when building block")
+var (
+	errWaitingForExecution = errors.New("waiting for execution when building block")
+	errNoopBlock           = errors.New("block does not settle state nor include transactions")
+)
 
 func (vm *VM) buildBlockWithCandidateTxs(timestamp uint64, parent *Block, candidateTxs queue.Queue[*pendingTx]) (*Block, error) {
 	if timestamp < parent.Time() {
@@ -79,6 +82,9 @@ func (vm *VM) buildBlockWithCandidateTxs(timestamp uint64, parent *Block, candid
 	txs, gasLimit, err := vm.buildBlockOnHistory(toSettle, parent, timestamp, candidateTxs)
 	if err != nil {
 		return nil, err
+	}
+	if gasUsed == 0 && len(txs) == 0 {
+		return nil, errNoopBlock
 	}
 
 	b := vm.newBlock(types.NewBlock(
@@ -177,18 +183,15 @@ func (vm *VM) buildBlockOnHistory(lastSettled, parent *Block, timestamp uint64, 
 		}
 	}
 
-	txs := make(types.Transactions, len(include))
-	for i, tx := range include {
-		txs[i] = tx.tx
-	}
-
 	// TODO(arr4n) setting `gasUsed` (i.e. historical) based on receipts and
 	// `gasLimit` (future-looking) based on the enqueued transactions follows
 	// naturally from all of the other changes. However it will be possible to
 	// have `gasUsed>gasLimit`, which may break some systems.
 	var gasLimit gas.Gas
-	for _, tx := range txs {
-		gasLimit += gas.Gas(tx.Gas())
+	txs := make(types.Transactions, len(include))
+	for i, tx := range include {
+		txs[i] = tx.tx
+		gasLimit += gas.Gas(tx.tx.Gas())
 	}
 
 	// TODO(arr4n) return the base fee too, available from the [gastime.Time] in

@@ -206,7 +206,12 @@ func TestBasicE2E(t *testing.T) {
 			waitingForExecution++
 			continue
 		}
-		require.NoErrorf(t, err, "%T.BuildBlock()", snowCompatVM)
+		if errors.Is(err, errNoopBlock) {
+			numBlocks--
+			now = now.Add(time.Second)
+			continue
+		}
+		require.NoErrorf(t, err, "%T.BuildBlock() #%d", snowCompatVM, numBlocks)
 
 		b, err := snowCompatVM.ParseBlock(ctx, proposed.Bytes())
 		require.NoErrorf(t, err, "%T.ParseBlock()", snowCompatVM)
