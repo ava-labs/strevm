@@ -277,7 +277,7 @@ func (*ethAPIBackend) RPCEVMTimeout() time.Duration {
 }
 
 func (b *ethAPIBackend) RPCGasCap() uint64 {
-	return uint64(10 * b.vm.exec.gasClock.params.R)
+	return uint64(10 * b.vm.exec.gasClock.Rate())
 }
 
 func (b *ethAPIBackend) Engine() consensus.Engine {

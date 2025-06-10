@@ -52,10 +52,10 @@ func (vm *VM) AcceptBlock(ctx context.Context, b *Block) error {
 	// `Verify` and `Accept` in a loop over blocks. Reporting an error during
 	// either `Verify` or `Accept` is considered FATAL during this process.
 	// Therefore, we must ensure that avalanchego does not get too far ahead of
-	// the execution thread and FATAL during block Verification.
+	// the execution thread and FATAL during block verification.
 	if vm.consensusState.Get() == snow.Bootstrapping {
-		if err := vm.exec.awaitEmpty(ctx); err != nil {
-			return err
+		if err := vm.exec.queueCleared.Wait(ctx); err != nil {
+			return fmt.Errorf("waiting for execution during bootstrap: %v", err)
 		}
 	}
 
@@ -87,7 +87,7 @@ func (vm *VM) AcceptBlock(ctx context.Context, b *Block) error {
 	vm.last.settled.Store(b.lastSettled)
 	vm.last.accepted.Store(b)
 
-	vm.logger().Info(
+	vm.logger().Debug(
 		"Accepted block",
 		zap.Uint64("height", b.Height()),
 		zap.Stringer("hash", b.Hash()),
@@ -98,7 +98,7 @@ func (vm *VM) AcceptBlock(ctx context.Context, b *Block) error {
 		// GC!
 		prune := func(b *Block) {
 			delete(bm, b.Hash())
-			vm.logger().Info(
+			vm.logger().Debug(
 				"Pruning settled block",
 				zap.Stringer("hash", b.Hash()),
 				zap.Uint64("number", b.NumberU64()),

@@ -29,6 +29,7 @@ type TransactionIncluder struct {
 
 	clock *gastime.Time
 
+	maxQSeconds, maxBlockSeconds                 uint64
 	qLength, maxQLength, blockSize, maxBlockSize gas.Gas
 }
 
@@ -48,15 +49,20 @@ func NewTxIncluder(
 	fromExecTime *gastime.Time,
 	maxQueueSeconds, maxBlockSeconds uint64,
 ) *TransactionIncluder {
-	t := fromExecTime
 	inc := &TransactionIncluder{
-		db:           db,
-		config:       config,
-		clock:        t,
-		maxQLength:   t.Rate() * gas.Gas(maxQueueSeconds),
-		maxBlockSize: t.Rate() * gas.Gas(maxBlockSeconds),
+		db:              db,
+		config:          config,
+		clock:           fromExecTime,
+		maxQSeconds:     maxQueueSeconds,
+		maxBlockSeconds: maxBlockSeconds,
 	}
+	inc.setMaxSizes()
 	return inc
+}
+
+func (inc *TransactionIncluder) setMaxSizes() {
+	inc.maxQLength = inc.clock.Rate() * gas.Gas(inc.maxQSeconds)
+	inc.maxBlockSize = inc.clock.Rate() * gas.Gas(inc.maxBlockSeconds)
 }
 
 var errNonConsecutiveBlocks = errors.New("non-consecutive block numbers")
@@ -74,6 +80,7 @@ func (inc *TransactionIncluder) StartBlock(hdr *types.Header, target gas.Gas) er
 
 	inc.FinishBlock()
 	hook.BeforeBlock(inc.clock, hdr, target)
+	inc.setMaxSizes()
 	inc.curr = types.CopyHeader(hdr)
 
 	// For both rules and signer, we MUST use the block's timestamp, not the
@@ -141,7 +148,7 @@ func (inc *TransactionIncluder) Include(tx *types.Transaction) error {
 	}
 
 	// ----- Balance covers worst-case gas cost + tx value -----
-	price := uint256.NewInt(uint64(inc.clock.Price()))
+	price := inc.clock.BaseFee()
 	if cap, min := tx.GasFeeCap(), price.ToBig(); cap.Cmp(min) < 0 {
 		return core.ErrFeeCapTooLow
 	}

@@ -10,17 +10,15 @@ import (
 	"github.com/arr4n/sink"
 	snowcommon "github.com/ava-labs/avalanchego/snow/engine/common"
 	"github.com/ava-labs/avalanchego/vms/components/gas"
-	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core/state"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/strevm/intmath"
 	"github.com/ava-labs/strevm/queue"
-	"github.com/holiman/uint256"
+	"github.com/ava-labs/strevm/worstcase"
 	"go.uber.org/zap"
 )
 
 func (vm *VM) buildBlock(ctx context.Context, timestamp uint64, parent *Block) (*Block, error) {
-	timestamp = max(timestamp, parent.Time())
 	block, err := sink.FromPriorityMutex(
 		ctx, vm.mempool, sink.MaxPriority,
 		func(_ <-chan sink.Priority, pool *queue.Priority[*pendingTx]) (*Block, error) {
@@ -43,11 +41,12 @@ func (vm *VM) buildBlock(ctx context.Context, timestamp uint64, parent *Block) (
 	if err != nil {
 		return nil, err
 	}
-	vm.logger().Info(
+	vm.logger().Debug(
 		"Built block",
 		zap.Uint64("timestamp", timestamp),
 		zap.Uint64("height", block.Height()),
 		zap.Stringer("parent", parent.Hash()),
+		zap.Int("transactions", len(block.Transactions())),
 	)
 	return block, nil
 }
@@ -71,7 +70,7 @@ func (vm *VM) buildBlockWithCandidateTxs(timestamp uint64, parent *Block, candid
 		)
 		return nil, fmt.Errorf("%w: parent %#x at time %d", errWaitingForExecution, parent.Hash(), timestamp)
 	}
-	vm.logger().Info(
+	vm.logger().Debug(
 		"Settlement candidate",
 		zap.Uint64("timestamp", timestamp),
 		zap.Stringer("parent", parent.Hash()),
@@ -135,107 +134,91 @@ func (vm *VM) buildBlockOnHistory(lastSettled, parent *Block, timestamp uint64, 
 		return nil, 0, err
 	}
 
-	blockNum := parent.NumberU64() + 1
-	signer := vm.signer(blockNum, timestamp)
-	checker := validityChecker{
-		db:  sdb,
-		log: vm.logger(),
-		rules: vm.exec.chainConfig.Rules(
-			new(big.Int).SetUint64(blockNum),
-			true,
-			timestamp,
-		),
-		gasClock: lastSettled.execution.by.clone(),
-		nonces:   make(map[common.Address]uint64),
-		balances: make(map[common.Address]*uint256.Int),
-	}
-	clock := &checker.gasClock
+	checker := worstcase.NewTxIncluder(
+		sdb, vm.exec.chainConfig,
+		lastSettled.execution.by.Clone(),
+		5, 2, // TODO(arr4n) what are the max queue and block seconds?
+	)
 
-	// TODO(arr4n): investigate caching values to avoid having to replay the
-	// entire history.
 	for _, b := range history {
-		clock.beforeBlock(b.parent, b.Time(), vm.hooks)
-		var consumed gas.Gas
+		checker.StartBlock(b.Header(), vm.hooks.GasTarget(b.parent.Block))
 		for _, tx := range b.Transactions() {
-			from, err := types.Sender(signer, tx)
-			if err != nil {
-				return nil, 0, err
-			}
-
-			valid, err := checker.addTxToQueue(txAndSender{tx, from})
-			if err != nil || valid != includeTx {
+			if err := checker.Include(tx); err != nil {
 				vm.logger().Error(
-					"Invalid transaction when replaying history",
+					"Transaction not included when replaying history",
 					zap.Stringer("block", b.Hash()),
 					zap.Stringer("tx", tx.Hash()),
 					zap.Error(err),
-					zap.Stringer("validity", valid),
 				)
 				return nil, 0, err
 			}
-			consumed += gas.Gas(tx.Gas())
 		}
-		clock.afterBlock(consumed)
 	}
 
 	var (
-		txs types.Transactions
-		// TODO(arr4n) setting `gasUsed` (i.e. historical) based on receipts and
-		// `gasLimit` (future-looking) based on the enqueued transactions
-		// follows naturally from all of the other changes. However it will be
-		// possible to have `gasUsed>gasLimit`, which may break some systems.
-		gasLimit gas.Gas
-		delayed  []*pendingTx
+		txs     types.Transactions
+		delayed []*pendingTx
 	)
 
-	clock.beforeBlock(parent, timestamp, vm.hooks)
-TxLoop:
-	for candidateTxs.Len() > 0 {
+	hdr := &types.Header{
+		Number: new(big.Int).SetUint64(parent.NumberU64() + 1),
+		Time:   timestamp,
+	}
+	checker.StartBlock(hdr, vm.hooks.GasTarget(parent.Block))
+
+	for full := false; !full && candidateTxs.Len() > 0; {
 		candidate := candidateTxs.Pop()
 		tx := candidate.tx
 
-		validity, err := checker.addTxToQueue(candidate.txAndSender)
-		if err != nil {
+		switch err := checker.Include(tx); {
+		case err == nil:
+			txs = append(txs, tx)
+
+		case errIsOneOf(err, worstcase.ErrBlockTooFull, worstcase.ErrQueueTooFull):
+			delayed = append(delayed, candidate)
+			full = true
+
+		// TODO(arr4n) handle all other errors.
+
+		default:
+			vm.logger().Error(
+				"Unknown error from worst-case transaction checking",
+				zap.Error(err),
+			)
+
 			// TODO: It is not acceptable to return an error here, as all
 			// transactions that have been removed from the mempool will be
 			// dropped and never included.
 			return nil, 0, err
 		}
-
-		switch validity {
-		case includeTx:
-			if gl := gasLimit + gas.Gas(tx.Gas()); gl <= clock.maxBlockSize() {
-				gasLimit = gl
-				txs = append(txs, tx)
-			} else {
-				delayed = append(delayed, candidate)
-				break TxLoop
-			}
-
-		case delayTx, queueFull:
-			delayed = append(delayed, candidate)
-			vm.logger().Info(
-				"Delaying transaction until later block-building",
-				zap.Stringer("hash", tx.Hash()),
-			)
-			if validity == queueFull {
-				break TxLoop
-			}
-
-		case discardTx:
-			vm.logger().Info(
-				"Discarding transaction",
-				zap.Stringer("hash", tx.Hash()),
-			)
-
-		}
 	}
+
 	for _, tx := range delayed {
 		candidateTxs.Push(tx)
 	}
-	clock.afterBlock(gasLimit)
+
+	// TODO(arr4n) setting `gasUsed` (i.e. historical) based on receipts and
+	// `gasLimit` (future-looking) based on the enqueued transactions follows
+	// naturally from all of the other changes. However it will be possible to
+	// have `gasUsed>gasLimit`, which may break some systems.
+	var gasLimit gas.Gas
+	for _, tx := range txs {
+		gasLimit += gas.Gas(tx.Gas())
+	}
+
+	// TODO(arr4n) return the base fee too, available from the [gastime.Time] in
+	// `checker`.
 
 	return txs, gasLimit, nil
+}
+
+func errIsOneOf(err error, targets ...error) bool {
+	for _, t := range targets {
+		if errors.Is(err, t) {
+			return true
+		}
+	}
+	return false
 }
 
 func (vm *VM) lastBlockToSettleAt(timestamp uint64, parent *Block) (*Block, bool) {
@@ -259,7 +242,7 @@ func (vm *VM) lastBlockToSettleAt(timestamp uint64, parent *Block) (*Block, bool
 		}
 
 		if block.executed.Load() {
-			if block.execution.by.isAfter(settleAt) {
+			if block.execution.by.CmpUnix(settleAt) > 0 {
 				continue
 			}
 			return block, true
@@ -273,15 +256,4 @@ func (vm *VM) lastBlockToSettleAt(timestamp uint64, parent *Block) (*Block, bool
 
 		return nil, false
 	}
-}
-
-func (b *Block) mightFitWithinGasLimit(max gas.Gas) bool {
-	for _, tx := range b.Transactions() {
-		g := minGasCharged(tx)
-		if g > max {
-			return false
-		}
-		max -= g
-	}
-	return true
 }

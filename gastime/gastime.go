@@ -5,6 +5,7 @@ import (
 	"github.com/ava-labs/avalanchego/vms/components/gas"
 	"github.com/ava-labs/strevm/intmath"
 	"github.com/ava-labs/strevm/proxytime"
+	"github.com/holiman/uint256"
 )
 
 // Time represents an instant in time, its passage measured in [gas.Gas]
@@ -62,6 +63,12 @@ func (tm *Time) Excess() gas.Gas {
 // Price returns the price of a unit of gas, i.e. the "base fee".
 func (tm *Time) Price() gas.Price {
 	return gas.CalculatePrice(1 /* M */, tm.excess, 87*tm.target /* K */)
+}
+
+// BaseFee is equivalent to [Time.Price], returning the result as a uint256 for
+// compatibility with geth/libevm objects.
+func (tm *Time) BaseFee() *uint256.Int {
+	return uint256.NewInt(uint64(tm.Price()))
 }
 
 // SetTarget changes the target gas consumption per second. It is equivalent to

@@ -13,20 +13,13 @@ import (
 )
 
 const (
-	TargetGasPerSecond       = 1_000_000
-	GasCapacityPerSecond     = 2 * TargetGasPerSecond
-	ExcessConversionConstant = 87 * TargetGasPerSecond
+	TargetGasPerSecond = 1_000_000
 )
 
 type hooks struct{}
 
-func (h *hooks) UpdateGasParams(parent *types.Block, p *sae.GasParams) {
-	*p = sae.GasParams{
-		T:      TargetGasPerSecond,
-		R:      GasCapacityPerSecond,
-		Price:  gas.CalculatePrice(1, p.Excess, ExcessConversionConstant),
-		Excess: p.Excess,
-	}
+func (*hooks) GasTarget(parent *types.Block) gas.Gas {
+	return TargetGasPerSecond
 }
 
 func main() {

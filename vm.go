@@ -42,9 +42,10 @@ type VM struct {
 	now      func() time.Time
 
 	consensusState utils.Atomic[snow.State]
-	blocks         sink.Mutex[blockMap]
-	preference     atomic.Pointer[Block]
-	last           last
+
+	blocks     sink.Mutex[blockMap]
+	preference atomic.Pointer[Block]
+	last       last
 
 	db ethdb.Database
 

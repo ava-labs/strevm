@@ -24,7 +24,8 @@ import (
 	"github.com/ava-labs/libevm/params"
 	"go.uber.org/zap"
 
-	"github.com/ava-labs/strevm/intmath"
+	"github.com/ava-labs/strevm/gastime"
+	"github.com/ava-labs/strevm/hook"
 	"github.com/ava-labs/strevm/queue"
 )
 
@@ -37,9 +38,16 @@ type executor struct {
 
 	spawned sync.WaitGroup
 
-	gasClock     gasClock
+	gasClock     gastime.Time
 	queue        sink.Monitor[*queue.FIFO[*Block]]
 	lastExecuted *atomic.Pointer[Block] // shared with VM
+
+	// During bootstrapping we need to know when the queue has been executed to
+	// avoid verification returning an error due to waiting on the execution
+	// stream for settlement. This [sink.Gate] is only valid if *not* waited
+	// upon concurrently with a call to [VM.AcceptBlock] as that may result in a
+	// spurious unblocking with a non-empty queue.
+	queueCleared sink.Gate
 
 	headEvents  event.FeedOf[core.ChainHeadEvent]
 	chainEvents event.FeedOf[core.ChainEvent]
@@ -78,12 +86,13 @@ func (e *executor) init() error {
 		snaps:   snaps,
 		statedb: statedb,
 	}
-	e.gasClock = last.execution.by.clone()
+	e.gasClock = *last.execution.by.Clone()
 	return nil
 }
 
 func (e *executor) run(ready chan<- struct{}) {
 	e.queue = sink.NewMonitor(new(queue.FIFO[*Block]))
+	e.queueCleared = sink.NewGate()
 	e.spawn(e.processQueue)
 
 	close(ready)
@@ -121,6 +130,7 @@ func (e *executor) quitCtx() context.Context {
 func (e *executor) enqueueAccepted(ctx context.Context, block *Block) error {
 	return e.queue.UseThenSignal(ctx, func(q *queue.FIFO[*Block]) error {
 		q.Push(block)
+		e.queueCleared.Block()
 		return nil
 	})
 }
@@ -129,12 +139,21 @@ func (e *executor) processQueue() {
 	ctx := e.quitCtx()
 
 	for {
-		block, err := sink.FromMonitor(ctx, e.queue,
+		type pop struct {
+			block      *Block
+			emptyAfter bool
+		}
+
+		popped, err := sink.FromMonitor(ctx, e.queue,
 			func(q *queue.FIFO[*Block]) bool {
 				return q.Len() > 0
 			},
-			func(q *queue.FIFO[*Block]) (*Block, error) {
-				return q.Pop(), nil
+			func(q *queue.FIFO[*Block]) (pop, error) {
+				b := q.Pop()
+				return pop{
+					block:      b,
+					emptyAfter: q.Len() == 0,
+				}, nil
 			},
 		)
 		if errors.Is(err, context.Canceled) {
@@ -148,6 +167,7 @@ func (e *executor) processQueue() {
 			return
 		}
 
+		block := popped.block
 		switch err := e.execute(ctx, block); {
 		case errors.Is(err, context.Canceled):
 			return
@@ -162,22 +182,13 @@ func (e *executor) processQueue() {
 			return
 		}
 
-		// This is a hack to signal anyone blocked on awaitEmpty
-		_ = e.queue.UseThenSignal(ctx, func(*queue.FIFO[*Block]) error { return nil })
+		// This may race with a concurrent call to [VM.AcceptBlock], but that is
+		// documented and also acceptable as we only ever Wait() inside
+		// [VM.AcceptBlock].
+		if popped.emptyAfter {
+			e.queueCleared.Open()
+		}
 	}
-}
-
-func (e *executor) awaitEmpty(ctx context.Context) error {
-	// This isn't implemented correctly, but I don't know how it is supposed to
-	// work. We should have a mutex with 2 conditions, one where the queue is
-	// empty (and the processing thread is not executing), the other where the
-	// queue isn't empty.
-	return e.queue.Wait(ctx,
-		func(q *queue.FIFO[*Block]) bool {
-			return q.Len() == 0
-		},
-		func(*queue.FIFO[*Block]) error { return nil },
-	)
 }
 
 type executionScratchSpace struct {
@@ -186,7 +197,7 @@ type executionScratchSpace struct {
 }
 
 type executionResults struct {
-	by       gasClock `canoto:"value,1"`
+	by       gastime.Time `canoto:"value,1"`
 	byTime   time.Time
 	receipts types.Receipts
 
@@ -195,85 +206,6 @@ type executionResults struct {
 	stateRootPost common.Hash `canoto:"fixed bytes,4"`
 
 	canotoData canotoData_executionResults `canoto:"nocopy"`
-}
-
-type gasClock struct {
-	time     uint64    `canoto:"uint,1"`
-	consumed gas.Gas   `canoto:"uint,2"` // this second
-	params   GasParams `canoto:"value,3"`
-
-	canotoData canotoData_gasClock `canoto:"nocopy"`
-}
-
-func (c *gasClock) clone() gasClock {
-	return gasClock{
-		time:     c.time,
-		consumed: c.consumed,
-		params:   c.params.clone(),
-	}
-}
-
-type GasParams struct {
-	T      gas.Gas   `canoto:"uint,1"`
-	R      gas.Gas   `canoto:"uint,2"`
-	Excess gas.Gas   `canoto:"uint,3"`
-	Price  gas.Price `canoto:"uint,4"`
-
-	canotoData canotoData_GasParams `canoto:"nocopy"`
-}
-
-func (p *GasParams) clone() GasParams {
-	return GasParams{
-		T:      p.T,
-		R:      p.R,
-		Excess: p.Excess,
-		Price:  p.Price,
-	}
-}
-
-func (c *gasClock) beforeBlock(parent *Block, timestamp uint64, hooks Hooks) {
-	hooks.UpdateGasParams(parent.Block, &c.params)
-	c.fastForward(timestamp)
-}
-
-func (c *gasClock) afterBlock(consumed gas.Gas) {
-	c.consume(consumed)
-}
-
-func (c *gasClock) fastForward(to uint64) {
-	if to <= c.time {
-		return
-	}
-
-	R, T := c.params.R, c.params.T
-	surplus := R - c.consumed
-	surplus += gas.Gas(to-c.time-1) * R // -1 avoids double-counting gas remaining this second
-
-	quo, _ := intmath.MulDiv(surplus, T, R)
-	c.params.Excess = intmath.BoundedSubtract(c.params.Excess, quo, 0)
-
-	c.time = to
-	c.consumed = 0
-}
-
-func (c *gasClock) consume(g gas.Gas) {
-	R, T := c.params.R, c.params.T
-
-	c.consumed += g
-	c.time += uint64(c.consumed / R)
-	c.consumed %= R
-
-	quo, _ := intmath.MulDiv(g, R-T, R)
-	c.params.Excess += gas.Gas(quo)
-}
-
-func (c *gasClock) isAfter(timestamp uint64) bool {
-	return timestamp < c.time || (timestamp == c.time && c.consumed > 0)
-}
-
-func (c *gasClock) asTime() time.Time {
-	nsec, _ /*remainder*/ := intmath.MulDiv(c.consumed, 1e9, c.params.R)
-	return time.Unix(int64(c.time), int64(nsec))
 }
 
 func (e *executor) execute(ctx context.Context, b *Block) error {
@@ -286,10 +218,10 @@ func (e *executor) execute(ctx context.Context, b *Block) error {
 		return fmt.Errorf("executing blocks out of order: %d then %d", last, curr)
 	}
 
-	e.gasClock.beforeBlock(b.parent, b.Time(), e.hooks)
+	hook.BeforeBlock(&e.gasClock, b.Header(), e.hooks.GasTarget(b.parent.Block))
 
 	header := types.CopyHeader(b.Header())
-	header.BaseFee = e.gasClock.params.baseFee().ToBig()
+	header.BaseFee = e.gasClock.BaseFee().ToBig()
 	e.log.Info(
 		"Executing accepted block",
 		zap.Uint64("height", b.Height()),
@@ -324,14 +256,14 @@ func (e *executor) execute(ctx context.Context, b *Block) error {
 		receipts[ti] = receipt
 	}
 	endTime := time.Now()
-	e.gasClock.afterBlock(blockGasConsumed)
+	hook.AfterBlock(&e.gasClock, blockGasConsumed)
 
 	root, err := e.commitState(ctx, x, b.NumberU64())
 	if err != nil {
 		return err
 	}
 	b.execution = &executionResults{
-		by:            e.gasClock.clone(),
+		by:            *e.gasClock.Clone(),
 		byTime:        endTime,
 		receipts:      receipts,
 		gasUsed:       blockGasConsumed,
@@ -362,7 +294,7 @@ func (e *executor) execute(ctx context.Context, b *Block) error {
 	e.log.Info(
 		"Block execution complete",
 		zap.Uint64("height", b.Height()),
-		zap.Time("gas_time", e.gasClock.asTime()),
+		zap.Time("gas_time", e.gasClock.AsTime()),
 		zap.Time("wall_time", endTime),
 		zap.Int("tx_count", len(b.Transactions())),
 	)

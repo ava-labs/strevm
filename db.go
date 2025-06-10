@@ -13,6 +13,7 @@ import (
 	"github.com/ava-labs/libevm/core/rawdb"
 	"github.com/ava-labs/libevm/ethdb"
 	"github.com/ava-labs/libevm/params"
+	"github.com/ava-labs/strevm/gastime"
 	"go.uber.org/zap"
 )
 
@@ -83,9 +84,12 @@ func (vm *VM) upgradeLastSynchronousBlock(hash common.Hash) error {
 	vm.last.synchronousTime = block.Time()
 
 	block.execution = &executionResults{
-		by: gasClock{
-			time: block.Time(),
-		},
+		by: *gastime.New(
+			block.Time(),
+			// TODO(arr4n) get the gas target and post-execution excess of the
+			// genesis block.
+			1e6, 0,
+		),
 		receipts:      nil, // nil to avoid async re-settlement
 		gasUsed:       gas.Gas(block.GasUsed()),
 		receiptRoot:   block.ReceiptHash(),

@@ -151,10 +151,18 @@ func (tm *Time[D]) Cmp(u *Time[D]) int {
 	return 0
 }
 
+// CmpUnix is equivalent to [Time.Cmp] against a zero-fractional-second instant
+// in time. Note that it does NOT only compare the seconds and that if `tm` has
+// the same [Time.Unix] as `sec` but non-zero [Time.Fraction] then CmpUnix will
+// return 1.
+func (tm *Time[D]) CmpUnix(sec uint64) int {
+	return tm.Cmp(&Time[D]{seconds: sec})
+}
+
 // AsTime converts the proxy time to a standard [time.Time] in UTC. AsTime is
 // analogous to setting a rate of 1e9 (nanosecond), which might result in
 // truncation.
 func (tm *Time[D]) AsTime() time.Time {
-	nsec, _ /*remainder*/ := intmath.MulDiv(tm.fraction, 1e9, tm.hertz)
+	nsec, _ /*remainder*/ := tm.scale(tm.fraction, 1e9)
 	return time.Unix(int64(tm.seconds), int64(nsec)).In(time.UTC)
 }
