@@ -34,6 +34,7 @@ func (vm *VM) AcceptBlock(ctx context.Context, b *Block) error {
 	}
 
 	batch := vm.db.NewBatch()
+	rawdb.WriteBlock(batch, b.Block)
 	rawdb.WriteCanonicalHash(batch, b.Hash(), b.NumberU64())
 	rawdb.WriteTxLookupEntriesByBlock(batch, b.Block) // i.e. canonical tx inclusion
 
@@ -140,7 +141,6 @@ func (vm *VM) VerifyBlock(ctx context.Context, b *Block) error {
 		return err
 	}
 
-	rawdb.WriteBlock(vm.db, b.Block)
 	return vm.blocks.Use(ctx, func(bm blockMap) error {
 		bm[b.Hash()] = b
 		return nil
