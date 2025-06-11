@@ -220,7 +220,7 @@ func (b *ethAPIBackend) GetReceipts(ctx context.Context, hash common.Hash) (type
 
 func (b *ethAPIBackend) GetTransaction(ctx context.Context, txHash common.Hash) (bool, *types.Transaction, common.Hash, uint64, uint64, error) {
 	tx, blockHash, blockNum, index := rawdb.ReadTransaction(b.vm.db, txHash)
-	if tx == nil {
+	if tx == nil || blockNum > b.vm.last.executed.Load().NumberU64() {
 		return false, nil, common.Hash{}, 0, 0, nil
 	}
 	return true, tx, blockHash, blockNum, index, nil
