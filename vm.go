@@ -2,10 +2,8 @@ package sae
 
 import (
 	"context"
-	"math"
 	"math/big"
 	"net/http"
-	"runtime"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -25,6 +23,7 @@ import (
 	"github.com/ava-labs/libevm/ethdb"
 	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/rlp"
+	"github.com/ava-labs/strevm/blocks"
 	"github.com/ava-labs/strevm/queue"
 )
 
@@ -138,20 +137,8 @@ func New(ctx context.Context, c Config) (*VM, error) {
 	return vm, nil
 }
 
-// inMemoryBlockCount tracks the number of blocks created with [VM.newBlock]
-// that are yet to have their GC finalizers run. See block pruning at the end of
-// [VM.AcceptBlock].
-var inMemoryBlockCount atomic.Uint64
-
-func (vm *VM) newBlock(b *types.Block) *Block {
-	inMemoryBlockCount.Add(1)
-	bb := &Block{
-		Block: b,
-	}
-	runtime.SetFinalizer(bb, func(*Block) {
-		inMemoryBlockCount.Add(math.MaxUint64) // -1
-	})
-	return bb
+func (vm *VM) newBlock(b *types.Block, parent, lastSettled *Block) (*Block, error) {
+	return blocks.New(b, parent, lastSettled, vm.logger())
 }
 
 func (vm *VM) logger() logging.Logger {
@@ -231,7 +218,10 @@ func (vm *VM) GetBlock(ctx context.Context, blkID ids.ID) (*Block, error) {
 	if ethB == nil {
 		return nil, database.ErrNotFound
 	}
-	return vm.newBlock(ethB), nil
+	// Not being in the blockMap (above) means that the block has been settled
+	// and that its parent and last-settled pointers would have been cleared; we
+	// therefore don't populate either of them.
+	return vm.newBlock(ethB, nil, nil)
 }
 
 func (vm *VM) ParseBlock(ctx context.Context, blockBytes []byte) (*Block, error) {
@@ -239,7 +229,10 @@ func (vm *VM) ParseBlock(ctx context.Context, blockBytes []byte) (*Block, error)
 	if err := rlp.DecodeBytes(blockBytes, b); err != nil {
 		return nil, err
 	}
-	return vm.newBlock(b), nil
+	// TODO(arr4n) do we need to populate parent and last-settled blocks here?
+	// They will be populated by [VM.VerifyBlock] so I assume not, but best to
+	// confirm and document here.
+	return vm.newBlock(b, nil, nil)
 }
 
 func (vm *VM) BuildBlock(ctx context.Context) (*Block, error) {

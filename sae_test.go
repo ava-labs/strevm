@@ -37,6 +37,7 @@ import (
 	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/rpc"
 	"github.com/ava-labs/strevm/adaptor"
+	"github.com/ava-labs/strevm/blocks"
 	"github.com/ava-labs/strevm/gastime"
 	"github.com/ava-labs/strevm/proxytime"
 	"github.com/ava-labs/strevm/queue"
@@ -117,9 +118,9 @@ func TestBasicE2E(t *testing.T) {
 		require.NoErrorf(t, err, "%T.GetBlock(%[1]T.LastAccepted())", vm)
 
 		assert.Equal(t, uint64(0), block.Height(), "block height")
-		assert.Nil(t, block.parent, "parent")
-		assert.Nil(t, block.lastSettled, "last settled")
-		assert.True(t, block.executed.Load(), "executed")
+		assert.Nil(t, block.ParentBlock(), "parent")
+		assert.Nil(t, block.LastSettled(), "last settled")
+		assert.True(t, block.Executed(), "executed")
 
 		for k, ptr := range map[string]*atomic.Pointer[Block]{
 			"accepted": &vm.last.accepted,
@@ -234,7 +235,7 @@ func TestBasicE2E(t *testing.T) {
 		if blockWithLastTx == nil {
 			blockWithLastTx = bb
 			t.Logf("Last tx included in block %d", bb.NumberU64())
-		} else if s := bb.lastSettled; s != nil && s.NumberU64() >= blockWithLastTx.NumberU64() {
+		} else if s := bb.LastSettled(); s != nil && s.NumberU64() >= blockWithLastTx.NumberU64() {
 			t.Logf("Built and accepted %s blocks in %v", human(numBlocks), time.Since(start))
 			t.Logf("Consensus waited for execution %s times", human(waitingForExecution))
 			break
@@ -244,11 +245,11 @@ func TestBasicE2E(t *testing.T) {
 
 	t.Cleanup(func() {
 		// See block pruning at the end of [VM.AcceptBlock]
-		n := inMemoryBlockCount.Load()
+		n := blocks.InMemoryBlockCount()
 		acceptedBlocks = nil
 		blockWithLastTx = nil
 		runtime.GC()
-		t.Logf("After GC, in-memory block count: %d => %d", n, inMemoryBlockCount.Load())
+		t.Logf("After GC, in-memory block count: %d => %d", n, blocks.InMemoryBlockCount())
 	})
 
 	pprof.StopCPUProfile() // docs state "stops the current CPU profile, if any" so ok if we didn't start it
@@ -262,7 +263,7 @@ func TestBasicE2E(t *testing.T) {
 	require.NoErrorf(t, err, "%T.LastAccepted()", vm)
 	lastBlock, err := vm.GetBlock(ctx, lastID)
 	require.NoErrorf(t, err, "%T.GetBlock(LastAccepted())", vm)
-	require.Eventuallyf(t, lastBlock.executed.Load, time.Second, 10*time.Millisecond, "executed.Load() on last %T", lastBlock)
+	require.Eventuallyf(t, lastBlock.Executed, time.Second, 10*time.Millisecond, "executed.Load() on last %T", lastBlock)
 
 	t.Run("persisted_block_hashes", func(t *testing.T) {
 		t.Parallel()
@@ -277,7 +278,7 @@ func TestBasicE2E(t *testing.T) {
 
 				assert.GreaterOrEqual(t, settled.Number.Cmp(b.Number()), 0, "last-settled height >= block including last tx")
 			})
-			assert.Equalf(t, b.execution.stateRootPost, lastBlock.Root(), "%T.Root() of last block must be post-execution root of block including last tx", lastBlock)
+			assert.Equalf(t, b.PostExecutionStateRoot(), lastBlock.Root(), "%T.Root() of last block must be post-execution root of block including last tx", lastBlock)
 
 			// The following tests that [rawdb.WriteTxLookupEntriesByBlock] has
 			// been called correctly.
@@ -317,7 +318,7 @@ func TestBasicE2E(t *testing.T) {
 			gotReceiptsConcat := slices.Concat(gotReceipts...)
 
 			require.Equalf(t, len(allTxs), len(gotReceiptsConcat), "# %T == # %T", &types.Receipt{}, &types.Transaction{})
-			lastExecutedBy := blockWithLastTx.execution.byTime
+			lastExecutedBy := blockWithLastTx.ExecutedByWallTime()
 			t.Logf("Executed %s txs (%s gas) in %v", human(len(gotReceiptsConcat)), human(totalGasConsumed), lastExecutedBy.Sub(start))
 
 			t.Run("vs_sent_txs", func(t *testing.T) {
@@ -397,7 +398,7 @@ func TestBasicE2E(t *testing.T) {
 
 		t.Run("subscriptions", func(t *testing.T) {
 			t.Run("head_events", func(t *testing.T) {
-				for n := len(acceptedBlocks); !acceptedBlocks[n-1].executed.Load(); {
+				for n := len(acceptedBlocks); !acceptedBlocks[n-1].Executed(); {
 					// There's no need to block on execution in production so
 					// making the executed bool a channel is overkill.
 					runtime.Gosched()
@@ -530,10 +531,6 @@ func cmpBlocks() cmp.Options {
 	return cmp.Options{
 		cmpBigInts(),
 		cmpTimes(),
-		cmp.AllowUnexported(
-			Block{},
-			executionResults{},
-		),
 		cmp.Comparer(func(a, b *types.Block) bool {
 			return a.Hash() == b.Hash()
 		}),
@@ -546,13 +543,6 @@ func cmpBlocks() cmp.Options {
 			// Using a [cmp.Transformer] would make the linter complain about
 			// copying.
 			atomic.Bool{},
-		),
-		cmpopts.IgnoreTypes(
-			canotoData_executionResults{},
-		),
-		cmpopts.IgnoreFields(
-			executionResults{},
-			"byTime", // wall-clock for metrics only
 		),
 	}
 }
