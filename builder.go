@@ -12,6 +12,7 @@ import (
 	"github.com/ava-labs/avalanchego/vms/components/gas"
 	"github.com/ava-labs/libevm/core/state"
 	"github.com/ava-labs/libevm/core/types"
+	"github.com/ava-labs/strevm/blocks"
 	"github.com/ava-labs/strevm/intmath"
 	"github.com/ava-labs/strevm/queue"
 	"github.com/ava-labs/strevm/worstcase"
@@ -86,9 +87,10 @@ func (vm *VM) buildBlockWithCandidateTxs(timestamp uint64, parent *Block, candid
 	// We can never concurrently build and accept a block on the same parent,
 	// which guarantees that `parent` won't be settled, so the [Block] invariant
 	// means that `parent.lastSettled != nil`.
-	for _, b := range settling(parent.lastSettled, toSettle) {
-		receipts = append(receipts, b.execution.receipts)
-		for _, r := range b.execution.receipts {
+	for _, b := range parent.IfChildSettles(toSettle) {
+		brs := b.Receipts()
+		receipts = append(receipts, brs)
+		for _, r := range brs {
 			gasUsed += r.GasUsed
 		}
 	}
@@ -102,10 +104,10 @@ func (vm *VM) buildBlockWithCandidateTxs(timestamp uint64, parent *Block, candid
 		return nil, fmt.Errorf("%w: parent %#x at time %d", errNoopBlock, parent.Hash(), timestamp)
 	}
 
-	b := vm.newBlock(types.NewBlock(
+	ethB := types.NewBlock(
 		&types.Header{
 			ParentHash: parent.Hash(),
-			Root:       toSettle.execution.stateRootPost,
+			Root:       toSettle.PostExecutionStateRoot(),
 			Number:     new(big.Int).Add(parent.Number(), big.NewInt(1)),
 			GasLimit:   uint64(gasLimit),
 			GasUsed:    gasUsed,
@@ -115,32 +117,30 @@ func (vm *VM) buildBlockWithCandidateTxs(timestamp uint64, parent *Block, candid
 		txs, nil, /*uncles*/
 		slices.Concat(receipts...),
 		trieHasher(),
-	))
-	b.parent = parent
-	b.lastSettled = toSettle
-	return b, nil
+	)
+	return blocks.New(ethB, parent, toSettle, vm.logger())
 }
 
 func (vm *VM) buildBlockOnHistory(lastSettled, parent *Block, timestamp uint64, candidateTxs queue.Queue[*pendingTx]) (_ types.Transactions, _ gas.Gas, retErr error) {
 	var history []*Block
-	for b := parent; b.ID() != lastSettled.ID(); b = b.parent {
+	for b := parent; b.ID() != lastSettled.ID(); b = b.ParentBlock() {
 		history = append(history, b)
 	}
 	slices.Reverse(history)
 
-	sdb, err := state.New(lastSettled.execution.stateRootPost, vm.exec.stateCache, nil)
+	sdb, err := state.New(lastSettled.PostExecutionStateRoot(), vm.exec.stateCache, nil)
 	if err != nil {
 		return nil, 0, err
 	}
 
 	checker := worstcase.NewTxIncluder(
 		sdb, vm.exec.chainConfig,
-		lastSettled.execution.by.Clone(),
+		lastSettled.ExecutedByGasTime().Clone(),
 		5, 2, // TODO(arr4n) what are the max queue and block seconds?
 	)
 
 	for _, b := range history {
-		checker.StartBlock(b.Header(), vm.hooks.GasTarget(b.parent.Block))
+		checker.StartBlock(b.Header(), vm.hooks.GasTarget(b.ParentBlock().Block))
 		for _, tx := range b.Transactions() {
 			if err := checker.Include(tx); err != nil {
 				vm.logger().Error(
@@ -229,38 +229,6 @@ func errIsOneOf(err error, targets ...error) bool {
 }
 
 func (vm *VM) lastBlockToSettleAt(timestamp uint64, parent *Block) (*Block, bool) {
-	// These variables are only abstracted for clarity; they are not needed
-	// beyond the scope of the `for` loop.
-	var block, child *Block
-	block = parent // therefore `child` remains nil
 	settleAt := intmath.BoundedSubtract(timestamp, stateRootDelaySeconds, vm.last.synchronousTime)
-
-	// The only way [Block.parent] can be nil is if it was already settled (see
-	// invariant in [Block]). If a block was already settled then only that or a
-	// later (i.e. unsettled) block can be returned by this loop, therefore we
-	// have a guarantee that the loop update will never result in `block==nil`.
-	// Framed differently, because `settleAt` is >= what it was when this
-	// function was used to build `parent`, if `block.parent==nil` then it will
-	// have already been settled in `parent` and therefore executed by
-	// `<=settleAt` so will be returned here.
-	for ; ; block, child = block.parent, block {
-		if block.Time() > settleAt {
-			continue
-		}
-
-		if block.executed.Load() {
-			if block.execution.by.CmpUnix(settleAt) > 0 {
-				continue
-			}
-			return block, true
-		}
-
-		// TODO(arr4n) more fine-grained checks are possible for scenarios where
-		// (a) `block` could never execute before `settleAt` so we would
-		// `continue`; and (b) `block` will definitely execute in time and
-		// `child` could never, in which case return `nil, false`.
-		_ = child
-
-		return nil, false
-	}
+	return blocks.LastToSettleAt(settleAt, parent)
 }

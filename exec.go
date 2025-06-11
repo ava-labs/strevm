@@ -29,8 +29,6 @@ import (
 	"github.com/ava-labs/strevm/queue"
 )
 
-//go:generate go run github.com/StephenButtolph/canoto/canoto $GOFILE
-
 type executor struct {
 	quit  <-chan struct{}
 	log   logging.Logger
@@ -86,7 +84,7 @@ func (e *executor) init() error {
 		snaps:   snaps,
 		statedb: statedb,
 	}
-	e.gasClock = *last.execution.by.Clone()
+	e.gasClock = *last.ExecutedByGasTime().Clone()
 	return nil
 }
 
@@ -196,18 +194,6 @@ type executionScratchSpace struct {
 	statedb *state.StateDB
 }
 
-type executionResults struct {
-	by       gastime.Time `canoto:"value,1"`
-	byTime   time.Time
-	receipts types.Receipts
-
-	gasUsed       gas.Gas     `canoto:"uint,2"`
-	receiptRoot   common.Hash `canoto:"fixed bytes,3"`
-	stateRootPost common.Hash `canoto:"fixed bytes,4"`
-
-	canotoData canotoData_executionResults `canoto:"nocopy"`
-}
-
 func (e *executor) execute(ctx context.Context, b *Block) error {
 	x := &e.executeScratchSpace
 
@@ -218,7 +204,7 @@ func (e *executor) execute(ctx context.Context, b *Block) error {
 		return fmt.Errorf("executing blocks out of order: %d then %d", last, curr)
 	}
 
-	hook.BeforeBlock(&e.gasClock, b.Header(), e.hooks.GasTarget(b.parent.Block))
+	hook.BeforeBlock(&e.gasClock, b.Header(), e.hooks.GasTarget(b.ParentBlock().Block))
 
 	header := types.CopyHeader(b.Header())
 	header.BaseFee = e.gasClock.BaseFee().ToBig()
@@ -262,13 +248,8 @@ func (e *executor) execute(ctx context.Context, b *Block) error {
 	if err != nil {
 		return err
 	}
-	b.execution = &executionResults{
-		by:            *e.gasClock.Clone(),
-		byTime:        endTime,
-		receipts:      receipts,
-		gasUsed:       blockGasConsumed,
-		receiptRoot:   types.DeriveSha(receipts, trieHasher()),
-		stateRootPost: root,
+	if err := b.MarkExecuted(e.gasClock.Clone(), endTime, receipts, root); err != nil {
+		return err
 	}
 
 	batch := e.db.NewBatch()
@@ -280,7 +261,7 @@ func (e *executor) execute(ctx context.Context, b *Block) error {
 	// last-executed as the "latest" block and the upstream API implementation
 	// requires this write.
 	rawdb.WriteReceipts(batch, b.Hash(), b.NumberU64(), receipts)
-	if err := b.writePostExecutionState(batch); err != nil {
+	if err := b.WritePostExecutionState(batch); err != nil {
 		return err
 	}
 	if err := batch.Write(); err != nil {
@@ -288,7 +269,6 @@ func (e *executor) execute(ctx context.Context, b *Block) error {
 	}
 
 	e.sendPostExecutionEvents(b.Block, receipts)
-	b.executed.Store(true)
 	e.lastExecuted.Store(b)
 
 	e.log.Info(
