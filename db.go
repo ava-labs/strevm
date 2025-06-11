@@ -2,114 +2,61 @@ package sae
 
 import (
 	"context"
-	"encoding/binary"
 	"fmt"
 	"math"
-	"math/big"
 
 	"github.com/ava-labs/avalanchego/database"
-	"github.com/ava-labs/avalanchego/vms/components/gas"
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core/rawdb"
-	"github.com/ava-labs/libevm/ethdb"
 	"github.com/ava-labs/libevm/params"
+	"github.com/ava-labs/strevm/blocks"
 	"github.com/ava-labs/strevm/gastime"
 	"go.uber.org/zap"
 )
-
-func blockNumDBKey(prefix string, blockNum uint64) []byte {
-	return binary.BigEndian.AppendUint64([]byte(prefix), blockNum)
-}
-
-func (b *Block) writeToKVStore(w ethdb.KeyValueWriter, key func(uint64) []byte, val []byte) error {
-	return w.Put(key(b.NumberU64()), val)
-}
-
-/* ===== Post-execution state =====*/
-
-func execResultsDBKey(blockNum uint64) []byte {
-	return blockNumDBKey("sae-post-exec-", blockNum)
-}
-
-func (b *Block) writePostExecutionState(w ethdb.KeyValueWriter) error {
-	return b.writeToKVStore(w, execResultsDBKey, b.execution.MarshalCanoto())
-}
-
-func (vm *VM) readPostExecutionState(blockNum uint64) (*executionResults, error) {
-	buf, err := vm.db.Get(execResultsDBKey(blockNum))
-	if err != nil {
-		return nil, err
-	}
-	r := new(executionResults)
-	if err := r.UnmarshalCanoto(buf); err != nil {
-		return nil, err
-	}
-	return r, nil
-}
-
-/* ===== Last-settled block at chain height ===== */
-
-func lastSettledDBKey(blockNum uint64) []byte {
-	return blockNumDBKey("sae-last-settled-", blockNum)
-}
-
-func (b *Block) writeLastSettledNumber(w ethdb.KeyValueWriter) error {
-	return b.writeToKVStore(w, lastSettledDBKey, b.lastSettled.Number().Bytes())
-}
-
-func (vm *VM) readLastSettledNumber(blockNum uint64) (uint64, error) {
-	buf, err := vm.db.Get(lastSettledDBKey(blockNum))
-	if err != nil {
-		return 0, err
-	}
-	settled := new(big.Int).SetBytes(buf)
-	if !settled.IsUint64() {
-		return 0, fmt.Errorf("read non-uint64 last-settled block of block %d", blockNum)
-	}
-	if settled.Uint64() > blockNum {
-		return 0, fmt.Errorf("read last-settled block num %d of block %d", settled.Uint64(), blockNum)
-	}
-	return settled.Uint64(), nil
-}
 
 func (vm *VM) upgradeLastSynchronousBlock(hash common.Hash) error {
 	lastSyncNum := rawdb.ReadHeaderNumber(vm.db, hash)
 	if lastSyncNum == nil {
 		return fmt.Errorf("read number of last synchronous block (%#x): %w", hash, database.ErrNotFound)
 	}
-	block := vm.newBlock(rawdb.ReadBlock(vm.db, hash, *lastSyncNum))
-	if block.Block == nil {
+	ethBlock := rawdb.ReadBlock(vm.db, hash, *lastSyncNum)
+	if ethBlock == nil {
 		return fmt.Errorf("read last synchronous block (%#x): %w", hash, database.ErrNotFound)
 	}
-	vm.last.synchronousTime = block.Time()
+	vm.last.synchronousTime = ethBlock.Time()
 
-	block.execution = &executionResults{
-		by: *gastime.New(
+	// The last synchronous block is, by definition, already settled (an
+	// invariant of synchronous execution) so we use a self reference to record
+	// as the last-settled block number. There is no need to pass a parent
+	// because [block.Block] clears its ancestry once marked as settled (below).
+	selfSettle, err := blocks.New(ethBlock, nil, nil, vm.logger())
+	if err != nil {
+		return err
+	}
+	block, err := blocks.New(ethBlock, nil, selfSettle, vm.logger())
+	if err != nil {
+		return err
+	}
+
+	if err := block.MarkExecuted(
+		gastime.New(
 			block.Time(),
 			// TODO(arr4n) get the gas target and post-execution excess of the
 			// genesis block.
 			1e6, 0,
 		),
-		receipts:      nil, // nil to avoid async re-settlement
-		gasUsed:       gas.Gas(block.GasUsed()),
-		receiptRoot:   block.ReceiptHash(),
-		stateRootPost: block.Root(),
-	}
-	block.executed.Store(true)
-
-	// The last synchronous block is, by definition, already settled, so the
-	// `parent` and `lastSettled` pointers MUST be nil (see the invariant
-	// documented in [Block]). We do, however, need to write the last-settled
-	// block number to the database; the deferred resetting to nil is defensive,
-	// in case this method is refactored to return `block`.
-	block.lastSettled = block
-	defer func() { block.lastSettled = nil }()
-
-	batch := vm.db.NewBatch()
-	if err := block.writePostExecutionState(batch); err != nil {
+		block.Timestamp(),
+		nil, // avoid re-settlement of receipts,
+		block.Root(),
+	); err != nil {
 		return err
 	}
-	if err := block.writeLastSettledNumber(batch); err != nil {
+
+	batch := vm.db.NewBatch()
+	if err := block.WritePostExecutionState(batch); err != nil {
+		return err
+	}
+	if err := block.WriteLastSettledNumber(batch); err != nil {
 		return err
 	}
 	if err := batch.Write(); err != nil {
@@ -121,6 +68,13 @@ func (vm *VM) upgradeLastSynchronousBlock(hash common.Hash) error {
 		zap.Uint64("timestamp", block.Time()),
 		zap.Stringer("hash", block.Hash()),
 	)
+
+	// Although the block isn't returned, do this defensively in case of a
+	// future refactor.
+	block.MarkSettled()
+	if err := block.CheckInvariants(true, true); err != nil {
+		return fmt.Errorf("upgrading last synchronous block: %v", err)
+	}
 	return nil
 }
 
@@ -140,7 +94,7 @@ func (vm *VM) recoverFromDB(ctx context.Context, chainConfig *params.ChainConfig
 	// Although we won't need all of these blocks, the last-settled of the
 	// last-settled block is a guaranteed and reasonable lower bound on the
 	// blocks to recover.
-	from, err := vm.readLastSettledNumber(*lastSettledNum)
+	from, err := blocks.ReadLastSettledNumber(vm.db, *lastSettledNum)
 	if err != nil {
 		return err
 	}
@@ -167,21 +121,29 @@ func (vm *VM) recoverFromDB(ctx context.Context, chainConfig *params.ChainConfig
 
 		for i, num := range nums {
 			hash := hashes[i]
-			b := vm.newBlock(rawdb.ReadBlock(db, hash, num))
-			if b.Block == nil {
+			ethB := rawdb.ReadBlock(db, hash, num)
+			if ethB == nil {
 				return nil, fmt.Errorf("rawdb.ReadBlock(%#x, %d) returned nil", hash, num)
 			}
+			// We don't know the parent and last-settled blocks yet so will
+			// populate them in the next loop with a call to
+			// [block.Block.CopyInternalsFrom].
+			b, err := vm.newBlock(ethB, nil, nil)
+			if err != nil {
+				return nil, err
+			}
+
 			byID[b.Hash()] = b
 			byNum[num] = b
 
 			if num <= lastExecutedNum {
-				state, err := vm.readPostExecutionState(num)
-				if err != nil {
-					return nil, fmt.Errorf("recover post-execution state of block %d: %w", num, err)
+				receipts := rawdb.ReadReceipts(db, b.Hash(), b.NumberU64(), b.Time(), chainConfig)
+				if err := b.RestorePostExecutionState(vm.db, receipts); err != nil {
+					return nil, err
 				}
-				state.receipts = rawdb.ReadReceipts(db, b.Hash(), b.NumberU64(), b.Time(), chainConfig)
-				b.execution = state
-				b.executed.Store(true)
+			}
+			if num <= *lastSettledNum {
+				b.MarkSettled()
 			}
 
 			if b.Hash() == lastExecutedHash {
@@ -205,12 +167,18 @@ func (vm *VM) recoverFromDB(ctx context.Context, chainConfig *params.ChainConfig
 				continue
 			}
 
-			b.parent = byNum[num-1]
-			s, err := vm.readLastSettledNumber(num)
+			s, err := blocks.ReadLastSettledNumber(vm.db, num)
 			if err != nil {
 				return nil, err
 			}
-			b.lastSettled = byNum[s]
+			parent := byNum[num-1]
+			withAncestors, err := blocks.New(b.Block, parent, byNum[s], vm.logger())
+			if err != nil {
+				return nil, err
+			}
+			if err := b.CopyAncestorsFrom(withAncestors); err != nil {
+				return nil, err
+			}
 		}
 
 		for _, num := range nums {
@@ -222,6 +190,12 @@ func (vm *VM) recoverFromDB(ctx context.Context, chainConfig *params.ChainConfig
 			}
 		}
 
+		for _, b := range byID {
+			num := b.Height()
+			if err := b.CheckInvariants(num <= lastExecutedNum, num <= *lastSettledNum); err != nil {
+				return nil, err
+			}
+		}
 		return byID, nil
 	})
 }

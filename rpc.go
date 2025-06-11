@@ -22,6 +22,7 @@ import (
 	"github.com/ava-labs/libevm/libevm/ethapi"
 	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/rpc"
+	"github.com/ava-labs/strevm/blocks"
 )
 
 func (vm *VM) ethRPCServer() *rpc.Server {
@@ -247,11 +248,11 @@ func (b *ethAPIBackend) StateAndHeaderByNumberOrHash(ctx context.Context, numOrH
 	// being upgraded.
 	const lastSynchronousBlockHeight = 0
 	if num := h.Number.Uint64(); num > lastSynchronousBlockHeight {
-		res, err := b.vm.readPostExecutionState(num)
+		root, err := blocks.StateRootPostExecution(b.vm.db, num)
 		if err != nil {
 			return nil, nil, err
 		}
-		h.Root = res.stateRootPost
+		h.Root = root
 	}
 
 	db, err := state.New(h.Root, b.vm.exec.stateCache, nil)
