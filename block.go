@@ -94,7 +94,6 @@ func (vm *VM) AcceptBlock(ctx context.Context, b *Block) error {
 }
 
 func (vm *VM) RejectBlock(ctx context.Context, b *Block) error {
-	rawdb.DeleteBlock(vm.db, b.Hash(), b.NumberU64())
 	// TODO(arr4n) add the transactions back to the mempool if necessary.
 	return nil
 }
