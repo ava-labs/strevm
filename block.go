@@ -18,21 +18,6 @@ import (
 type Block = blocks.Block
 
 func (vm *VM) AcceptBlock(ctx context.Context, b *Block) error {
-	if err := vm.exec.enqueueAccepted(ctx, b); err != nil {
-		return err
-	}
-
-	// When the chain is bootstrapping, avalanchego expects to be able to call
-	// `Verify` and `Accept` in a loop over blocks. Reporting an error during
-	// either `Verify` or `Accept` is considered FATAL during this process.
-	// Therefore, we must ensure that avalanchego does not get too far ahead of
-	// the execution thread and FATAL during block verification.
-	if vm.consensusState.Get() == snow.Bootstrapping {
-		if err := vm.exec.queueCleared.Wait(ctx); err != nil {
-			return fmt.Errorf("waiting for execution during bootstrap: %v", err)
-		}
-	}
-
 	batch := vm.db.NewBatch()
 	rawdb.WriteBlock(batch, b.Block)
 	rawdb.WriteCanonicalHash(batch, b.Hash(), b.NumberU64())
@@ -40,7 +25,7 @@ func (vm *VM) AcceptBlock(ctx context.Context, b *Block) error {
 
 	settle := b.Settles()
 	for i, s := range settle {
-		if err := vm.exec.stateCache.TrieDB().Commit(s.PostExecutionStateRoot(), false); err != nil {
+		if err := vm.exec.StateCache().TrieDB().Commit(s.PostExecutionStateRoot(), false); err != nil {
 			return err
 		}
 		if i+1 == len(settle) {
@@ -59,6 +44,18 @@ func (vm *VM) AcceptBlock(ctx context.Context, b *Block) error {
 
 	vm.last.settled.Store(b.LastSettled())
 	vm.last.accepted.Store(b)
+
+	// When the chain is bootstrapping, avalanchego expects to be able to call
+	// `Verify` and `Accept` in a loop over blocks. Reporting an error during
+	// either `Verify` or `Accept` is considered FATAL during this process.
+	// Therefore, we must ensure that avalanchego does not get too far ahead of
+	// the execution thread and FATAL during block verification.
+	execSynchronous := vm.consensusState.Get() == snow.Bootstrapping
+	// This MUST NOT happen before the database and [VM.last] are updated to
+	// reflect that the block has been accepted.
+	if err := vm.exec.EnqueueAccepted(ctx, b, execSynchronous); err != nil {
+		return err
+	}
 
 	vm.logger().Debug(
 		"Accepted block",

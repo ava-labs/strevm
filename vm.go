@@ -17,7 +17,6 @@ import (
 	"github.com/ava-labs/avalanchego/utils/logging"
 	"github.com/ava-labs/avalanchego/version"
 	"github.com/ava-labs/libevm/common"
-	"github.com/ava-labs/libevm/consensus"
 	"github.com/ava-labs/libevm/core/rawdb"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/ethdb"
@@ -25,6 +24,7 @@ import (
 	"github.com/ava-labs/libevm/rlp"
 	"github.com/ava-labs/strevm/blocks"
 	"github.com/ava-labs/strevm/queue"
+	"github.com/ava-labs/strevm/saexec"
 )
 
 var VMID = ids.ID{'s', 't', 'r', 'e', 'v', 'm'}
@@ -51,7 +51,7 @@ type VM struct {
 	newTxs  chan *types.Transaction
 	mempool sink.PriorityMutex[*queue.Priority[*pendingTx]]
 
-	exec *executor
+	exec *saexec.Executor
 
 	quit             chan struct{}
 	mempoolAndExecWG sync.WaitGroup
@@ -110,23 +110,17 @@ func New(ctx context.Context, c Config) (*VM, error) {
 		return nil, err
 	}
 
-	vm.exec = &executor{
-		quit:         quit,
-		log:          vm.logger(),
-		hooks:        vm.hooks,
-		chainConfig:  c.ChainConfig,
-		db:           vm.db,
-		lastExecuted: &vm.last.executed,
-	}
-	if err := vm.exec.init(); err != nil {
+	exec, err := saexec.New(&vm.last.executed, c.ChainConfig, vm.db, vm.hooks, vm.logger())
+	if err != nil {
 		return nil, err
 	}
+	vm.exec = exec
 
 	wg := &vm.mempoolAndExecWG
 	wg.Add(2)
 	execReady := make(chan struct{})
 	go func() {
-		vm.exec.run(execReady)
+		vm.exec.Run(vm.quit, execReady)
 		wg.Done()
 	}()
 	go func() {
@@ -240,7 +234,7 @@ func (vm *VM) BuildBlock(ctx context.Context) (*Block, error) {
 }
 
 func (vm *VM) signer(blockNum, timestamp uint64) types.Signer {
-	return types.MakeSigner(vm.exec.chainConfig, new(big.Int).SetUint64(blockNum), timestamp)
+	return types.MakeSigner(vm.exec.ChainConfig(), new(big.Int).SetUint64(blockNum), timestamp)
 }
 
 func (vm *VM) currSigner() types.Signer {
@@ -268,22 +262,4 @@ func (vm *VM) GetBlockIDAtHeight(ctx context.Context, height uint64) (ids.ID, er
 		return ids.Empty, database.ErrNotFound
 	}
 	return ids.ID(h), nil
-}
-
-type chainContext struct{}
-
-func (chainContext) Engine() consensus.Engine {
-	return engine{}
-}
-
-type engine struct {
-	consensus.Engine
-}
-
-func (engine) Author(h *types.Header) (common.Address, error) {
-	return common.Address{}, nil
-}
-
-func (chainContext) GetHeader(common.Hash, uint64) *types.Header {
-	panic(errUnimplemented)
 }

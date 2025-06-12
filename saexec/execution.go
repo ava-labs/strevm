@@ -1,16 +1,13 @@
-package sae
+package saexec
 
 import (
 	"context"
 	"errors"
 	"fmt"
 	"math"
-	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/arr4n/sink"
-	"github.com/ava-labs/avalanchego/utils/logging"
 	"github.com/ava-labs/avalanchego/vms/components/gas"
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core"
@@ -19,134 +16,45 @@ import (
 	"github.com/ava-labs/libevm/core/state/snapshot"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/core/vm"
-	"github.com/ava-labs/libevm/ethdb"
-	"github.com/ava-labs/libevm/event"
-	"github.com/ava-labs/libevm/params"
 	"go.uber.org/zap"
 
-	"github.com/ava-labs/strevm/gastime"
+	"github.com/ava-labs/strevm/blocks"
+	"github.com/ava-labs/strevm/dummy"
 	"github.com/ava-labs/strevm/hook"
 	"github.com/ava-labs/strevm/queue"
 )
 
-type executor struct {
-	quit  <-chan struct{}
-	log   logging.Logger
-	hooks Hooks
-
-	spawned sync.WaitGroup
-
-	gasClock     gastime.Time
-	queue        sink.Monitor[*queue.FIFO[*Block]]
-	lastExecuted *atomic.Pointer[Block] // shared with VM
-
-	// During bootstrapping we need to know when the queue has been executed to
-	// avoid verification returning an error due to waiting on the execution
-	// stream for settlement. This [sink.Gate] is only valid if *not* waited
-	// upon concurrently with a call to [VM.AcceptBlock] as that may result in a
-	// spurious unblocking with a non-empty queue.
-	queueCleared sink.Gate
-
-	headEvents  event.FeedOf[core.ChainHeadEvent]
-	chainEvents event.FeedOf[core.ChainEvent]
-	logEvents   event.FeedOf[[]*types.Log]
-
-	chainConfig *params.ChainConfig
-	db          ethdb.Database
-	stateCache  state.Database
-	// executeScratchSpace MUST NOT be accessed by any methods other than
-	// [executor.init] and [executor.execute].
-	executeScratchSpace executionScratchSpace
-}
-
-func (e *executor) init() error {
-	last := e.lastExecuted.Load()
-	root := last.Root()
-
-	e.stateCache = state.NewDatabase(e.db)
-	sdb := e.stateCache
-	tdb := sdb.TrieDB()
-
-	snapConf := snapshot.Config{
-		CacheSize:  128, // MB
-		AsyncBuild: true,
-	}
-	snaps, err := snapshot.New(snapConf, e.db, tdb, root)
-	if err != nil {
-		return err
-	}
-
-	statedb, err := state.New(root, sdb, snaps)
-	if err != nil {
-		return err
-	}
-	e.executeScratchSpace = executionScratchSpace{
-		snaps:   snaps,
-		statedb: statedb,
-	}
-	e.gasClock = *last.ExecutedByGasTime().Clone()
-	return nil
-}
-
-func (e *executor) run(ready chan<- struct{}) {
-	e.queue = sink.NewMonitor(new(queue.FIFO[*Block]))
-	e.queueCleared = sink.NewGate()
-	e.spawn(e.processQueue)
-
-	close(ready)
-
-	<-e.quit
-	e.spawned.Wait()
-	e.queue.Close()
-
-	snaps := e.executeScratchSpace.snaps
-	snaps.Disable()
-	snaps.Release()
-}
-
-func (e *executor) spawn(fn func()) {
-	e.spawned.Add(1)
-	go func() {
-		fn()
-		e.spawned.Done()
-	}()
-}
-
-// quitCtx returns a `Context`, derived from [context.Background], that is
-// cancelled when [executor.quit] is closed.
-func (e *executor) quitCtx() context.Context {
-	ctx, cancel := context.WithCancel(context.Background())
-	e.spawn(func() {
-		<-e.quit
-		cancel()
-	})
-	return ctx
-}
-
-// enqueueAccepted is intended to be called by [Block.Accept], passing itself
-// as the argument.
-func (e *executor) enqueueAccepted(ctx context.Context, block *Block) error {
-	return e.queue.UseThenSignal(ctx, func(q *queue.FIFO[*Block]) error {
+// Enqueue pushes a new block to the FIFO queue. It is non-blocking unless the
+// `synchronous` argument is true, in which case it returns when either the
+// [context.Context] is cancelled or the block has been executed.
+//
+// The `synchronous` argument SHOULD be true i.f.f. the chain is bootstrapping.
+func (e *Executor) EnqueueAccepted(ctx context.Context, block *blocks.Block, synchronous bool) error {
+	err := e.queue.UseThenSignal(ctx, func(q *queue.FIFO[*blocks.Block]) error {
 		q.Push(block)
 		e.queueCleared.Block()
 		return nil
 	})
+	if err != nil || !synchronous {
+		return err
+	}
+	return e.queueCleared.Wait(ctx)
 }
 
-func (e *executor) processQueue() {
+func (e *Executor) processQueue() {
 	ctx := e.quitCtx()
 
 	for {
 		type pop struct {
-			block      *Block
+			block      *blocks.Block
 			emptyAfter bool
 		}
 
 		popped, err := sink.FromMonitor(ctx, e.queue,
-			func(q *queue.FIFO[*Block]) bool {
+			func(q *queue.FIFO[*blocks.Block]) bool {
 				return q.Len() > 0
 			},
-			func(q *queue.FIFO[*Block]) (pop, error) {
+			func(q *queue.FIFO[*blocks.Block]) (pop, error) {
 				b := q.Pop()
 				return pop{
 					block:      b,
@@ -194,7 +102,7 @@ type executionScratchSpace struct {
 	statedb *state.StateDB
 }
 
-func (e *executor) execute(ctx context.Context, b *Block) error {
+func (e *Executor) execute(ctx context.Context, b *blocks.Block) error {
 	x := &e.executeScratchSpace
 
 	// If [VM.AcceptBlock] returns an error after enqueuing the block, we would
@@ -224,7 +132,7 @@ func (e *executor) execute(ctx context.Context, b *Block) error {
 
 		receipt, err := core.ApplyTransaction(
 			e.chainConfig,
-			chainContext{},
+			dummy.ChainContext(),
 			&header.Coinbase,
 			&gasPool,
 			x.statedb,
@@ -281,22 +189,7 @@ func (e *executor) execute(ctx context.Context, b *Block) error {
 	return nil
 }
 
-func (e *executor) sendPostExecutionEvents(b *types.Block, receipts types.Receipts) {
-	e.headEvents.Send(core.ChainHeadEvent{Block: b})
-
-	var logs []*types.Log
-	for _, r := range receipts {
-		logs = append(logs, r.Logs...)
-	}
-	e.chainEvents.Send(core.ChainEvent{
-		Block: b,
-		Hash:  b.Hash(),
-		Logs:  logs,
-	})
-	e.logEvents.Send(logs)
-}
-
-func (e *executor) commitState(ctx context.Context, x *executionScratchSpace, blockNum uint64) (common.Hash, error) {
+func (e *Executor) commitState(ctx context.Context, x *executionScratchSpace, blockNum uint64) (common.Hash, error) {
 	root, err := x.statedb.Commit(blockNum, true)
 	if err != nil {
 		return common.Hash{}, fmt.Errorf("%T.Commit() at end of block %d: %w", x.statedb, blockNum, err)
