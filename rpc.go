@@ -23,6 +23,7 @@ import (
 	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/rpc"
 	"github.com/ava-labs/strevm/blocks"
+	"github.com/ava-labs/strevm/dummy"
 )
 
 func (vm *VM) ethRPCServer() *rpc.Server {
@@ -51,7 +52,7 @@ type ethAPIBackend struct {
 }
 
 func (b *ethAPIBackend) ChainConfig() *params.ChainConfig {
-	return b.vm.exec.chainConfig
+	return b.vm.exec.ChainConfig()
 }
 
 func (b *ethAPIBackend) RPCTxFeeCap() float64 {
@@ -215,7 +216,7 @@ func (b *ethAPIBackend) GetReceipts(ctx context.Context, hash common.Hash) (type
 		// [types.Receipts.DeriveFields] so it MUST be the block's time, not the
 		// execution time of the receipts.
 		hdr.Time,
-		b.vm.exec.chainConfig,
+		b.ChainConfig(),
 	), nil
 }
 
@@ -255,7 +256,7 @@ func (b *ethAPIBackend) StateAndHeaderByNumberOrHash(ctx context.Context, numOrH
 		h.Root = root
 	}
 
-	db, err := state.New(h.Root, b.vm.exec.stateCache, nil)
+	db, err := state.New(h.Root, b.vm.exec.StateCache(), nil)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -270,7 +271,7 @@ func (b *ethAPIBackend) GetEVM(ctx context.Context, msg *core.Message, db *state
 	if txCtx.GasPrice == nil {
 		txCtx.GasPrice = big.NewInt(0)
 	}
-	return vm.NewEVM(*context, txCtx, db, b.vm.exec.chainConfig, *config)
+	return vm.NewEVM(*context, txCtx, db, b.ChainConfig(), *config)
 }
 
 func (*ethAPIBackend) RPCEVMTimeout() time.Duration {
@@ -278,11 +279,11 @@ func (*ethAPIBackend) RPCEVMTimeout() time.Duration {
 }
 
 func (b *ethAPIBackend) RPCGasCap() uint64 {
-	return uint64(10 * b.vm.exec.gasClock.Rate())
+	return 15e6 // TODO(arr4n)
 }
 
 func (b *ethAPIBackend) Engine() consensus.Engine {
-	return engine{}
+	return dummy.Engine()
 }
 
 // GetTd is required by the API frontend for unmarshalling a [types.Block], but
@@ -290,15 +291,15 @@ func (b *ethAPIBackend) Engine() consensus.Engine {
 func (b *ethAPIBackend) GetTd(context.Context, common.Hash) *big.Int { return nil }
 
 func (b *ethAPIBackend) SubscribeChainEvent(ch chan<- core.ChainEvent) event.Subscription {
-	return b.vm.exec.chainEvents.Subscribe(ch)
+	return b.vm.exec.SubscribeChainEvent(ch)
 }
 
 func (b *ethAPIBackend) SubscribeChainHeadEvent(ch chan<- core.ChainHeadEvent) event.Subscription {
-	return b.vm.exec.headEvents.Subscribe(ch)
+	return b.vm.exec.SubscribeChainHeadEvent(ch)
 }
 
 func (b *ethAPIBackend) SubscribeLogsEvent(ch chan<- []*types.Log) event.Subscription {
-	return b.vm.exec.logEvents.Subscribe(ch)
+	return b.vm.exec.SubscribeLogsEvent(ch)
 }
 
 func (vm *VM) newNoopSubscription() event.Subscription {

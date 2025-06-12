@@ -113,13 +113,13 @@ func (vm *VM) buildBlockOnHistory(lastSettled, parent *Block, timestamp uint64, 
 	}
 	slices.Reverse(history)
 
-	sdb, err := state.New(lastSettled.PostExecutionStateRoot(), vm.exec.stateCache, nil)
+	sdb, err := state.New(lastSettled.PostExecutionStateRoot(), vm.exec.StateCache(), nil)
 	if err != nil {
 		return nil, 0, err
 	}
 
 	checker := worstcase.NewTxIncluder(
-		sdb, vm.exec.chainConfig,
+		sdb, vm.exec.ChainConfig(),
 		lastSettled.ExecutedByGasTime().Clone(),
 		5, 2, // TODO(arr4n) what are the max queue and block seconds?
 	)

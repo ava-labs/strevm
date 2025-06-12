@@ -41,6 +41,7 @@ import (
 	"github.com/ava-labs/strevm/gastime"
 	"github.com/ava-labs/strevm/proxytime"
 	"github.com/ava-labs/strevm/queue"
+	"github.com/ava-labs/strevm/saexec"
 	"github.com/ava-labs/strevm/weth"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
@@ -241,7 +242,6 @@ func TestBasicE2E(t *testing.T) {
 			break
 		}
 	}
-	require.NoError(t, vm.exec.queueCleared.Wait(ctx))
 
 	t.Cleanup(func() {
 		// See block pruning at the end of [VM.AcceptBlock]
@@ -338,7 +338,7 @@ func TestBasicE2E(t *testing.T) {
 
 				for i, b := range acceptedBlocks {
 					fromAPI := gotReceipts[i+1 /*skips genesis*/]
-					fromDB := rawdb.ReadReceipts(vm.db, b.Hash(), b.NumberU64(), b.Time(), vm.exec.chainConfig)
+					fromDB := rawdb.ReadReceipts(vm.db, b.Hash(), b.NumberU64(), b.Time(), vm.exec.ChainConfig())
 
 					if diff := cmp.Diff(fromDB, fromAPI, cmpBigInts()); diff != "" {
 						t.Errorf("Block %d receipts diff vs db: -rawdb.ReadReceipts() +%T.BlockReceipts():\n%s", b.NumberU64(), rpcClient, diff)
@@ -548,25 +548,20 @@ func cmpBlocks() cmp.Options {
 }
 
 func cmpVMs(ctx context.Context, tb testing.TB) cmp.Options {
-	var (
-		zeroVM   VM
-		zeroExec executor
-	)
+	var zeroVM VM
 
 	return cmp.Options{
 		cmpBlocks(),
 		cmp.AllowUnexported(
 			VM{},
 			last{},
-			executor{},
-			executionScratchSpace{},
+			saexec.Executor{},
 		),
 		cmpopts.IgnoreUnexported(params.ChainConfig{}),
 		cmpopts.IgnoreFields(VM{}, "preference"),
 		cmpopts.IgnoreTypes(
 			zeroVM.snowCtx,
 			zeroVM.mempool,
-			zeroExec.queue,
 			&snapshot.Tree{},
 		),
 		cmpopts.IgnoreInterfaces(struct{ snowcommon.AppHandler }{}),
