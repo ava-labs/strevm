@@ -8,6 +8,7 @@ import (
 	"slices"
 
 	"github.com/arr4n/sink"
+	snowcommon "github.com/ava-labs/avalanchego/snow/engine/common"
 	"github.com/ava-labs/avalanchego/vms/components/gas"
 	"github.com/ava-labs/libevm/core/state"
 	"github.com/ava-labs/libevm/core/types"
@@ -22,7 +23,20 @@ func (vm *VM) buildBlock(ctx context.Context, timestamp uint64, parent *Block) (
 	block, err := sink.FromPriorityMutex(
 		ctx, vm.mempool, sink.MaxPriority,
 		func(_ <-chan sink.Priority, pool *queue.Priority[*pendingTx]) (*Block, error) {
-			return vm.buildBlockWithCandidateTxs(timestamp, parent, pool)
+			block, err := vm.buildBlockWithCandidateTxs(timestamp, parent, pool)
+
+			// TODO: This shouldn't be done immediately, there should be some
+			// retry delay if block building failed.
+			if pool.Len() > 0 {
+				select {
+				case vm.toEngine <- snowcommon.PendingTxs:
+				default:
+					p := snowcommon.PendingTxs
+					vm.logger().Info(fmt.Sprintf("%T(%s) dropped", p, p))
+				}
+			}
+
+			return block, err
 		},
 	)
 	if err != nil {
@@ -86,7 +100,8 @@ func (vm *VM) buildBlockWithCandidateTxs(timestamp uint64, parent *Block, candid
 		return nil, err
 	}
 	if gasUsed == 0 && len(txs) == 0 {
-		return nil, errNoopBlock
+		vm.logger().Info("Blocks must either settle or include transactions")
+		return nil, fmt.Errorf("%w: parent %#x at time %d", errNoopBlock, parent.Hash(), timestamp)
 	}
 
 	ethB := types.NewBlock(
@@ -179,6 +194,10 @@ func (vm *VM) buildBlockOnHistory(lastSettled, parent *Block, timestamp uint64, 
 				"Unknown error from worst-case transaction checking",
 				zap.Error(err),
 			)
+
+			// TODO: It is not acceptable to return an error here, as all
+			// transactions that have been removed from the mempool will be
+			// dropped and never included.
 			return nil, 0, err
 		}
 	}

@@ -50,7 +50,7 @@ func (vm *VM) receiveTxs(preempt <-chan sink.Priority, pool *queue.Priority[*pen
 
 			from, err := types.Sender(vm.currSigner(), tx)
 			if err != nil {
-				vm.logger().Debug(
+				vm.logger().Info(
 					"Dropped tx due to failed sender recovery",
 					zap.Stringer("hash", tx.Hash()),
 					zap.Error(err),
@@ -64,7 +64,7 @@ func (vm *VM) receiveTxs(preempt <-chan sink.Priority, pool *queue.Priority[*pen
 				},
 				timePriority: time.Now(),
 			})
-			vm.logger().Debug(
+			vm.logger().Info(
 				"New tx in mempool",
 				zap.Stringer("hash", tx.Hash()),
 				zap.Stringer("from", from),
@@ -75,7 +75,7 @@ func (vm *VM) receiveTxs(preempt <-chan sink.Priority, pool *queue.Priority[*pen
 			case vm.toEngine <- snowcommon.PendingTxs:
 			default:
 				p := snowcommon.PendingTxs
-				vm.logger().Debug(fmt.Sprintf("%T(%s) dropped", p, p))
+				vm.logger().Info(fmt.Sprintf("%T(%s) dropped", p, p))
 			}
 		}
 	}

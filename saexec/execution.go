@@ -116,7 +116,7 @@ func (e *Executor) execute(ctx context.Context, b *blocks.Block) error {
 
 	header := types.CopyHeader(b.Header())
 	header.BaseFee = e.gasClock.BaseFee().ToBig()
-	e.log.Debug(
+	e.log.Info(
 		"Executing accepted block",
 		zap.Uint64("height", b.Height()),
 		zap.Uint64("timestamp", header.Time),
@@ -179,7 +179,7 @@ func (e *Executor) execute(ctx context.Context, b *blocks.Block) error {
 	e.sendPostExecutionEvents(b.Block, receipts)
 	e.lastExecuted.Store(b)
 
-	e.log.Debug(
+	e.log.Info(
 		"Block execution complete",
 		zap.Uint64("height", b.Height()),
 		zap.Time("gas_time", e.gasClock.AsTime()),
