@@ -7,7 +7,9 @@ import (
 
 	"github.com/ava-labs/avalanchego/vms/components/gas"
 	"github.com/ava-labs/libevm/common"
+	"github.com/ava-labs/libevm/core/rawdb"
 	"github.com/ava-labs/libevm/core/types"
+	"github.com/ava-labs/libevm/ethdb"
 	"github.com/ava-labs/libevm/trie"
 	"github.com/ava-labs/strevm/gastime"
 )
@@ -48,10 +50,10 @@ func (e *executionResults) Equal(f *executionResults) bool {
 // time(s) and with the specified results. This function MUST NOT be called more
 // than once. The wall-clock [time.Time] is for metrics only.
 //
-// Note: only in-memory state is updated. Receipts SHOULD be stored
-// independently of a call to MarkExecuted, along with a call to
-// [Block.WritePostExecutionState].
-func (b *Block) MarkExecuted(byGas *gastime.Time, byWall time.Time, receipts types.Receipts, stateRootPost common.Hash) error {
+// MarkExecuted guarantees that state is persisted to the database before
+// in-memory indicators of execution are updated. [Block.Executed] returning
+// true is therefore indicative of a successful database write by MarkExecuted.
+func (b *Block) MarkExecuted(db ethdb.Database, isLastSyncBlock bool, byGas *gastime.Time, byWall time.Time, receipts types.Receipts, stateRootPost common.Hash) error {
 	var used gas.Gas
 	for _, r := range receipts {
 		used += gas.Gas(r.GasUsed)
@@ -65,6 +67,28 @@ func (b *Block) MarkExecuted(byGas *gastime.Time, byWall time.Time, receipts typ
 		receiptRoot:   types.DeriveSha(receipts, trie.NewStackTrie(nil)),
 		stateRootPost: stateRootPost,
 	}
+
+	batch := db.NewBatch()
+	if !isLastSyncBlock {
+		// Although the last synchronous block is required to be the head block
+		// at the time of upgrade, not setting the head here allows this method
+		// to be called idempotently for that block. This is useful when
+		// converting it to an SAE block.
+		rawdb.WriteHeadBlockHash(batch, b.Hash())
+		rawdb.WriteHeadHeaderHash(batch, b.Hash())
+	}
+	rawdb.WriteReceipts(batch, b.Hash(), b.NumberU64(), receipts)
+	if err := b.writePostExecutionState(batch, e); err != nil {
+		return err
+	}
+	if err := batch.Write(); err != nil {
+		return err
+	}
+
+	return b.markExecuted(e)
+}
+
+func (b *Block) markExecuted(e *executionResults) error {
 	if !b.execution.CompareAndSwap(nil, e) {
 		b.log.Error("Block re-marked as executed")
 		return fmt.Errorf("block %d re-marked as executed", b.Height())
@@ -72,7 +96,8 @@ func (b *Block) MarkExecuted(byGas *gastime.Time, byWall time.Time, receipts typ
 	return nil
 }
 
-// Executed reports whether [Block.MarkExecuted] has been called.
+// Executed reports whether [Block.MarkExecuted] has been called and returned
+// without error.
 func (b *Block) Executed() bool {
 	return b.execution.Load() != nil
 }
@@ -80,7 +105,7 @@ func (b *Block) Executed() bool {
 func zero[T any]() (z T) { return }
 
 // ExecutedByGasTime returns a clone of the gas time passed to
-// [Block.MarkExecuted] or nil if no such call has been made.
+// [Block.MarkExecuted] or nil if no such successful call has been made.
 func (b *Block) ExecutedByGasTime() *gastime.Time {
 	if e := b.execution.Load(); e != nil {
 		return e.byGas.Clone()
@@ -90,7 +115,7 @@ func (b *Block) ExecutedByGasTime() *gastime.Time {
 }
 
 // ExecutedByWallTime returns the wall time passed to [Block.MarkExecuted] or
-// the zero time if no such call has been made.
+// the zero time if no such successful call has been made.
 func (b *Block) ExecutedByWallTime() time.Time {
 	if e := b.execution.Load(); e != nil {
 		return e.byWall
@@ -100,7 +125,7 @@ func (b *Block) ExecutedByWallTime() time.Time {
 }
 
 // Receipts returns the receipts passed to [Block.MarkExecuted] or nil if no
-// such call has been made.
+// such successful call has been made.
 func (b *Block) Receipts() types.Receipts {
 	if e := b.execution.Load(); e != nil {
 		return slices.Clone(e.receipts)
@@ -110,7 +135,7 @@ func (b *Block) Receipts() types.Receipts {
 }
 
 // PostExecutionStateRoot returns the state root passed to [Block.MarkExecuted]
-// or the zero hash if no such call has been made.
+// or the zero hash if no such successful call has been made.
 func (b *Block) PostExecutionStateRoot() common.Hash {
 	if e := b.execution.Load(); e != nil {
 		return e.stateRootPost

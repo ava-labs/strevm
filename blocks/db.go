@@ -4,13 +4,14 @@ import (
 	"encoding/binary"
 	"fmt"
 	"math/big"
-	"time"
 
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/ethdb"
 	"github.com/ava-labs/libevm/trie"
 )
+
+/* ===== Common =====*/
 
 func blockNumDBKey(prefix string, blockNum uint64) []byte {
 	return binary.BigEndian.AppendUint64([]byte(prefix), blockNum)
@@ -26,19 +27,16 @@ func execResultsDBKey(blockNum uint64) []byte {
 	return blockNumDBKey("sae-post-exec-", blockNum)
 }
 
-// WritePostExecutionState writes, to w, the values passed to
-// [Block.MarkExecuted].
-func (b *Block) WritePostExecutionState(w ethdb.KeyValueWriter) error {
-	e := b.execution.Load()
-	if e == nil {
-		return fmt.Errorf("writing post-execution state of block %d before execution", b.Height())
-	}
+func (b *Block) writePostExecutionState(w ethdb.KeyValueWriter, e *executionResults) error {
 	return b.writeToKVStore(w, execResultsDBKey, e.MarshalCanoto())
 }
 
-// RestorePostExecutionState is the inverse of [Block.WritePostExecutionState].
-// The receipts MUST match those originally passed to [Block.MarkExecuted]
-// before the post-execution state was written to the database.
+// RestorePostExecutionState restores b to the same post-execution state as when
+// [Block.MarkExecuted] was called on it. This is only expected to be used after
+// a restart.
+//
+// The receipts MUST match those originally passed to [Block.MarkExecuted] as
+// they will be checked against the persisted Merkle root.
 func (b *Block) RestorePostExecutionState(db ethdb.Database, receipts types.Receipts) error {
 	e, err := readExecResults(db, b.NumberU64())
 	if err != nil {
@@ -47,7 +45,7 @@ func (b *Block) RestorePostExecutionState(db ethdb.Database, receipts types.Rece
 	if e.receiptRoot != types.DeriveSha(receipts, trie.NewStackTrie(nil)) {
 		return fmt.Errorf("restoring execution state of block %d: receipt-root mismatch", b.Height())
 	}
-	return b.MarkExecuted(e.byGas.Clone(), time.Time{}, receipts, e.stateRootPost)
+	return b.markExecuted(e)
 }
 
 // StateRootPostExecution returns the state root passed to [Block.MarkExecuted]

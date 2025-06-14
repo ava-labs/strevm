@@ -38,43 +38,29 @@ func (vm *VM) upgradeLastSynchronousBlock(hash common.Hash) error {
 		return err
 	}
 
-	if err := block.MarkExecuted(
-		gastime.New(
-			block.Time(),
-			// TODO(arr4n) get the gas target and post-execution excess of the
-			// genesis block.
-			1e6, 0,
-		),
-		block.Timestamp(),
-		nil, // avoid re-settlement of receipts,
-		block.Root(),
-	); err != nil {
+	clock := gastime.New(
+		block.Time(),
+		// TODO(arr4n) get the gas target and post-execution excess of the
+		// genesis block.
+		1e6, 0,
+	)
+	receipts := rawdb.ReadRawReceipts(vm.db, hash, block.Height())
+	if err := block.MarkExecuted(vm.db, true, clock, block.Timestamp(), receipts, block.Root()); err != nil {
 		return err
 	}
+	if err := block.WriteLastSettledNumber(vm.db); err != nil {
+		return err
+	}
+	block.MarkSettled()
 
-	batch := vm.db.NewBatch()
-	if err := block.WritePostExecutionState(batch); err != nil {
-		return err
+	if err := block.CheckInvariants(true, true); err != nil {
+		return fmt.Errorf("upgrading last synchronous block: %v", err)
 	}
-	if err := block.WriteLastSettledNumber(batch); err != nil {
-		return err
-	}
-	if err := batch.Write(); err != nil {
-		return err
-	}
-
 	vm.logger().Info(
 		"Last synchronous block before SAE",
 		zap.Uint64("timestamp", block.Time()),
 		zap.Stringer("hash", block.Hash()),
 	)
-
-	// Although the block isn't returned, do this defensively in case of a
-	// future refactor.
-	block.MarkSettled()
-	if err := block.CheckInvariants(true, true); err != nil {
-		return fmt.Errorf("upgrading last synchronous block: %v", err)
-	}
 	return nil
 }
 
