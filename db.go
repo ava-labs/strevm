@@ -38,19 +38,14 @@ func (vm *VM) upgradeLastSynchronousBlock(hash common.Hash) error {
 		return err
 	}
 
-	if err := block.MarkExecuted(
-		vm.db,
-		true,
-		gastime.New(
-			block.Time(),
-			// TODO(arr4n) get the gas target and post-execution excess of the
-			// genesis block.
-			1e6, 0,
-		),
-		block.Timestamp(),
-		nil, // avoid re-settlement of receipts,
-		block.Root(),
-	); err != nil {
+	clock := gastime.New(
+		block.Time(),
+		// TODO(arr4n) get the gas target and post-execution excess of the
+		// genesis block.
+		1e6, 0,
+	)
+	receipts := rawdb.ReadRawReceipts(vm.db, hash, block.Height())
+	if err := block.MarkExecuted(vm.db, true, clock, block.Timestamp(), receipts, block.Root()); err != nil {
 		return err
 	}
 	if err := block.WriteLastSettledNumber(vm.db); err != nil {
