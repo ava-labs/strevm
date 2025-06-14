@@ -48,13 +48,16 @@ func (e *executionResults) Equal(f *executionResults) bool {
 }
 
 // MarkExecuted marks the block as having being executed at the specified
-// time(s) and with the specified results. This function MUST NOT be called more
-// than once. The wall-clock [time.Time] is for metrics only.
+// time(s) and with the specified results. It also sets the chain's head block
+// to b.
 //
 // MarkExecuted guarantees that state is persisted to the database before
 // in-memory indicators of execution are updated. [Block.Executed] returning
 // true is therefore indicative of a successful database write by MarkExecuted.
-func (b *Block) MarkExecuted(db ethdb.Database, isLastSyncBlock bool, byGas *gastime.Time, byWall time.Time, receipts types.Receipts, stateRootPost common.Hash) error {
+//
+// This function MUST NOT be called more than once. The wall-clock [time.Time]
+// is for metrics only.
+func (b *Block) MarkExecuted(db ethdb.Database, byGas *gastime.Time, byWall time.Time, receipts types.Receipts, stateRootPost common.Hash) error {
 	var used gas.Gas
 	for _, r := range receipts {
 		used += gas.Gas(r.GasUsed)
@@ -70,14 +73,8 @@ func (b *Block) MarkExecuted(db ethdb.Database, isLastSyncBlock bool, byGas *gas
 	}
 
 	batch := db.NewBatch()
-	if !isLastSyncBlock {
-		// Although the last synchronous block is required to be the head block
-		// at the time of upgrade, not setting the head here allows this method
-		// to be called idempotently for that block. This is useful when
-		// converting it to an SAE block.
-		rawdb.WriteHeadBlockHash(batch, b.Hash())
-		rawdb.WriteHeadHeaderHash(batch, b.Hash())
-	}
+	rawdb.WriteHeadBlockHash(batch, b.Hash())
+	rawdb.WriteHeadHeaderHash(batch, b.Hash())
 	rawdb.WriteReceipts(batch, b.Hash(), b.NumberU64(), receipts)
 	if err := b.writePostExecutionState(batch, e); err != nil {
 		return err

@@ -135,7 +135,7 @@ func (e *Executor) execute(ctx context.Context, b *blocks.Block) error {
 	// 1. [blocks.Block.MarkExecuted] guarantees disk then in-memory changes.
 	// 2. Internal indicator of last executed MUST follow in-memory change.
 	// 3. External indicator of last executed MUST follow internal indicator.
-	if err := b.MarkExecuted(e.db, false, e.gasClock.Clone(), endTime, receipts, root); err != nil {
+	if err := b.MarkExecuted(e.db, e.gasClock.Clone(), endTime, receipts, root); err != nil {
 		return err
 	}
 	e.lastExecuted.Store(b)                      // (2)
