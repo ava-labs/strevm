@@ -15,9 +15,7 @@ import (
 	"go.uber.org/zap"
 )
 
-type Block = blocks.Block
-
-func (vm *VM) AcceptBlock(ctx context.Context, b *Block) error {
+func (vm *VM) AcceptBlock(ctx context.Context, b *blocks.Block) error {
 	batch := vm.db.NewBatch()
 	rawdb.WriteBlock(batch, b.Block)
 	rawdb.WriteCanonicalHash(batch, b.Hash(), b.NumberU64())
@@ -66,7 +64,7 @@ func (vm *VM) AcceptBlock(ctx context.Context, b *Block) error {
 	return vm.blocks.Use(ctx, func(bm blockMap) error {
 		// Same rationale as the invariant described in [Block]. Praised be the
 		// GC!
-		prune := func(b *Block) {
+		prune := func(b *blocks.Block) {
 			delete(bm, b.Hash())
 			vm.logger().Debug(
 				"Pruning settled block",
@@ -93,12 +91,12 @@ func (vm *VM) AcceptBlock(ctx context.Context, b *Block) error {
 	})
 }
 
-func (vm *VM) RejectBlock(ctx context.Context, b *Block) error {
+func (vm *VM) RejectBlock(ctx context.Context, b *blocks.Block) error {
 	// TODO(arr4n) add the transactions back to the mempool if necessary.
 	return nil
 }
 
-func (vm *VM) VerifyBlock(ctx context.Context, b *Block) error {
+func (vm *VM) VerifyBlock(ctx context.Context, b *blocks.Block) error {
 	parent, err := vm.GetBlock(ctx, ids.ID(b.ParentHash()))
 	if err != nil {
 		return fmt.Errorf("block parent %#x not found (presumed height %d)", b.ParentHash(), b.Height()-1)

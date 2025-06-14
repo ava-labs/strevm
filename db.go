@@ -103,7 +103,7 @@ func (vm *VM) recoverFromDB(ctx context.Context, chainConfig *params.ChainConfig
 
 	return vm.blocks.Replace(ctx, func(blockMap) (blockMap, error) {
 		byID := make(blockMap)
-		byNum := make(map[uint64]*Block)
+		byNum := make(map[uint64]*blocks.Block)
 
 		for i, num := range nums {
 			hash := hashes[i]

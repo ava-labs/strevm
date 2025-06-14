@@ -12,13 +12,15 @@ import (
 	"github.com/ava-labs/libevm/core/rawdb"
 	"github.com/ava-labs/libevm/core/state"
 	"github.com/ava-labs/strevm/adaptor"
+	"github.com/ava-labs/strevm/blocks"
+	"github.com/ava-labs/strevm/hook"
 )
 
 func init() {
 	var (
 		vm *SinceGenesis
-		_  snowcommon.VM           = vm
-		_  adaptor.ChainVM[*Block] = vm
+		_  snowcommon.VM                  = vm
+		_  adaptor.ChainVM[*blocks.Block] = vm
 	)
 }
 
@@ -30,7 +32,7 @@ func init() {
 type SinceGenesis struct {
 	*VM // Populated by [SinceGenesis.Initialize]
 	// Propagated to [Config]
-	Hooks Hooks
+	Hooks hook.Points
 	Now   func() time.Time
 }
 

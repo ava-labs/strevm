@@ -123,7 +123,7 @@ func TestBasicE2E(t *testing.T) {
 		assert.Nil(t, block.LastSettled(), "last settled")
 		assert.True(t, block.Executed(), "executed")
 
-		for k, ptr := range map[string]*atomic.Pointer[Block]{
+		for k, ptr := range map[string]*atomic.Pointer[blocks.Block]{
 			"accepted": &vm.last.accepted,
 			"executed": &vm.last.executed,
 			"settled":  &vm.last.settled,
@@ -192,8 +192,8 @@ func TestBasicE2E(t *testing.T) {
 	require.NoErrorf(t, err, "%T.SubscribeFilterLogs()", err)
 
 	var (
-		acceptedBlocks      []*Block
-		blockWithLastTx     *Block
+		acceptedBlocks      []*blocks.Block
+		blockWithLastTx     *blocks.Block
 		waitingForExecution int
 	)
 	start := time.Now()
@@ -575,7 +575,7 @@ func cmpVMs(ctx context.Context, tb testing.TB) cmp.Options {
 			require.NoError(tb, err)
 			return bm
 		}),
-		cmp.Transformer("atomic_block", func(p atomic.Pointer[Block]) *Block {
+		cmp.Transformer("atomic_block", func(p atomic.Pointer[blocks.Block]) *blocks.Block {
 			return p.Load()
 		}),
 		cmp.Transformer("state_dump", func(db *state.StateDB) state.Dump {
