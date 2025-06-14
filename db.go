@@ -39,6 +39,8 @@ func (vm *VM) upgradeLastSynchronousBlock(hash common.Hash) error {
 	}
 
 	if err := block.MarkExecuted(
+		vm.db,
+		true,
 		gastime.New(
 			block.Time(),
 			// TODO(arr4n) get the gas target and post-execution excess of the
@@ -51,30 +53,19 @@ func (vm *VM) upgradeLastSynchronousBlock(hash common.Hash) error {
 	); err != nil {
 		return err
 	}
+	if err := block.WriteLastSettledNumber(vm.db); err != nil {
+		return err
+	}
+	block.MarkSettled()
 
-	batch := vm.db.NewBatch()
-	if err := block.WritePostExecutionState(batch); err != nil {
-		return err
+	if err := block.CheckInvariants(true, true); err != nil {
+		return fmt.Errorf("upgrading last synchronous block: %v", err)
 	}
-	if err := block.WriteLastSettledNumber(batch); err != nil {
-		return err
-	}
-	if err := batch.Write(); err != nil {
-		return err
-	}
-
 	vm.logger().Info(
 		"Last synchronous block before SAE",
 		zap.Uint64("timestamp", block.Time()),
 		zap.Stringer("hash", block.Hash()),
 	)
-
-	// Although the block isn't returned, do this defensively in case of a
-	// future refactor.
-	block.MarkSettled()
-	if err := block.CheckInvariants(true, true); err != nil {
-		return fmt.Errorf("upgrading last synchronous block: %v", err)
-	}
 	return nil
 }
 

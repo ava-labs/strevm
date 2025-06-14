@@ -11,7 +11,6 @@ import (
 	"github.com/ava-labs/avalanchego/vms/components/gas"
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core"
-	"github.com/ava-labs/libevm/core/rawdb"
 	"github.com/ava-labs/libevm/core/state"
 	"github.com/ava-labs/libevm/core/state/snapshot"
 	"github.com/ava-labs/libevm/core/types"
@@ -156,28 +155,17 @@ func (e *Executor) execute(ctx context.Context, b *blocks.Block) error {
 	if err != nil {
 		return err
 	}
-	if err := b.MarkExecuted(e.gasClock.Clone(), endTime, receipts, root); err != nil {
+	// The strict ordering of the next 3 calls guarantees invariants that MUST
+	// NOT be broken:
+	//
+	// 1. [blocks.Block.MarkExecuted] guarantees disk then in-memory changes.
+	// 2. Internal indicator of last executed MUST follow in-memory change.
+	// 3. External indicator of last executed MUST follow internal indicator.
+	if err := b.MarkExecuted(e.db, false, e.gasClock.Clone(), endTime, receipts, root); err != nil {
 		return err
 	}
-
-	batch := e.db.NewBatch()
-	rawdb.WriteHeadBlockHash(batch, b.Hash())
-	rawdb.WriteHeadHeaderHash(batch, b.Hash())
-	// TODO(arr4n) move writing of receipts into settlement, where the
-	// associated state root is committed on the trie DB. For now it's done here
-	// to support immediate eth_getTransactionReceipt as the API treats
-	// last-executed as the "latest" block and the upstream API implementation
-	// requires this write.
-	rawdb.WriteReceipts(batch, b.Hash(), b.NumberU64(), receipts)
-	if err := b.WritePostExecutionState(batch); err != nil {
-		return err
-	}
-	if err := batch.Write(); err != nil {
-		return err
-	}
-
-	e.sendPostExecutionEvents(b.Block, receipts)
-	e.lastExecuted.Store(b)
+	e.lastExecuted.Store(b)                      // (2)
+	e.sendPostExecutionEvents(b.Block, receipts) // (3)
 
 	e.log.Debug(
 		"Block execution complete",
