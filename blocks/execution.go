@@ -1,6 +1,7 @@
 package blocks
 
 import (
+	"context"
 	"fmt"
 	"slices"
 	"time"
@@ -93,7 +94,19 @@ func (b *Block) markExecuted(e *executionResults) error {
 		b.log.Error("Block re-marked as executed")
 		return fmt.Errorf("block %d re-marked as executed", b.Height())
 	}
+	close(b.executed)
 	return nil
+}
+
+// WaitUntilExecuted blocks until either [Block.MarkExecuted] is called or the
+// [context.Context] is cancelled.
+func (b *Block) WaitUntilExecuted(ctx context.Context) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-b.executed:
+		return nil
+	}
 }
 
 // Executed reports whether [Block.MarkExecuted] has been called and returned

@@ -43,16 +43,20 @@ func (vm *VM) AcceptBlock(ctx context.Context, b *blocks.Block) error {
 	vm.last.settled.Store(b.LastSettled())
 	vm.last.accepted.Store(b)
 
+	// This MUST NOT happen before the database and [VM.last] are updated to
+	// reflect that the block has been accepted.
+	if err := vm.exec.EnqueueAccepted(ctx, b); err != nil {
+		return err
+	}
 	// When the chain is bootstrapping, avalanchego expects to be able to call
 	// `Verify` and `Accept` in a loop over blocks. Reporting an error during
 	// either `Verify` or `Accept` is considered FATAL during this process.
 	// Therefore, we must ensure that avalanchego does not get too far ahead of
 	// the execution thread and FATAL during block verification.
-	execSynchronous := vm.consensusState.Get() == snow.Bootstrapping
-	// This MUST NOT happen before the database and [VM.last] are updated to
-	// reflect that the block has been accepted.
-	if err := vm.exec.EnqueueAccepted(ctx, b, execSynchronous); err != nil {
-		return err
+	if vm.consensusState.Get() == snow.Bootstrapping {
+		if err := b.WaitUntilExecuted(ctx); err != nil {
+			return fmt.Errorf("waiting for block %d to execute: %v", b.Height(), err)
+		}
 	}
 
 	vm.logger().Debug(

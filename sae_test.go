@@ -398,11 +398,7 @@ func TestBasicE2E(t *testing.T) {
 
 		t.Run("subscriptions", func(t *testing.T) {
 			t.Run("head_events", func(t *testing.T) {
-				for n := len(acceptedBlocks); !acceptedBlocks[n-1].Executed(); {
-					// There's no need to block on execution in production so
-					// making the executed bool a channel is overkill.
-					runtime.Gosched()
-				}
+				require.NoError(t, acceptedBlocks[len(acceptedBlocks)-1].WaitUntilExecuted(ctx))
 
 				headSub.Unsubscribe()
 				require.NoErrorf(t, <-headSub.Err(), "receive on %T.Err()", headSub)

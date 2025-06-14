@@ -29,6 +29,9 @@ type Block struct {
 	ancestry  atomic.Pointer[ancestry]
 	execution atomic.Pointer[executionResults]
 
+	executed chan struct{} // closed after `execution` is set
+	settled  chan struct{} // closed after `ancestry` is cleared
+
 	log logging.Logger
 }
 
@@ -43,7 +46,9 @@ func InMemoryBlockCount() uint64 {
 // New constructs a new Block.
 func New(eth *types.Block, parent, lastSettled *Block, log logging.Logger) (*Block, error) {
 	b := &Block{
-		Block: eth,
+		Block:    eth,
+		executed: make(chan struct{}),
+		settled:  make(chan struct{}),
 	}
 	// TODO(arr4n) change to runtime.AddCleanup after the Go version has been
 	// bumped to >=1.24.0.
