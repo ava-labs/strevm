@@ -20,16 +20,19 @@ func (vm *VM) upgradeLastSynchronousBlock(hash common.Hash) error {
 	if lastSyncNum == nil {
 		return fmt.Errorf("read number of last synchronous block (%#x): %w", hash, database.ErrNotFound)
 	}
-	lastSyncNumBig := new(big.Int).SetUint64(*lastSyncNum)
-	if rawdb.ReadHeadHeader(vm.db).Number.Cmp(lastSyncNumBig) > 0 {
-		return nil
-	}
-
 	ethBlock := rawdb.ReadBlock(vm.db, hash, *lastSyncNum)
 	if ethBlock == nil {
 		return fmt.Errorf("read last synchronous block (%#x): %w", hash, database.ErrNotFound)
 	}
-	vm.last.synchronousTime = ethBlock.Time()
+
+	s := &vm.last.synchronous
+	s.height = *lastSyncNum
+	s.time = ethBlock.Time()
+
+	lastSyncNumBig := new(big.Int).SetUint64(*lastSyncNum)
+	if rawdb.ReadHeadHeader(vm.db).Number.Cmp(lastSyncNumBig) > 0 {
+		return nil
+	}
 
 	// The last synchronous block is, by definition, already settled (an
 	// invariant of synchronous execution) so we use a self reference to record

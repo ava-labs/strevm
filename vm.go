@@ -59,7 +59,7 @@ type VM struct {
 type (
 	blockMap map[common.Hash]*blocks.Block
 	last     struct {
-		synchronousTime             uint64
+		synchronous                 struct{ height, time uint64 }
 		accepted, executed, settled atomic.Pointer[blocks.Block]
 	}
 )
