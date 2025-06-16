@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"math/big"
 
 	"github.com/ava-labs/avalanchego/database"
 	"github.com/ava-labs/libevm/common"
@@ -19,6 +20,11 @@ func (vm *VM) upgradeLastSynchronousBlock(hash common.Hash) error {
 	if lastSyncNum == nil {
 		return fmt.Errorf("read number of last synchronous block (%#x): %w", hash, database.ErrNotFound)
 	}
+	lastSyncNumBig := new(big.Int).SetUint64(*lastSyncNum)
+	if rawdb.ReadHeadHeader(vm.db).Number.Cmp(lastSyncNumBig) > 0 {
+		return nil
+	}
+
 	ethBlock := rawdb.ReadBlock(vm.db, hash, *lastSyncNum)
 	if ethBlock == nil {
 		return fmt.Errorf("read last synchronous block (%#x): %w", hash, database.ErrNotFound)
@@ -45,7 +51,7 @@ func (vm *VM) upgradeLastSynchronousBlock(hash common.Hash) error {
 		1e6, 0,
 	)
 	receipts := rawdb.ReadRawReceipts(vm.db, hash, block.Height())
-	if err := block.MarkExecuted(vm.db, true, clock, block.Timestamp(), receipts, block.Root()); err != nil {
+	if err := block.MarkExecuted(vm.db, clock, block.Timestamp(), receipts, block.Root()); err != nil {
 		return err
 	}
 	if err := block.WriteLastSettledNumber(vm.db); err != nil {
@@ -103,7 +109,7 @@ func (vm *VM) recoverFromDB(ctx context.Context, chainConfig *params.ChainConfig
 
 	return vm.blocks.Replace(ctx, func(blockMap) (blockMap, error) {
 		byID := make(blockMap)
-		byNum := make(map[uint64]*Block)
+		byNum := make(map[uint64]*blocks.Block)
 
 		for i, num := range nums {
 			hash := hashes[i]

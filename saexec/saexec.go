@@ -37,12 +37,6 @@ type Executor struct {
 	queue        sink.Monitor[*queue.FIFO[*blocks.Block]]
 	lastExecuted *atomic.Pointer[blocks.Block] // shared with VM
 
-	// During bootstrapping we need to know when the queue has been executed to
-	// avoid verification returning an error due to waiting on the execution
-	// stream for settlement. This [sink.Gate] is only valid in the absence of
-	// concurrent calls to [Executor.EnqueueAccepted].
-	queueCleared sink.Gate
-
 	headEvents  event.FeedOf[core.ChainHeadEvent]
 	chainEvents event.FeedOf[core.ChainEvent]
 	logEvents   event.FeedOf[[]*types.Log]
@@ -119,7 +113,6 @@ func (e *Executor) init() error {
 func (e *Executor) Run(quit <-chan struct{}, ready chan<- struct{}) {
 	e.quit = quit
 	e.queue = sink.NewMonitor(new(queue.FIFO[*blocks.Block]))
-	e.queueCleared = sink.NewGate()
 	e.spawn(e.processQueue)
 
 	close(ready)

@@ -13,29 +13,29 @@ import (
 	"github.com/ava-labs/avalanchego/snow/engine/snowman/block"
 )
 
-// ChainVM defines the required functionality to be converted into a Snowman VM.
-// See the respective methods on [block.ChainVM] and [snowman.Block] for
-// detailed documentation.
-type ChainVM[B Block] interface {
+// ChainVM defines the functionality required in order to be converted into a
+// Snowman VM. See the respective methods on [block.ChainVM] and [snowman.Block]
+// for detailed documentation.
+type ChainVM[BP BlockProperties] interface {
 	common.VM
 
-	GetBlock(context.Context, ids.ID) (B, error)
-	ParseBlock(context.Context, []byte) (B, error)
-	BuildBlock(context.Context) (B, error)
+	GetBlock(context.Context, ids.ID) (BP, error)
+	ParseBlock(context.Context, []byte) (BP, error)
+	BuildBlock(context.Context) (BP, error)
 
 	// Transferred from [snowman.Block].
-	VerifyBlock(context.Context, B) error
-	AcceptBlock(context.Context, B) error
-	RejectBlock(context.Context, B) error
+	VerifyBlock(context.Context, BP) error
+	AcceptBlock(context.Context, BP) error
+	RejectBlock(context.Context, BP) error
 
 	SetPreference(context.Context, ids.ID) error
 	LastAccepted(context.Context) (ids.ID, error)
 	GetBlockIDAtHeight(context.Context, uint64) (ids.ID, error)
 }
 
-// Block is a read-only subset of [snowman.Block]. The state-modifying methods
-// required by Snowman consensus are, instead, present on [ChainVM].
-type Block interface {
+// BlockProperties is a read-only subset of [snowman.Block]. The state-modifying
+// methods required by Snowman consensus are, instead, present on [ChainVM].
+type BlockProperties interface {
 	ID() ids.ID
 	Parent() ids.ID
 	Bytes() []byte
@@ -43,60 +43,52 @@ type Block interface {
 	Timestamp() time.Time
 }
 
-type CompatibleChainVM[B Block] interface {
-	block.ChainVM
-	AsRawBlock(snowman.Block) (B, bool)
+// Convert transforms a generic [ChainVM] into a standard [block.ChainVM]. All
+// [snowman.Block] values returned by methods of the returned chain will be of
+// the concrete type [Block] with type parameter `BP`.
+func Convert[BP BlockProperties](vm ChainVM[BP]) block.ChainVM {
+	return &adaptor[BP]{vm}
 }
 
-// Convert transforms a generic [ChainVM] into a standard [block.ChainVM].
-func Convert[B Block](vm ChainVM[B]) CompatibleChainVM[B] {
-	return &adaptor[B]{vm}
+type adaptor[BP BlockProperties] struct {
+	ChainVM[BP]
 }
 
-type adaptor[B Block] struct {
-	ChainVM[B]
+// Block is an implementation of [snowman.Block], used by chains returned by
+// [Convert]. The [BlockProperties] can be accessed with [Block.Unwrap].
+type Block[BP BlockProperties] struct {
+	b  BP
+	vm ChainVM[BP]
 }
 
-func (vm adaptor[B]) newBlock(b B, err error) (snowman.Block, error) {
+// Unwrap returns the [BlockProperties] carried by b.
+func (b Block[BP]) Unwrap() BP { return b.b }
+
+func (vm adaptor[BP]) newBlock(b BP, err error) (snowman.Block, error) {
 	if err != nil {
 		return nil, err
 	}
-	return blk[B]{b, vm.ChainVM}, nil
+	return Block[BP]{b, vm.ChainVM}, nil
 }
 
-func (vm adaptor[B]) GetBlock(ctx context.Context, blkID ids.ID) (snowman.Block, error) {
+func (vm adaptor[BP]) GetBlock(ctx context.Context, blkID ids.ID) (snowman.Block, error) {
 	return vm.newBlock(vm.ChainVM.GetBlock(ctx, blkID))
 }
 
-func (vm adaptor[B]) ParseBlock(ctx context.Context, blockBytes []byte) (snowman.Block, error) {
+func (vm adaptor[BP]) ParseBlock(ctx context.Context, blockBytes []byte) (snowman.Block, error) {
 	return vm.newBlock(vm.ChainVM.ParseBlock(ctx, blockBytes))
 }
 
-func (vm adaptor[B]) BuildBlock(ctx context.Context) (snowman.Block, error) {
+func (vm adaptor[BP]) BuildBlock(ctx context.Context) (snowman.Block, error) {
 	return vm.newBlock(vm.ChainVM.BuildBlock(ctx))
 }
 
-func (vm adaptor[B]) AsRawBlock(b snowman.Block) (B, bool) {
-	switch b := b.(type) {
-	case blk[B]:
-		return b.b, true
-	default:
-		var zero B
-		return zero, false
-	}
-}
+func (b Block[BP]) Verify(ctx context.Context) error { return b.vm.VerifyBlock(ctx, b.b) }
+func (b Block[BP]) Accept(ctx context.Context) error { return b.vm.AcceptBlock(ctx, b.b) }
+func (b Block[BP]) Reject(ctx context.Context) error { return b.vm.RejectBlock(ctx, b.b) }
 
-type blk[B Block] struct {
-	b  B
-	vm ChainVM[B]
-}
-
-func (b blk[B]) Verify(ctx context.Context) error { return b.vm.VerifyBlock(ctx, b.b) }
-func (b blk[B]) Accept(ctx context.Context) error { return b.vm.AcceptBlock(ctx, b.b) }
-func (b blk[B]) Reject(ctx context.Context) error { return b.vm.RejectBlock(ctx, b.b) }
-
-func (b blk[B]) ID() ids.ID           { return b.b.ID() }
-func (b blk[B]) Parent() ids.ID       { return b.b.Parent() }
-func (b blk[B]) Bytes() []byte        { return b.b.Bytes() }
-func (b blk[B]) Height() uint64       { return b.b.Height() }
-func (b blk[B]) Timestamp() time.Time { return b.b.Timestamp() }
+func (b Block[BP]) ID() ids.ID           { return b.b.ID() }
+func (b Block[BP]) Parent() ids.ID       { return b.b.Parent() }
+func (b Block[BP]) Bytes() []byte        { return b.b.Bytes() }
+func (b Block[BP]) Height() uint64       { return b.b.Height() }
+func (b Block[BP]) Timestamp() time.Time { return b.b.Timestamp() }

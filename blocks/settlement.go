@@ -1,6 +1,9 @@
 package blocks
 
-import "slices"
+import (
+	"context"
+	"slices"
+)
 
 type ancestry struct {
 	parent, lastSettled *Block
@@ -17,9 +20,21 @@ func (b *Block) MarkSettled() {
 		b.log.Fatal("Block re-settled")
 	}
 	if b.ancestry.CompareAndSwap(a, nil) {
+		close(b.settled)
 		return
 	}
 	b.log.Fatal("Block ancestry changed")
+}
+
+// WaitUntilSettled blocks until either [Block.MarkSettled] is called or the
+// [context.Context] is cancelled.
+func (b *Block) WaitUntilSettled(ctx context.Context) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-b.settled:
+		return nil
+	}
 }
 
 // ParentBlock returns the block's parent unless [Block.MarkSettled] has been

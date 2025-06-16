@@ -23,42 +23,24 @@ import (
 	"github.com/ava-labs/strevm/queue"
 )
 
-// Enqueue pushes a new block to the FIFO queue. It is non-blocking unless the
-// `synchronous` argument is true, in which case it returns when either the
-// [context.Context] is cancelled or the block has been executed.
-//
-// The `synchronous` argument SHOULD be true i.f.f. the chain is bootstrapping.
-func (e *Executor) EnqueueAccepted(ctx context.Context, block *blocks.Block, synchronous bool) error {
-	err := e.queue.UseThenSignal(ctx, func(q *queue.FIFO[*blocks.Block]) error {
+// Enqueue pushes a new block to the FIFO queue.
+func (e *Executor) EnqueueAccepted(ctx context.Context, block *blocks.Block) error {
+	return e.queue.UseThenSignal(ctx, func(q *queue.FIFO[*blocks.Block]) error {
 		q.Push(block)
-		e.queueCleared.Block()
 		return nil
 	})
-	if err != nil || !synchronous {
-		return err
-	}
-	return e.queueCleared.Wait(ctx)
 }
 
 func (e *Executor) processQueue() {
 	ctx := e.quitCtx()
 
 	for {
-		type pop struct {
-			block      *blocks.Block
-			emptyAfter bool
-		}
-
-		popped, err := sink.FromMonitor(ctx, e.queue,
+		block, err := sink.FromMonitor(ctx, e.queue,
 			func(q *queue.FIFO[*blocks.Block]) bool {
 				return q.Len() > 0
 			},
-			func(q *queue.FIFO[*blocks.Block]) (pop, error) {
-				b := q.Pop()
-				return pop{
-					block:      b,
-					emptyAfter: q.Len() == 0,
-				}, nil
+			func(q *queue.FIFO[*blocks.Block]) (*blocks.Block, error) {
+				return q.Pop(), nil
 			},
 		)
 		if errors.Is(err, context.Canceled) {
@@ -72,7 +54,6 @@ func (e *Executor) processQueue() {
 			return
 		}
 
-		block := popped.block
 		switch err := e.execute(ctx, block); {
 		case errors.Is(err, context.Canceled):
 			return
@@ -85,13 +66,6 @@ func (e *Executor) processQueue() {
 				zap.Any("hash", block.Hash()),
 			)
 			return
-		}
-
-		// This may race with a concurrent call to [VM.AcceptBlock], but that is
-		// documented and also acceptable as we only ever Wait() inside
-		// [VM.AcceptBlock].
-		if popped.emptyAfter {
-			e.queueCleared.Open()
 		}
 	}
 }
@@ -161,7 +135,7 @@ func (e *Executor) execute(ctx context.Context, b *blocks.Block) error {
 	// 1. [blocks.Block.MarkExecuted] guarantees disk then in-memory changes.
 	// 2. Internal indicator of last executed MUST follow in-memory change.
 	// 3. External indicator of last executed MUST follow internal indicator.
-	if err := b.MarkExecuted(e.db, false, e.gasClock.Clone(), endTime, receipts, root); err != nil {
+	if err := b.MarkExecuted(e.db, e.gasClock.Clone(), endTime, receipts, root); err != nil {
 		return err
 	}
 	e.lastExecuted.Store(b)                      // (2)

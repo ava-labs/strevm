@@ -23,6 +23,7 @@ import (
 	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/rlp"
 	"github.com/ava-labs/strevm/blocks"
+	"github.com/ava-labs/strevm/hook"
 	"github.com/ava-labs/strevm/queue"
 	"github.com/ava-labs/strevm/saexec"
 )
@@ -37,13 +38,13 @@ type VM struct {
 	snowCtx *snow.Context
 	snowcommon.AppHandler
 	toEngine chan<- snowcommon.Message
-	hooks    Hooks
+	hooks    hook.Points
 	now      func() time.Time
 
 	consensusState utils.Atomic[snow.State]
 
 	blocks     sink.Mutex[blockMap]
-	preference atomic.Pointer[Block]
+	preference atomic.Pointer[blocks.Block]
 	last       last
 
 	db ethdb.Database
@@ -58,15 +59,15 @@ type VM struct {
 }
 
 type (
-	blockMap map[common.Hash]*Block
+	blockMap map[common.Hash]*blocks.Block
 	last     struct {
 		synchronousTime             uint64
-		accepted, executed, settled atomic.Pointer[Block]
+		accepted, executed, settled atomic.Pointer[blocks.Block]
 	}
 )
 
 type Config struct {
-	Hooks       Hooks
+	Hooks       hook.Points
 	ChainConfig *params.ChainConfig
 	DB          ethdb.Database
 	// At the point of upgrade from synchronous to asynchronous execution, the
@@ -131,7 +132,7 @@ func New(ctx context.Context, c Config) (*VM, error) {
 	return vm, nil
 }
 
-func (vm *VM) newBlock(b *types.Block, parent, lastSettled *Block) (*Block, error) {
+func (vm *VM) newBlock(b *types.Block, parent, lastSettled *blocks.Block) (*blocks.Block, error) {
 	return blocks.New(b, parent, lastSettled, vm.logger())
 }
 
@@ -188,8 +189,8 @@ func (vm *VM) CreateHandlers(context.Context) (map[string]http.Handler, error) {
 	}, nil
 }
 
-func (vm *VM) GetBlock(ctx context.Context, blkID ids.ID) (*Block, error) {
-	b, err := sink.FromMutex(ctx, vm.blocks, func(blocks blockMap) (*Block, error) {
+func (vm *VM) GetBlock(ctx context.Context, blkID ids.ID) (*blocks.Block, error) {
+	b, err := sink.FromMutex(ctx, vm.blocks, func(blocks blockMap) (*blocks.Block, error) {
 		if b, ok := blocks[common.Hash(blkID)]; ok {
 			return b, nil
 		}
@@ -218,7 +219,7 @@ func (vm *VM) GetBlock(ctx context.Context, blkID ids.ID) (*Block, error) {
 	return vm.newBlock(ethB, nil, nil)
 }
 
-func (vm *VM) ParseBlock(ctx context.Context, blockBytes []byte) (*Block, error) {
+func (vm *VM) ParseBlock(ctx context.Context, blockBytes []byte) (*blocks.Block, error) {
 	b := new(types.Block)
 	if err := rlp.DecodeBytes(blockBytes, b); err != nil {
 		return nil, err
@@ -229,7 +230,7 @@ func (vm *VM) ParseBlock(ctx context.Context, blockBytes []byte) (*Block, error)
 	return vm.newBlock(b, nil, nil)
 }
 
-func (vm *VM) BuildBlock(ctx context.Context) (*Block, error) {
+func (vm *VM) BuildBlock(ctx context.Context) (*blocks.Block, error) {
 	return vm.buildBlock(ctx, uint64(vm.now().Unix()), vm.preference.Load())
 }
 

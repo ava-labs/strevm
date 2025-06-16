@@ -133,7 +133,7 @@ func (b *ethAPIBackend) resolveBlockNumber(num rpc.BlockNumber) (uint64, common.
 
 // blockNumAndHash always returns a nil error; the signature is for convenience
 // when used in [ethAPIBackend.resolveBlockNumber].
-func (*ethAPIBackend) blockNumAndHash(block *atomic.Pointer[Block]) (uint64, common.Hash, error) {
+func (*ethAPIBackend) blockNumAndHash(block *atomic.Pointer[blocks.Block]) (uint64, common.Hash, error) {
 	b := block.Load()
 	return b.NumberU64(), b.Hash(), nil
 }

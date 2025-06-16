@@ -13,7 +13,7 @@ import (
 	_ "github.com/ava-labs/libevm/core/types"
 )
 
-var _ adaptor.Block = (*Block)(nil)
+var _ adaptor.BlockProperties = (*Block)(nil)
 
 // ID returns [types.Block.Hash] from the embedded [types.Block].
 func (b *Block) ID() ids.ID {

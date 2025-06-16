@@ -19,10 +19,10 @@ import (
 	"go.uber.org/zap"
 )
 
-func (vm *VM) buildBlock(ctx context.Context, timestamp uint64, parent *Block) (*Block, error) {
+func (vm *VM) buildBlock(ctx context.Context, timestamp uint64, parent *blocks.Block) (*blocks.Block, error) {
 	block, err := sink.FromPriorityMutex(
 		ctx, vm.mempool, sink.MaxPriority,
-		func(_ <-chan sink.Priority, pool *queue.Priority[*pendingTx]) (*Block, error) {
+		func(_ <-chan sink.Priority, pool *queue.Priority[*pendingTx]) (*blocks.Block, error) {
 			block, err := vm.buildBlockWithCandidateTxs(timestamp, parent, pool)
 
 			// TODO: This shouldn't be done immediately, there should be some
@@ -57,7 +57,7 @@ var (
 	errNoopBlock           = errors.New("block does not settle state nor include transactions")
 )
 
-func (vm *VM) buildBlockWithCandidateTxs(timestamp uint64, parent *Block, candidateTxs queue.Queue[*pendingTx]) (*Block, error) {
+func (vm *VM) buildBlockWithCandidateTxs(timestamp uint64, parent *blocks.Block, candidateTxs queue.Queue[*pendingTx]) (*blocks.Block, error) {
 	if timestamp < parent.Time() {
 		return nil, fmt.Errorf("block at time %d before parent at %d", timestamp, parent.Time())
 	}
@@ -121,8 +121,8 @@ func (vm *VM) buildBlockWithCandidateTxs(timestamp uint64, parent *Block, candid
 	return blocks.New(ethB, parent, toSettle, vm.logger())
 }
 
-func (vm *VM) buildBlockOnHistory(lastSettled, parent *Block, timestamp uint64, candidateTxs queue.Queue[*pendingTx]) (_ types.Transactions, _ gas.Gas, retErr error) {
-	var history []*Block
+func (vm *VM) buildBlockOnHistory(lastSettled, parent *blocks.Block, timestamp uint64, candidateTxs queue.Queue[*pendingTx]) (_ types.Transactions, _ gas.Gas, retErr error) {
+	var history []*blocks.Block
 	for b := parent; b.ID() != lastSettled.ID(); b = b.ParentBlock() {
 		history = append(history, b)
 	}
@@ -228,7 +228,7 @@ func errIsOneOf(err error, targets ...error) bool {
 	return false
 }
 
-func (vm *VM) lastBlockToSettleAt(timestamp uint64, parent *Block) (*Block, bool) {
+func (vm *VM) lastBlockToSettleAt(timestamp uint64, parent *blocks.Block) (*blocks.Block, bool) {
 	settleAt := intmath.BoundedSubtract(timestamp, stateRootDelaySeconds, vm.last.synchronousTime)
 	return blocks.LastToSettleAt(settleAt, parent)
 }
