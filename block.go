@@ -40,6 +40,9 @@ func (vm *VM) AcceptBlock(ctx context.Context, b *blocks.Block) error {
 		s.MarkSettled()
 	}
 
+	// The documentation of invariants and ordering guarantees explicitly states
+	// that these can happen in any order because they involve different blocks
+	// entering different states.
 	vm.last.settled.Store(b.LastSettled())
 	vm.last.accepted.Store(b)
 
