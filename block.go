@@ -7,6 +7,7 @@ import (
 
 	"github.com/ava-labs/avalanchego/ids"
 	"github.com/ava-labs/avalanchego/snow"
+	"github.com/ava-labs/avalanchego/snow/engine/snowman/block"
 	"github.com/ava-labs/libevm/core"
 	"github.com/ava-labs/libevm/core/rawdb"
 	"github.com/ava-labs/libevm/core/types"
@@ -101,6 +102,39 @@ func (vm *VM) AcceptBlock(ctx context.Context, b *blocks.Block) error {
 func (vm *VM) RejectBlock(ctx context.Context, b *blocks.Block) error {
 	// TODO(arr4n) add the transactions back to the mempool if necessary.
 	return nil
+}
+
+func (vm *VM) ShouldVerifyBlockWithContext(ctx context.Context, b *blocks.Block) (bool, error) {
+	return vm.hooks.ShouldVerifyBlockContext(ctx, b.Block)
+}
+
+func (vm *VM) VerifyBlockWithContext(ctx context.Context, blockContext *block.Context, b *blocks.Block) error {
+	// Verify that the block is valid within the provided context. This must be
+	// called even if the block was previously verified because the context may
+	// be different.
+	if err := vm.hooks.VerifyBlockContext(ctx, blockContext, b.Block); err != nil {
+		return err
+	}
+
+	blockHash := b.Hash()
+	var previouslyVerified bool
+	// TODO(StephenButtolph): In the concurrency model this VM is implementing,
+	// is this usage of the block map a logical race? The consensus engine
+	// currently only ever calls VerifyWithContext and VerifyBlock on a single
+	// thread, so the actual behavior seems correct.
+	err := vm.blocks.Use(ctx, func(bm blockMap) error {
+		_, previouslyVerified = bm[blockHash]
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	// If [VM.VerifyBlock] has already returned nil, we do not need to re-verify
+	// the block.
+	if previouslyVerified {
+		return nil
+	}
+	return vm.VerifyBlock(ctx, b)
 }
 
 func (vm *VM) VerifyBlock(ctx context.Context, b *blocks.Block) error {

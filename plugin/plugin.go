@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/ava-labs/avalanchego/snow/engine/snowman/block"
 	"github.com/ava-labs/avalanchego/vms/components/gas"
 	"github.com/ava-labs/avalanchego/vms/rpcchainvm"
 	"github.com/ava-labs/libevm/core/types"
@@ -20,6 +21,14 @@ type hooks struct{}
 
 func (*hooks) GasTarget(parent *types.Block) gas.Gas {
 	return TargetGasPerSecond
+}
+
+func (*hooks) ShouldVerifyBlockContext(context.Context, *types.Block) (bool, error) {
+	return false, nil
+}
+
+func (*hooks) VerifyBlockContext(context.Context, *block.Context, *types.Block) error {
+	return nil
 }
 
 func main() {

@@ -5,6 +5,9 @@
 package hook
 
 import (
+	"context"
+
+	"github.com/ava-labs/avalanchego/snow/engine/snowman/block"
 	"github.com/ava-labs/avalanchego/vms/components/gas"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/strevm/gastime"
@@ -13,6 +16,16 @@ import (
 // Points define user-injected hook points.
 type Points interface {
 	GasTarget(parent *types.Block) gas.Gas
+	// ShouldVerifyBlockContext reports whether this block is only valid against
+	// a subset of proposervm block contexts. If there are contexts where this
+	// block could be invalid, this function must return true.
+	//
+	// This function must be deterministic for a given block.
+	ShouldVerifyBlockContext(ctx context.Context, block *types.Block) (bool, error)
+	// VerifyBlockContext verifies that the block is valid within the provided
+	// block context. This is not expected to fully verify the block, only that
+	// the block is not invalid with the provided context.
+	VerifyBlockContext(ctx context.Context, blockContext *block.Context, block *types.Block) error
 }
 
 // BeforeBlock is intended to be called before processing a block, with the gas

@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/arr4n/sink"
+	"github.com/ava-labs/avalanchego/snow/engine/snowman/block"
 	"github.com/ava-labs/avalanchego/utils/logging"
 	"github.com/ava-labs/avalanchego/vms/components/gas"
 	ethereum "github.com/ava-labs/libevm"
@@ -48,6 +49,14 @@ type stubHooks struct {
 
 func (h *stubHooks) GasTarget(parent *types.Block) gas.Gas {
 	return h.T
+}
+
+func (*stubHooks) ShouldVerifyBlockContext(context.Context, *types.Block) (bool, error) {
+	return false, nil
+}
+
+func (*stubHooks) VerifyBlockContext(context.Context, *block.Context, *types.Block) error {
+	return nil
 }
 
 func TestIntegrationWrapAVAX(t *testing.T) {
