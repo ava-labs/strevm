@@ -27,7 +27,7 @@ func newTxIncluder(tb testing.TB) (*TransactionIncluder, *state.StateDB) {
 	tb.Helper()
 	db := newDB(tb)
 	return NewTxIncluder(
-		db, params.TestChainConfig,
+		db, params.MergedTestChainConfig,
 		gastime.New(0, 1e6, 0),
 		5, 2,
 	), db
@@ -86,6 +86,7 @@ func TestNonContextualTransactionRejection(t *testing.T) {
 			tx: &types.LegacyTx{
 				To:   nil, // i.e. contract creation
 				Data: make([]byte, params.MaxInitCodeSize+1),
+				Gas:  250_000, // cover intrinsic gas
 			},
 			wantErrIs: core.ErrMaxInitCodeSizeExceeded,
 		},
@@ -131,6 +132,13 @@ func TestNonContextualTransactionRejection(t *testing.T) {
 			},
 			wantErrIs: core.ErrInsufficientFunds,
 		},
+		{
+			name: "blob_tx_not_supported",
+			tx: &types.BlobTx{
+				Gas: params.TxGas,
+			},
+			wantErrIs: core.ErrTxTypeNotSupported,
+		},
 	}
 
 	for _, tt := range tests {
@@ -142,7 +150,7 @@ func TestNonContextualTransactionRejection(t *testing.T) {
 			if tt.stateSetup != nil {
 				tt.stateSetup(db)
 			}
-			tx := types.MustSignNewTx(key, types.LatestSigner(inc.config), tt.tx)
+			tx := types.MustSignNewTx(key, types.NewCancunSigner(inc.config.ChainID), tt.tx)
 			require.ErrorIs(t, inc.Include(tx), tt.wantErrIs)
 		})
 	}
