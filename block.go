@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"iter"
 
 	"github.com/ava-labs/avalanchego/ids"
 	"github.com/ava-labs/avalanchego/snow"
@@ -12,7 +13,6 @@ import (
 	"github.com/ava-labs/libevm/core/rawdb"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/strevm/blocks"
-	"github.com/ava-labs/strevm/hook"
 	"github.com/ava-labs/strevm/queue"
 	"go.uber.org/zap"
 )
@@ -195,7 +195,7 @@ func (vm *VM) VerifyBlock(ctx context.Context, b *blocks.Block) error {
 // and iterates up to but not including the most recently settled block.
 //
 // If the provided block is settled, then the returned iterator is empty.
-func iterateUntilSettled(from *blocks.Block) hook.BlockIterator {
+func iterateUntilSettled(from *blocks.Block) iter.Seq[*types.Block] {
 	return func(yield func(*types.Block) bool) {
 		// Do not modify the `from` variable to support multiple iterations.
 		current := from

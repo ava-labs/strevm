@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"iter"
 	"math"
 	"math/big"
 	"net/http/httptest"
@@ -29,7 +30,6 @@ import (
 	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/rpc"
 	"github.com/ava-labs/strevm/blocks"
-	"github.com/ava-labs/strevm/hook"
 	"github.com/ava-labs/strevm/queue"
 	"github.com/ava-labs/strevm/weth"
 	"github.com/google/go-cmp/cmp"
@@ -60,7 +60,7 @@ func (*stubHooks) VerifyBlockContext(context.Context, *block.Context, *types.Blo
 	return nil
 }
 
-func (*stubHooks) VerifyBlockAncestors(context.Context, *types.Block, hook.BlockIterator) error {
+func (*stubHooks) VerifyBlockAncestors(context.Context, *types.Block, iter.Seq[*types.Block]) error {
 	return nil
 }
 

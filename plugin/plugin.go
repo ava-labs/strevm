@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"iter"
 	"os"
 
 	"github.com/ava-labs/avalanchego/snow/engine/snowman/block"
@@ -11,7 +12,6 @@ import (
 	"github.com/ava-labs/libevm/core/types"
 	sae "github.com/ava-labs/strevm"
 	"github.com/ava-labs/strevm/adaptor"
-	"github.com/ava-labs/strevm/hook"
 )
 
 const (
@@ -32,7 +32,7 @@ func (*hooks) VerifyBlockContext(context.Context, *block.Context, *types.Block) 
 	return nil
 }
 
-func (*hooks) VerifyBlockAncestors(context.Context, *types.Block, hook.BlockIterator) error {
+func (*hooks) VerifyBlockAncestors(context.Context, *types.Block, iter.Seq[*types.Block]) error {
 	return nil
 }
 

@@ -6,22 +6,13 @@ package hook
 
 import (
 	"context"
+	"iter"
 
 	"github.com/ava-labs/avalanchego/snow/engine/snowman/block"
 	"github.com/ava-labs/avalanchego/vms/components/gas"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/strevm/gastime"
 )
-
-// BlockIterator enables iteration over blocks.
-//
-// Example usage is:
-//
-//	var it BlockIterator
-//	for block := range it {
-//		...
-//	}
-type BlockIterator func(yield func(*types.Block) bool)
 
 // Points define user-injected hook points.
 type Points interface {
@@ -40,7 +31,7 @@ type Points interface {
 	// ancestors. This is not expected to fully verify the block, only that the
 	// block's ancestors are compatible. The ancestor iterator iterates from the
 	// parent of block up to but not including the most recently settled block.
-	VerifyBlockAncestors(ctx context.Context, block *types.Block, ancestors BlockIterator) error
+	VerifyBlockAncestors(ctx context.Context, block *types.Block, ancestors iter.Seq[*types.Block]) error
 }
 
 // BeforeBlock is intended to be called before processing a block, with the gas
