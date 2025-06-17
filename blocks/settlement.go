@@ -9,6 +9,8 @@ type ancestry struct {
 	parent, lastSettled *Block
 }
 
+const blockResettledMsg = "Block re-settled"
+
 // MarkSettled marks the block as having being settled. This function MUST NOT
 // be called more than once.
 //
@@ -17,7 +19,8 @@ type ancestry struct {
 func (b *Block) MarkSettled() {
 	a := b.ancestry.Load()
 	if a == nil {
-		b.log.Fatal("Block re-settled")
+		b.log.Fatal(blockResettledMsg)
+		return
 	}
 	if b.ancestry.CompareAndSwap(a, nil) {
 		close(b.settled)
@@ -37,13 +40,18 @@ func (b *Block) WaitUntilSettled(ctx context.Context) error {
 	}
 }
 
+const (
+	getParentOfSettledMsg  = "Get parent of settled block"
+	getSettledOfSettledMsg = "Get last-settled of settled block"
+)
+
 // ParentBlock returns the block's parent unless [Block.MarkSettled] has been
 // called, in which case it returns nil.
 func (b *Block) ParentBlock() *Block {
 	if a := b.ancestry.Load(); a != nil {
 		return a.parent
 	}
-	b.log.Error("Get parent of settled block")
+	b.log.Error(getParentOfSettledMsg)
 	return nil
 }
 
@@ -53,7 +61,7 @@ func (b *Block) LastSettled() *Block {
 	if a := b.ancestry.Load(); a != nil {
 		return a.lastSettled
 	}
-	b.log.Error("Get last-settled of settled block")
+	b.log.Error(getSettledOfSettledMsg)
 	return nil
 }
 

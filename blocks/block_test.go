@@ -30,6 +30,8 @@ func newBlock(tb testing.TB, eth *types.Block, parent, lastSettled *Block) *Bloc
 }
 
 func TestSetAncestors(t *testing.T) {
+	t.Parallel()
+
 	parent := newBlock(t, newEthBlock(5, 5, nil), nil, nil)
 	lastSettled := newBlock(t, newEthBlock(3, 0, nil), nil, nil)
 	child := newEthBlock(6, 6, parent.Block)
