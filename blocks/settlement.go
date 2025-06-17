@@ -2,6 +2,8 @@ package blocks
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"slices"
 )
 
@@ -9,24 +11,27 @@ type ancestry struct {
 	parent, lastSettled *Block
 }
 
-const blockResettledMsg = "Block re-settled"
+var errBlockResettled = errors.New("block re-settled")
 
 // MarkSettled marks the block as having being settled. This function MUST NOT
 // be called more than once.
 //
 // After a call to MarkSettled, future calls to [Block.ParentBlock] and
 // [Block.LastSettled] will return nil.
-func (b *Block) MarkSettled() {
+func (b *Block) MarkSettled() error {
 	a := b.ancestry.Load()
 	if a == nil {
-		b.log.Fatal(blockResettledMsg)
-		return
+		b.log.Error(errBlockResettled.Error())
+		return fmt.Errorf("%w: block height %d", errBlockResettled, b.Height())
 	}
 	if b.ancestry.CompareAndSwap(a, nil) {
 		close(b.settled)
-		return
+		return nil
 	}
 	b.log.Fatal("Block ancestry changed")
+	// We have to return something to keen the compiler happy, even though we
+	// expect the Fatal to be, well, fatal.
+	return errors.New("block ancestry changed")
 }
 
 // WaitUntilSettled blocks until either [Block.MarkSettled] is called or the

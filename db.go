@@ -60,7 +60,9 @@ func (vm *VM) upgradeLastSynchronousBlock(hash common.Hash) error {
 	if err := block.WriteLastSettledNumber(vm.db); err != nil {
 		return err
 	}
-	block.MarkSettled()
+	if err := block.MarkSettled(); err != nil {
+		return err
+	}
 
 	if err := block.CheckInvariants(true, true); err != nil {
 		return fmt.Errorf("upgrading last synchronous block: %v", err)
@@ -138,7 +140,9 @@ func (vm *VM) recoverFromDB(ctx context.Context, chainConfig *params.ChainConfig
 				}
 			}
 			if num <= *lastSettledNum {
-				b.MarkSettled()
+				if err := b.MarkSettled(); err != nil {
+					return nil, err
+				}
 			}
 
 			if b.Hash() == lastExecutedHash {

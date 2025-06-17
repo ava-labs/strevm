@@ -85,7 +85,7 @@ func TestSettlementInvariants(t *testing.T) {
 		t.FailNow()
 	}
 
-	b.MarkSettled()
+	require.NoError(t, b.MarkSettled(), "first call to MarkSettled()")
 
 	t.Run("after_MarkSettled", func(t *testing.T) {
 		assert.NoError(t, b.WaitUntilSettled(context.Background()), "WaitUntilSettled()")
@@ -97,7 +97,7 @@ func TestSettlementInvariants(t *testing.T) {
 		assert.Len(t, rec.records, 1, "Number of ERROR or FATAL logs")
 		assert.Nil(t, b.LastSettled(), "LastSettled()")
 		assert.Len(t, rec.records, 2, "Number of ERROR or FATAL logs")
-		b.MarkSettled()
+		assert.ErrorIs(t, b.MarkSettled(), errBlockResettled, "second call to MarkSettled()")
 		assert.Len(t, rec.records, 3, "Number of ERROR or FATAL logs")
 		if t.Failed() {
 			t.FailNow()
@@ -113,8 +113,8 @@ func TestSettlementInvariants(t *testing.T) {
 				msg:   getSettledOfSettledMsg,
 			},
 			{
-				level: logging.Fatal,
-				msg:   blockResettledMsg,
+				level: logging.Error,
+				msg:   errBlockResettled.Error(),
 			},
 		}
 		if diff := cmp.Diff(want, rec.records, cmp.AllowUnexported(logRecord{})); diff != "" {
