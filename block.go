@@ -102,7 +102,10 @@ func (vm *VM) AcceptBlock(ctx context.Context, b *blocks.Block) error {
 
 func (vm *VM) RejectBlock(ctx context.Context, b *blocks.Block) error {
 	// TODO(arr4n) add the transactions back to the mempool if necessary.
-	return nil
+	return vm.blocks.Use(ctx, func(bm blockMap) error {
+		delete(bm, b.Hash())
+		return nil
+	})
 }
 
 func (vm *VM) ShouldVerifyBlockWithContext(ctx context.Context, b *blocks.Block) (bool, error) {
