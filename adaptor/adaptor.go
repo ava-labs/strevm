@@ -13,6 +13,12 @@ import (
 	"github.com/ava-labs/avalanchego/snow/engine/snowman/block"
 )
 
+// Enforce optional interfaces
+var (
+	_ block.BuildBlockWithContextChainVM = adaptor[BlockProperties]{}
+	_ block.WithVerifyContext            = Block[BlockProperties]{}
+)
+
 // ChainVM defines the functionality required in order to be converted into a
 // Snowman VM. See the respective methods on [block.ChainVM] and [snowman.Block]
 // for detailed documentation.
@@ -21,6 +27,7 @@ type ChainVM[BP BlockProperties] interface {
 
 	GetBlock(context.Context, ids.ID) (BP, error)
 	ParseBlock(context.Context, []byte) (BP, error)
+	BuildBlockWithContext(context.Context, *block.Context) (BP, error)
 	BuildBlock(context.Context) (BP, error)
 
 	// Transferred from [snowman.Block] and [block.WithVerifyContext].
@@ -79,6 +86,10 @@ func (vm adaptor[BP]) GetBlock(ctx context.Context, blkID ids.ID) (snowman.Block
 
 func (vm adaptor[BP]) ParseBlock(ctx context.Context, blockBytes []byte) (snowman.Block, error) {
 	return vm.newBlock(vm.ChainVM.ParseBlock(ctx, blockBytes))
+}
+
+func (vm adaptor[BP]) BuildBlockWithContext(ctx context.Context, blockContext *block.Context) (snowman.Block, error) {
+	return vm.newBlock(vm.ChainVM.BuildBlockWithContext(ctx, blockContext))
 }
 
 func (vm adaptor[BP]) BuildBlock(ctx context.Context) (snowman.Block, error) {
