@@ -29,7 +29,7 @@ func newBlock(tb testing.TB, eth *types.Block, parent, lastSettled *Block) *Bloc
 	return b
 }
 
-func newChain(tb testing.TB, startHeight, total uint64, lastSettled map[uint64]uint64) []*Block {
+func newChain(tb testing.TB, startHeight, total uint64, lastSettledAtHeight map[uint64]uint64) []*Block {
 	tb.Helper()
 
 	var (
@@ -39,11 +39,15 @@ func newChain(tb testing.TB, startHeight, total uint64, lastSettled map[uint64]u
 	)
 	byNum := make(map[uint64]*Block)
 
+	if lastSettledAtHeight == nil {
+		lastSettledAtHeight = make(map[uint64]uint64)
+	}
+
 	for i := range total {
 		n := startHeight + i
 
 		var settle *Block
-		if s, ok := lastSettled[n]; ok {
+		if s, ok := lastSettledAtHeight[n]; ok {
 			settle = byNum[s]
 		}
 
