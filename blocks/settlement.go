@@ -69,6 +69,9 @@ func (b *Block) LastSettled() *Block {
 // consensus. If `x` is the block height of the `b.ParentBlock().LastSettled()`
 // and `y` is the height of the `b.LastSettled()`, then Settles returns the
 // contiguous, half-open range (x,y] or an empty slice i.f.f. x==y.
+//
+// It is not valid to call Settles after a call to [Block.MarkSettled] on either
+// b or its parent.
 func (b *Block) Settles() []*Block {
 	return b.ParentBlock().IfChildSettles(b.LastSettled())
 }

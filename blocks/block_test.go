@@ -29,6 +29,34 @@ func newBlock(tb testing.TB, eth *types.Block, parent, lastSettled *Block) *Bloc
 	return b
 }
 
+func newChain(tb testing.TB, startHeight, total uint64, lastSettled map[uint64]uint64) []*Block {
+	tb.Helper()
+
+	var (
+		ethParent *types.Block
+		parent    *Block
+		blocks    []*Block
+	)
+	byNum := make(map[uint64]*Block)
+
+	for i := range total {
+		n := startHeight + i
+
+		var settle *Block
+		if s, ok := lastSettled[n]; ok {
+			settle = byNum[s]
+		}
+
+		byNum[n] = newBlock(tb, newEthBlock(n, n /*time*/, ethParent), parent, settle)
+		blocks = append(blocks, byNum[n])
+
+		parent = byNum[n]
+		ethParent = parent.Block
+	}
+
+	return blocks
+}
+
 func TestSetAncestors(t *testing.T) {
 	t.Parallel()
 
