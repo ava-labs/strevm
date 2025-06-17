@@ -197,8 +197,10 @@ func (vm *VM) VerifyBlock(ctx context.Context, b *blocks.Block) error {
 // If the provided block is settled, then the returned iterator is empty.
 func iterateUntilSettled(from *blocks.Block) hook.BlockIterator {
 	return func(yield func(*types.Block) bool) {
+		// Do not modify the `from` variable to support multiple iterations.
+		current := from
 		for {
-			next := from.ParentBlock()
+			next := current.ParentBlock()
 			// If the next block is nil, then the current block is settled.
 			if next == nil {
 				return
@@ -206,11 +208,11 @@ func iterateUntilSettled(from *blocks.Block) hook.BlockIterator {
 
 			// If the person iterating over this iterator broke out of the loop,
 			// we must not call yield again.
-			if !yield(from.Block) {
+			if !yield(current.Block) {
 				return
 			}
 
-			from = next
+			current = next
 		}
 	}
 }
