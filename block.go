@@ -12,6 +12,7 @@ import (
 	"github.com/ava-labs/libevm/core/rawdb"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/strevm/blocks"
+	"github.com/ava-labs/strevm/hook"
 	"github.com/ava-labs/strevm/queue"
 	"go.uber.org/zap"
 )
@@ -143,6 +144,11 @@ func (vm *VM) VerifyBlock(ctx context.Context, b *blocks.Block) error {
 		return fmt.Errorf("block parent %#x not found (presumed height %d)", b.ParentHash(), b.Height()-1)
 	}
 
+	ancestors := iterateUntilSettled(parent)
+	if err := vm.hooks.VerifyBlockAncestors(ctx, b.Block, ancestors); err != nil {
+		return err
+	}
+
 	signer := vm.signer(b.NumberU64(), b.Time())
 	txs := b.Transactions()
 	// This starts a concurrent, background pre-computation of the results of
@@ -180,4 +186,28 @@ func (vm *VM) VerifyBlock(ctx context.Context, b *blocks.Block) error {
 		bm[b.Hash()] = b
 		return nil
 	})
+}
+
+// iterateUntilSettled returns an iterator which starts at the provided block
+// and iterates up to but not including the most recently settled block.
+//
+// If the provided block is settled, then the returned iterator is empty.
+func iterateUntilSettled(from *blocks.Block) hook.BlockIterator {
+	return func(yield func(*types.Block) bool) {
+		for {
+			next := from.ParentBlock()
+			// If the next block is nil, then the current block is settled.
+			if next == nil {
+				return
+			}
+
+			// If the person iterating over this iterator broke out of the loop,
+			// we must not call yield again.
+			if !yield(from.Block) {
+				return
+			}
+
+			from = next
+		}
+	}
 }

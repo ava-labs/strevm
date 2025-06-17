@@ -29,6 +29,7 @@ import (
 	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/rpc"
 	"github.com/ava-labs/strevm/blocks"
+	"github.com/ava-labs/strevm/hook"
 	"github.com/ava-labs/strevm/queue"
 	"github.com/ava-labs/strevm/weth"
 	"github.com/google/go-cmp/cmp"
@@ -56,6 +57,10 @@ func (*stubHooks) ShouldVerifyBlockContext(context.Context, *types.Block) (bool,
 }
 
 func (*stubHooks) VerifyBlockContext(context.Context, *block.Context, *types.Block) error {
+	return nil
+}
+
+func (*stubHooks) VerifyBlockAncestors(context.Context, *types.Block, hook.BlockIterator) error {
 	return nil
 }
 

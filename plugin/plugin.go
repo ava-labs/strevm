@@ -11,6 +11,7 @@ import (
 	"github.com/ava-labs/libevm/core/types"
 	sae "github.com/ava-labs/strevm"
 	"github.com/ava-labs/strevm/adaptor"
+	"github.com/ava-labs/strevm/hook"
 )
 
 const (
@@ -28,6 +29,10 @@ func (*hooks) ShouldVerifyBlockContext(context.Context, *types.Block) (bool, err
 }
 
 func (*hooks) VerifyBlockContext(context.Context, *block.Context, *types.Block) error {
+	return nil
+}
+
+func (*hooks) VerifyBlockAncestors(context.Context, *types.Block, hook.BlockIterator) error {
 	return nil
 }
 
