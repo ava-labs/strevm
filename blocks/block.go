@@ -4,6 +4,7 @@
 package blocks
 
 import (
+	"errors"
 	"fmt"
 	"math"
 	"runtime"
@@ -67,10 +68,15 @@ func New(eth *types.Block, parent, lastSettled *Block, log logging.Logger) (*Blo
 	return b, nil
 }
 
+var (
+	errParentHashMismatch = errors.New("block-parent hash mismatch")
+	errHashMismatch       = errors.New("block hash mismatch")
+)
+
 func (b *Block) setAncestors(parent, lastSettled *Block) error {
 	if parent != nil {
 		if got, want := parent.Hash(), b.ParentHash(); got != want {
-			return fmt.Errorf("constructing Block with parent hash %v; expecting %v", got, want)
+			return fmt.Errorf("%w: constructing Block with parent hash %v; expecting %v", errParentHashMismatch, got, want)
 		}
 	}
 	b.ancestry.Store(&ancestry{
@@ -85,7 +91,7 @@ func (b *Block) setAncestors(parent, lastSettled *Block) error {
 // MUST have the same hash as b.
 func (b *Block) CopyAncestorsFrom(c *Block) error {
 	if from, to := c.Hash(), b.Hash(); from != to {
-		return fmt.Errorf("copying internals from block %#x to %#x", from, to)
+		return fmt.Errorf("%w: copying internals from block %#x to %#x", errHashMismatch, from, to)
 	}
 	a := c.ancestry.Load()
 	return b.setAncestors(a.parent, a.lastSettled)

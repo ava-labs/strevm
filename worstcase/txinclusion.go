@@ -6,10 +6,13 @@ package worstcase
 import (
 	"errors"
 	"fmt"
+	"math"
+	"math/big"
 
 	"github.com/ava-labs/avalanchego/vms/components/gas"
 	"github.com/ava-labs/libevm/core"
 	"github.com/ava-labs/libevm/core/state"
+	"github.com/ava-labs/libevm/core/txpool"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/strevm/gastime"
@@ -82,6 +85,7 @@ func (inc *TransactionIncluder) StartBlock(hdr *types.Header, target gas.Gas) er
 	hook.BeforeBlock(inc.clock, hdr, target)
 	inc.setMaxSizes()
 	inc.curr = types.CopyHeader(hdr)
+	inc.curr.GasLimit = uint64(min(inc.maxQLength, inc.maxBlockSize))
 
 	// For both rules and signer, we MUST use the block's timestamp, not the
 	// execution clock's, otherwise we might enable an upgrade too early.
@@ -122,20 +126,34 @@ var (
 // The TransactionIncluder's internal state is updated to reflect inclusion of
 // the transaction i.f.f. a nil error is returned by Include.
 func (inc *TransactionIncluder) Include(tx *types.Transaction) error {
+	opts := &txpool.ValidationOptions{
+		Config: inc.config,
+		Accept: 0 |
+			1<<types.LegacyTxType |
+			1<<types.AccessListTxType |
+			1<<types.DynamicFeeTxType,
+		MaxSize: math.MaxUint, // TODO(arr4n)
+		MinTip:  big.NewInt(0),
+	}
+	if err := txpool.ValidateTransaction(tx, inc.curr, inc.signer, opts); err != nil {
+		return err
+	}
+
 	switch g := gas.Gas(tx.Gas()); {
 	case g > inc.maxQLength-inc.qLength:
 		return ErrQueueTooFull
 	case g > inc.maxBlockSize-inc.blockSize:
 		return ErrBlockTooFull
 	}
-	if err := checkStateless(tx, inc.rules); err != nil {
-		return err
-	}
 
 	from, err := types.Sender(inc.signer, tx)
 	if err != nil {
 		return fmt.Errorf("determining sender: %w", err)
 	}
+
+	// [txpool.ValidateTransactionWithState] is not fit for our purpose so we
+	// implement our own checks. Although it could be massaged into working
+	// properly, that would make the code hard to understand.
 
 	// ----- Nonce -----
 	switch nonce, next := tx.Nonce(), inc.db.GetNonce(from); {
@@ -148,18 +166,10 @@ func (inc *TransactionIncluder) Include(tx *types.Transaction) error {
 	}
 
 	// ----- Balance covers worst-case gas cost + tx value -----
-	price := inc.clock.BaseFee()
-	if cap, min := tx.GasFeeCap(), price.ToBig(); cap.Cmp(min) < 0 {
+	if cap, min := tx.GasFeeCap(), inc.clock.BaseFee().ToBig(); cap.Cmp(min) < 0 {
 		return core.ErrFeeCapTooLow
 	}
-	gasCost := new(uint256.Int).Mul(
-		price,
-		uint256.NewInt(tx.Gas()),
-	)
-	txCost := new(uint256.Int).Add(
-		gasCost,
-		uint256.MustFromBig(tx.Value()),
-	)
+	txCost := uint256.MustFromBig(tx.Cost())
 	if bal := inc.db.GetBalance(from); bal.Cmp(txCost) < 0 {
 		return core.ErrInsufficientFunds
 	}
@@ -171,31 +181,5 @@ func (inc *TransactionIncluder) Include(tx *types.Transaction) error {
 
 	inc.db.SetNonce(from, inc.db.GetNonce(from)+1)
 	inc.db.SubBalance(from, txCost)
-
-	return nil
-}
-
-func checkStateless(tx *types.Transaction, rules params.Rules) error {
-	contractCreation := tx.To() == nil
-
-	// ----- Init-code length -----
-	if contractCreation && len(tx.Data()) > params.MaxInitCodeSize {
-		return core.ErrMaxInitCodeSizeExceeded
-	}
-
-	// ----- Intrinsic gas -----
-	intrinsic, err := core.IntrinsicGas(
-		tx.Data(), tx.AccessList(),
-		contractCreation, rules.IsHomestead,
-		rules.IsIstanbul, // EIP-2028
-		rules.IsShanghai, // EIP-3869
-	)
-	if err != nil {
-		return fmt.Errorf("calculating intrinsic gas requirement: %w", err)
-	}
-	if tx.Gas() < intrinsic {
-		return fmt.Errorf("%w: %d < %d", core.ErrIntrinsicGas, tx.Gas(), intrinsic)
-	}
-
 	return nil
 }

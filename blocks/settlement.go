@@ -2,6 +2,8 @@ package blocks
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"slices"
 )
 
@@ -9,21 +11,27 @@ type ancestry struct {
 	parent, lastSettled *Block
 }
 
+var errBlockResettled = errors.New("block re-settled")
+
 // MarkSettled marks the block as having being settled. This function MUST NOT
 // be called more than once.
 //
 // After a call to MarkSettled, future calls to [Block.ParentBlock] and
 // [Block.LastSettled] will return nil.
-func (b *Block) MarkSettled() {
+func (b *Block) MarkSettled() error {
 	a := b.ancestry.Load()
 	if a == nil {
-		b.log.Fatal("Block re-settled")
+		b.log.Error(errBlockResettled.Error())
+		return fmt.Errorf("%w: block height %d", errBlockResettled, b.Height())
 	}
 	if b.ancestry.CompareAndSwap(a, nil) {
 		close(b.settled)
-		return
+		return nil
 	}
 	b.log.Fatal("Block ancestry changed")
+	// We have to return something to keen the compiler happy, even though we
+	// expect the Fatal to be, well, fatal.
+	return errors.New("block ancestry changed")
 }
 
 // WaitUntilSettled blocks until either [Block.MarkSettled] is called or the
@@ -37,13 +45,18 @@ func (b *Block) WaitUntilSettled(ctx context.Context) error {
 	}
 }
 
+const (
+	getParentOfSettledMsg  = "Get parent of settled block"
+	getSettledOfSettledMsg = "Get last-settled of settled block"
+)
+
 // ParentBlock returns the block's parent unless [Block.MarkSettled] has been
 // called, in which case it returns nil.
 func (b *Block) ParentBlock() *Block {
 	if a := b.ancestry.Load(); a != nil {
 		return a.parent
 	}
-	b.log.Error("Get parent of settled block")
+	b.log.Error(getParentOfSettledMsg)
 	return nil
 }
 
@@ -53,7 +66,7 @@ func (b *Block) LastSettled() *Block {
 	if a := b.ancestry.Load(); a != nil {
 		return a.lastSettled
 	}
-	b.log.Error("Get last-settled of settled block")
+	b.log.Error(getSettledOfSettledMsg)
 	return nil
 }
 
@@ -61,6 +74,9 @@ func (b *Block) LastSettled() *Block {
 // consensus. If `x` is the block height of the `b.ParentBlock().LastSettled()`
 // and `y` is the height of the `b.LastSettled()`, then Settles returns the
 // contiguous, half-open range (x,y] or an empty slice i.f.f. x==y.
+//
+// It is not valid to call Settles after a call to [Block.MarkSettled] on either
+// b or its parent.
 func (b *Block) Settles() []*Block {
 	return b.ParentBlock().IfChildSettles(b.LastSettled())
 }

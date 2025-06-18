@@ -39,7 +39,9 @@ func (vm *VM) AcceptBlock(ctx context.Context, b *blocks.Block) error {
 		return err
 	}
 	for _, s := range settle {
-		s.MarkSettled()
+		if err := s.MarkSettled(); err != nil {
+			return err
+		}
 	}
 
 	// The documentation of invariants and ordering guarantees explicitly states

@@ -244,11 +244,7 @@ func (b *ethAPIBackend) StateAndHeaderByNumberOrHash(ctx context.Context, numOrH
 		return nil, nil, err
 	}
 
-	// TODO(arr4n) use a last-synchronous block as the pivot point for async
-	// execution; a genesis block suffices, but so too does a synchronous chain
-	// being upgraded.
-	const lastSynchronousBlockHeight = 0
-	if num := h.Number.Uint64(); num > lastSynchronousBlockHeight {
+	if num := h.Number.Uint64(); num > b.vm.last.synchronous.height {
 		root, err := blocks.StateRootPostExecution(b.vm.db, num)
 		if err != nil {
 			return nil, nil, err

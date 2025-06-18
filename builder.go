@@ -229,6 +229,6 @@ func errIsOneOf(err error, targets ...error) bool {
 }
 
 func (vm *VM) lastBlockToSettleAt(timestamp uint64, parent *blocks.Block) (*blocks.Block, bool) {
-	settleAt := intmath.BoundedSubtract(timestamp, stateRootDelaySeconds, vm.last.synchronousTime)
+	settleAt := intmath.BoundedSubtract(timestamp, stateRootDelaySeconds, vm.last.synchronous.time)
 	return blocks.LastToSettleAt(settleAt, parent)
 }
