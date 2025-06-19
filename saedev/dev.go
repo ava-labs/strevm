@@ -17,12 +17,13 @@ import (
 	snowcommon "github.com/ava-labs/avalanchego/snow/engine/common"
 	"github.com/ava-labs/avalanchego/snow/snowtest"
 	"github.com/ava-labs/avalanchego/utils/logging"
-	"github.com/ava-labs/libevm/common"
+	"github.com/ava-labs/avalanchego/vms/components/gas"
 	"github.com/ava-labs/libevm/core"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/crypto"
 	"github.com/ava-labs/libevm/params"
 	sae "github.com/ava-labs/strevm"
+	"github.com/ava-labs/strevm/saedev/unsafedev"
 	"go.uber.org/zap/zapcore"
 )
 
@@ -33,21 +34,24 @@ func main() {
 	}
 }
 
+type hooks struct{}
+
+func (hooks) GasTarget(*types.Block) gas.Gas { return 10e6 }
+
 func run(ctx context.Context) error {
-	vm := new(sae.SinceGenesis)
+	vm := &sae.SinceGenesis{
+		Hooks: hooks{},
+	}
 
 	// test test test test test test test test test test test junk
-	key, err := crypto.HexToECDSA("ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80")
-	if err != nil {
-		return err
-	}
-	eoa := common.HexToAddress("0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266")
+	key := unsafedev.MustPrivateKey()
+	eoa := unsafedev.Address()
 	if crypto.PubkeyToAddress(key.PublicKey) != eoa {
 		return fmt.Errorf("address mismatch")
 	}
 
-	config := params.TestChainConfig
-	config.ChainID = big.NewInt(9876)
+	config := params.MergedTestChainConfig
+	config.ChainID = unsafedev.ChainID()
 	genJSON, err := json.Marshal(&core.Genesis{
 		Config:     config,
 		Difficulty: big.NewInt(0),
@@ -102,6 +106,9 @@ func run(ctx context.Context) error {
 			if err := vm.AcceptBlock(ctx, b); err != nil {
 				log.Fatalf("%T.AcceptBlock(): %v", vm, err)
 			}
+			if err := vm.SetPreference(ctx, b.ID()); err != nil {
+				log.Fatalf("%T.SetPreference(): %v", vm, err)
+			}
 		}
 	}()
 
@@ -111,7 +118,7 @@ func run(ctx context.Context) error {
 	}
 	const addr = "localhost:9876"
 	log.Printf("Serving RPC on %q", addr)
-	return http.ListenAndServe(addr, handlers[sae.HTTPHandlerKey])
+	return http.ListenAndServe(addr, handlers[sae.WSHandlerKey])
 }
 
 type tb struct {
