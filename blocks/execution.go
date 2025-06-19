@@ -33,20 +33,6 @@ type executionResults struct {
 	canotoData canotoData_executionResults
 }
 
-// Equal MUST NOT be used other than in [Block.Equal].
-func (e *executionResults) Equal(f *executionResults) bool {
-	if en, fn := e == nil, f == nil; en == true && fn == true {
-		return true
-	} else if en != fn {
-		return false
-	}
-
-	return e.byGas.Cmp(f.byGas.Time) == 0 &&
-		e.gasUsed == f.gasUsed &&
-		e.receiptRoot == f.receiptRoot &&
-		e.stateRootPost == f.stateRootPost
-}
-
 // MarkExecuted marks the block as having being executed at the specified
 // time(s) and with the specified results. It also sets the chain's head block
 // to b.

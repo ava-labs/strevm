@@ -29,6 +29,7 @@ import (
 	"github.com/ava-labs/libevm/rpc"
 	"github.com/ava-labs/strevm/blocks"
 	"github.com/ava-labs/strevm/queue"
+	"github.com/ava-labs/strevm/saetest"
 	"github.com/ava-labs/strevm/weth"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
@@ -95,7 +96,7 @@ func TestIntegrationWrapAVAX(t *testing.T) {
 			"executed": &vm.last.executed,
 			"settled":  &vm.last.settled,
 		} {
-			if diff := cmp.Diff(block, ptr.Load(), cmpBlocks()); diff != "" {
+			if diff := cmp.Diff(block, ptr.Load(), blocks.CmpOpt()); diff != "" {
 				t.Errorf("%T.last.%s diff (-want +got):\n%s", vm, k, diff)
 			}
 		}
@@ -294,7 +295,7 @@ func TestIntegrationWrapAVAX(t *testing.T) {
 				for _, tx := range allTxs {
 					wantReceipts = append(wantReceipts, &types.Receipt{TxHash: tx.Hash()})
 				}
-				if diff := cmp.Diff(wantReceipts, gotReceiptsConcat, cmpReceiptsByHash()); diff != "" {
+				if diff := cmp.Diff(wantReceipts, gotReceiptsConcat, saetest.CmpReceiptsByTxHash()); diff != "" {
 					t.Errorf("Execution results diff (-want +got): \n%s", diff)
 				}
 			})
@@ -306,7 +307,7 @@ func TestIntegrationWrapAVAX(t *testing.T) {
 					fromAPI := gotReceipts[i+1 /*skips genesis*/]
 					fromDB := rawdb.ReadReceipts(vm.db, b.Hash(), b.NumberU64(), b.Time(), vm.exec.ChainConfig())
 
-					if diff := cmp.Diff(fromDB, fromAPI, cmpBigInts()); diff != "" {
+					if diff := cmp.Diff(fromDB, fromAPI, saetest.CmpBigInts()); diff != "" {
 						t.Errorf("Block %d receipts diff vs db: -rawdb.ReadReceipts() +%T.BlockReceipts():\n%s", b.NumberU64(), rpcClient, diff)
 					}
 					if diff := cmp.Diff(txHashes(b.Transactions()), txHashes(fromAPI)); diff != "" {
