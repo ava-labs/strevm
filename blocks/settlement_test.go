@@ -78,8 +78,8 @@ func TestSettlementInvariants(t *testing.T) {
 		defer cancel()
 		assert.ErrorIs(t, b.WaitUntilSettled(ctx), context.DeadlineExceeded, "WaitUntilSettled()")
 
-		assert.True(t, b.ParentBlock().equalForTests(parent), "ParentBlock().Equal([constructor arg])")
-		assert.True(t, b.LastSettled().equalForTests(lastSettled), "LastSettled().Equal([constructor arg])")
+		assert.True(t, b.ParentBlock().equalForTests(parent), "ParentBlock().equalForTests([constructor arg])")
+		assert.True(t, b.LastSettled().equalForTests(lastSettled), "LastSettled().equalForTests([constructor arg])")
 	})
 	if t.Failed() {
 		t.FailNow()

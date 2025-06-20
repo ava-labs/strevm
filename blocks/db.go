@@ -6,8 +6,10 @@ import (
 	"math/big"
 
 	"github.com/ava-labs/libevm/common"
+	"github.com/ava-labs/libevm/core/rawdb"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/ethdb"
+	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/trie"
 )
 
@@ -46,6 +48,14 @@ func (b *Block) RestorePostExecutionState(db ethdb.Database, receipts types.Rece
 		return fmt.Errorf("restoring execution state of block %d: receipt-root mismatch", b.Height())
 	}
 	return b.markExecuted(e)
+}
+
+// RestorePostExecutionStateAndReceipts is a convenience wrapper for calling
+// [rawdb.ReadReceipts], the results of which are propagated to
+// [Block.RestorePostExecutionState].
+func (b *Block) RestorePostExecutionStateAndReceipts(db ethdb.Database, config *params.ChainConfig) error {
+	rs := rawdb.ReadReceipts(db, b.Hash(), b.NumberU64(), b.Time(), config)
+	return b.RestorePostExecutionState(db, rs)
 }
 
 // StateRootPostExecution returns the state root passed to [Block.MarkExecuted]

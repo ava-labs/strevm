@@ -13,5 +13,6 @@ func CmpOpt[D Duration]() cmp.Option {
 	return cmp.Options{
 		cmp.AllowUnexported(Time[D]{}),
 		cmpopts.IgnoreTypes(canotoData_Time{}),
+		cmpopts.IgnoreFields(Time[D]{}, "rateInvariants"),
 	}
 }

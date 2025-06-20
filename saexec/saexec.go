@@ -76,7 +76,7 @@ func New(
 
 func (e *Executor) init() error {
 	last := e.lastExecuted.Load()
-	root := last.Root()
+	root := last.PostExecutionStateRoot()
 
 	e.stateCache = state.NewDatabase(e.db)
 	sdb := e.stateCache

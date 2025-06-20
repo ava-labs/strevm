@@ -30,6 +30,7 @@ import (
 	"github.com/ava-labs/strevm/blocks"
 	"github.com/ava-labs/strevm/queue"
 	"github.com/ava-labs/strevm/saetest"
+	"github.com/ava-labs/strevm/saexec"
 	"github.com/ava-labs/strevm/weth"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
@@ -74,6 +75,8 @@ func TestIntegrationWrapAVAX(t *testing.T) {
 		tbLogger{tb: t, level: logging.Debug + 1},
 		genesisJSON(t, chainConfig, eoa),
 	)
+
+	setTrieDBCommitBlockIntervalLog2(t, 2)
 
 	t.Run("convert_genesis_to_async", func(t *testing.T) {
 		require.NoError(t, vm.blocks.Use(ctx, func(bm blockMap) error {
@@ -416,16 +419,20 @@ func TestIntegrationWrapAVAX(t *testing.T) {
 		recovered, err := New(
 			ctx,
 			Config{
-				LastSynchronousBlock: common.Hash(genesisID),
-				DB:                   vm.db,
-				SnowCtx:              vm.snowCtx,
+				Hooks:                vm.hooks,
 				ChainConfig:          chainConfig,
+				DB:                   vm.db,
+				LastSynchronousBlock: common.Hash(genesisID),
+				SnowCtx:              vm.snowCtx,
 			},
 		)
 		require.NoErrorf(t, err, "New(%T[DB from original VM])", Config{})
 
 		if diff := cmp.Diff(vm, recovered, cmpVMs(ctx, t)); diff != "" {
-			t.Errorf("%T from used DB diff (-recovered +original):\n%s", vm, diff)
+			t.Errorf("%T from DB recovery diff (-recovered +original):\n%s", vm, diff)
+		}
+		if diff := cmp.Diff(vm.exec, recovered.exec, saexec.CmpOpt(ctx)); diff != "" {
+			t.Errorf("%T from DB recovery diff (-recovered +original):\n%s", vm.exec, diff)
 		}
 		require.NoErrorf(t, recovered.Shutdown(ctx), "%T.Shutdown()", recovered)
 	})

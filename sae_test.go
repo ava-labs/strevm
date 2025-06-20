@@ -138,3 +138,11 @@ func (l tbLogger) handle(when time.Time, level logging.Level, dest func(string, 
 	_, file, line, _ := runtime.Caller(2)
 	dest("[%s] %v %q %v - %s:%d", level, when.UnixNano(), msg, parts, file, line)
 }
+
+func setTrieDBCommitBlockIntervalLog2(tb testing.TB, val uint64) {
+	old := trieDBCommitBlockIntervalLog2
+	trieDBCommitBlockIntervalLog2 = val
+	tb.Cleanup(func() {
+		trieDBCommitBlockIntervalLog2 = old
+	})
+}
