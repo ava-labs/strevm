@@ -201,7 +201,7 @@ func TestSettles(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if diff := cmp.Diff(tt.want, tt.got, cmpopts.EquateEmpty()); diff != "" {
+			if diff := cmp.Diff(tt.want, tt.got, cmpopts.EquateEmpty(), CmpOpt()); diff != "" {
 				t.Errorf("diff (-want +got):\n%s", diff)
 			}
 		})
