@@ -214,7 +214,7 @@ func (b *Block) markExecutedForTests(tb testing.TB, db ethdb.Database, tm *gasti
 }
 
 func TestLastToSettleAt(t *testing.T) {
-	blocks := newChain(t, 0, 20, nil)
+	blocks := newChain(t, 0, 30, nil)
 	t.Run("helper_invariants", func(t *testing.T) {
 		for i, b := range blocks {
 			require.Equal(t, uint64(i), b.Height())
@@ -244,13 +244,15 @@ func TestLastToSettleAt(t *testing.T) {
 	tm.Tick(50)
 	blocks[8].markExecutedForTests(t, db, tm) // 13.1
 
-	tests := []struct {
+	type testCase struct {
 		name     string
 		settleAt uint64
 		parent   *Block
 		wantOK   bool
 		want     *Block
-	}{
+	}
+
+	tests := []testCase{
 		{
 			settleAt: 3,
 			parent:   blocks[5],
@@ -298,6 +300,34 @@ func TestLastToSettleAt(t *testing.T) {
 			parent:   blocks[18],
 			wantOK:   false,
 		},
+	}
+
+	{
+		// Scenario:
+		//   * Mark block 24 as executed at time 25.1
+		//   * Mark block 25 as partially executed by time 27.1
+		//   * Settle at time 26 (between them) with 25 as parent
+		//
+		// If block 25 wasn't marked as partially executed then it could
+		// feasibly execute by settlement time (26) so [LastToSettleAt] would
+		// return false. As the partial execution time makes it impossible for
+		// block 25 to execute in time, we loop to its parent, which is already
+		// executed in time and is therefore the expected return value.
+		tm.Tick(120)
+		require.Equal(t, uint64(25), tm.Unix())
+		require.Equal(t, proxytime.FractionalSecond[gas.Gas]{Numerator: 1, Denominator: 10}, tm.Fraction())
+		blocks[24].markExecutedForTests(t, db, tm)
+
+		partiallyExecutedAt := proxytime.New[gas.Gas](27, 100)
+		partiallyExecutedAt.Tick(1)
+		blocks[25].SetInterimExecutionTime(partiallyExecutedAt)
+
+		tests = append(tests, testCase{
+			settleAt: 26,
+			parent:   blocks[25],
+			wantOK:   true,
+			want:     blocks[24],
+		})
 	}
 
 	t.Run("validate_setup", func(t *testing.T) {

@@ -30,6 +30,10 @@ type Block struct {
 	ancestry  atomic.Pointer[ancestry]
 	execution atomic.Pointer[executionResults]
 
+	// See [Block.SetInterimExecutionTime for setting and [LastToSettleAt] for
+	// usage. The pointer MAY be nil if execution is yet to commence.
+	executionExceededSecond atomic.Pointer[uint64]
+
 	executed chan struct{} // closed after `execution` is set
 	settled  chan struct{} // closed after `ancestry` is cleared
 

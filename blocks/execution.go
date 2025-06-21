@@ -13,9 +13,21 @@ import (
 	"github.com/ava-labs/libevm/ethdb"
 	"github.com/ava-labs/libevm/trie"
 	"github.com/ava-labs/strevm/gastime"
+	"github.com/ava-labs/strevm/proxytime"
 )
 
 //go:generate go run github.com/StephenButtolph/canoto/canoto $GOFILE
+
+// SetInterimExecutionTime is expected to be called during execution of b's
+// transactions, with the highest-known gas time. This MAY be at any resolution
+// but MUST be monotonic.
+func (b *Block) SetInterimExecutionTime(t *proxytime.Time[gas.Gas]) {
+	p := t.Unix()
+	if t.Fraction().Numerator == 0 {
+		p--
+	}
+	b.executionExceededSecond.Store(&p)
+}
 
 type executionResults struct {
 	byGas  gastime.Time `canoto:"value,1"`
