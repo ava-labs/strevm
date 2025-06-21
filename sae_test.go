@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"runtime"
 	"sort"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -145,4 +147,32 @@ func setTrieDBCommitBlockIntervalLog2(tb testing.TB, val uint64) {
 	tb.Cleanup(func() {
 		trieDBCommitBlockIntervalLog2 = old
 	})
+}
+
+// uint64s is a [flag.Value] that parses comma-separated uint64 values. The
+// pflag package doesn't play nicely with -test.* flags.
+type uint64s []uint64
+
+var _ flag.Value = (*uint64s)(nil)
+
+func (us *uint64s) String() string {
+	strs := make([]string, len(*us))
+	for i, u := range *us {
+		strs[i] = fmt.Sprint(u)
+	}
+	return strings.Join(strs, ",")
+}
+
+func (us *uint64s) Set(str string) error {
+	*us = uint64s{}
+	for _, s := range strings.Split(str, ",") {
+		s = strings.TrimSpace(s)
+		s = strings.ReplaceAll(s, "_", "")
+		u, err := strconv.ParseUint(s, 10, 64)
+		if err != nil {
+			return err
+		}
+		*us = append(*us, u)
+	}
+	return nil
 }

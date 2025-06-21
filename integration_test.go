@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"fmt"
 	"math"
 	"math/big"
 	"net/http/httptest"
@@ -40,9 +41,13 @@ import (
 )
 
 var (
-	txsInIntegrationTest = flag.Uint64("wrap_avax_tx_count", 1_000, "Number of transactions to use in TestIntegrationWrapAVAX")
+	txsInIntegrationTest = uint64s{10, 30, 100, 300, 1000, 3000}
 	cpuProfileDest       = flag.String("cpu_profile_out", "", "If non-empty, file to which pprof CPU profile is written")
 )
+
+func init() {
+	flag.Var(&txsInIntegrationTest, "wrap_avax_tx_count", "Number of transactions to use in TestIntegrationWrapAVAX (comma-separated)")
+}
 
 type stubHooks struct {
 	T gas.Gas
@@ -53,6 +58,14 @@ func (h *stubHooks) GasTarget(parent *types.Block) gas.Gas {
 }
 
 func TestIntegrationWrapAVAX(t *testing.T) {
+	for _, n := range txsInIntegrationTest {
+		t.Run(fmt.Sprint(n), func(t *testing.T) {
+			testIntegrationWrapAVAX(t, n)
+		})
+	}
+}
+
+func testIntegrationWrapAVAX(t *testing.T, numTxsInTest uint64) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
@@ -117,8 +130,8 @@ func TestIntegrationWrapAVAX(t *testing.T) {
 	require.NoErrorf(t, err, "ethclient.Dial(%T(%q))", rpcServer, rpcURL)
 	t.Cleanup(rpcClient.Close)
 
-	allTxs := make([]*types.Transaction, *txsInIntegrationTest)
-	for nonce := range *txsInIntegrationTest {
+	allTxs := make([]*types.Transaction, numTxsInTest)
+	for nonce := range numTxsInTest {
 		allTxs[nonce] = types.MustSignNewTx(key, signer, &types.DynamicFeeTx{
 			Nonce:     nonce,
 			To:        &wethAddr,
