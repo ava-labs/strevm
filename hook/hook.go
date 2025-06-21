@@ -7,7 +7,10 @@ package hook
 import (
 	"github.com/ava-labs/avalanchego/vms/components/gas"
 	"github.com/ava-labs/libevm/core/types"
+	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/strevm/gastime"
+	"github.com/ava-labs/strevm/intmath"
+	saeparams "github.com/ava-labs/strevm/params"
 )
 
 // Points define user-injected hook points.
@@ -26,4 +29,12 @@ func BeforeBlock(clock *gastime.Time, block *types.Header, target gas.Gas) {
 // sourced from [types.Block.GasUsed] or equivalent.
 func AfterBlock(clock *gastime.Time, used gas.Gas) {
 	clock.Tick(used)
+}
+
+// MinimumGasConsumption MUST be used as the implementation for the respective
+// method on [params.RulesHooks]. The concrete type implementing the hooks MUST
+// propagate incoming and return arguments unchanged.
+func MinimumGasConsumption(txLimit uint64) uint64 {
+	_ = (params.RulesHooks)(nil) // keep the import to allow [] doc links
+	return intmath.CeilDiv(txLimit, saeparams.Lambda)
 }

@@ -25,6 +25,7 @@ import (
 	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/rpc"
 	"github.com/ava-labs/strevm/blocks"
+	"github.com/ava-labs/strevm/hook"
 	"github.com/ava-labs/strevm/queue"
 	"github.com/ava-labs/strevm/saetest"
 	"github.com/ava-labs/strevm/saexec"
@@ -84,6 +85,8 @@ func testIntegrationWrapAVAX(t *testing.T, numTxsInTest uint64) {
 		genesisJSON(t, chainConfig, eoa),
 	)
 
+	saetest.EnableMinimumGasConsumption(t)
+
 	t.Run("convert_genesis_to_async", func(t *testing.T) {
 		require.NoError(t, vm.blocks.Use(ctx, func(bm blockMap) error {
 			require.Equal(t, 1, len(bm))
@@ -112,12 +115,14 @@ func testIntegrationWrapAVAX(t *testing.T, numTxsInTest uint64) {
 	})
 
 	allTxs := make([]*types.Transaction, numTxsInTest)
+	// Tx gas limit high enough that [hook.MinimumGasConsumption] is enforced.
+	const commonTxGasLimit = params.TxGas + params.SstoreSetGas + 500_000
 	for nonce := range numTxsInTest {
 		allTxs[nonce] = types.MustSignNewTx(key, signer, &types.DynamicFeeTx{
 			Nonce:     nonce,
 			To:        &wethAddr,
 			Value:     big.NewInt(1),
-			Gas:       params.TxGas + params.SstoreSetGas + 50_000, // arbitrary buffer
+			Gas:       commonTxGasLimit,
 			GasTipCap: big.NewInt(0),
 			GasFeeCap: new(big.Int).SetUint64(math.MaxUint64),
 		})
@@ -290,24 +295,35 @@ func testIntegrationWrapAVAX(t *testing.T, numTxsInTest uint64) {
 			t.Run("vs_sent_txs", func(t *testing.T) {
 				t.Parallel()
 
-				var wantReceipts types.Receipts
+				wantGasUsed := hook.MinimumGasConsumption(commonTxGasLimit)
+				var (
+					lastBlockNum, wantCumulGasUsed uint64
+					wantReceipts                   types.Receipts
+				)
 				for _, tx := range allTxs {
 					inc := inclusion[tx.Hash()]
+					if inc.blockNum != lastBlockNum {
+						lastBlockNum = inc.blockNum
+						wantCumulGasUsed = wantGasUsed
+					} else {
+						wantCumulGasUsed += wantGasUsed
+					}
+
 					wantReceipts = append(wantReceipts, &types.Receipt{
-						Type:             types.DynamicFeeTxType,
-						TxHash:           tx.Hash(),
-						Status:           1,
-						BlockHash:        inc.blockHash,
-						BlockNumber:      new(big.Int).SetUint64(inc.blockNum),
-						TransactionIndex: inc.txIndex,
+						Type:              types.DynamicFeeTxType,
+						TxHash:            tx.Hash(),
+						Status:            1,
+						GasUsed:           wantGasUsed,
+						CumulativeGasUsed: wantCumulGasUsed,
+						BlockHash:         inc.blockHash,
+						BlockNumber:       new(big.Int).SetUint64(inc.blockNum),
+						TransactionIndex:  inc.txIndex,
 					})
 				}
 				ignore := cmpopts.IgnoreFields(
 					types.Receipt{},
 					"Logs", // checked below
-					"GasUsed",
 					"EffectiveGasPrice",
-					"CumulativeGasUsed",
 					"Bloom",
 				)
 				if diff := cmp.Diff(wantReceipts, gotReceiptsConcat, ignore, saetest.CmpBigInts()); diff != "" {

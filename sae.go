@@ -3,18 +3,11 @@ package sae
 import (
 	"errors"
 
-	"github.com/ava-labs/avalanchego/vms/components/gas"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/trie"
 	"github.com/ava-labs/strevm/intmath"
 	"github.com/dustin/go-humanize"
 	"golang.org/x/exp/constraints"
-)
-
-const (
-	stateRootDelaySeconds = 5
-	lambda                = 1
-	maxGasSecondsPerBlock = 2
 )
 
 var (
@@ -34,8 +27,4 @@ func human[T constraints.Integer](x T) string {
 
 func trieHasher() types.TrieHasher {
 	return trie.NewStackTrie(nil)
-}
-
-func minGasCharged(tx *types.Transaction) gas.Gas {
-	return intmath.CeilDiv(gas.Gas(tx.Gas()), lambda)
 }
