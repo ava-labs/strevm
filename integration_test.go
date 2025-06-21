@@ -7,17 +7,14 @@ import (
 	"fmt"
 	"math"
 	"math/big"
-	"net/http/httptest"
-	"net/url"
-	"os"
 	"runtime"
-	"runtime/pprof"
 	"slices"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/arr4n/sink"
+	"github.com/ava-labs/avalanchego/snow/engine/snowman/block"
 	"github.com/ava-labs/avalanchego/utils/logging"
 	"github.com/ava-labs/avalanchego/vms/components/gas"
 	ethereum "github.com/ava-labs/libevm"
@@ -25,7 +22,6 @@ import (
 	"github.com/ava-labs/libevm/core/rawdb"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/crypto"
-	"github.com/ava-labs/libevm/ethclient"
 	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/rpc"
 	"github.com/ava-labs/strevm/blocks"
@@ -40,10 +36,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-var (
-	txsInIntegrationTest = uint64s{10, 30, 100, 300, 1000, 3000}
-	cpuProfileDest       = flag.String("cpu_profile_out", "", "If non-empty, file to which pprof CPU profile is written")
-)
+var txsInIntegrationTest = uint64s{10, 30, 100, 300, 1000, 3000}
 
 func init() {
 	flag.Var(&txsInIntegrationTest, "wrap_avax_tx_count", "Number of transactions to use in TestIntegrationWrapAVAX (comma-separated)")
@@ -72,12 +65,14 @@ func testIntegrationWrapAVAX(t *testing.T, numTxsInTest uint64) {
 	key := newTestPrivateKey(t, nil)
 	eoa := crypto.PubkeyToAddress(key.PublicKey)
 	t.Logf("Sending all txs as EOA %v", eoa)
+
 	chainConfig := params.TestChainConfig
 	signer := types.LatestSigner(chainConfig)
-
 	now := time.Unix(0, 0)
 
-	vm, snowCompatVM := newVM(
+	setTrieDBCommitBlockIntervalLog2(t, 2)
+
+	vm := newVM(
 		ctx, t,
 		func() time.Time {
 			return now
@@ -88,8 +83,6 @@ func testIntegrationWrapAVAX(t *testing.T, numTxsInTest uint64) {
 		tbLogger{tb: t, level: logging.Debug + 1},
 		genesisJSON(t, chainConfig, eoa),
 	)
-
-	setTrieDBCommitBlockIntervalLog2(t, 2)
 
 	t.Run("convert_genesis_to_async", func(t *testing.T) {
 		require.NoError(t, vm.blocks.Use(ctx, func(bm blockMap) error {
@@ -118,18 +111,6 @@ func testIntegrationWrapAVAX(t *testing.T, numTxsInTest uint64) {
 		}
 	})
 
-	handlers, err := vm.CreateHandlers(ctx)
-	require.NoErrorf(t, err, "%T.CreateHandlers()", vm)
-	rpcServer := httptest.NewServer(handlers[WSHandlerKey])
-	t.Cleanup(rpcServer.Close)
-
-	rpcURL, err := url.Parse(rpcServer.URL)
-	require.NoErrorf(t, err, "url.Parse(%T.URL = %q)", rpcServer, rpcServer.URL)
-	rpcURL.Scheme = "ws"
-	rpcClient, err := ethclient.Dial(rpcURL.String())
-	require.NoErrorf(t, err, "ethclient.Dial(%T(%q))", rpcServer, rpcURL)
-	t.Cleanup(rpcClient.Close)
-
 	allTxs := make([]*types.Transaction, numTxsInTest)
 	for nonce := range numTxsInTest {
 		allTxs[nonce] = types.MustSignNewTx(key, signer, &types.DynamicFeeTx{
@@ -140,7 +121,7 @@ func testIntegrationWrapAVAX(t *testing.T, numTxsInTest uint64) {
 			GasTipCap: big.NewInt(0),
 			GasFeeCap: new(big.Int).SetUint64(math.MaxUint64),
 		})
-		require.NoError(t, rpcClient.SendTransaction(ctx, allTxs[nonce]))
+		require.NoError(t, vm.rpc.SendTransaction(ctx, allTxs[nonce]))
 	}
 
 	numPendingTxs := func(ctx context.Context) (int, error) {
@@ -157,22 +138,13 @@ func testIntegrationWrapAVAX(t *testing.T, numTxsInTest uint64) {
 	}
 	require.Eventually(t, mempoolPopulated, time.Second, 5*time.Millisecond, "mempool populated")
 
-	if d := *cpuProfileDest; d != "" {
-		t.Logf("Writing CPU profile for block acceptance and execution to %q", d)
-		f, err := os.Create(d)
-		require.NoErrorf(t, err, "os.Create(%q) for CPU profiling", d)
-		require.NoError(t, pprof.StartCPUProfile(f), "pprof.StartCPUProfile()")
-		// We don't `defer pprof.StopCPUProfile()` because we want to stop it at
-		// a very specific point.
-	}
-
 	headEvents := make(chan *types.Header, len(allTxs))
-	headSub, err := rpcClient.SubscribeNewHead(ctx, headEvents)
-	require.NoErrorf(t, err, "%T.SubscribeNewHead()", rpcClient)
+	headSub, err := vm.rpc.SubscribeNewHead(ctx, headEvents)
+	require.NoErrorf(t, err, "%T.SubscribeNewHead()", vm.rpc)
 
 	filter := ethereum.FilterQuery{Addresses: []common.Address{wethAddr}}
 	logEvents := make(chan types.Log, len(allTxs))
-	logSub, err := rpcClient.SubscribeFilterLogs(ctx, filter, logEvents)
+	logSub, err := vm.rpc.SubscribeFilterLogs(ctx, filter, logEvents)
 	require.NoErrorf(t, err, "%T.SubscribeFilterLogs()", err)
 
 	var (
@@ -180,13 +152,19 @@ func testIntegrationWrapAVAX(t *testing.T, numTxsInTest uint64) {
 		blockWithLastTx     *blocks.Block
 		waitingForExecution int
 	)
+	inclusion := make(map[common.Hash]txInclusion)
 	start := time.Now()
 	for numBlocks := 0; ; numBlocks++ {
-		lastID, err := snowCompatVM.LastAccepted(ctx)
-		require.NoErrorf(t, err, "%T.LastAccepted()", snowCompatVM)
-		require.NoErrorf(t, snowCompatVM.SetPreference(ctx, lastID), "%T.SetPreference(LastAccepted())", snowCompatVM)
+		// This loop fakes consensus so only allow access to the Snow-compatible
+		// VM view. It's not a guarantee of correct behaviour, but it does
+		// ensure that we don't accidentally use the raw [VM].
+		var vm block.ChainVM = vm.snow
 
-		proposed, err := snowCompatVM.BuildBlock(ctx)
+		lastID, err := vm.LastAccepted(ctx)
+		require.NoErrorf(t, err, "%T.LastAccepted()", vm)
+		require.NoErrorf(t, vm.SetPreference(ctx, lastID), "%T.SetPreference(LastAccepted())", vm)
+
+		proposed, err := vm.BuildBlock(ctx)
 		if errors.Is(err, errWaitingForExecution) {
 			numBlocks--
 			waitingForExecution++
@@ -197,17 +175,24 @@ func testIntegrationWrapAVAX(t *testing.T, numTxsInTest uint64) {
 			now = now.Add(time.Second)
 			continue
 		}
-		require.NoErrorf(t, err, "%T.BuildBlock() #%d", snowCompatVM, numBlocks)
+		require.NoErrorf(t, err, "%T.BuildBlock() #%d", vm, numBlocks)
 
-		b, err := snowCompatVM.ParseBlock(ctx, proposed.Bytes())
-		require.NoErrorf(t, err, "%T.ParseBlock()", snowCompatVM)
+		b, err := vm.ParseBlock(ctx, proposed.Bytes())
+		require.NoErrorf(t, err, "%T.ParseBlock()", vm)
 		require.Equal(t, now.Truncate(time.Second), b.Timestamp())
 
 		require.NoErrorf(t, b.Verify(ctx), "%T.Verify()", b)
 		require.NoErrorf(t, b.Accept(ctx), "%T.Accept()", b)
 
-		bb := unwrapBlock(t, b)
-		acceptedBlocks = append(acceptedBlocks, bb)
+		rawB := unwrapBlock(t, b)
+		acceptedBlocks = append(acceptedBlocks, rawB)
+		for i, tx := range rawB.Transactions() {
+			inclusion[tx.Hash()] = txInclusion{
+				blockHash: rawB.Hash(),
+				blockNum:  rawB.Height(),
+				txIndex:   uint(i),
+			}
+		}
 
 		now = now.Add(900 * time.Millisecond)
 
@@ -217,13 +202,16 @@ func testIntegrationWrapAVAX(t *testing.T, numTxsInTest uint64) {
 			continue
 		}
 		if blockWithLastTx == nil {
-			blockWithLastTx = bb
-			t.Logf("Last tx included in block %d", bb.NumberU64())
-		} else if s := bb.LastSettled(); s != nil && s.NumberU64() >= blockWithLastTx.NumberU64() {
+			blockWithLastTx = rawB
+			t.Logf("Last tx included in block %d", rawB.NumberU64())
+		} else if s := rawB.LastSettled(); s != nil && s.NumberU64() >= blockWithLastTx.NumberU64() {
 			t.Logf("Built and accepted %s blocks in %v", human(numBlocks), time.Since(start))
 			t.Logf("Consensus waited for execution %s times", human(waitingForExecution))
 			break
 		}
+	}
+	if t.Failed() {
+		t.FailNow()
 	}
 
 	t.Cleanup(func() {
@@ -235,44 +223,39 @@ func testIntegrationWrapAVAX(t *testing.T, numTxsInTest uint64) {
 		t.Logf("After GC, in-memory block count: %d => %d", n, blocks.InMemoryBlockCount())
 	})
 
-	pprof.StopCPUProfile() // docs state "stops the current CPU profile, if any" so ok if we didn't start it
-	if t.Failed() {
-		return
-	}
-
 	ctx = context.Background() // original ctx had a timeout in case of execution deadlock, but we're past that
 
 	lastID, err := vm.LastAccepted(ctx)
 	require.NoErrorf(t, err, "%T.LastAccepted()", vm)
 	lastBlock, err := vm.GetBlock(ctx, lastID)
 	require.NoErrorf(t, err, "%T.GetBlock(LastAccepted())", vm)
-	require.Eventuallyf(t, lastBlock.Executed, time.Second, 10*time.Millisecond, "executed.Load() on last %T", lastBlock)
+	require.NoErrorf(t, lastBlock.WaitUntilExecuted(ctx), "%T{last}.WaitUntilExecuted()", lastBlock)
 
-	t.Run("persisted_block_hashes", func(t *testing.T) {
+	t.Run("persisted_blocks", func(t *testing.T) {
 		t.Parallel()
-
 		t.Run("with_last_tx", func(t *testing.T) {
 			b := blockWithLastTx
 
 			t.Run("last_settled_block", func(t *testing.T) {
 				safe := rpc.SafeBlockNumber
-				settled, err := rpcClient.HeaderByNumber(ctx, big.NewInt(safe.Int64()))
-				require.NoErrorf(t, err, "%T.HeaderByNumber(%d %q)", rpcClient, safe, safe)
+				settled, err := vm.rpc.HeaderByNumber(ctx, big.NewInt(safe.Int64()))
+				require.NoErrorf(t, err, "%T.HeaderByNumber(%d %q)", vm.rpc, safe, safe)
 
 				assert.GreaterOrEqual(t, settled.Number.Cmp(b.Number()), 0, "last-settled height >= block including last tx")
 			})
 			assert.Equalf(t, b.PostExecutionStateRoot(), lastBlock.Root(), "%T.Root() of last block must be post-execution root of block including last tx", lastBlock)
 
-			// The following tests that [rawdb.WriteTxLookupEntriesByBlock] has
-			// been called correctly.
-			lastTxHash := allTxs[len(allTxs)-1].Hash()
-			got, err := rpcClient.TransactionReceipt(ctx, lastTxHash)
-			require.NoErrorf(t, err, "%T.TransactionReceipt(%#x [last tx])", rpcClient, lastTxHash)
-			assert.Equal(t, b.Hash(), got.BlockHash, "block hash of last tx")
-			assert.Equal(t, uint(len(b.Transactions())-1), got.TransactionIndex, "index of last tx")
+			t.Run("rawdb_tx_lookup_entries", func(t *testing.T) {
+				lastTxHash := allTxs[len(allTxs)-1].Hash()
+				got, err := vm.rpc.TransactionReceipt(ctx, lastTxHash)
+				require.NoErrorf(t, err, "%T.TransactionReceipt(%#x [last tx])", vm.rpc, lastTxHash)
+
+				assert.Equal(t, b.Hash(), got.BlockHash, "block hash of last tx")
+				assert.Equal(t, uint(len(b.Transactions())-1), got.TransactionIndex, "index of last tx")
+			})
 		})
 
-		_, got := rawdb.ReadAllCanonicalHashes(vm.db, 1, lastBlock.NumberU64()+1, math.MaxInt)
+		_, got := rawdb.ReadAllCanonicalHashes(vm.db, 1, math.MaxUint64, math.MaxInt)
 		var want []common.Hash
 		for _, b := range acceptedBlocks {
 			want = append(want, b.Hash())
@@ -290,8 +273,8 @@ func testIntegrationWrapAVAX(t *testing.T, numTxsInTest uint64) {
 			)
 			for i := range lastBlock.NumberU64() {
 				num := rpc.BlockNumberOrHashWithNumber(rpc.BlockNumber(i))
-				rs, err := rpcClient.BlockReceipts(ctx, num)
-				require.NoErrorf(t, err, "%T.BlockReceipts(%d)", rpcClient, i)
+				rs, err := vm.rpc.BlockReceipts(ctx, num)
+				require.NoErrorf(t, err, "%T.BlockReceipts(%d)", vm.rpc, i)
 				gotReceipts = append(gotReceipts, rs)
 
 				for _, r := range rs {
@@ -309,14 +292,30 @@ func testIntegrationWrapAVAX(t *testing.T, numTxsInTest uint64) {
 
 				var wantReceipts types.Receipts
 				for _, tx := range allTxs {
-					wantReceipts = append(wantReceipts, &types.Receipt{TxHash: tx.Hash()})
+					inc := inclusion[tx.Hash()]
+					wantReceipts = append(wantReceipts, &types.Receipt{
+						Type:             types.DynamicFeeTxType,
+						TxHash:           tx.Hash(),
+						Status:           1,
+						BlockHash:        inc.blockHash,
+						BlockNumber:      new(big.Int).SetUint64(inc.blockNum),
+						TransactionIndex: inc.txIndex,
+					})
 				}
-				if diff := cmp.Diff(wantReceipts, gotReceiptsConcat, saetest.CmpReceiptsByTxHash()); diff != "" {
+				ignore := cmpopts.IgnoreFields(
+					types.Receipt{},
+					"Logs", // checked below
+					"GasUsed",
+					"EffectiveGasPrice",
+					"CumulativeGasUsed",
+					"Bloom",
+				)
+				if diff := cmp.Diff(wantReceipts, gotReceiptsConcat, ignore, saetest.CmpBigInts()); diff != "" {
 					t.Errorf("Execution results diff (-want +got): \n%s", diff)
 				}
 			})
 
-			t.Run("vs_block_contents", func(t *testing.T) {
+			t.Run("vs_direct_db_read", func(t *testing.T) {
 				t.Parallel()
 
 				for i, b := range acceptedBlocks {
@@ -324,10 +323,10 @@ func testIntegrationWrapAVAX(t *testing.T, numTxsInTest uint64) {
 					fromDB := rawdb.ReadReceipts(vm.db, b.Hash(), b.NumberU64(), b.Time(), vm.exec.ChainConfig())
 
 					if diff := cmp.Diff(fromDB, fromAPI, saetest.CmpBigInts()); diff != "" {
-						t.Errorf("Block %d receipts diff vs db: -rawdb.ReadReceipts() +%T.BlockReceipts():\n%s", b.NumberU64(), rpcClient, diff)
+						t.Errorf("Block %d receipts diff vs db: -rawdb.ReadReceipts() +%T.BlockReceipts():\n%s", b.NumberU64(), vm.rpc, diff)
 					}
 					if diff := cmp.Diff(txHashes(b.Transactions()), txHashes(fromAPI)); diff != "" {
-						t.Errorf("Block %d receipt hashes diff vs proposed block: -%T.Transactions() +%T.BlockReceipts():\n%s", b.NumberU64(), b, rpcClient, diff)
+						t.Errorf("Block %d receipt hashes diff vs proposed block: -%T.Transactions() +%T.BlockReceipts():\n%s", b.NumberU64(), b, vm.rpc, diff)
 					}
 
 					if b.Hash() == blockWithLastTx.Hash() {
@@ -341,9 +340,6 @@ func testIntegrationWrapAVAX(t *testing.T, numTxsInTest uint64) {
 
 				var eoaAsHash common.Hash
 				copy(eoaAsHash[12:], eoa[:])
-				// Certain fields will have different meanings (TBD) in SAE so
-				// we ignore them for now.
-				ignore := cmpopts.IgnoreFields(types.Log{}, "BlockNumber", "BlockHash", "Index", "TxIndex")
 				want := []*types.Log{{
 					Address: wethAddr,
 					Topics: []common.Hash{
@@ -351,23 +347,39 @@ func testIntegrationWrapAVAX(t *testing.T, numTxsInTest uint64) {
 						eoaAsHash,
 					},
 					Data: uint256.NewInt(1).PaddedBytes(32),
-					// TxHash to be completed for each receipt
+					// TxHash and inclusion data to be completed for each.
 				}}
 
 				logSub.Unsubscribe()
 				require.NoErrorf(t, <-logSub.Err(), "receive on %T.Err()", logSub)
 
+				var (
+					lastBlockNum uint64
+					index        uint
+				)
 				for i, r := range slices.Concat(gotReceipts...) {
-					// Use `require` and `t.Fatalf()` because all receipts should be
-					// the same; if one fails then they'll all probably fail in the
-					// same way and there's no point being inundated with thousands
-					// of identical errors.
-					require.Truef(t, r.Status == 1, "tx[%d] execution succeeded", i)
+					inc := inclusion[r.TxHash]
+					if inc.blockNum != lastBlockNum {
+						lastBlockNum = inc.blockNum
+						index = 0
+					} else {
+						index++
+					}
+
 					want[0].TxHash = r.TxHash
-					if diff := cmp.Diff(want, r.Logs, ignore); diff != "" {
+					want[0].BlockHash = inc.blockHash
+					want[0].BlockNumber = inc.blockNum
+					want[0].TxIndex = inc.txIndex
+					want[0].Index = index
+
+					// Use `t.Fatalf()` because all receipts should be the same;
+					// if one fails then they'll all probably fail in the same
+					// way and there's no point being inundated with thousands
+					// of identical errors.
+					if diff := cmp.Diff(want, r.Logs); diff != "" {
 						t.Fatalf("receipt[%d] logs diff (-want +got):\n%s", i, diff)
 					}
-					if diff := cmp.Diff(*want[0], <-logEvents, ignore); diff != "" {
+					if diff := cmp.Diff(*want[0], <-logEvents); diff != "" {
 						t.Fatalf("Log subscription receive [%d] diff (-want +got):\n%s", i, diff)
 					}
 				}
@@ -379,26 +391,24 @@ func testIntegrationWrapAVAX(t *testing.T, numTxsInTest uint64) {
 			})
 		})
 
-		t.Run("subscriptions", func(t *testing.T) {
-			t.Run("head_events", func(t *testing.T) {
-				require.NoError(t, acceptedBlocks[len(acceptedBlocks)-1].WaitUntilExecuted(ctx))
+		t.Run("head_events", func(t *testing.T) {
+			require.NoError(t, acceptedBlocks[len(acceptedBlocks)-1].WaitUntilExecuted(ctx))
 
-				headSub.Unsubscribe()
-				require.NoErrorf(t, <-headSub.Err(), "receive on %T.Err()", headSub)
-				close(headEvents)
+			headSub.Unsubscribe()
+			require.NoErrorf(t, <-headSub.Err(), "receive on %T.Err()", headSub)
+			close(headEvents)
 
-				var got []common.Hash
-				for hdr := range headEvents {
-					got = append(got, hdr.Hash())
-				}
-				var want []common.Hash
-				for _, b := range acceptedBlocks {
-					want = append(want, b.Hash())
-				}
-				if diff := cmp.Diff(want, got); diff != "" {
-					t.Errorf("Chain-head subscription: block hashes diff (-want +got):\n%s", diff)
-				}
-			})
+			var got []common.Hash
+			for hdr := range headEvents {
+				got = append(got, hdr.Hash())
+			}
+			var want []common.Hash
+			for _, b := range acceptedBlocks {
+				want = append(want, b.Hash())
+			}
+			if diff := cmp.Diff(want, got); diff != "" {
+				t.Errorf("Chain-head subscription: block hashes diff (-want +got):\n%s", diff)
+			}
 		})
 	})
 
@@ -408,18 +418,18 @@ func testIntegrationWrapAVAX(t *testing.T, numTxsInTest uint64) {
 		// count as expected value when performing the below tests at different
 		// block numbers.
 
-		gotNonce, err := rpcClient.NonceAt(ctx, eoa, nil)
-		require.NoErrorf(t, err, "%T.NonceAt(%v, [latest])", rpcClient, eoa)
+		gotNonce, err := vm.rpc.NonceAt(ctx, eoa, nil)
+		require.NoErrorf(t, err, "%T.NonceAt(%v, [latest])", vm.rpc, eoa)
 		assert.Equal(t, want, gotNonce, "Nonce of EOA sending txs")
 
-		contract, err := weth.NewWeth(wethAddr, rpcClient)
+		contract, err := weth.NewWeth(wethAddr, vm.rpc)
 		require.NoError(t, err, "bind WETH contract")
 		gotWrapped, err := contract.BalanceOf(nil, eoa)
 		require.NoErrorf(t, err, "%T.BalanceOf(%v)", contract, eoa)
 		require.Truef(t, gotWrapped.IsUint64(), "%T.BalanceOf(%v).IsUint64()", contract, eoa)
 		assert.Equal(t, want, gotWrapped.Uint64(), "%T.BalanceOf(%v)", contract, eoa)
 
-		gotContractBal, err := rpcClient.BalanceAt(ctx, wethAddr, nil)
+		gotContractBal, err := vm.rpc.BalanceAt(ctx, wethAddr, nil)
 		require.NoError(t, err)
 		require.Truef(t, gotContractBal.IsUint64(), "")
 		assert.Equal(t, want, gotContractBal.Uint64(), "Balance of WETH contract")
@@ -441,13 +451,17 @@ func testIntegrationWrapAVAX(t *testing.T, numTxsInTest uint64) {
 		)
 		require.NoErrorf(t, err, "New(%T[DB from original VM])", Config{})
 
-		if diff := cmp.Diff(vm, recovered, cmpVMs(ctx, t)); diff != "" {
+		if diff := cmp.Diff(vm.VM, recovered, cmpVMs(ctx, t)); diff != "" {
 			t.Errorf("%T from DB recovery diff (-recovered +original):\n%s", vm, diff)
 		}
 		if diff := cmp.Diff(vm.exec, recovered.exec, saexec.CmpOpt(ctx)); diff != "" {
 			t.Errorf("%T from DB recovery diff (-recovered +original):\n%s", vm.exec, diff)
 		}
 		require.NoErrorf(t, recovered.Shutdown(ctx), "%T.Shutdown()", recovered)
+
+		// TODO(arr4n) execute one more tx on both the original and the
+		// recovered VMs. Ensure that the gas price is >1 as this is a good test
+		// of the excess.
 	})
 
 	require.NoErrorf(t, vm.Shutdown(ctx), "%T.Shutdown()", vm)

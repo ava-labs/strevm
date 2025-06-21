@@ -5,6 +5,8 @@ import (
 	"crypto/ecdsa"
 	"flag"
 	"fmt"
+	"net/http/httptest"
+	"net/url"
 	"runtime"
 	"sort"
 	"strconv"
@@ -20,6 +22,7 @@ import (
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/crypto"
+	"github.com/ava-labs/libevm/ethclient"
 	"github.com/ava-labs/strevm/adaptor"
 	"github.com/ava-labs/strevm/blocks"
 	"github.com/ava-labs/strevm/hook"
@@ -41,23 +44,53 @@ func TestMain(m *testing.M) {
 	)
 }
 
-func newVM(ctx context.Context, tb testing.TB, now func() time.Time, hooks hook.Points, logger logging.Logger, genesis []byte) (*VM, block.ChainVM) {
+// vmViews are different views of the same [VM] instance, each useful in
+// different testing scenarios.
+type vmViews struct {
+	*VM                    // general
+	snow block.ChainVM     // consensus integration testing
+	rpc  *ethclient.Client // API testing
+}
+
+func newVM(ctx context.Context, tb testing.TB, now func() time.Time, hooks hook.Points, logger logging.Logger, genesis []byte) vmViews {
 	tb.Helper()
 
 	harness := &SinceGenesis{
 		Now:   now,
 		Hooks: hooks,
 	}
-	conv := adaptor.Convert(harness)
+	snow := adaptor.Convert(harness)
 
 	snowCtx := snowtest.Context(tb, ids.Empty)
 	snowCtx.Log = logger
-	require.NoErrorf(tb, conv.Initialize(
+	require.NoErrorf(tb, snow.Initialize(
 		ctx, snowCtx,
 		nil, genesis, nil, nil, nil, nil, nil,
-	), "%T.Initialize()", conv)
+	), "%T.Initialize()", snow)
 
-	return harness.VM, conv
+	handlers, err := snow.CreateHandlers(ctx)
+	require.NoErrorf(tb, err, "%T.CreateHandlers()", snow)
+	server := httptest.NewServer(handlers[WSHandlerKey])
+	tb.Cleanup(server.Close)
+
+	rpcURL, err := url.Parse(server.URL)
+	require.NoErrorf(tb, err, "url.Parse(%T.URL = %q)", server, server.URL)
+	rpcURL.Scheme = "ws"
+	client, err := ethclient.Dial(rpcURL.String())
+	require.NoErrorf(tb, err, "ethclient.Dial(%T(%q))", server, rpcURL)
+	tb.Cleanup(client.Close)
+
+	return vmViews{
+		VM:   harness.VM,
+		snow: snow,
+		rpc:  client,
+	}
+}
+
+type txInclusion struct {
+	blockHash common.Hash
+	blockNum  uint64
+	txIndex   uint // unsure why geth uses uint for this
 }
 
 func unwrapBlock(tb testing.TB, b snowman.Block) *blocks.Block {
