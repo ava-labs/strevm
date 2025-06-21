@@ -118,6 +118,15 @@ func (e *Executor) execute(ctx context.Context, b *blocks.Block) error {
 			return fmt.Errorf("tx[%d]: %w", ti, err)
 		}
 
+		// The [types.Header] that we pass to [core.ApplyTransaction] is
+		// modified to reduce gas price from the worst-case value agreed by
+		// consensus. This changes the hash, which is what is copied to receipts
+		// and logs.
+		receipt.BlockHash = b.Hash()
+		for _, l := range receipt.Logs {
+			l.BlockHash = b.Hash()
+		}
+
 		// TODO(arr4n) add a receipt cache to the [executor] to allow API calls
 		// to access them before the end of the block.
 		receipts[ti] = receipt
