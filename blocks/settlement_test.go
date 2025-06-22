@@ -226,23 +226,65 @@ func TestLastToSettleAt(t *testing.T) {
 	tm := gastime.New(0, 5 /*target*/, 0)
 	require.Equal(t, gas.Gas(10), tm.Rate())
 
-	blocks[0].markExecutedForTests(t, db, tm) // 0.0
+	requireTime := func(t *testing.T, sec uint64, numerator gas.Gas) {
+		t.Helper()
+		assert.Equalf(t, sec, tm.Unix(), "%T.Unix()", tm)
+		wantFrac := proxytime.FractionalSecond[gas.Gas]{
+			Numerator:   numerator,
+			Denominator: tm.Rate(),
+		}
+		assert.Equalf(t, wantFrac, tm.Fraction(), "%T.Fraction()", tm)
+		if t.Failed() {
+			t.FailNow()
+		}
+	}
+
+	requireTime(t, 0, 0)
+	blocks[0].markExecutedForTests(t, db, tm)
+
 	tm.Tick(13)
-	blocks[1].markExecutedForTests(t, db, tm) // 1.3
+	requireTime(t, 1, 3)
+	blocks[1].markExecutedForTests(t, db, tm)
+
 	tm.Tick(20)
-	blocks[2].markExecutedForTests(t, db, tm) // 3.3
+	requireTime(t, 3, 3)
+	blocks[2].markExecutedForTests(t, db, tm)
+
 	tm.Tick(5)
-	blocks[3].markExecutedForTests(t, db, tm) // 3.8
+	requireTime(t, 3, 8)
+	blocks[3].markExecutedForTests(t, db, tm)
+
 	tm.Tick(23)
-	blocks[4].markExecutedForTests(t, db, tm) // 6.1
+	requireTime(t, 6, 1)
+	blocks[4].markExecutedForTests(t, db, tm)
+
 	tm.Tick(9)
-	blocks[5].markExecutedForTests(t, db, tm) // 7.0
+	requireTime(t, 7, 0)
+	blocks[5].markExecutedForTests(t, db, tm)
+
 	tm.Tick(10)
-	blocks[6].markExecutedForTests(t, db, tm) // 8.0
+	requireTime(t, 8, 0)
+	blocks[6].markExecutedForTests(t, db, tm)
+
 	tm.Tick(1)
-	blocks[7].markExecutedForTests(t, db, tm) // 8.1
+	requireTime(t, 8, 1)
+	blocks[7].markExecutedForTests(t, db, tm)
+
 	tm.Tick(50)
-	blocks[8].markExecutedForTests(t, db, tm) // 13.1
+	requireTime(t, 13, 1)
+	blocks[8].markExecutedForTests(t, db, tm)
+
+	for _, b := range blocks {
+		if !b.Executed() {
+			continue
+		}
+		// Setting interim execution time isn't required for the algorithm to
+		// work as it just allows [LastToSettleAt] to return definitive results
+		// earlier in execution. It does, however, risk an edge-case error for
+		// blocks that complete execution on an exact second boundary; see the
+		// [Block.SetInterimExecutionTime] implementation for details.
+		b.SetInterimExecutionTime(b.ExecutedByGasTime().Time)
+	}
 
 	type testCase struct {
 		name     string
@@ -328,37 +370,6 @@ func TestLastToSettleAt(t *testing.T) {
 			wantOK:   true,
 			want:     blocks[24],
 		})
-	}
-
-	t.Run("validate_setup", func(t *testing.T) {
-		frac := func(g gas.Gas) (f proxytime.FractionalSecond[gas.Gas]) {
-			f.Numerator = g
-			f.Denominator = tm.Rate()
-			return f
-		}
-
-		tests := []struct {
-			Unix     uint64
-			Fraction proxytime.FractionalSecond[gas.Gas]
-		}{
-			{0, frac(0)},
-			{1, frac(3)},
-			{3, frac(3)},
-			{3, frac(8)},
-			{6, frac(1)},
-			{7, frac(0)},
-			{8, frac(0)},
-			{8, frac(1)},
-			{13, frac(1)},
-		}
-		for i, tt := range tests {
-			got := blocks[i].ExecutedByGasTime()
-			assert.Equal(t, tt.Unix, got.Unix())
-			assert.Equal(t, tt.Fraction, got.Fraction())
-		}
-	})
-	if t.Failed() {
-		t.Fatalf("Invalid test setup; failing early as results will be corrupted")
 	}
 
 	for _, tt := range tests {
