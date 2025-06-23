@@ -11,8 +11,12 @@ import (
 // Time represents an instant in time, its passage measured in [gas.Gas]
 // consumption. It is not thread safe nor is the zero value valid.
 //
-// In addition to the passage of time, it also tracks excess consumption above
-// a target, as described in [ACP-194] as a "continuous" version of [ACP-176].
+// In addition to the passage of time, it also tracks excess consumption above a
+// target, as described in [ACP-194] as a "continuous" version of [ACP-176].
+//
+// Copying a Time, either directly or by dereferencing a pointer, will result in
+// undefined behaviour. Use [Time.Clone] instead as it reestablishes internal
+// invariants.
 //
 // [ACP-176]: https://github.com/avalanche-foundation/ACPs/tree/main/ACPs/176-dynamic-evm-gas-limit-and-price-discovery-updates
 // [ACP-194]: https://github.com/avalanche-foundation/ACPs/tree/main/ACPs/194-streaming-asynchronous-execution

@@ -21,14 +21,14 @@ import (
 	"go.uber.org/zap"
 )
 
-func (vm *VM) upgradeLastSynchronousBlock(hash common.Hash) error {
-	lastSyncNum := rawdb.ReadHeaderNumber(vm.db, hash)
+func (vm *VM) upgradeLastSynchronousBlock(lastSync LastSynchronousBlock) error {
+	lastSyncNum := rawdb.ReadHeaderNumber(vm.db, lastSync.Hash)
 	if lastSyncNum == nil {
-		return fmt.Errorf("read number of last synchronous block (%#x): %w", hash, database.ErrNotFound)
+		return fmt.Errorf("read number of last synchronous block (%#x): %w", lastSync.Hash, database.ErrNotFound)
 	}
-	ethBlock := rawdb.ReadBlock(vm.db, hash, *lastSyncNum)
+	ethBlock := rawdb.ReadBlock(vm.db, lastSync.Hash, *lastSyncNum)
 	if ethBlock == nil {
-		return fmt.Errorf("read last synchronous block (%#x): %w", hash, database.ErrNotFound)
+		return fmt.Errorf("read last synchronous block (%#x): %w", lastSync.Hash, database.ErrNotFound)
 	}
 
 	s := &vm.last.synchronous
@@ -53,13 +53,9 @@ func (vm *VM) upgradeLastSynchronousBlock(hash common.Hash) error {
 		return err
 	}
 
-	clock := gastime.New(
-		block.Time(),
-		// TODO(arr4n) get the gas target and post-execution excess of the
-		// genesis block.
-		1e6, 0,
-	)
-	receipts := rawdb.ReadRawReceipts(vm.db, hash, block.Height())
+	clock := gastime.New(block.Time(), lastSync.Target, lastSync.ExcessAfter)
+
+	receipts := rawdb.ReadRawReceipts(vm.db, lastSync.Hash, block.Height())
 	if err := block.MarkExecuted(vm.db, clock, block.Timestamp(), receipts, block.Block.Root()); err != nil {
 		return err
 	}

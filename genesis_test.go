@@ -18,19 +18,19 @@ var (
 	wethAddr = common.HexToAddress("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2")
 )
 
-func genesisJSON(tb testing.TB, config *params.ChainConfig, eoas ...common.Address) []byte {
+func genesisJSON(tb testing.TB, timestamp uint64, config *params.ChainConfig, eoas ...common.Address) []byte {
 	tb.Helper()
-	buf, err := json.Marshal(genesis(tb, config, eoas...))
+	buf, err := json.Marshal(genesis(tb, timestamp, config, eoas...))
 	require.NoErrorf(tb, err, "json.Marshal(%T)", &core.Genesis{})
 	return buf
 }
 
-func genesis(tb testing.TB, config *params.ChainConfig, eoas ...common.Address) *core.Genesis {
+func genesis(tb testing.TB, timestamp uint64, config *params.ChainConfig, eoas ...common.Address) *core.Genesis {
 	tb.Helper()
 
 	g := &core.Genesis{
 		Config:     config,
-		Timestamp:  0,
+		Timestamp:  timestamp,
 		Difficulty: big.NewInt(0), // required by geth
 		Alloc: types.GenesisAlloc{
 			wethAddr: {

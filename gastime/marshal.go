@@ -15,6 +15,8 @@ type TimeMarshaler struct {
 	target                   gas.Gas `canoto:"uint,2"`
 	excess                   gas.Gas `canoto:"uint,3"`
 
+	// The nocopy is important, not only for canoto, but because of the use of
+	// pointers in [Time.establishInvariants]. See [Time.Clone].
 	canotoData canotoData_TimeMarshaler `canoto:"nocopy"`
 }
 

@@ -73,7 +73,8 @@ func testIntegrationWrapAVAX(t *testing.T, numTxsInTest uint64) {
 
 	chainConfig := params.TestChainConfig
 	signer := types.LatestSigner(chainConfig)
-	now := time.Unix(0, 0)
+	const genesisTime = 1600858926
+	now := time.Unix(genesisTime, 0)
 
 	setTrieDBCommitBlockIntervalLog2(t, 2)
 
@@ -86,7 +87,7 @@ func testIntegrationWrapAVAX(t *testing.T, numTxsInTest uint64) {
 			T: 2e6,
 		},
 		tbLogger{tb: t, level: logging.Debug + 1},
-		genesisJSON(t, chainConfig, eoa),
+		genesisJSON(t, genesisTime, chainConfig, eoa),
 	)
 
 	if *enableMinGasConsumption {
@@ -473,11 +474,14 @@ func testIntegrationWrapAVAX(t *testing.T, numTxsInTest uint64) {
 		recovered, err := New(
 			ctx,
 			Config{
-				Hooks:                vm.hooks,
-				ChainConfig:          chainConfig,
-				DB:                   vm.db,
-				LastSynchronousBlock: common.Hash(genesisID),
-				SnowCtx:              vm.snowCtx,
+				Hooks:       vm.hooks,
+				ChainConfig: vm.exec.ChainConfig(),
+				DB:          vm.db,
+				LastSynchronousBlock: LastSynchronousBlock{
+					Hash:   common.Hash(genesisID),
+					Target: genesisBlockGasTarget,
+				},
+				SnowCtx: vm.snowCtx,
 			},
 		)
 		require.NoErrorf(t, err, "New(%T[DB from original VM])", Config{})

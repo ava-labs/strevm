@@ -8,6 +8,7 @@ import (
 	"github.com/ava-labs/avalanchego/database"
 	"github.com/ava-labs/avalanchego/snow"
 	snowcommon "github.com/ava-labs/avalanchego/snow/engine/common"
+	"github.com/ava-labs/avalanchego/vms/components/gas"
 	"github.com/ava-labs/libevm/core"
 	"github.com/ava-labs/libevm/core/rawdb"
 	"github.com/ava-labs/libevm/core/state"
@@ -35,6 +36,13 @@ type SinceGenesis struct {
 	Hooks hook.Points
 	Now   func() time.Time
 }
+
+// genesisBlockGasTarget is the value used by [SinceGenesis.Initialize] when
+// configuring the gas target of the last synchronous block. As future blocks
+// will update their target, the specific value is irrelevant. Since the genesis
+// block's gas excess is 0, scaling is also irrelevant, therefore any non-zero
+// number is acceptable.
+const genesisBlockGasTarget = gas.Gas(1)
 
 // Initialize creates an in-memory database, unmarshals the genesis bytes as
 // [core.Genesis] JSON to create a genesis block, and constructs a new [VM] that
@@ -73,13 +81,17 @@ func (s *SinceGenesis) Initialize(
 	vm, err := New(
 		ctx,
 		Config{
-			Hooks:                s.Hooks,
-			ChainConfig:          chainConfig,
-			DB:                   ethdb,
-			LastSynchronousBlock: genesisHash,
-			ToEngine:             toEngine,
-			SnowCtx:              chainCtx,
-			Now:                  s.Now,
+			Hooks:       s.Hooks,
+			ChainConfig: chainConfig,
+			DB:          ethdb,
+			LastSynchronousBlock: LastSynchronousBlock{
+				Hash:        genesisHash,
+				Target:      genesisBlockGasTarget,
+				ExcessAfter: 0,
+			},
+			ToEngine: toEngine,
+			SnowCtx:  chainCtx,
+			Now:      s.Now,
 		},
 	)
 	if err != nil {

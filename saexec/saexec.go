@@ -33,7 +33,7 @@ type Executor struct {
 
 	spawned sync.WaitGroup
 
-	gasClock     gastime.Time
+	gasClock     *gastime.Time
 	queue        sink.Monitor[*queue.FIFO[*blocks.Block]]
 	lastExecuted *atomic.Pointer[blocks.Block] // shared with VM
 
@@ -99,7 +99,7 @@ func (e *Executor) init() error {
 		snaps:   snaps,
 		statedb: statedb,
 	}
-	e.gasClock = *last.ExecutedByGasTime().Clone()
+	e.gasClock = last.ExecutedByGasTime().Clone()
 	return nil
 }
 
@@ -153,4 +153,11 @@ func (e *Executor) ChainConfig() *params.ChainConfig {
 // StateCache returns caching database underpinning execution.
 func (e *Executor) StateCache() state.Database {
 	return e.stateCache
+}
+
+// TimeNotThreadSafe returns a clone of the gas clock that times execution. It
+// is only safe to call when all blocks passed to [Executor.EnqueueAccepted]
+// have been executed, and is only intended for use in tests.
+func (e *Executor) TimeNotThreadsafe() *gastime.Time {
+	return e.gasClock.Clone()
 }

@@ -16,6 +16,7 @@ import (
 	"github.com/ava-labs/avalanchego/utils"
 	"github.com/ava-labs/avalanchego/utils/logging"
 	"github.com/ava-labs/avalanchego/version"
+	"github.com/ava-labs/avalanchego/vms/components/gas"
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core/rawdb"
 	"github.com/ava-labs/libevm/core/types"
@@ -71,14 +72,21 @@ type Config struct {
 	// At the point of upgrade from synchronous to asynchronous execution, the
 	// last synchronous block MUST be both the "head" and "finalized" block as
 	// retrieved via [rawdb] functions and the database MUST NOT contain any
-	// canonical hashes at greater heights.
-	LastSynchronousBlock common.Hash
+	// canonical hashes at greater heights. Its state root MUST be committed to
+	// disk as database recovery can't re-execute it nor its ancestry in the
+	// event of a node restart.
+	LastSynchronousBlock LastSynchronousBlock
 
 	ToEngine chan<- snowcommon.Message
 	SnowCtx  *snow.Context
 
 	// Now is optional, defaulting to [time.Now] if nil.
 	Now func() time.Time
+}
+
+type LastSynchronousBlock struct {
+	Hash                common.Hash
+	Target, ExcessAfter gas.Gas
 }
 
 func New(ctx context.Context, c Config) (*VM, error) {

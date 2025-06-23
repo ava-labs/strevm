@@ -85,7 +85,7 @@ func (e *Executor) execute(ctx context.Context, b *blocks.Block) error {
 		return fmt.Errorf("executing blocks out of order: %d then %d", last, curr)
 	}
 
-	hook.BeforeBlock(&e.gasClock, b.Header(), e.hooks.GasTarget(b.ParentBlock().Block))
+	hook.BeforeBlock(e.gasClock, b.Header(), e.hooks.GasTarget(b.ParentBlock().Block))
 	perTxClock := e.gasClock.Time.Clone()
 
 	header := types.CopyHeader(b.Header())
@@ -139,7 +139,7 @@ func (e *Executor) execute(ctx context.Context, b *blocks.Block) error {
 		receipts[ti] = receipt
 	}
 	endTime := time.Now()
-	hook.AfterBlock(&e.gasClock, blockGasConsumed)
+	hook.AfterBlock(e.gasClock, blockGasConsumed)
 	if e.gasClock.Time.Cmp(perTxClock) != 0 {
 		return fmt.Errorf("broken invariant: block-resolution clock @ %s does not match tx-resolution clock @ %s", e.gasClock.String(), perTxClock.String())
 	}

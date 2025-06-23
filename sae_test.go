@@ -5,6 +5,8 @@ import (
 	"crypto/ecdsa"
 	"flag"
 	"fmt"
+	"math"
+	"math/big"
 	"net/http/httptest"
 	"net/url"
 	"runtime"
@@ -208,4 +210,63 @@ func (us *uint64s) Set(str string) error {
 		*us = append(*us, u)
 	}
 	return nil
+}
+
+// A simpleBlockBuilder builds a linear chain of blocks, only accounting for the
+// parent and not the last settled block.
+type simpleBlockBuilder struct {
+	last *blocks.Block
+	vm   *VM
+}
+
+func (vm *VM) newSimpleBlockBuilder(ctx context.Context, tb testing.TB) *simpleBlockBuilder {
+	tb.Helper()
+
+	id, err := vm.LastAccepted(ctx)
+	require.NoErrorf(tb, err, "%T.LastAccepted()", vm)
+	last, err := vm.GetBlock(ctx, id)
+	require.NoErrorf(tb, err, "%T.GetBlock(LastAccepted())", vm)
+
+	return &simpleBlockBuilder{
+		last: last,
+		vm:   vm,
+	}
+}
+
+func (bb *simpleBlockBuilder) next(t *testing.T, timestamp uint64, txs ...*types.Transaction) *blocks.Block {
+	t.Helper()
+	if timestamp < bb.last.Time() {
+		t.Fatalf("decreasing block timestamp building on %d (@%d); time %d is in the past", bb.last.Height(), bb.last.Time(), timestamp)
+	}
+
+	hdr := &types.Header{
+		Number:     new(big.Int).SetUint64(bb.last.Height() + 1),
+		ParentHash: bb.last.Hash(),
+		Time:       timestamp,
+	}
+
+	b, err := bb.vm.newBlock(types.NewBlock(hdr, txs, nil, nil, trieHasher()), bb.last, nil)
+	require.NoErrorf(t, err, "%T.newBlock()", bb.vm)
+	bb.last = b
+	return b
+}
+
+// A simpleTxSigner creates transactions with consecutive nonces and specified
+// gas limits. The transactions have no value nor data and call the zero
+// address.
+type simpleTxSigner struct {
+	key    *ecdsa.PrivateKey
+	signer types.Signer
+	nonce  uint64
+}
+
+func (s *simpleTxSigner) next(gas uint64) *types.Transaction {
+	tx := types.MustSignNewTx(s.key, s.signer, &types.DynamicFeeTx{
+		Nonce:     s.nonce,
+		To:        &common.Address{},
+		Gas:       gas,
+		GasFeeCap: new(big.Int).SetUint64(math.MaxUint64),
+	})
+	s.nonce++
+	return tx
 }
