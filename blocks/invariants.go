@@ -42,7 +42,7 @@ func (b *Block) CheckInvariants(expectExecuted, expectSettled bool) error {
 		if expectSettled {
 			return b.brokenInvariantErr("expected to be settled")
 		}
-		if b.Root() != b.LastSettled().PostExecutionStateRoot() {
+		if b.SettledStateRoot() != b.LastSettled().PostExecutionStateRoot() {
 			return b.brokenInvariantErr("state root does not match last-settled post execution")
 		}
 	}

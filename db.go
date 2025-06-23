@@ -60,7 +60,7 @@ func (vm *VM) upgradeLastSynchronousBlock(hash common.Hash) error {
 		1e6, 0,
 	)
 	receipts := rawdb.ReadRawReceipts(vm.db, hash, block.Height())
-	if err := block.MarkExecuted(vm.db, clock, block.Timestamp(), receipts, block.Root()); err != nil {
+	if err := block.MarkExecuted(vm.db, clock, block.Timestamp(), receipts, block.Block.Root()); err != nil {
 		return err
 	}
 	if err := block.WriteLastSettledNumber(vm.db); err != nil {

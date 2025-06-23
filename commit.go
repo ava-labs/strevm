@@ -26,12 +26,12 @@ func (vm *VM) maybeCommitTrieDB(b *blocks.Block) error {
 	if !shouldCommitTrieDB(b.Height()) {
 		return nil
 	}
-	if err := vm.exec.StateCache().TrieDB().Commit(b.Root(), false); err != nil {
+	if err := vm.exec.StateCache().TrieDB().Commit(b.SettledStateRoot(), false); err != nil {
 		return err
 	}
 	vm.logger().Info(
 		"State root committed to disk",
-		zap.Stringer("root", b.Root()),
+		zap.Stringer("root", b.SettledStateRoot()),
 		zap.Uint64("accepted_block", b.Height()),
 		zap.Uint64("settled_block", b.LastSettled().Height()),
 	)

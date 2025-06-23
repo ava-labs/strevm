@@ -257,7 +257,7 @@ func testIntegrationWrapAVAX(t *testing.T, numTxsInTest uint64) {
 
 				assert.GreaterOrEqual(t, settled.Number.Cmp(b.Number()), 0, "last-settled height >= block including last tx")
 			})
-			assert.Equalf(t, b.PostExecutionStateRoot(), lastBlock.Root(), "%T.Root() of last block must be post-execution root of block including last tx", lastBlock)
+			assert.Equalf(t, b.PostExecutionStateRoot(), lastBlock.SettledStateRoot(), "%T.SettledStateRoot() of last block must be post-execution root of block including last tx", lastBlock)
 
 			t.Run("rawdb_tx_lookup_entries", func(t *testing.T) {
 				lastTxHash := allTxs[len(allTxs)-1].Hash()
