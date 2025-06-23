@@ -8,12 +8,14 @@ import (
 
 	"github.com/ava-labs/avalanchego/utils/logging"
 	"github.com/ava-labs/avalanchego/vms/components/gas"
+	"github.com/ava-labs/libevm/core/state"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/crypto"
 	"github.com/ava-labs/libevm/libevm/hookstest"
 	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/strevm/blocks"
 	"github.com/ava-labs/strevm/proxytime"
+	"github.com/holiman/uint256"
 	"github.com/stretchr/testify/require"
 )
 
@@ -84,7 +86,6 @@ func TestExecutorClock(t *testing.T) {
 		key:    key,
 		signer: types.LatestSigner(exec.ChainConfig()),
 	}
-	nextTx := txs.next
 
 	requireGasTimeAndExcess(t, start, 0, 0) // repeated, but a reminder for readability
 
@@ -92,18 +93,18 @@ func TestExecutorClock(t *testing.T) {
 
 	// Because R = 2T, excess increases by half of the aggregate gas consumed by
 	// the block.
-	executeNextBlock(t, start, nextTx(100_000), nextTx(50_000), nextTx(300_000))
+	executeNextBlock(t, start, txs.next(100_000), txs.next(50_000), txs.next(300_000))
 	requireGasTimeAndExcess(t, start, 450_000, 450_000/2)
 
 	// If the above increase (half of gas consumed) were to be applied per
 	// transaction then there would be rounding down of odd numbers of gas
 	// units.
-	executeNextBlock(t, start, nextTx(1e5-1), nextTx(1e5+1))
+	executeNextBlock(t, start, txs.next(1e5-1), txs.next(1e5+1))
 	requireGasTimeAndExcess(t, start, 650_000, 650_000/2)
 
 	// No specific behaviour being tested; just moving to a useful time for the
 	// next block.
-	executeNextBlock(t, start, nextTx(1e6))
+	executeNextBlock(t, start, txs.next(1e6))
 	requireGasTimeAndExcess(t, start, 1_650_000, 1_650_000/2)
 
 	// Excess also decreases by half when the clock is fast-forwarded due to an
@@ -114,7 +115,7 @@ func TestExecutorClock(t *testing.T) {
 	requireGasTimeAndExcess(t, start+1, 0, (1_650_000/2)-(350_000/2))
 
 	// No specific behaviour being tested.
-	executeNextBlock(t, start+1, nextTx(1_900_000))
+	executeNextBlock(t, start+1, txs.next(1_900_000))
 	requireGasTimeAndExcess(t, start+1, 1.9e6, (1_300_000+1_900_000)/2) // show your working
 	requireGasTimeAndExcess(t, start+1, 1.9e6, 1_600_000)
 
@@ -131,7 +132,7 @@ func TestExecutorClock(t *testing.T) {
 
 	// Fast-forwarding occurs before the block is executed. If it didn't, then
 	// the increase in excess would be reduced back to zero.
-	executeNextBlock(t, start+6, nextTx(100_000), nextTx(50_000))
+	executeNextBlock(t, start+6, txs.next(100_000), txs.next(50_000))
 	requireGasTimeAndExcess(t, start+6, 150_000, 75_000)
 
 	// When the gas target scales then so too must the clock's fractional
@@ -147,15 +148,15 @@ func TestExecutorClock(t *testing.T) {
 	// The modified gas target only affects excess scaling before execution, but
 	// increases/decreases are still at a rate of half the consumed/skipped gas,
 	// respectively.
-	executeNextBlock(t, start+6, nextTx(900_000))
+	executeNextBlock(t, start+6, txs.next(900_000))
 	requireGasTimeAndExcess(t, start+6, 975_000, 37_500+(900_000/2))
 	executeNextBlock(t, start+7)
 	requireGasTimeAndExcess(t, start+7, 0, 37_500+(900_000/2)-(25_000/2))
 
 	// Large transactions move the clock ahead of the block time.
-	halfSecondOfGas := hooks.T
+	halfSecondOfGas := hooks.fractionSecondsOfGas(t, 1, 2)
 	twoAndAHalfSeconds := 5 * halfSecondOfGas
-	executeNextBlock(t, start+10, nextTx(uint64(twoAndAHalfSeconds)))
+	executeNextBlock(t, start+10, txs.next(uint64(twoAndAHalfSeconds)))
 	requireFutureTime := func(t *testing.T) {
 		t.Helper()
 		requireGasTimeAndExcess(t, start+10+2, halfSecondOfGas, twoAndAHalfSeconds/2)
@@ -164,4 +165,38 @@ func TestExecutorClock(t *testing.T) {
 	// And blocks not as far in the future then don't change the clock.
 	executeNextBlock(t, start+10+1)
 	requireFutureTime(t)
+
+	t.Run("gas_price_charged", func(t *testing.T) {
+		// Push the excess high enough that we have a gas price > 1.
+		executeNextBlock(t, start+20)
+		requireGasTimeAndExcess(t, start+20, 0, 0)
+		hooks.T = 100
+		executeNextBlock(t, start+20, txs.next(100_000))
+		requireGasTimeAndExcess(t, start+520, 0, 50_000) // excess is arbitrary but high
+
+		gasPrice := exec.TimeNotThreadsafe().Price()
+		require.Equal(t, gas.CalculatePrice(1, 50_000, 87*hooks.T), gasPrice)
+		require.True(t, gasPrice > 1, "Gas price > 1") // require.Greater allows comparison of different types #Python
+
+		rootBefore := executeNextBlock(t, start+20).PostExecutionStateRoot()
+		sdb, err := state.New(rootBefore, exec.StateCache(), nil)
+		require.NoError(t, err, "state.New()")
+		balBefore := sdb.GetBalance(eoa)
+
+		txs.gasTipCap = 0
+		tx0 := txs.next(170_000)
+		txs.gasTipCap = 7
+		tx1 := txs.next(190_000)
+		txs.gasTipCap = 0
+		wantCharge := uint64(170_000*gasPrice + 190_000*(gasPrice+7)) // 17 and 19 are deliberately prime
+
+		rootAfter := executeNextBlock(t, start+20, tx0, tx1).PostExecutionStateRoot()
+		sdb, err = state.New(rootAfter, exec.StateCache(), nil)
+		require.NoError(t, err, "state.New()")
+		got := new(uint256.Int).Sub(balBefore, sdb.GetBalance(eoa))
+
+		if want := uint256.NewInt(wantCharge); !got.Eq(want) {
+			t.Errorf("Balance reduction from gas-cost alone; got %s; want %s", got, want)
+		}
+	})
 }

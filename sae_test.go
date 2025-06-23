@@ -255,9 +255,10 @@ func (bb *simpleBlockBuilder) next(t *testing.T, timestamp uint64, txs ...*types
 // gas limits. The transactions have no value nor data and call the zero
 // address.
 type simpleTxSigner struct {
-	key    *ecdsa.PrivateKey
-	signer types.Signer
-	nonce  uint64
+	key       *ecdsa.PrivateKey
+	signer    types.Signer
+	nonce     uint64
+	gasTipCap uint64
 }
 
 func (s *simpleTxSigner) next(gas uint64) *types.Transaction {
@@ -266,6 +267,7 @@ func (s *simpleTxSigner) next(gas uint64) *types.Transaction {
 		To:        &common.Address{},
 		Gas:       gas,
 		GasFeeCap: new(big.Int).SetUint64(math.MaxUint64),
+		GasTipCap: new(big.Int).SetUint64(s.gasTipCap),
 	})
 	s.nonce++
 	return tx

@@ -25,6 +25,7 @@ import (
 	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/rpc"
 	"github.com/ava-labs/strevm/blocks"
+	"github.com/ava-labs/strevm/intmath"
 	"github.com/ava-labs/strevm/queue"
 	"github.com/ava-labs/strevm/saetest"
 	"github.com/ava-labs/strevm/saexec"
@@ -53,6 +54,13 @@ type stubHooks struct {
 
 func (h *stubHooks) GasTarget(parent *types.Block) gas.Gas {
 	return h.T
+}
+
+func (h *stubHooks) fractionSecondsOfGas(tb testing.TB, num, denom uint64) gas.Gas {
+	tb.Helper()
+	quo, rem := intmath.MulDiv(gas.Gas(num), 2*h.T, gas.Gas(denom))
+	require.Zero(tb, rem, "remainder when calculating fractional seconds of gas")
+	return quo
 }
 
 func TestIntegrationWrapAVAX(t *testing.T) {
@@ -219,7 +227,7 @@ func testIntegrationWrapAVAX(t *testing.T, numTxsInTest uint64) {
 		if blockWithLastTx == nil {
 			blockWithLastTx = rawB
 			t.Logf("Last tx included in block %d", rawB.NumberU64())
-		} else if s := rawB.LastSettled(); s != nil && s.NumberU64() >= blockWithLastTx.NumberU64() {
+		} else if s := rawB.LastSettled(); s.NumberU64() >= blockWithLastTx.NumberU64() {
 			t.Logf("Built and accepted %s blocks in %v", human(numBlocks), time.Since(start))
 			t.Logf("Consensus waited for execution %s times", human(waitingForExecution))
 			break
