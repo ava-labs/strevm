@@ -25,7 +25,6 @@ import (
 	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/rpc"
 	"github.com/ava-labs/strevm/blocks"
-	"github.com/ava-labs/strevm/hook"
 	"github.com/ava-labs/strevm/queue"
 	"github.com/ava-labs/strevm/saetest"
 	"github.com/ava-labs/strevm/saexec"
@@ -37,7 +36,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-var txsInIntegrationTest = uint64s{10, 30, 100, 300, 1000, 3000}
+var (
+	txsInIntegrationTest = uint64s{10, 30, 100, 300, 1000, 3000}
+	// Disabling minimum gas consumption isn't useful for testing, but it
+	// distorts gas per second so may be used for (relative) throughput testing.
+	enableMinGasConsumption = flag.Bool("enable_min_gas_consumption", true, "Enforce lambda lower bound on gas consumption in integration test")
+)
 
 func init() {
 	flag.Var(&txsInIntegrationTest, "wrap_avax_tx_count", "Number of transactions to use in TestIntegrationWrapAVAX (comma-separated)")
@@ -85,7 +89,9 @@ func testIntegrationWrapAVAX(t *testing.T, numTxsInTest uint64) {
 		genesisJSON(t, chainConfig, eoa),
 	)
 
-	saetest.EnableMinimumGasConsumption(t)
+	if *enableMinGasConsumption {
+		saetest.EnableMinimumGasConsumption(t)
+	}
 
 	t.Run("convert_genesis_to_async", func(t *testing.T) {
 		require.NoError(t, vm.blocks.Use(ctx, func(bm blockMap) error {
@@ -116,7 +122,10 @@ func testIntegrationWrapAVAX(t *testing.T, numTxsInTest uint64) {
 
 	allTxs := make([]*types.Transaction, numTxsInTest)
 	// Tx gas limit high enough that [hook.MinimumGasConsumption] is enforced.
-	const commonTxGasLimit = params.TxGas + params.SstoreSetGas + 500_000
+	const (
+		commonTxGasLimit  = 499_999
+		minGasConsumption = 250_000 // rounded *up*
+	)
 	for nonce := range numTxsInTest {
 		allTxs[nonce] = types.MustSignNewTx(key, signer, &types.DynamicFeeTx{
 			Nonce:     nonce,
@@ -290,12 +299,15 @@ func testIntegrationWrapAVAX(t *testing.T, numTxsInTest uint64) {
 
 			require.Equalf(t, len(allTxs), len(gotReceiptsConcat), "# %T == # %T", &types.Receipt{}, &types.Transaction{})
 			lastExecutedBy := blockWithLastTx.ExecutedByWallTime()
-			t.Logf("Executed %s txs (%s gas) in %v", human(len(gotReceiptsConcat)), human(totalGasConsumed), lastExecutedBy.Sub(start))
+			t.Logf("Executed %s txs in %v", human(len(gotReceiptsConcat)), lastExecutedBy.Sub(start))
+			if !*enableMinGasConsumption {
+				t.Logf("%s gas consumed", human(totalGasConsumed))
+			}
 
 			t.Run("vs_sent_txs", func(t *testing.T) {
 				t.Parallel()
 
-				wantGasUsed := hook.MinimumGasConsumption(commonTxGasLimit)
+				const wantGasUsed = minGasConsumption
 				var (
 					lastBlockNum, wantCumulGasUsed uint64
 					wantReceipts                   types.Receipts
@@ -320,13 +332,16 @@ func testIntegrationWrapAVAX(t *testing.T, numTxsInTest uint64) {
 						TransactionIndex:  inc.txIndex,
 					})
 				}
-				ignore := cmpopts.IgnoreFields(
-					types.Receipt{},
+				ignore := []string{
 					"Logs", // checked below
 					"EffectiveGasPrice",
 					"Bloom",
-				)
-				if diff := cmp.Diff(wantReceipts, gotReceiptsConcat, ignore, saetest.CmpBigInts()); diff != "" {
+				}
+				if !*enableMinGasConsumption {
+					ignore = append(ignore, "GasUsed", "CumulativeGasUsed")
+				}
+				opt := cmpopts.IgnoreFields(types.Receipt{}, ignore...)
+				if diff := cmp.Diff(wantReceipts, gotReceiptsConcat, opt, saetest.CmpBigInts()); diff != "" {
 					t.Errorf("Execution results diff (-want +got): \n%s", diff)
 				}
 			})
