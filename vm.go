@@ -235,8 +235,8 @@ func (vm *VM) BuildBlock(ctx context.Context) (*blocks.Block, error) {
 	return vm.BuildBlockWithContext(ctx, nil)
 }
 
-func (vm *VM) BuildBlockWithContext(ctx context.Context, _ *block.Context) (*blocks.Block, error) {
-	return vm.buildBlock(ctx, uint64(vm.now().Unix()), vm.preference.Load())
+func (vm *VM) BuildBlockWithContext(ctx context.Context, blockContext *block.Context) (*blocks.Block, error) {
+	return vm.buildBlock(ctx, blockContext, uint64(vm.now().Unix()), vm.preference.Load())
 }
 
 func (vm *VM) signer(blockNum, timestamp uint64) types.Signer {
