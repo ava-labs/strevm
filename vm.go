@@ -69,7 +69,17 @@ type (
 )
 
 type Config struct {
-	Hooks       hook.Points
+	Hooks hook.Points
+	// LastExecutedBlockHeight should be >= the LastSynchronousBlock height.
+	//
+	// TODO(StephenButtolph): This allows coreth to specify what atomic txs
+	// (and warp receipts) have been applied. This is needed because the DB that
+	// is written to with Hooks.BlockExecuted is not atomically managed with the
+	// rest of SAE's state. We must ensure that Hooks.BlockExecuted is called
+	// consecutively starting with the block with height
+	// LastExecutedBlockHeight+1.
+	LastExecutedBlockHeight uint64
+
 	ChainConfig *params.ChainConfig
 	DB          ethdb.Database
 	// At the point of upgrade from synchronous to asynchronous execution, the
