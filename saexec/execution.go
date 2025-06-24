@@ -85,7 +85,8 @@ func (e *Executor) execute(ctx context.Context, b *blocks.Block) error {
 		return fmt.Errorf("executing blocks out of order: %d then %d", last, curr)
 	}
 
-	hook.BeforeBlock(&e.gasClock, b.Header(), e.hooks.GasTarget(b.ParentBlock().Block))
+	hook.BeforeBlock(e.gasClock, b.Header(), e.hooks.GasTarget(b.ParentBlock().Block))
+	perTxClock := e.gasClock.Time.Clone()
 
 	header := types.CopyHeader(b.Header())
 	header.BaseFee = e.gasClock.BaseFee().ToBig()
@@ -118,6 +119,21 @@ func (e *Executor) execute(ctx context.Context, b *blocks.Block) error {
 			return fmt.Errorf("tx[%d]: %w", ti, err)
 		}
 
+		perTxClock.Tick(gas.Gas(receipt.GasUsed))
+		b.SetInterimExecutionTime(perTxClock)
+		// TODO(arr4n) investigate calling the same method on pending blocks in
+		// the queue. It's only worth it if [blocks.LastToSettleAt] regularly
+		// returns false, meaning that execution is blocking consensus.
+
+		// The [types.Header] that we pass to [core.ApplyTransaction] is
+		// modified to reduce gas price from the worst-case value agreed by
+		// consensus. This changes the hash, which is what is copied to receipts
+		// and logs.
+		receipt.BlockHash = b.Hash()
+		for _, l := range receipt.Logs {
+			l.BlockHash = b.Hash()
+		}
+
 		// TODO(arr4n) add a receipt cache to the [executor] to allow API calls
 		// to access them before the end of the block.
 		receipts[ti] = receipt
@@ -139,7 +155,10 @@ func (e *Executor) execute(ctx context.Context, b *blocks.Block) error {
 	}
 
 	endTime := time.Now()
-	hook.AfterBlock(&e.gasClock, blockGasConsumed)
+	hook.AfterBlock(e.gasClock, blockGasConsumed)
+	if e.gasClock.Time.Cmp(perTxClock) != 0 {
+		return fmt.Errorf("broken invariant: block-resolution clock @ %s does not match tx-resolution clock @ %s", e.gasClock.String(), perTxClock.String())
+	}
 
 	root, err := e.commitState(ctx, x, b.NumberU64())
 	if err != nil {

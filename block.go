@@ -16,28 +16,53 @@ import (
 	"go.uber.org/zap"
 )
 
-func (vm *VM) AcceptBlock(ctx context.Context, b *blocks.Block) error {
-	batch := vm.db.NewBatch()
-	rawdb.WriteBlock(batch, b.Block)
-	rawdb.WriteCanonicalHash(batch, b.Hash(), b.NumberU64())
-	rawdb.WriteTxLookupEntriesByBlock(batch, b.Block) // i.e. canonical tx inclusion
+func (vm *VM) newBlock(b *types.Block, parent, lastSettled *blocks.Block) (*blocks.Block, error) {
+	return blocks.New(b, parent, lastSettled, vm.logger())
+}
 
-	settle := b.Settles()
-	for i, s := range settle {
-		if err := vm.exec.StateCache().TrieDB().Commit(s.PostExecutionStateRoot(), false); err != nil {
+func (vm *VM) addBlocksToMemory(ctx context.Context, bs ...*blocks.Block) error {
+	return vm.blocks.Use(ctx, func(bm blockMap) error {
+		for _, b := range bs {
+			bm[b.Hash()] = b
+		}
+		return nil
+	})
+}
+
+func (vm *VM) removeBlocksFromMemory(ctx context.Context, bs ...*blocks.Block) error {
+	return vm.blocks.Use(ctx, func(bm blockMap) error {
+		for _, b := range bs {
+			delete(bm, b.Hash())
+		}
+		return nil
+	})
+}
+
+func (vm *VM) AcceptBlock(ctx context.Context, b *blocks.Block) error {
+	if err := vm.maybeCommitTrieDB(b); err != nil {
+		return err
+	}
+
+	settles := b.Settles()
+	{
+		batch := vm.db.NewBatch()
+
+		rawdb.WriteBlock(batch, b.Block)
+		rawdb.WriteCanonicalHash(batch, b.Hash(), b.NumberU64())
+		rawdb.WriteTxLookupEntriesByBlock(batch, b.Block) // i.e. canonical tx inclusion
+
+		if s := settles; len(s) > 0 {
+			rawdb.WriteFinalizedBlockHash(batch, s[len(s)-1].Hash())
+		}
+		if err := b.WriteLastSettledNumber(batch); err != nil {
 			return err
 		}
-		if i+1 == len(settle) {
-			rawdb.WriteFinalizedBlockHash(batch, s.Hash())
+
+		if err := batch.Write(); err != nil {
+			return err
 		}
 	}
-	if err := b.WriteLastSettledNumber(batch); err != nil {
-		return err
-	}
-	if err := batch.Write(); err != nil {
-		return err
-	}
-	for _, s := range settle {
+	for _, s := range settles {
 		if err := s.MarkSettled(); err != nil {
 			return err
 		}
@@ -71,42 +96,26 @@ func (vm *VM) AcceptBlock(ctx context.Context, b *blocks.Block) error {
 		zap.Stringer("hash", b.Hash()),
 	)
 
-	return vm.blocks.Use(ctx, func(bm blockMap) error {
-		// Same rationale as the invariant described in [Block]. Praised be the
-		// GC!
-		prune := func(b *blocks.Block) {
-			delete(bm, b.Hash())
-			vm.logger().Debug(
-				"Pruning settled block",
-				zap.Stringer("hash", b.Hash()),
-				zap.Uint64("number", b.NumberU64()),
-			)
+	// Same rationale as the invariant described in [Block]. Praised be the GC!
+	var toPrune []*blocks.Block
+	keep := b.LastSettled().Hash()
+	for _, s := range settles {
+		if s.Hash() == keep {
+			continue
 		}
-
-		keep := b.LastSettled().Hash()
-		for _, s := range settle {
-			if s.Hash() == keep {
-				continue
-			}
-			prune(s)
+		toPrune = append(toPrune, s)
+	}
+	if p := b.ParentBlock(); p != nil {
+		if s := p.LastSettled(); s != nil && s.Hash() != keep {
+			toPrune = append(toPrune, s)
 		}
-		parent := b.ParentBlock()
-		if parent == nil {
-			return nil
-		}
-		if s := parent.LastSettled(); s != nil && s.Hash() != keep {
-			prune(s)
-		}
-		return nil
-	})
+	}
+	return vm.removeBlocksFromMemory(ctx, toPrune...)
 }
 
 func (vm *VM) RejectBlock(ctx context.Context, b *blocks.Block) error {
 	// TODO(arr4n) add the transactions back to the mempool if necessary.
-	return vm.blocks.Use(ctx, func(bm blockMap) error {
-		delete(bm, b.Hash())
-		return nil
-	})
+	return vm.removeBlocksFromMemory(ctx, b)
 }
 
 func (vm *VM) ShouldVerifyBlockWithContext(ctx context.Context, b *blocks.Block) (bool, error) {
@@ -165,9 +174,5 @@ func (vm *VM) verifyBlock(ctx context.Context, blockContext *block.Context, b *b
 	if err := b.CopyAncestorsFrom(bb); err != nil {
 		return err
 	}
-
-	return vm.blocks.Use(ctx, func(bm blockMap) error {
-		bm[b.Hash()] = b
-		return nil
-	})
+	return vm.addBlocksToMemory(ctx, b)
 }

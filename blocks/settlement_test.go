@@ -79,8 +79,8 @@ func TestSettlementInvariants(t *testing.T) {
 		defer cancel()
 		assert.ErrorIs(t, b.WaitUntilSettled(ctx), context.DeadlineExceeded, "WaitUntilSettled()")
 
-		assert.True(t, b.ParentBlock().Equal(parent), "ParentBlock().Equal([constructor arg])")
-		assert.True(t, b.LastSettled().Equal(lastSettled), "LastSettled().Equal([constructor arg])")
+		assert.True(t, b.ParentBlock().equalForTests(parent), "ParentBlock().equalForTests([constructor arg])")
+		assert.True(t, b.LastSettled().equalForTests(lastSettled), "LastSettled().equalForTests([constructor arg])")
 	})
 	if t.Failed() {
 		t.FailNow()
@@ -202,7 +202,7 @@ func TestSettles(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if diff := cmp.Diff(tt.want, tt.got, cmpopts.EquateEmpty()); diff != "" {
+			if diff := cmp.Diff(tt.want, tt.got, cmpopts.EquateEmpty(), CmpOpt()); diff != "" {
 				t.Errorf("diff (-want +got):\n%s", diff)
 			}
 		})
@@ -215,7 +215,7 @@ func (b *Block) markExecutedForTests(tb testing.TB, db ethdb.Database, tm *gasti
 }
 
 func TestLastToSettleAt(t *testing.T) {
-	blocks := newChain(t, 0, 20, nil)
+	blocks := newChain(t, 0, 30, nil)
 	t.Run("helper_invariants", func(t *testing.T) {
 		for i, b := range blocks {
 			require.Equal(t, uint64(i), b.Height())
@@ -227,31 +227,75 @@ func TestLastToSettleAt(t *testing.T) {
 	tm := gastime.New(0, 5 /*target*/, 0)
 	require.Equal(t, gas.Gas(10), tm.Rate())
 
-	blocks[0].markExecutedForTests(t, db, tm) // 0.0
-	tm.Tick(13)
-	blocks[1].markExecutedForTests(t, db, tm) // 1.3
-	tm.Tick(20)
-	blocks[2].markExecutedForTests(t, db, tm) // 3.3
-	tm.Tick(5)
-	blocks[3].markExecutedForTests(t, db, tm) // 3.8
-	tm.Tick(23)
-	blocks[4].markExecutedForTests(t, db, tm) // 6.1
-	tm.Tick(9)
-	blocks[5].markExecutedForTests(t, db, tm) // 7.0
-	tm.Tick(10)
-	blocks[6].markExecutedForTests(t, db, tm) // 8.0
-	tm.Tick(1)
-	blocks[7].markExecutedForTests(t, db, tm) // 8.1
-	tm.Tick(50)
-	blocks[8].markExecutedForTests(t, db, tm) // 13.1
+	requireTime := func(t *testing.T, sec uint64, numerator gas.Gas) {
+		t.Helper()
+		assert.Equalf(t, sec, tm.Unix(), "%T.Unix()", tm)
+		wantFrac := proxytime.FractionalSecond[gas.Gas]{
+			Numerator:   numerator,
+			Denominator: tm.Rate(),
+		}
+		assert.Equalf(t, wantFrac, tm.Fraction(), "%T.Fraction()", tm)
+		if t.Failed() {
+			t.FailNow()
+		}
+	}
 
-	tests := []struct {
+	requireTime(t, 0, 0)
+	blocks[0].markExecutedForTests(t, db, tm)
+
+	tm.Tick(13)
+	requireTime(t, 1, 3)
+	blocks[1].markExecutedForTests(t, db, tm)
+
+	tm.Tick(20)
+	requireTime(t, 3, 3)
+	blocks[2].markExecutedForTests(t, db, tm)
+
+	tm.Tick(5)
+	requireTime(t, 3, 8)
+	blocks[3].markExecutedForTests(t, db, tm)
+
+	tm.Tick(23)
+	requireTime(t, 6, 1)
+	blocks[4].markExecutedForTests(t, db, tm)
+
+	tm.Tick(9)
+	requireTime(t, 7, 0)
+	blocks[5].markExecutedForTests(t, db, tm)
+
+	tm.Tick(10)
+	requireTime(t, 8, 0)
+	blocks[6].markExecutedForTests(t, db, tm)
+
+	tm.Tick(1)
+	requireTime(t, 8, 1)
+	blocks[7].markExecutedForTests(t, db, tm)
+
+	tm.Tick(50)
+	requireTime(t, 13, 1)
+	blocks[8].markExecutedForTests(t, db, tm)
+
+	for _, b := range blocks {
+		if !b.Executed() {
+			continue
+		}
+		// Setting interim execution time isn't required for the algorithm to
+		// work as it just allows [LastToSettleAt] to return definitive results
+		// earlier in execution. It does, however, risk an edge-case error for
+		// blocks that complete execution on an exact second boundary; see the
+		// [Block.SetInterimExecutionTime] implementation for details.
+		b.SetInterimExecutionTime(b.ExecutedByGasTime().Time)
+	}
+
+	type testCase struct {
 		name     string
 		settleAt uint64
 		parent   *Block
 		wantOK   bool
 		want     *Block
-	}{
+	}
+
+	tests := []testCase{
 		{
 			settleAt: 3,
 			parent:   blocks[5],
@@ -301,35 +345,32 @@ func TestLastToSettleAt(t *testing.T) {
 		},
 	}
 
-	t.Run("validate_setup", func(t *testing.T) {
-		frac := func(g gas.Gas) (f proxytime.FractionalSecond[gas.Gas]) {
-			f.Numerator = g
-			f.Denominator = tm.Rate()
-			return f
-		}
+	{
+		// Scenario:
+		//   * Mark block 24 as executed at time 25.1
+		//   * Mark block 25 as partially executed by time 27.1
+		//   * Settle at time 26 (between them) with 25 as parent
+		//
+		// If block 25 wasn't marked as partially executed then it could
+		// feasibly execute by settlement time (26) so [LastToSettleAt] would
+		// return false. As the partial execution time makes it impossible for
+		// block 25 to execute in time, we loop to its parent, which is already
+		// executed in time and is therefore the expected return value.
+		tm.Tick(120)
+		require.Equal(t, uint64(25), tm.Unix())
+		require.Equal(t, proxytime.FractionalSecond[gas.Gas]{Numerator: 1, Denominator: 10}, tm.Fraction())
+		blocks[24].markExecutedForTests(t, db, tm)
 
-		tests := []struct {
-			Unix     uint64
-			Fraction proxytime.FractionalSecond[gas.Gas]
-		}{
-			{0, frac(0)},
-			{1, frac(3)},
-			{3, frac(3)},
-			{3, frac(8)},
-			{6, frac(1)},
-			{7, frac(0)},
-			{8, frac(0)},
-			{8, frac(1)},
-			{13, frac(1)},
-		}
-		for i, tt := range tests {
-			got := blocks[i].ExecutedByGasTime()
-			assert.Equal(t, tt.Unix, got.Unix())
-			assert.Equal(t, tt.Fraction, got.Fraction())
-		}
-	})
-	if t.Failed() {
-		t.Fatalf("Invalid test setup; failing early as results will be corrupted")
+		partiallyExecutedAt := proxytime.New[gas.Gas](27, 100)
+		partiallyExecutedAt.Tick(1)
+		blocks[25].SetInterimExecutionTime(partiallyExecutedAt)
+
+		tests = append(tests, testCase{
+			settleAt: 26,
+			parent:   blocks[25],
+			wantOK:   true,
+			want:     blocks[24],
+		})
 	}
 
 	for _, tt := range tests {

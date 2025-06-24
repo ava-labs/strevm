@@ -17,6 +17,7 @@ import (
 	"github.com/ava-labs/avalanchego/utils"
 	"github.com/ava-labs/avalanchego/utils/logging"
 	"github.com/ava-labs/avalanchego/version"
+	"github.com/ava-labs/avalanchego/vms/components/gas"
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core/rawdb"
 	"github.com/ava-labs/libevm/core/types"
@@ -74,14 +75,21 @@ type Config struct {
 	// At the point of upgrade from synchronous to asynchronous execution, the
 	// last synchronous block MUST be both the "head" and "finalized" block as
 	// retrieved via [rawdb] functions and the database MUST NOT contain any
-	// canonical hashes at greater heights.
-	LastSynchronousBlock common.Hash
+	// canonical hashes at greater heights. Its state root MUST be committed to
+	// disk as database recovery can't re-execute it nor its ancestry in the
+	// event of a node restart.
+	LastSynchronousBlock LastSynchronousBlock
 
 	ToEngine chan<- snowcommon.Message
 	SnowCtx  *snow.Context
 
 	// Now is optional, defaulting to [time.Now] if nil.
 	Now func() time.Time
+}
+
+type LastSynchronousBlock struct {
+	Hash                common.Hash
+	Target, ExcessAfter gas.Gas
 }
 
 func New(ctx context.Context, c Config) (*VM, error) {
@@ -108,13 +116,27 @@ func New(ctx context.Context, c Config) (*VM, error) {
 	if err := vm.upgradeLastSynchronousBlock(c.LastSynchronousBlock); err != nil {
 		return nil, err
 	}
-	if err := vm.recoverFromDB(ctx, c.ChainConfig); err != nil {
-		return nil, err
-	}
-
-	exec, err := saexec.New(&vm.last.executed, c.ChainConfig, vm.db, vm.hooks, vm.logger())
+	recovery, err := vm.recoverFromDB(ctx, c.ChainConfig)
 	if err != nil {
 		return nil, err
+	}
+	if err := vm.startExecutorAndMempool(c.ChainConfig); err != nil {
+		return nil, err
+	}
+	// We only commit the state root if [shouldCommitTrieDB] returns true for an
+	// accepted block height. Therefore, even though we may have receipts and
+	// other post-execution state in the database, the executor could only open
+	// the last committed root.
+	if err := vm.reexecuteBlocksAfterShutdown(ctx, recovery); err != nil {
+		return nil, err
+	}
+	return vm, nil
+}
+
+func (vm *VM) startExecutorAndMempool(chainConfig *params.ChainConfig) error {
+	exec, err := saexec.New(&vm.last.executed, chainConfig, vm.db, vm.hooks, vm.logger())
+	if err != nil {
+		return err
 	}
 	vm.exec = exec
 
@@ -130,11 +152,8 @@ func New(ctx context.Context, c Config) (*VM, error) {
 		wg.Done()
 	}()
 	<-execReady
-	return vm, nil
-}
 
-func (vm *VM) newBlock(b *types.Block, parent, lastSettled *blocks.Block) (*blocks.Block, error) {
-	return blocks.New(b, parent, lastSettled, vm.logger())
+	return nil
 }
 
 func (vm *VM) logger() logging.Logger {
@@ -188,6 +207,10 @@ func (vm *VM) CreateHandlers(context.Context) (map[string]http.Handler, error) {
 			[]string{"*"}, // TODO(arr4n) make this configurable
 		),
 	}, nil
+}
+
+func (vm *VM) CreateHTTP2Handler(context.Context) (http.Handler, error) {
+	return nil, errUnimplemented
 }
 
 func (vm *VM) GetBlock(ctx context.Context, blkID ids.ID) (*blocks.Block, error) {

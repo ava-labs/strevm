@@ -3,12 +3,15 @@ package hooktest
 import (
 	"context"
 	"iter"
+	"testing"
 
 	"github.com/ava-labs/avalanchego/snow/engine/snowman/block"
 	"github.com/ava-labs/avalanchego/vms/components/gas"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/trie"
 	"github.com/ava-labs/strevm/hook"
+	"github.com/ava-labs/strevm/intmath"
+	"github.com/stretchr/testify/require"
 )
 
 type Simple struct {
@@ -48,4 +51,11 @@ func (Simple) ExtraBlockOperations(ctx context.Context, block *types.Block) ([]h
 
 func (Simple) BlockExecuted(ctx context.Context, block *types.Block, receipts types.Receipts) error {
 	return nil
+}
+
+func (s Simple) FractionSecondsOfGas(tb testing.TB, num, denom uint64) gas.Gas {
+	tb.Helper()
+	quo, rem := intmath.MulDiv(gas.Gas(num), 2*s.T, gas.Gas(denom))
+	require.Zero(tb, rem, "remainder when calculating fractional seconds of gas")
+	return quo
 }

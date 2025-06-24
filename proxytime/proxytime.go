@@ -3,6 +3,7 @@
 package proxytime
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/ava-labs/strevm/intmath"
@@ -165,4 +166,11 @@ func (tm *Time[D]) CmpUnix(sec uint64) int {
 func (tm *Time[D]) AsTime() time.Time {
 	nsec, _ /*remainder*/ := tm.scale(tm.fraction, 1e9)
 	return time.Unix(int64(tm.seconds), int64(nsec)).In(time.UTC)
+}
+
+// String returns the time as a human-readable string. It is not intended for
+// parsing and its format MAY change.
+func (tm *Time[D]) String() string {
+	f := tm.Fraction()
+	return fmt.Sprintf("%d+(%d/%d)", tm.Unix(), f.Numerator, f.Denominator)
 }

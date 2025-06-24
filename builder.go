@@ -18,6 +18,7 @@ import (
 	"github.com/ava-labs/strevm/hook"
 	"github.com/ava-labs/strevm/intmath"
 	"github.com/ava-labs/strevm/queue"
+	"github.com/ava-labs/strevm/params"
 	"github.com/ava-labs/strevm/worstcase"
 	"go.uber.org/zap"
 )
@@ -277,7 +278,7 @@ func errIsOneOf(err error, targets ...error) bool {
 }
 
 func (vm *VM) lastBlockToSettleAt(timestamp uint64, parent *blocks.Block) (*blocks.Block, bool) {
-	settleAt := intmath.BoundedSubtract(timestamp, stateRootDelaySeconds, vm.last.synchronous.time)
+	settleAt := intmath.BoundedSubtract(timestamp, params.StateRootDelaySeconds, vm.last.synchronous.time)
 	return blocks.LastToSettleAt(settleAt, parent)
 }
 

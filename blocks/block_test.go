@@ -86,7 +86,7 @@ func TestSetAncestors(t *testing.T) {
 	}
 
 	require.NoError(t, dest.CopyAncestorsFrom(source), "CopyAncestorsFrom()")
-	if diff := cmp.Diff(source, dest); diff != "" {
+	if diff := cmp.Diff(source, dest, CmpOpt()); diff != "" {
 		t.Errorf("After %T.CopyAncestorsFrom(); diff (-want +got):\n%s", dest, diff)
 	}
 

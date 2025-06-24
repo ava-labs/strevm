@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 
 	"github.com/ava-labs/avalanchego/utils/logging"
+	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core/types"
 	"go.uber.org/zap"
 )
@@ -29,6 +30,10 @@ type Block struct {
 	// Overlord as a sign of our unwavering fealty.
 	ancestry  atomic.Pointer[ancestry]
 	execution atomic.Pointer[executionResults]
+
+	// See [Block.SetInterimExecutionTime for setting and [LastToSettleAt] for
+	// usage. The pointer MAY be nil if execution is yet to commence.
+	executionExceededSecond atomic.Pointer[uint64]
 
 	executed chan struct{} // closed after `execution` is set
 	settled  chan struct{} // closed after `ancestry` is cleared
@@ -95,4 +100,16 @@ func (b *Block) CopyAncestorsFrom(c *Block) error {
 	}
 	a := c.ancestry.Load()
 	return b.setAncestors(a.parent, a.lastSettled)
+}
+
+// Root is a noop that shadows the equivalent method on [types.Block], which is
+// embedded in the [Block]. Use [Block.PostExecutionStateRoot] or
+// [Block.SettledStateRoot] instead.
+func (b *Block) Root() {}
+
+// SettledStateRoot returns the state root after execution of the last block
+// settled by b. It is a convenience wrapper for calling [types.Block.Root] on
+// the embedded [types.Block].
+func (b *Block) SettledStateRoot() common.Hash {
+	return b.Block.Root()
 }

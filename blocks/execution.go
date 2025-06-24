@@ -14,9 +14,21 @@ import (
 	"github.com/ava-labs/libevm/trie"
 	"github.com/ava-labs/strevm/gastime"
 	"github.com/ava-labs/strevm/hook"
+	"github.com/ava-labs/strevm/proxytime"
 )
 
 //go:generate go run github.com/StephenButtolph/canoto/canoto $GOFILE
+
+// SetInterimExecutionTime is expected to be called during execution of b's
+// transactions, with the highest-known gas time. This MAY be at any resolution
+// but MUST be monotonic.
+func (b *Block) SetInterimExecutionTime(t *proxytime.Time[gas.Gas]) {
+	p := t.Unix()
+	if t.Fraction().Numerator == 0 {
+		p--
+	}
+	b.executionExceededSecond.Store(&p)
+}
 
 type executionResults struct {
 	byGas  gastime.Time `canoto:"value,1"`
@@ -32,20 +44,6 @@ type executionResults struct {
 	stateRootPost common.Hash `canoto:"fixed bytes,4"`
 
 	canotoData canotoData_executionResults
-}
-
-// Equal MUST NOT be used other than in [Block.Equal].
-func (e *executionResults) Equal(f *executionResults) bool {
-	if en, fn := e == nil, f == nil; en == true && fn == true {
-		return true
-	} else if en != fn {
-		return false
-	}
-
-	return e.byGas.Cmp(f.byGas.Time) == 0 &&
-		e.gasUsed == f.gasUsed &&
-		e.receiptRoot == f.receiptRoot &&
-		e.stateRootPost == f.stateRootPost
 }
 
 // MarkExecuted marks the block as having being executed at the specified
