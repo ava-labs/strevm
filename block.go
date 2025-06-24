@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"iter"
 
 	"github.com/ava-labs/avalanchego/ids"
 	"github.com/ava-labs/avalanchego/snow"
@@ -111,47 +110,22 @@ func (vm *VM) RejectBlock(ctx context.Context, b *blocks.Block) error {
 }
 
 func (vm *VM) ShouldVerifyBlockWithContext(ctx context.Context, b *blocks.Block) (bool, error) {
-	return vm.hooks.ShouldVerifyBlockContext(ctx, b.Block)
+	return true, nil
 }
 
 func (vm *VM) VerifyBlockWithContext(ctx context.Context, blockContext *block.Context, b *blocks.Block) error {
-	// Verify that the block is valid within the provided context. This must be
-	// called even if the block was previously verified because the context may
-	// be different.
-	if err := vm.hooks.VerifyBlockContext(ctx, blockContext, b.Block); err != nil {
-		return err
-	}
-
-	blockHash := b.Hash()
-	var previouslyVerified bool
-	// TODO(StephenButtolph): In the concurrency model this VM is implementing,
-	// is this usage of the block map a logical race? The consensus engine
-	// currently only ever calls VerifyWithContext and VerifyBlock on a single
-	// thread, so the actual behavior seems correct.
-	err := vm.blocks.Use(ctx, func(bm blockMap) error {
-		_, previouslyVerified = bm[blockHash]
-		return nil
-	})
-	if err != nil {
-		return err
-	}
-	// If [VM.VerifyBlock] has already returned nil, we do not need to re-verify
-	// the block.
-	if previouslyVerified {
-		return nil
-	}
-	return vm.VerifyBlock(ctx, b)
+	// TODO: This could be optimized to only verify this block once.
+	return vm.verifyBlock(ctx, blockContext, b)
 }
 
 func (vm *VM) VerifyBlock(ctx context.Context, b *blocks.Block) error {
+	return vm.verifyBlock(ctx, nil, b)
+}
+
+func (vm *VM) verifyBlock(ctx context.Context, blockContext *block.Context, b *blocks.Block) error {
 	parent, err := vm.GetBlock(ctx, ids.ID(b.ParentHash()))
 	if err != nil {
 		return fmt.Errorf("block parent %#x not found (presumed height %d)", b.ParentHash(), b.Height()-1)
-	}
-
-	ancestors := iterateUntilSettled(parent)
-	if err := vm.hooks.VerifyBlockAncestors(ctx, b.Block, ancestors); err != nil {
-		return err
 	}
 
 	signer := vm.signer(b.NumberU64(), b.Time())
@@ -175,7 +149,12 @@ func (vm *VM) VerifyBlock(ctx context.Context, b *blocks.Block) error {
 		})
 	}
 
-	bb, err := vm.buildBlockWithCandidateTxs(b.Time(), parent, candidates)
+	constructBlock, err := vm.hooks.ConstructBlockFromBlock(ctx, b.Block)
+	if err != nil {
+		return err
+	}
+
+	bb, err := vm.buildBlockWithCandidateTxs(b.Time(), parent, candidates, blockContext, constructBlock)
 	if err != nil {
 		return err
 	}
@@ -191,30 +170,4 @@ func (vm *VM) VerifyBlock(ctx context.Context, b *blocks.Block) error {
 		bm[b.Hash()] = b
 		return nil
 	})
-}
-
-// iterateUntilSettled returns an iterator which starts at the provided block
-// and iterates up to but not including the most recently settled block.
-//
-// If the provided block is settled, then the returned iterator is empty.
-func iterateUntilSettled(from *blocks.Block) iter.Seq[*types.Block] {
-	return func(yield func(*types.Block) bool) {
-		// Do not modify the `from` variable to support multiple iterations.
-		current := from
-		for {
-			next := current.ParentBlock()
-			// If the next block is nil, then the current block is settled.
-			if next == nil {
-				return
-			}
-
-			// If the person iterating over this iterator broke out of the loop,
-			// we must not call yield again.
-			if !yield(current.Block) {
-				return
-			}
-
-			current = next
-		}
-	}
 }

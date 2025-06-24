@@ -231,15 +231,11 @@ func (vm *VM) ParseBlock(ctx context.Context, blockBytes []byte) (*blocks.Block,
 	return vm.newBlock(b, nil, nil)
 }
 
-func (vm *VM) BuildBlockWithContext(ctx context.Context, _ *block.Context) (*blocks.Block, error) {
-	// TODO(StephenButtolph): Figure out how we want to support block building
-	// hooks. Contextual block building is needed to support Warp messages.
-	//
-	// We additionally need to include atomic txs in the block for the C-chain.
-	return vm.BuildBlock(ctx)
+func (vm *VM) BuildBlock(ctx context.Context) (*blocks.Block, error) {
+	return vm.BuildBlockWithContext(ctx, nil)
 }
 
-func (vm *VM) BuildBlock(ctx context.Context) (*blocks.Block, error) {
+func (vm *VM) BuildBlockWithContext(ctx context.Context, _ *block.Context) (*blocks.Block, error) {
 	return vm.buildBlock(ctx, uint64(vm.now().Unix()), vm.preference.Load())
 }
 

@@ -30,6 +30,7 @@ import (
 	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/rpc"
 	"github.com/ava-labs/strevm/blocks"
+	"github.com/ava-labs/strevm/hook"
 	"github.com/ava-labs/strevm/queue"
 	"github.com/ava-labs/strevm/weth"
 	"github.com/google/go-cmp/cmp"
@@ -52,16 +53,30 @@ func (h *stubHooks) GasTarget(parent *types.Block) gas.Gas {
 	return h.T
 }
 
-func (*stubHooks) ShouldVerifyBlockContext(context.Context, *types.Block) (bool, error) {
-	return false, nil
+func (*stubHooks) ExtraBlockOperations(ctx context.Context, block *types.Block) ([]hook.Op, error) {
+	return nil, nil
 }
 
-func (*stubHooks) VerifyBlockContext(context.Context, *block.Context, *types.Block) error {
-	return nil
+func (h *stubHooks) ConstructBlock(
+	ctx context.Context,
+	blockContext *block.Context,
+	header *types.Header,
+	parent *types.Header,
+	ancestors iter.Seq[*types.Block],
+	state hook.State,
+	txs []*types.Transaction,
+	receipts []*types.Receipt,
+) (*types.Block, error) {
+	return types.NewBlock(
+		header,
+		txs, nil, /*uncles*/
+		receipts,
+		trieHasher(),
+	), nil
 }
 
-func (*stubHooks) VerifyBlockAncestors(context.Context, *types.Block, iter.Seq[*types.Block]) error {
-	return nil
+func (h *stubHooks) ConstructBlockFromBlock(ctx context.Context, block *types.Block) (hook.ConstructBlock, error) {
+	return h.ConstructBlock, nil
 }
 
 func TestIntegrationWrapAVAX(t *testing.T) {

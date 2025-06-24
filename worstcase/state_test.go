@@ -23,7 +23,7 @@ func newDB(tb testing.TB) *state.StateDB {
 	return db
 }
 
-func newTxIncluder(tb testing.TB) (*TransactionIncluder, *state.StateDB) {
+func newTxIncluder(tb testing.TB) (*State, *state.StateDB) {
 	tb.Helper()
 	db := newDB(tb)
 	return NewTxIncluder(
@@ -151,7 +151,7 @@ func TestNonContextualTransactionRejection(t *testing.T) {
 				tt.stateSetup(db)
 			}
 			tx := types.MustSignNewTx(key, types.NewCancunSigner(inc.config.ChainID), tt.tx)
-			require.ErrorIs(t, inc.Include(tx), tt.wantErrIs)
+			require.ErrorIs(t, inc.ApplyTx(tx), tt.wantErrIs)
 		})
 	}
 }

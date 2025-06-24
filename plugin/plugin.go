@@ -10,8 +10,10 @@ import (
 	"github.com/ava-labs/avalanchego/vms/components/gas"
 	"github.com/ava-labs/avalanchego/vms/rpcchainvm"
 	"github.com/ava-labs/libevm/core/types"
+	"github.com/ava-labs/libevm/trie"
 	sae "github.com/ava-labs/strevm"
 	"github.com/ava-labs/strevm/adaptor"
+	"github.com/ava-labs/strevm/hook"
 )
 
 const (
@@ -24,16 +26,30 @@ func (*hooks) GasTarget(parent *types.Block) gas.Gas {
 	return TargetGasPerSecond
 }
 
-func (*hooks) ShouldVerifyBlockContext(context.Context, *types.Block) (bool, error) {
-	return false, nil
+func (*hooks) ExtraBlockOperations(ctx context.Context, block *types.Block) ([]hook.Op, error) {
+	return nil, nil
 }
 
-func (*hooks) VerifyBlockContext(context.Context, *block.Context, *types.Block) error {
-	return nil
+func (h *hooks) ConstructBlock(
+	ctx context.Context,
+	blockContext *block.Context,
+	header *types.Header,
+	parent *types.Header,
+	ancestors iter.Seq[*types.Block],
+	state hook.State,
+	txs []*types.Transaction,
+	receipts []*types.Receipt,
+) (*types.Block, error) {
+	return types.NewBlock(
+		header,
+		txs, nil, /*uncles*/
+		receipts,
+		trie.NewStackTrie(nil),
+	), nil
 }
 
-func (*hooks) VerifyBlockAncestors(context.Context, *types.Block, iter.Seq[*types.Block]) error {
-	return nil
+func (h *hooks) ConstructBlockFromBlock(ctx context.Context, block *types.Block) (hook.ConstructBlock, error) {
+	return h.ConstructBlock, nil
 }
 
 func main() {
