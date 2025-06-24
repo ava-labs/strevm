@@ -13,6 +13,7 @@ import (
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/ethdb"
 	"github.com/ava-labs/strevm/gastime"
+	"github.com/ava-labs/strevm/hook/hooktest"
 	"github.com/ava-labs/strevm/proxytime"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
@@ -210,7 +211,7 @@ func TestSettles(t *testing.T) {
 
 func (b *Block) markExecutedForTests(tb testing.TB, db ethdb.Database, tm *gastime.Time) {
 	tb.Helper()
-	require.NoError(tb, b.MarkExecuted(db, tm, time.Time{}, nil, common.Hash{}), "MarkExecuted()")
+	require.NoError(tb, b.MarkExecuted(db, tm, time.Time{}, nil, common.Hash{}, hooktest.Simple{}), "MarkExecuted()")
 }
 
 func TestLastToSettleAt(t *testing.T) {

@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"flag"
-	"iter"
 	"math"
 	"math/big"
 	"net/http/httptest"
@@ -18,7 +17,6 @@ import (
 	"time"
 
 	"github.com/arr4n/sink"
-	"github.com/ava-labs/avalanchego/snow/engine/snowman/block"
 	"github.com/ava-labs/avalanchego/utils/logging"
 	"github.com/ava-labs/avalanchego/vms/components/gas"
 	ethereum "github.com/ava-labs/libevm"
@@ -30,7 +28,7 @@ import (
 	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/rpc"
 	"github.com/ava-labs/strevm/blocks"
-	"github.com/ava-labs/strevm/hook"
+	"github.com/ava-labs/strevm/hook/hooktest"
 	"github.com/ava-labs/strevm/queue"
 	"github.com/ava-labs/strevm/weth"
 	"github.com/google/go-cmp/cmp"
@@ -44,40 +42,6 @@ var (
 	txsInIntegrationTest = flag.Uint64("wrap_avax_tx_count", 1_000, "Number of transactions to use in TestIntegrationWrapAVAX")
 	cpuProfileDest       = flag.String("cpu_profile_out", "", "If non-empty, file to which pprof CPU profile is written")
 )
-
-type stubHooks struct {
-	T gas.Gas
-}
-
-func (h *stubHooks) GasTarget(parent *types.Block) gas.Gas {
-	return h.T
-}
-
-func (*stubHooks) ExtraBlockOperations(ctx context.Context, block *types.Block) ([]hook.Op, error) {
-	return nil, nil
-}
-
-func (h *stubHooks) ConstructBlock(
-	ctx context.Context,
-	blockContext *block.Context,
-	header *types.Header,
-	parent *types.Header,
-	ancestors iter.Seq[*types.Block],
-	state hook.State,
-	txs []*types.Transaction,
-	receipts []*types.Receipt,
-) (*types.Block, error) {
-	return types.NewBlock(
-		header,
-		txs, nil, /*uncles*/
-		receipts,
-		trieHasher(),
-	), nil
-}
-
-func (h *stubHooks) ConstructBlockFromBlock(ctx context.Context, block *types.Block) (hook.ConstructBlock, error) {
-	return h.ConstructBlock, nil
-}
 
 func TestIntegrationWrapAVAX(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -96,7 +60,7 @@ func TestIntegrationWrapAVAX(t *testing.T) {
 		func() time.Time {
 			return now
 		},
-		&stubHooks{
+		hooktest.Simple{
 			T: 2e6,
 		},
 		tbLogger{tb: t, level: logging.Debug + 1},

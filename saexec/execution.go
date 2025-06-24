@@ -122,6 +122,22 @@ func (e *Executor) execute(ctx context.Context, b *blocks.Block) error {
 		// to access them before the end of the block.
 		receipts[ti] = receipt
 	}
+
+	extraOps, err := e.hooks.ExtraBlockOperations(ctx, b.Block)
+	if err != nil {
+		return err
+	}
+	for _, op := range extraOps {
+		blockGasConsumed += op.Gas
+		for from, ad := range op.From {
+			x.statedb.SetNonce(from, ad.Nonce+1)
+			x.statedb.SubBalance(from, &ad.Amount)
+		}
+		for to, amount := range op.To {
+			x.statedb.AddBalance(to, &amount)
+		}
+	}
+
 	endTime := time.Now()
 	hook.AfterBlock(&e.gasClock, blockGasConsumed)
 
@@ -135,7 +151,7 @@ func (e *Executor) execute(ctx context.Context, b *blocks.Block) error {
 	// 1. [blocks.Block.MarkExecuted] guarantees disk then in-memory changes.
 	// 2. Internal indicator of last executed MUST follow in-memory change.
 	// 3. External indicator of last executed MUST follow internal indicator.
-	if err := b.MarkExecuted(e.db, e.gasClock.Clone(), endTime, receipts, root); err != nil {
+	if err := b.MarkExecuted(e.db, e.gasClock.Clone(), endTime, receipts, root, e.hooks); err != nil {
 		return err
 	}
 	e.lastExecuted.Store(b)                      // (2)

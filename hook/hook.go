@@ -54,9 +54,6 @@ type State interface {
 type Points interface {
 	GasTarget(parent *types.Block) gas.Gas
 
-	// Called during historical worst case tracking + execution
-	ExtraBlockOperations(ctx context.Context, block *types.Block) ([]Op, error)
-
 	// Called during build
 	ConstructBlock(
 		ctx context.Context,
@@ -71,6 +68,12 @@ type Points interface {
 
 	// Called during verify
 	ConstructBlockFromBlock(ctx context.Context, block *types.Block) (ConstructBlock, error)
+
+	// Called during historical worst case tracking + execution
+	ExtraBlockOperations(ctx context.Context, block *types.Block) ([]Op, error)
+
+	// Called after the block has been executed by the node.
+	BlockExecuted(ctx context.Context, block *types.Block) error
 }
 
 // BeforeBlock is intended to be called before processing a block, with the gas
