@@ -91,7 +91,7 @@ func (b *Block) MarkExecuted(
 		return err
 	}
 
-	if err := hooks.BlockExecuted(context.TODO(), b.Block); err != nil {
+	if err := hooks.BlockExecuted(context.TODO(), b.Block, receipts); err != nil {
 		return err
 	}
 

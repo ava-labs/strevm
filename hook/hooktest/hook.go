@@ -46,6 +46,6 @@ func (Simple) ExtraBlockOperations(ctx context.Context, block *types.Block) ([]h
 	return nil, nil
 }
 
-func (Simple) BlockExecuted(ctx context.Context, block *types.Block) error {
+func (Simple) BlockExecuted(ctx context.Context, block *types.Block, receipts types.Receipts) error {
 	return nil
 }

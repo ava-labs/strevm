@@ -73,7 +73,11 @@ type Points interface {
 	ExtraBlockOperations(ctx context.Context, block *types.Block) ([]Op, error)
 
 	// Called after the block has been executed by the node.
-	BlockExecuted(ctx context.Context, block *types.Block) error
+	BlockExecuted(
+		ctx context.Context,
+		block *types.Block,
+		receipts types.Receipts,
+	) error
 }
 
 // BeforeBlock is intended to be called before processing a block, with the gas
