@@ -44,6 +44,10 @@ var (
 	enableMinGasConsumption = flag.Bool("enable_min_gas_consumption", true, "Enforce lambda lower bound on gas consumption in integration test")
 )
 
+func init() {
+	flag.Var(&txsInIntegrationTest, "wrap_avax_tx_count", "Number of transactions to use in TestIntegrationWrapAVAX (comma-separated)")
+}
+
 func TestIntegrationWrapAVAX(t *testing.T) {
 	for _, n := range txsInIntegrationTest {
 		t.Run(fmt.Sprint(n), func(t *testing.T) {
