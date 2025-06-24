@@ -53,10 +53,14 @@ type State interface {
 // Points define user-injected hook points.
 type Points interface {
 	GasTarget(parent *types.Block) gas.Gas
+
+	// Called during historical worst case tracking + execution
 	ExtraBlockOperations(ctx context.Context, block *types.Block) ([]Op, error)
+
+	// Called during build
 	ConstructBlock(
 		ctx context.Context,
-		blockContext *block.Context,
+		blockContext *block.Context, // May be nil
 		header *types.Header,
 		parent *types.Header,
 		ancestors iter.Seq[*types.Block],
@@ -64,6 +68,8 @@ type Points interface {
 		txs []*types.Transaction,
 		receipts []*types.Receipt,
 	) (*types.Block, error)
+
+	// Called during verify
 	ConstructBlockFromBlock(ctx context.Context, block *types.Block) (ConstructBlock, error)
 }
 
