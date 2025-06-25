@@ -74,6 +74,15 @@ linters-settings:
         # Method parameters may be required by interfaces and forcing them to be
         # named _ is of questionable benefit.
         disabled: true
+      - name: exported
+        severity: error
+        disabled: false
+        exclude: [""]
+        arguments:
+          - "sayRepetitiveInsteadOfStutters"
+      - name: package-comments
+        severity: warning
+        disabled: false
 
 issues:
   include:
