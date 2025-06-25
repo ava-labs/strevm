@@ -17,8 +17,8 @@ import (
 	"github.com/ava-labs/strevm/blocks"
 	"github.com/ava-labs/strevm/hook"
 	"github.com/ava-labs/strevm/intmath"
-	"github.com/ava-labs/strevm/queue"
 	"github.com/ava-labs/strevm/params"
+	"github.com/ava-labs/strevm/queue"
 	"github.com/ava-labs/strevm/worstcase"
 	"go.uber.org/zap"
 )
@@ -101,13 +101,6 @@ func (vm *VM) buildBlockWithCandidateTxs(
 	if err != nil {
 		return nil, err
 	}
-
-	// TODO: Check if the block contains transactions (potentially atomic)
-	if ethB.GasUsed() == 0 {
-		vm.logger().Info("Blocks must either settle or include transactions")
-		return nil, fmt.Errorf("%w: parent %#x at time %d", errNoopBlock, parent.Hash(), timestamp)
-	}
-
 	return blocks.New(ethB, parent, toSettle, vm.logger())
 }
 

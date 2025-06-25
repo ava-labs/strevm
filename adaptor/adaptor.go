@@ -55,7 +55,7 @@ type BlockProperties interface {
 // Convert transforms a generic [ChainVM] into a standard [block.ChainVM]. All
 // [snowman.Block] values returned by methods of the returned chain will be of
 // the concrete type [Block] with type parameter `BP`.
-func Convert[BP BlockProperties](vm ChainVM[BP]) block.ChainVM {
+func Convert[BP BlockProperties](vm ChainVM[BP]) *adaptor[BP] {
 	return &adaptor[BP]{vm}
 }
 
