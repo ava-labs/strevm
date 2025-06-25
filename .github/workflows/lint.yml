@@ -30,22 +30,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0 # Required for go-header check https://github.com/golangci/golangci-lint/issues/2470#issuecomment-1473658471
       - uses: actions/setup-go@v5
         with:
           go-version-file: "go.mod"
-      - name: goheader
-        if: ${{ github.event_name == 'pull_request' }}
-        # The goheader linter is only enabled in the CI so that it runs only on modified or new files
-        # (see only-new-issues: true). It is disabled in .golangci.yml because
-        # golangci-lint running locally is not aware of new/modified files compared to the base
-        # commit of a pull request, and we want to avoid reporting invalid goheader errors.
-        uses: golangci/golangci-lint-action@v6
-        with:
-          version: v1.60
-          only-new-issues: true
-          args: --enable-only goheader
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v6
         with:
