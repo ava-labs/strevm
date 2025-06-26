@@ -13,6 +13,7 @@ import (
 	"github.com/ava-labs/avalanchego/ids"
 	"github.com/ava-labs/avalanchego/snow"
 	snowcommon "github.com/ava-labs/avalanchego/snow/engine/common"
+	"github.com/ava-labs/avalanchego/snow/engine/snowman/block"
 	"github.com/ava-labs/avalanchego/utils"
 	"github.com/ava-labs/avalanchego/utils/logging"
 	"github.com/ava-labs/avalanchego/version"
@@ -28,6 +29,8 @@ import (
 	"github.com/ava-labs/strevm/queue"
 	"github.com/ava-labs/strevm/saexec"
 )
+
+var VMID = ids.ID{'s', 't', 'r', 'e', 'v', 'm'}
 
 // VM implements Streaming Asynchronous Execution (SAE) of EVM blocks. It
 // implements all [adaptor.ChainVM] methods except for `Initialize()`, which
@@ -66,7 +69,17 @@ type (
 )
 
 type Config struct {
-	Hooks       hook.Points
+	Hooks hook.Points
+	// LastExecutedBlockHeight should be >= the LastSynchronousBlock height.
+	//
+	// TODO(StephenButtolph): This allows coreth to specify what atomic txs
+	// (and warp receipts) have been applied. This is needed because the DB that
+	// is written to with Hooks.BlockExecuted is not atomically managed with the
+	// rest of SAE's state. We must ensure that Hooks.BlockExecuted is called
+	// consecutively starting with the block with height
+	// LastExecutedBlockHeight+1.
+	LastExecutedBlockHeight uint64
+
 	ChainConfig *params.ChainConfig
 	DB          ethdb.Database
 	// At the point of upgrade from synchronous to asynchronous execution, the
@@ -179,7 +192,7 @@ func (vm *VM) SetState(ctx context.Context, state snow.State) error {
 }
 
 func (vm *VM) Shutdown(ctx context.Context) error {
-	vm.logger().Debug("Shutting down VM")
+	vm.logger().Info("Shutting down VM")
 	close(vm.quit)
 
 	vm.blocks.Close()
@@ -252,7 +265,11 @@ func (vm *VM) ParseBlock(ctx context.Context, blockBytes []byte) (*blocks.Block,
 }
 
 func (vm *VM) BuildBlock(ctx context.Context) (*blocks.Block, error) {
-	return vm.buildBlock(ctx, uint64(vm.now().Unix()), vm.preference.Load())
+	return vm.BuildBlockWithContext(ctx, nil)
+}
+
+func (vm *VM) BuildBlockWithContext(ctx context.Context, blockContext *block.Context) (*blocks.Block, error) {
+	return vm.buildBlock(ctx, blockContext, uint64(vm.now().Unix()), vm.preference.Load())
 }
 
 func (vm *VM) signer(blockNum, timestamp uint64) types.Signer {

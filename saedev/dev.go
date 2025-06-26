@@ -17,12 +17,12 @@ import (
 	snowcommon "github.com/ava-labs/avalanchego/snow/engine/common"
 	"github.com/ava-labs/avalanchego/snow/snowtest"
 	"github.com/ava-labs/avalanchego/utils/logging"
-	"github.com/ava-labs/avalanchego/vms/components/gas"
 	"github.com/ava-labs/libevm/core"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/crypto"
 	"github.com/ava-labs/libevm/params"
 	sae "github.com/ava-labs/strevm"
+	"github.com/ava-labs/strevm/hook/hooktest"
 	"github.com/ava-labs/strevm/saedev/unsafedev"
 	"go.uber.org/zap/zapcore"
 )
@@ -34,13 +34,11 @@ func main() {
 	}
 }
 
-type hooks struct{}
-
-func (hooks) GasTarget(*types.Block) gas.Gas { return 10e6 }
-
 func run(ctx context.Context) error {
 	vm := &sae.SinceGenesis{
-		Hooks: hooks{},
+		Hooks: hooktest.Simple{
+			T: 10e6,
+		},
 	}
 
 	// test test test test test test test test test test test junk

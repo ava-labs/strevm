@@ -25,7 +25,7 @@ import (
 	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/rpc"
 	"github.com/ava-labs/strevm/blocks"
-	"github.com/ava-labs/strevm/intmath"
+	"github.com/ava-labs/strevm/hook/hooktest"
 	"github.com/ava-labs/strevm/queue"
 	"github.com/ava-labs/strevm/saetest"
 	"github.com/ava-labs/strevm/saexec"
@@ -46,21 +46,6 @@ var (
 
 func init() {
 	flag.Var(&txsInIntegrationTest, "wrap_avax_tx_count", "Number of transactions to use in TestIntegrationWrapAVAX (comma-separated)")
-}
-
-type stubHooks struct {
-	T gas.Gas
-}
-
-func (h *stubHooks) GasTarget(parent *types.Block) gas.Gas {
-	return h.T
-}
-
-func (h *stubHooks) fractionSecondsOfGas(tb testing.TB, num, denom uint64) gas.Gas {
-	tb.Helper()
-	quo, rem := intmath.MulDiv(gas.Gas(num), 2*h.T, gas.Gas(denom))
-	require.Zero(tb, rem, "remainder when calculating fractional seconds of gas")
-	return quo
 }
 
 func TestIntegrationWrapAVAX(t *testing.T) {
@@ -91,7 +76,7 @@ func testIntegrationWrapAVAX(t *testing.T, numTxsInTest uint64) {
 		func() time.Time {
 			return now
 		},
-		&stubHooks{
+		hooktest.Simple{
 			T: 2e6,
 		},
 		tbLogger{tb: t, level: logging.Debug + 1},
