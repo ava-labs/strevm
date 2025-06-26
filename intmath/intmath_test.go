@@ -4,6 +4,7 @@
 package intmath
 
 import (
+	"errors"
 	"math"
 	"math/rand/v2"
 	"testing"
@@ -50,9 +51,13 @@ func TestMulDiv(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		if gotQuo, gotRem := MulDiv(tt.a, tt.b, tt.div); gotQuo != tt.wantQuo || gotRem != tt.wantRem {
-			t.Errorf("MulDiv[%T](%[1]d, %d, %d) got (%d, %d); want (%d, %d)", tt.a, tt.b, tt.div, gotQuo, gotRem, tt.wantQuo, tt.wantRem)
+		if gotQuo, gotRem, err := MulDiv(tt.a, tt.b, tt.div); err != nil || gotQuo != tt.wantQuo || gotRem != tt.wantRem {
+			t.Errorf("MulDiv[%T](%[1]d, %d, %d) got (%d, %d, %v); want (%d, %d, nil)", tt.a, tt.b, tt.div, gotQuo, gotRem, err, tt.wantQuo, tt.wantRem)
 		}
+	}
+
+	if _, _, err := MulDiv[uint64](max, 2, 1); !errors.Is(err, ErrOverflow) {
+		t.Errorf("MulDiv[uint64]([max uint64], 2, 1) got error %v; want %v", err, ErrOverflow)
 	}
 }
 
