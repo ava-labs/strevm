@@ -40,6 +40,10 @@ func MulDiv[T ~uint64](a, b, den T) (quo, rem T, err error) {
 // CeilDiv returns `ceil(num/den)`, i.e. the rounded-up quotient.
 func CeilDiv[T ~uint64](num, den T) T {
 	lo, hi := bits.Add64(uint64(num), uint64(den)-1, 0)
+	// [bits.Div64] panics if the denominator is zero (expected behaviour) or if
+	// `den <= hi`. The latter is impossible because `hi` is a carry bit (i.e.
+	// can only be 0 or 1) and even if `num==MaxUint64` then `den` would have to
+	// be `>=2` for `hi` to be non-zero.
 	quo, _ := bits.Div64(hi, lo, uint64(den))
 	return T(quo)
 }
