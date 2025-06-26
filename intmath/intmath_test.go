@@ -16,13 +16,13 @@ func TestBoundedSubtract(t *testing.T) {
 	tests := []struct {
 		a, b, floor, want uint64
 	}{
-		{1, 2, 0, 0}, // a < b
-		{2, 1, 0, 1}, // not bounded
-		{2, 1, 1, 1}, // a - b == floor
-		{2, 2, 1, 1}, // bounded
-		{3, 1, 1, 2},
-		{max, 10, max - 9, max - 9}, // `a` threshold (`max+1`) would overflow uint64
-		{max, 10, max - 11, max - 10},
+		{a: 1, b: 2, floor: 0, want: 0}, // a < b
+		{a: 2, b: 1, floor: 0, want: 1}, // not bounded
+		{a: 2, b: 1, floor: 1, want: 1}, // a - b == floor
+		{a: 2, b: 2, floor: 1, want: 1}, // bounded
+		{a: 3, b: 1, floor: 1, want: 2},
+		{a: max, b: 10, floor: max - 9, want: max - 9}, // `a` threshold (`max+1`) would overflow uint64
+		{a: max, b: 10, floor: max - 11, want: max - 10},
 	}
 
 	for _, tt := range tests {
