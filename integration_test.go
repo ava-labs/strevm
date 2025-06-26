@@ -58,7 +58,8 @@ func (h *stubHooks) GasTarget(parent *types.Block) gas.Gas {
 
 func (h *stubHooks) fractionSecondsOfGas(tb testing.TB, num, denom uint64) gas.Gas {
 	tb.Helper()
-	quo, rem := intmath.MulDiv(gas.Gas(num), 2*h.T, gas.Gas(denom))
+	quo, rem, err := intmath.MulDiv(gas.Gas(num), 2*h.T, gas.Gas(denom))
+	require.NoErrorf(tb, err, "calculating fractional seconds of gas")
 	require.Zero(tb, rem, "remainder when calculating fractional seconds of gas")
 	return quo
 }

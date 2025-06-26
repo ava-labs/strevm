@@ -88,7 +88,7 @@ func (tm *Time) Tick(g gas.Gas) {
 	tm.Time.Tick(g)
 
 	R, T := tm.Rate(), tm.Target()
-	quo, _ := intmath.MulDiv(g, R-T, R)
+	quo, _, _ := intmath.MulDiv(g, R-T, R) //nolint:errcheck // R-T < R so the quotient is < g
 	tm.excess += quo
 }
 
@@ -101,6 +101,6 @@ func (tm *Time) FastForwardTo(to uint64) {
 	}
 
 	R, T := tm.Rate(), tm.Target()
-	quo, _ := intmath.MulDiv(R*gas.Gas(sec)+frac.Numerator, T, R)
+	quo, _, _ := intmath.MulDiv(R*gas.Gas(sec)+frac.Numerator, T, R) //nolint:errcheck // T < R so the quotient is < LHS
 	tm.excess = intmath.BoundedSubtract(tm.excess, quo, 0)
 }

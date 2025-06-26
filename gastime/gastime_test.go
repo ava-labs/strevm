@@ -81,7 +81,8 @@ func TestScaling(t *testing.T) {
 		Excess: (func() gas.Gas {
 			// Scale the _initial_ excess relative to the new and _initial_
 			// rates, not the most recent rate before scaling.
-			x, _ := intmath.MulDiv(initExcess, 4e6, 3.2e6)
+			x, _, err := intmath.MulDiv(initExcess, 4e6, 3.2e6)
+			require.NoErrorf(t, err, "intmath.MulDiv(%d, %d, %d)", initExcess, 4e6, 3.2e6)
 			return x
 		})(),
 		Price: initPrice, // unchanged

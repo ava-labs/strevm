@@ -99,7 +99,8 @@ func TestSetRate(t *testing.T) {
 
 	for _, s := range steps {
 		old := tm.Rate()
-		gotTruncated := tm.SetRate(s.newRate)
+		gotTruncated, err := tm.SetRate(s.newRate)
+		require.NoErrorf(t, err, "%T.SetRate(%d)", tm, s.newRate)
 		tm.requireEq(t, fmt.Sprintf("rate changed from %d to %d", old, s.newRate), initSeconds, frac(s.wantFraction, s.newRate))
 
 		if gotTruncated.Numerator == 0 && s.wantTruncated.Numerator == 0 {

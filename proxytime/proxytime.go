@@ -104,15 +104,28 @@ func (tm *Time[D]) FastForwardTo(to uint64) (uint64, FractionalSecond[D]) {
 // SetRate changes the unit rate at which time passes. The requisite integer
 // division may result in rounding down of the fractional-second component of
 // time, the amount of which is returned.
-func (tm *Time[D]) SetRate(hertz D) (truncated FractionalSecond[D]) {
-	tm.fraction, truncated = tm.scale(tm.fraction, hertz)
-
-	for _, v := range tm.rateInvariants {
-		*v, _ = tm.scale(*v, hertz)
+func (tm *Time[D]) SetRate(hertz D) (truncated FractionalSecond[D], err error) {
+	frac, truncated, err := tm.scale(tm.fraction, hertz)
+	if err != nil {
+		return FractionalSecond[D]{}, fmt.Errorf("fractional-second time: %w", err)
 	}
 
+	// Avoid scaling some but not all rate invariants if one results in an
+	// error.
+	scaled := make([]D, len(tm.rateInvariants))
+	for i, v := range tm.rateInvariants {
+		scaled[i], _, err = tm.scale(*v, hertz)
+		if err != nil {
+			return FractionalSecond[D]{}, fmt.Errorf("rate invariant [%d]: %w", i, err)
+		}
+	}
+	for i, v := range tm.rateInvariants {
+		*v = scaled[i]
+	}
+
+	tm.fraction = frac
 	tm.hertz = hertz
-	return truncated
+	return truncated, nil
 }
 
 // SetRateInvariants sets units that, whenever [Time.SetRate] is called, will be
@@ -124,10 +137,12 @@ func (tm *Time[D]) SetRateInvariants(inv ...*D) {
 	tm.rateInvariants = inv
 }
 
-func (tm *Time[D]) scale(val, newRate D) (scaled D, truncated FractionalSecond[D]) {
-	truncated.Denominator = tm.hertz
-	scaled, truncated.Numerator = intmath.MulDiv(val, newRate, tm.hertz)
-	return scaled, truncated
+func (tm *Time[D]) scale(val, newRate D) (scaled D, truncated FractionalSecond[D], err error) {
+	scaled, trunc, err := intmath.MulDiv(val, newRate, tm.hertz)
+	if err != nil {
+		return 0, FractionalSecond[D]{}, fmt.Errorf("scaling %d from rate of %d to %d: %w", val, tm.hertz, newRate, err)
+	}
+	return scaled, FractionalSecond[D]{Numerator: trunc, Denominator: tm.hertz}, nil
 }
 
 // Cmp returns
@@ -164,7 +179,7 @@ func (tm *Time[D]) CmpUnix(sec uint64) int {
 // analogous to setting a rate of 1e9 (nanosecond), which might result in
 // truncation.
 func (tm *Time[D]) AsTime() time.Time {
-	nsec, _ /*remainder*/ := tm.scale(tm.fraction, 1e9)
+	nsec, _ /*remainder*/, _ := tm.scale(tm.fraction, 1e9)
 	return time.Unix(int64(tm.seconds), int64(nsec)).In(time.UTC)
 }
 
