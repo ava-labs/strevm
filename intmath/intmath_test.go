@@ -37,16 +37,16 @@ func TestMulDiv(t *testing.T) {
 		a, b, div, wantQuo, wantRem uint64
 	}{
 		{
-			5, 2, 3, // 10/3
-			3, 1,
+			a: 5, b: 2, div: 3, // 10/3
+			wantQuo: 3, wantRem: 1,
 		},
 		{
-			5, 3, 3, // 15/3
-			5, 0,
+			a: 5, b: 3, div: 3, // 15/3
+			wantQuo: 5, wantRem: 0,
 		},
 		{
-			max, 4, 8, // must avoid overflow
-			max / 2, 4,
+			a: max, b: 4, div: 8, // must avoid overflow
+			wantQuo: max / 2, wantRem: 4,
 		},
 	}
 
@@ -67,11 +67,11 @@ func TestCeilDiv(t *testing.T) {
 	}
 
 	tests := []test{
-		{4, 2, 2},
-		{4, 1, 4},
-		{4, 3, 2},
-		{10, 3, 4},
-		{max, 2, 1 << 63}, // must not overflow
+		{num: 4, den: 2, want: 2},
+		{num: 4, den: 1, want: 4},
+		{num: 4, den: 3, want: 2},
+		{num: 10, den: 3, want: 4},
+		{num: max, den: 2, want: 1 << 63}, // must not overflow
 	}
 
 	rng := rand.New(rand.NewPCG(0, 0)) //nolint:gosec // Reproducibility is valuable for tests
@@ -80,13 +80,13 @@ func TestCeilDiv(t *testing.T) {
 		r := uint64(rng.Uint32())
 
 		tests = append(tests, []test{
-			{l*r + 1, l, r + 1},
-			{l*r + 0, l, r},
-			{l*r - 1, l, r},
+			{num: l*r + 1, den: l, want: r + 1},
+			{num: l*r + 0, den: l, want: r},
+			{num: l*r - 1, den: l, want: r},
 			// l <-> r
-			{l*r + 1, r, l + 1},
-			{l*r + 0, r, l},
-			{l*r - 1, r, l},
+			{num: l*r + 1, den: r, want: l + 1},
+			{num: l*r + 0, den: r, want: l},
+			{num: l*r - 1, den: r, want: l},
 		}...)
 	}
 
