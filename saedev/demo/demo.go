@@ -78,6 +78,12 @@ func run(ctx context.Context) error {
 		return err
 	}
 
+	// Although the time printed here isn't indicative of a real-world tx
+	// lifecycle, it demonstrates an upper bound on the time between block
+	// acceptance and result availability for a single-tx block. It's important
+	// to note that in a synchronous setup, this time would still be necessary,
+	// only _before_ block acceptance. The key takeaway is that the 5s period
+	// before settlment has no bearing on user experience nor tx finality.
 	hdr := <-headers
 	end := time.Now()
 	log.Printf("*#*#*#* Receipt(s) for block %d available in < %s\n", hdr.Number, end.Sub(start))
