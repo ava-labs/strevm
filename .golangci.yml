@@ -62,8 +62,6 @@ linters-settings:
       modules:
         - github.com/ethereum/go-ethereum:
             reason: "Use ava-labs/libevm instead"
-        - github.com/ava-labs/avalanchego:
-            reason: "Avoid dependency loop"
         - github.com/ava-labs/coreth:
             reason: "Avoid dependency loop"
         - github.com/ava-labs/subnet-evm:
