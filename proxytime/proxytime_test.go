@@ -17,14 +17,14 @@ func frac(num, den uint64) FractionalSecond[uint64] {
 	return FractionalSecond[uint64]{Numerator: num, Denominator: den}
 }
 
-func (tm *Time[D]) assertEq(tb testing.TB, desc string, seconds int64, fraction FractionalSecond[D]) {
+func (tm *Time[D]) assertEq(tb testing.TB, desc string, seconds uint64, fraction FractionalSecond[D]) {
 	tb.Helper()
 	if tm.Unix() != seconds || tm.Fraction() != fraction {
 		tb.Errorf("%s got (seconds, fraction) = (%d, %v); want (%d, %v)", desc, tm.Unix(), tm.Fraction(), seconds, fraction)
 	}
 }
 
-func (tm *Time[D]) requireEq(tb testing.TB, desc string, seconds int64, fraction FractionalSecond[D]) {
+func (tm *Time[D]) requireEq(tb testing.TB, desc string, seconds uint64, fraction FractionalSecond[D]) {
 	tb.Helper()
 	before := tb.Failed()
 	tm.assertEq(tb, desc, seconds, fraction)
@@ -39,9 +39,8 @@ func TestTickAndCmp(t *testing.T) {
 	tm.assertEq(t, "New(0, ...)", 0, frac(0, rate))
 
 	steps := []struct {
-		tick         uint64
-		wantSeconds  int64
-		wantFraction uint64
+		tick                      uint64
+		wantSeconds, wantFraction uint64
 	}{
 		{100, 0, 100},
 		{0, 0, 100},
@@ -118,8 +117,8 @@ func TestSetRate(t *testing.T) {
 func TestAsTime(t *testing.T) {
 	stdlib := time.Date(1986, time.October, 1, 0, 0, 0, 0, time.UTC)
 
-	const rate = 500
-	tm := New[uint64](stdlib.Unix(), rate)
+	const rate uint64 = 500
+	tm := New(uint64(stdlib.Unix()), rate) //nolint:gosec // Known to not overflow
 	if got, want := tm.AsTime(), stdlib; !got.Equal(want) {
 		t.Fatalf("%T.AsTime() at construction got %v; want %v", tm, got, want)
 	}
@@ -149,8 +148,8 @@ func TestFastForward(t *testing.T) {
 
 	steps := []struct {
 		tickBefore uint64
-		ffTo       int64
-		wantSec    int64
+		ffTo       uint64
+		wantSec    uint64
 		wantFrac   FractionalSecond[uint64]
 	}{
 		{100, 42, 0, frac(0, 1000)},
@@ -175,7 +174,7 @@ func TestCmpUnix(t *testing.T) {
 	tests := []struct {
 		tm         *Time[uint64]
 		tick       uint64
-		cmpAgainst int64
+		cmpAgainst uint64
 		want       int
 	}{
 		{

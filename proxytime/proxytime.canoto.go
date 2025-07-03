@@ -40,7 +40,7 @@ func (*Time[T1]) CanotoSpec(...reflect.Type) *canoto.Spec {
 				FieldNumber: 1,
 				Name:        "seconds",
 				OneOf:       "",
-				TypeInt:     canoto.SizeOf(zero.seconds),
+				TypeUint:    canoto.SizeOf(zero.seconds),
 			},
 			{
 				FieldNumber: 2,
@@ -102,7 +102,7 @@ func (c *Time[T1]) UnmarshalCanotoFrom(r canoto.Reader) error {
 				return canoto.ErrUnexpectedWireType
 			}
 
-			if err := canoto.ReadInt(&r, &c.seconds); err != nil {
+			if err := canoto.ReadUint(&r, &c.seconds); err != nil {
 				return err
 			}
 			if canoto.IsZero(c.seconds) {
@@ -161,7 +161,7 @@ func (c *Time[T1]) CalculateCanotoCache() {
 	}
 	var size uint64
 	if !canoto.IsZero(c.seconds) {
-		size += uint64(len(canoto__Time__seconds__tag)) + canoto.SizeInt(c.seconds)
+		size += uint64(len(canoto__Time__seconds__tag)) + canoto.SizeUint(c.seconds)
 	}
 	if !canoto.IsZero(c.fraction) {
 		size += uint64(len(canoto__Time__fraction__tag)) + canoto.SizeUint(c.fraction)
@@ -211,7 +211,7 @@ func (c *Time[T1]) MarshalCanotoInto(w canoto.Writer) canoto.Writer {
 	}
 	if !canoto.IsZero(c.seconds) {
 		canoto.Append(&w, canoto__Time__seconds__tag)
-		canoto.AppendInt(&w, c.seconds)
+		canoto.AppendUint(&w, c.seconds)
 	}
 	if !canoto.IsZero(c.fraction) {
 		canoto.Append(&w, canoto__Time__fraction__tag)

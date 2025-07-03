@@ -7,6 +7,7 @@ package proxytime
 
 import (
 	"fmt"
+	"math"
 	"time"
 
 	"github.com/ava-labs/strevm/intmath"
@@ -22,7 +23,7 @@ type Duration interface {
 // Time represents an instant in time, its passage measured by an arbitrary unit
 // of duration. It is not thread safe nor is the zero value valid.
 type Time[D Duration] struct {
-	seconds int64 `canoto:"int,1"`
+	seconds uint64 `canoto:"uint,1"`
 	// invariant: fraction < hertz
 	fraction D `canoto:"uint,2"`
 	hertz    D `canoto:"uint,3"`
@@ -48,7 +49,7 @@ func (tm *Time[D]) Clone() *Time[D] {
 
 // New returns a new [Time], set from a Unix timestamp. The passage of `hertz`
 // units is equivalent to a tick of 1 second.
-func New[D Duration](unixSeconds int64, hertz D) *Time[D] {
+func New[D Duration](unixSeconds uint64, hertz D) *Time[D] {
 	return &Time[D]{
 		seconds: unixSeconds,
 		hertz:   hertz,
@@ -56,7 +57,7 @@ func New[D Duration](unixSeconds int64, hertz D) *Time[D] {
 }
 
 // Unix returns tm as a Unix timestamp.
-func (tm *Time[D]) Unix() int64 {
+func (tm *Time[D]) Unix() uint64 {
 	return tm.seconds
 }
 
@@ -81,14 +82,14 @@ func (tm *Time[D]) Rate() D {
 // Tick advances the time by `d`.
 func (tm *Time[D]) Tick(d D) {
 	tm.fraction += d
-	tm.seconds += int64(tm.fraction / tm.hertz)
+	tm.seconds += uint64(tm.fraction / tm.hertz)
 	tm.fraction %= tm.hertz
 }
 
 // FastForwardTo sets the time to the specified Unix timestamp if it is in the
 // future, returning the integer and fraction number of seconds by which the
 // time was advanced.
-func (tm *Time[D]) FastForwardTo(to int64) (int64, FractionalSecond[D]) {
+func (tm *Time[D]) FastForwardTo(to uint64) (uint64, FractionalSecond[D]) {
 	if to <= tm.seconds {
 		return 0, FractionalSecond[D]{0, tm.hertz}
 	}
@@ -185,7 +186,7 @@ func (tm *Time[D]) Cmp(u *Time[D]) int {
 // in time. Note that it does NOT only compare the seconds and that if `tm` has
 // the same [Time.Unix] as `sec` but non-zero [Time.Fraction] then CmpUnix will
 // return 1.
-func (tm *Time[D]) CmpUnix(sec int64) int {
+func (tm *Time[D]) CmpUnix(sec uint64) int {
 	return tm.Cmp(&Time[D]{seconds: sec})
 }
 
@@ -193,10 +194,13 @@ func (tm *Time[D]) CmpUnix(sec int64) int {
 // analogous to setting a rate of 1e9 (nanosecond), which might result in
 // truncation.
 func (tm *Time[D]) AsTime() time.Time {
+	if tm.seconds > math.MaxInt64 { // keeps gosec linter happy
+		return time.Unix(math.MaxInt64, math.MaxInt64)
+	}
 	// The error can be ignored as the fraction is always less than the rate and
 	// therefore the scaled value can never overflow.
 	nsec, _ /*remainder*/, _ := tm.scale(tm.fraction, 1e9)
-	return time.Unix(tm.seconds, int64(nsec)).In(time.UTC)
+	return time.Unix(int64(tm.seconds), int64(nsec)).In(time.UTC)
 }
 
 // String returns the time as a human-readable string. It is not intended for
