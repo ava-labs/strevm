@@ -327,8 +327,8 @@ func testIntegrationWrapAVAX(t *testing.T, numTxsInTest uint64) {
 					})
 				}
 				ignore := []string{
-					"Logs", // checked below
-					"EffectiveGasPrice",
+					"Logs",              // checked below
+					"EffectiveGasPrice", // TODO(arr4n) test this
 					"Bloom",
 				}
 				if !*enableMinGasConsumption {

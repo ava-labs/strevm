@@ -55,7 +55,8 @@ func (Simple) BlockExecuted(ctx context.Context, block *types.Block, receipts ty
 
 func (s Simple) FractionSecondsOfGas(tb testing.TB, num, denom uint64) gas.Gas {
 	tb.Helper()
-	quo, rem := intmath.MulDiv(gas.Gas(num), 2*s.T, gas.Gas(denom))
+	quo, rem, err := intmath.MulDiv(gas.Gas(num), 2*s.T, gas.Gas(denom))
+	require.NoError(tb, err)
 	require.Zero(tb, rem, "remainder when calculating fractional seconds of gas")
 	return quo
 }
