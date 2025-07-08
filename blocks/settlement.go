@@ -56,7 +56,7 @@ func (b *Block) ParentBlock() *Block {
 	if a := b.ancestry.Load(); a != nil {
 		return a.parent
 	}
-	b.log.Error(getParentOfSettledMsg)
+	b.log.Debug(getParentOfSettledMsg)
 	return nil
 }
 

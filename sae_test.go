@@ -67,7 +67,7 @@ func newVM(ctx context.Context, tb testing.TB, now func() time.Time, hooks hook.
 	snowCtx.Log = logger
 	require.NoErrorf(tb, snow.Initialize(
 		ctx, snowCtx,
-		nil, genesis, nil, nil, nil, nil, nil,
+		nil, genesis, nil, nil, nil, nil,
 	), "%T.Initialize()", snow)
 
 	handlers, err := snow.CreateHandlers(ctx)

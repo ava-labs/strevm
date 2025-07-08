@@ -9,7 +9,6 @@ import (
 	"slices"
 
 	"github.com/arr4n/sink"
-	snowcommon "github.com/ava-labs/avalanchego/snow/engine/common"
 	"github.com/ava-labs/avalanchego/snow/engine/snowman/block"
 	"github.com/ava-labs/avalanchego/vms/components/gas"
 	"github.com/ava-labs/libevm/core/state"
@@ -28,18 +27,9 @@ func (vm *VM) buildBlock(ctx context.Context, blockContext *block.Context, times
 		ctx, vm.mempool, sink.MaxPriority,
 		func(_ <-chan sink.Priority, pool *queue.Priority[*pendingTx]) (*blocks.Block, error) {
 			block, err := vm.buildBlockWithCandidateTxs(timestamp, parent, pool, blockContext, vm.hooks.ConstructBlock)
-
-			// TODO: This shouldn't be done immediately, there should be some
-			// retry delay if block building failed.
-			if pool.Len() > 0 {
-				select {
-				case vm.toEngine <- snowcommon.PendingTxs:
-				default:
-					p := snowcommon.PendingTxs
-					vm.logger().Info(fmt.Sprintf("%T(%s) dropped", p, p))
-				}
+			if pool.Len() == 0 {
+				vm.mempoolHasTxs.Block()
 			}
-
 			return block, err
 		},
 	)

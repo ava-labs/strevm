@@ -39,9 +39,8 @@ var VMID = ids.ID{'s', 't', 'r', 'e', 'v', 'm'}
 type VM struct {
 	snowCtx *snow.Context
 	snowcommon.AppHandler
-	toEngine chan<- snowcommon.Message
-	hooks    hook.Points
-	now      func() time.Time
+	hooks hook.Points
+	now   func() time.Time
 
 	consensusState utils.Atomic[snow.State]
 
@@ -51,8 +50,9 @@ type VM struct {
 
 	db ethdb.Database
 
-	newTxs  chan *types.Transaction
-	mempool sink.PriorityMutex[*queue.Priority[*pendingTx]]
+	newTxs        chan *types.Transaction
+	mempool       sink.PriorityMutex[*queue.Priority[*pendingTx]]
+	mempoolHasTxs sink.Gate
 
 	exec *saexec.Executor
 
@@ -90,8 +90,7 @@ type Config struct {
 	// event of a node restart.
 	LastSynchronousBlock LastSynchronousBlock
 
-	ToEngine chan<- snowcommon.Message
-	SnowCtx  *snow.Context
+	SnowCtx *snow.Context
 
 	// Now is optional, defaulting to [time.Now] if nil.
 	Now func() time.Time
@@ -109,19 +108,20 @@ func New(ctx context.Context, c Config) (*VM, error) {
 		// VM
 		snowCtx:    c.SnowCtx,
 		db:         c.DB,
-		toEngine:   c.ToEngine,
 		hooks:      c.Hooks,
 		AppHandler: snowcommon.NewNoOpAppHandler(logging.NoLog{}),
 		now:        c.Now,
 		blocks:     sink.NewMutex(make(blockMap)),
 		// Block building
-		newTxs:  make(chan *types.Transaction, 10), // TODO(arr4n) make the buffer configurable
-		mempool: sink.NewPriorityMutex(new(queue.Priority[*pendingTx])),
-		quit:    quit, // both mempool and executor
+		newTxs:        make(chan *types.Transaction, 10), // TODO(arr4n) make the buffer configurable
+		mempool:       sink.NewPriorityMutex(new(queue.Priority[*pendingTx])),
+		mempoolHasTxs: sink.NewGate(),
+		quit:          quit, // both mempool and executor
 	}
 	if vm.now == nil {
 		vm.now = time.Now
 	}
+	vm.mempoolHasTxs.Block() // The mempool is initially empty.
 
 	if err := vm.upgradeLastSynchronousBlock(c.LastSynchronousBlock); err != nil {
 		return nil, err

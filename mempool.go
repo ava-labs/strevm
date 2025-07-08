@@ -36,6 +36,14 @@ func (vm *VM) startMempool() {
 	}
 }
 
+func (vm *VM) WaitForEvent(ctx context.Context) (snowcommon.Message, error) {
+	// TODO: there should be maximum frequency of block building enforced here.
+	if err := vm.mempoolHasTxs.Wait(ctx); err != nil {
+		return 0, err
+	}
+	return snowcommon.PendingTxs, nil
+}
+
 func (vm *VM) receiveTxs(preempt <-chan sink.Priority, pool *queue.Priority[*pendingTx]) error {
 	for {
 		select {
@@ -70,13 +78,7 @@ func (vm *VM) receiveTxs(preempt <-chan sink.Priority, pool *queue.Priority[*pen
 				zap.Stringer("from", from),
 				zap.Uint64("nonce", tx.Nonce()),
 			)
-
-			select {
-			case vm.toEngine <- snowcommon.PendingTxs:
-			default:
-				p := snowcommon.PendingTxs
-				vm.logger().Info(fmt.Sprintf("%T(%s) dropped", p, p))
-			}
+			vm.mempoolHasTxs.Open()
 		}
 	}
 }

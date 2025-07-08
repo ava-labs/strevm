@@ -6,6 +6,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"math/big"
@@ -72,26 +73,27 @@ func run(ctx context.Context) error {
 		}),
 	))
 
-	msgs := make(chan snowcommon.Message)
-	quit := make(chan struct{})
-
-	if err := vm.Initialize(ctx, snowCtx, nil, genJSON, nil, nil, msgs, nil, nil); err != nil {
+	if err := vm.Initialize(ctx, snowCtx, nil, genJSON, nil, nil, nil, nil); err != nil {
 		return err
 	}
+
+	quitContext, quit := context.WithCancel(context.Background())
 	defer func() {
-		close(quit)
+		quit()
 		vm.Shutdown(ctx)
 	}()
 	go func() {
 	BuildLoop:
 		for {
-			select {
-			case <-quit:
+			msg, err := vm.WaitForEvent(quitContext)
+			if errors.Is(err, context.Canceled) {
 				return
-			case msg := <-msgs:
-				if msg != snowcommon.PendingTxs {
-					continue BuildLoop
-				}
+			}
+			if err != nil {
+				log.Fatalf("%T.WaitForEvent(): %v", vm, err)
+			}
+			if msg != snowcommon.PendingTxs {
+				continue BuildLoop
 			}
 
 			b, err := vm.BuildBlock(ctx)
