@@ -7,10 +7,11 @@ package proxytime
 
 import (
 	"fmt"
-	"reflect"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
+
+	"github.com/ava-labs/strevm/cmputils"
 )
 
 // A CmpRateInvariantsBy value configures [CmpOpt] treatment of rate-invariant
@@ -27,23 +28,32 @@ const (
 // CmpOpt returns a configuration for [cmp.Diff] to compare [Time] instances in
 // tests. The option will only be applied to the specific [Duration] type.
 func CmpOpt[D Duration](invariants CmpRateInvariantsBy) cmp.Option {
-	opts := cmp.Options{
+	return cmp.Options{
 		cmp.AllowUnexported(Time[D]{}),
 		cmpopts.IgnoreTypes(canotoData_Time{}),
+		invariantsOpt[D](invariants),
 	}
+}
 
-	var cmpInvariants cmp.Option
-	switch invariants {
+func invariantsOpt[D Duration](by CmpRateInvariantsBy) (opt cmp.Option) {
+	defer func() {
+		opt = cmputils.IfIn[*Time[D]](opt)
+	}()
+
+	switch by {
 	case IgnoreRateInvariants:
-		cmpInvariants = cmpopts.IgnoreFields(Time[D]{}, "rateInvariants")
+		return cmpopts.IgnoreTypes([]*D{})
 
 	case CmpRateInvariantsByValue:
-		cmpInvariants = cmp.Transformer("rate_invariants_as_values", func(x *D) D {
-			return *x
+		return cmp.Transformer("rate_invariants_as_values", func(ptrs []*D) (vals []D) {
+			for _, x := range ptrs {
+				vals = append(vals, *x) // [Time.SetRateInvariants] requires that they aren't nil.
+			}
+			return vals
 		})
 
 	case CmpRateInvariantsByPointer:
-		cmpInvariants = cmp.Comparer(func(a, b []*D) bool {
+		return cmp.Comparer(func(a, b []*D) bool {
 			if len(a) != len(b) {
 				return false
 			}
@@ -54,22 +64,7 @@ func CmpOpt[D Duration](invariants CmpRateInvariantsBy) cmp.Option {
 			}
 			return true
 		})
-
-	default:
-		panic(fmt.Sprintf("Unsupported %T value: %d", invariants, invariants))
 	}
 
-	return append(opts, cmpOnlyIfTimeField[D](cmpInvariants))
-}
-
-func cmpOnlyIfTimeField[D Duration](opt cmp.Option) cmp.Option {
-	return cmp.FilterPath(func(p cmp.Path) bool {
-		t := reflect.TypeFor[*Time[D]]()
-		for _, step := range p {
-			if step.Type() == t {
-				return true
-			}
-		}
-		return false
-	}, opt)
+	panic(fmt.Sprintf("Unsupported %T value: %d", by, by))
 }

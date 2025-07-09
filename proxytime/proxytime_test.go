@@ -11,6 +11,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	gocmp "github.com/google/go-cmp/cmp"
 )
 
 func frac(num, den uint64) FractionalSecond[uint64] {
@@ -19,8 +21,13 @@ func frac(num, den uint64) FractionalSecond[uint64] {
 
 func (tm *Time[D]) assertEq(tb testing.TB, desc string, seconds uint64, fraction FractionalSecond[D]) {
 	tb.Helper()
-	if tm.Unix() != seconds || tm.Fraction() != fraction {
-		tb.Errorf("%s got (seconds, fraction) = (%d, %v); want (%d, %v)", desc, tm.Unix(), tm.Fraction(), seconds, fraction)
+	want := &Time[D]{
+		seconds:  seconds,
+		fraction: fraction.Numerator,
+		hertz:    fraction.Denominator,
+	}
+	if diff := gocmp.Diff(want, tm, CmpOpt[D](IgnoreRateInvariants)); diff != "" {
+		tb.Errorf("%s diff (-want +got):\n%s", desc, diff)
 	}
 }
 
@@ -39,20 +46,55 @@ func TestTickAndCmp(t *testing.T) {
 	tm.assertEq(t, "New(0, ...)", 0, frac(0, rate))
 
 	steps := []struct {
-		tick                      uint64
-		wantSeconds, wantFraction uint64
+		tick              uint64
+		wantSec, wantFrac uint64
 	}{
-		{100, 0, 100},
-		{0, 0, 100},
-		{399, 0, 499},
-		{1, 1, 0},
-		{500, 2, 0},
-		{400, 2, 400},
-		{200, 3, 100},
-		{1600, 6, 200},
-		{299, 6, 499},
-		{2, 7, 1},
-		{499, 8, 0},
+		{
+			tick:    100,
+			wantSec: 0, wantFrac: 100,
+		},
+		{
+			tick:    399,
+			wantSec: 0, wantFrac: 499,
+		},
+		{
+			// Although this is a no-op, it's useful to see the fraction for
+			// understanding the next step.
+			tick:    0,
+			wantSec: 0, wantFrac: rate - 1,
+		},
+		{
+			tick:    1,
+			wantSec: 1, wantFrac: 0,
+		},
+		{
+			tick:    rate,
+			wantSec: 2, wantFrac: 0,
+		},
+		{
+			tick:    400,
+			wantSec: 2, wantFrac: 400,
+		},
+		{
+			tick:    200,
+			wantSec: 3, wantFrac: 100,
+		},
+		{
+			tick:    3*rate + 100,
+			wantSec: 6, wantFrac: 200,
+		},
+		{
+			tick:    299,
+			wantSec: 6, wantFrac: 499,
+		},
+		{
+			tick:    2,
+			wantSec: 7, wantFrac: 1,
+		},
+		{
+			tick:    rate - 1,
+			wantSec: 8, wantFrac: 0,
+		},
 	}
 
 	var ticked uint64
@@ -61,7 +103,7 @@ func TestTickAndCmp(t *testing.T) {
 
 		tm.Tick(s.tick)
 		ticked += s.tick
-		tm.requireEq(t, fmt.Sprintf("%+d", ticked), s.wantSeconds, frac(s.wantFraction, rate))
+		tm.requireEq(t, fmt.Sprintf("%+d", ticked), s.wantSec, frac(s.wantFrac, rate))
 
 		if got, want := tm.Cmp(old), cmp.Compare(s.tick, 0); got != want {
 			t.Errorf("After %T.Tick(%d); ticked.Cmp(original) got %d; want %d", tm, s.tick, got, want)
@@ -89,21 +131,42 @@ func TestSetRate(t *testing.T) {
 	tm.SetRateInvariants(&invariant)
 
 	steps := []struct {
-		newRate, wantFraction uint64
-		wantTruncated         FractionalSecond[uint64]
-		wantInvariant         uint64
+		newRate, wantNumerator uint64
+		wantTruncated          FractionalSecond[uint64]
+		wantInvariant          uint64
 	}{
-		{initRate / divisor, tick / divisor, frac(0, 1), invariant / divisor}, // no rounding
-		{initRate * 5, tick * 5, frac(0, 1), invariant * 5},                   // multiplication never has rounding
-		{15_000, 1_500, frac(0, 1), 3_000},                                    // same as above, but shows the numbers
-		{75, 7 /*7.5*/, frac(7_500, 15_000), 15},                              // rounded down by 0.5, denominated in the old rate
+		{
+			newRate:       initRate / divisor, // no rounding
+			wantNumerator: tick / divisor,
+			wantTruncated: frac(0, 1),
+			wantInvariant: invariant / divisor,
+		},
+		{
+			newRate:       initRate * 5,
+			wantNumerator: tick * 5,
+			wantTruncated: frac(0, 1), // multiplication never has rounding
+			wantInvariant: invariant * 5,
+		},
+		{
+			newRate:       15_000, // same as above, but shows the numbers explicitly
+			wantNumerator: 1_500,
+			wantTruncated: frac(0, 1),
+			wantInvariant: 3_000,
+		},
+		{
+			newRate:       75,
+			wantNumerator: 7,                   // 7.5
+			wantTruncated: frac(7_500, 15_000), // rounded down by 0.5, denominated in the old rate
+			wantInvariant: 15,
+		},
 	}
 
 	for _, s := range steps {
 		old := tm.Rate()
 		gotTruncated, err := tm.SetRate(s.newRate)
 		require.NoErrorf(t, err, "%T.SetRate(%d)", tm, s.newRate)
-		tm.requireEq(t, fmt.Sprintf("rate changed from %d to %d", old, s.newRate), initSeconds, frac(s.wantFraction, s.newRate))
+		desc := fmt.Sprintf("rate changed from %d to %d", old, s.newRate)
+		tm.requireEq(t, desc, initSeconds, frac(s.wantNumerator, s.newRate))
 
 		if gotTruncated.Numerator == 0 && s.wantTruncated.Numerator == 0 {
 			assert.NotZerof(t, gotTruncated.Denominator, "truncation %T.Denominator with 0 numerator", gotTruncated)
@@ -152,10 +215,30 @@ func TestFastForward(t *testing.T) {
 		wantSec    uint64
 		wantFrac   FractionalSecond[uint64]
 	}{
-		{100, 42, 0, frac(0, 1000)},
-		{0, 43, 0, frac(900, 1000)},
-		{0, 44, 1, frac(0, 1000)},
-		{200, 50, 5, frac(800, 1000)},
+		{
+			tickBefore: 100, // 42.100
+			ffTo:       42,  // in the past
+			wantSec:    0,
+			wantFrac:   frac(0, 1000),
+		},
+		{
+			tickBefore: 0, // 42.100
+			ffTo:       43,
+			wantSec:    0,
+			wantFrac:   frac(900, 1000),
+		},
+		{
+			tickBefore: 0, // 43.000
+			ffTo:       44,
+			wantSec:    1,
+			wantFrac:   frac(0, 1000),
+		},
+		{
+			tickBefore: 200, // 44.200
+			ffTo:       50,
+			wantSec:    5,
+			wantFrac:   frac(800, 1000),
+		},
 	}
 
 	for _, s := range steps {
