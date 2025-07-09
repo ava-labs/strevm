@@ -168,18 +168,10 @@ func (tm *Time[D]) scale(val, newRate D) (scaled D, truncated FractionalSecond[D
 //
 // Results are undefined if [Time.Rate] is different for the two instants.
 func (tm *Time[D]) Cmp(u *Time[D]) int {
-	if ts, us := tm.seconds, u.seconds; ts < us {
-		return -1
-	} else if ts > us {
-		return 1
+	if c := cmp.Compare(tm.seconds, u.seconds); c != 0 {
+		return c
 	}
-
-	if tf, uf := tm.fraction, u.fraction; tf < uf {
-		return -1
-	} else if tf > uf {
-		return 1
-	}
-	return 0
+	return cmp.Compare(tm.fraction, u.fraction)
 }
 
 // CmpUnix is equivalent to [Time.Cmp] against a zero-fractional-second instant
