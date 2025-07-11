@@ -14,6 +14,7 @@ import (
 	"github.com/ava-labs/libevm/libevm/hookstest"
 	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/strevm/blocks"
+	"github.com/ava-labs/strevm/hook/hooktest"
 	"github.com/ava-labs/strevm/proxytime"
 	"github.com/holiman/uint256"
 	"github.com/stretchr/testify/require"
@@ -25,7 +26,7 @@ func TestExecutorClock(t *testing.T) {
 	key := newTestPrivateKey(t, nil)
 	eoa := crypto.PubkeyToAddress(key.PublicKey)
 
-	hooks := new(stubHooks)
+	hooks := new(hooktest.Simple)
 	chainConfig := params.TestChainConfig
 
 	const start = 42
@@ -154,7 +155,7 @@ func TestExecutorClock(t *testing.T) {
 	requireGasTimeAndExcess(t, start+7, 0, 37_500+(900_000/2)-(25_000/2))
 
 	// Large transactions move the clock ahead of the block time.
-	halfSecondOfGas := hooks.fractionSecondsOfGas(t, 1, 2)
+	halfSecondOfGas := hooks.FractionSecondsOfGas(t, 1, 2)
 	twoAndAHalfSeconds := 5 * halfSecondOfGas
 	executeNextBlock(t, start+10, txs.next(uint64(twoAndAHalfSeconds)))
 	requireFutureTime := func(t *testing.T) {

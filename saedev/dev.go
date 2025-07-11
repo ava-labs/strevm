@@ -6,6 +6,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"math/big"
@@ -17,12 +18,12 @@ import (
 	snowcommon "github.com/ava-labs/avalanchego/snow/engine/common"
 	"github.com/ava-labs/avalanchego/snow/snowtest"
 	"github.com/ava-labs/avalanchego/utils/logging"
-	"github.com/ava-labs/avalanchego/vms/components/gas"
 	"github.com/ava-labs/libevm/core"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/crypto"
 	"github.com/ava-labs/libevm/params"
 	sae "github.com/ava-labs/strevm"
+	"github.com/ava-labs/strevm/hook/hooktest"
 	"github.com/ava-labs/strevm/saedev/unsafedev"
 	"go.uber.org/zap/zapcore"
 )
@@ -34,13 +35,11 @@ func main() {
 	}
 }
 
-type hooks struct{}
-
-func (hooks) GasTarget(*types.Block) gas.Gas { return 10e6 }
-
 func run(ctx context.Context) error {
 	vm := &sae.SinceGenesis{
-		Hooks: hooks{},
+		Hooks: hooktest.Simple{
+			T: 10e6,
+		},
 	}
 
 	// test test test test test test test test test test test junk
@@ -74,26 +73,27 @@ func run(ctx context.Context) error {
 		}),
 	))
 
-	msgs := make(chan snowcommon.Message)
-	quit := make(chan struct{})
-
-	if err := vm.Initialize(ctx, snowCtx, nil, genJSON, nil, nil, msgs, nil, nil); err != nil {
+	if err := vm.Initialize(ctx, snowCtx, nil, genJSON, nil, nil, nil, nil); err != nil {
 		return err
 	}
+
+	quitContext, quit := context.WithCancel(context.Background())
 	defer func() {
-		close(quit)
+		quit()
 		vm.Shutdown(ctx)
 	}()
 	go func() {
 	BuildLoop:
 		for {
-			select {
-			case <-quit:
+			msg, err := vm.WaitForEvent(quitContext)
+			if errors.Is(err, context.Canceled) {
 				return
-			case msg := <-msgs:
-				if msg != snowcommon.PendingTxs {
-					continue BuildLoop
-				}
+			}
+			if err != nil {
+				log.Fatalf("%T.WaitForEvent(): %v", vm, err)
+			}
+			if msg != snowcommon.PendingTxs {
+				continue BuildLoop
 			}
 
 			b, err := vm.BuildBlock(ctx)
