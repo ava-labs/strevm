@@ -6,6 +6,7 @@
 package proxytime
 
 import (
+	"cmp"
 	"fmt"
 	"math"
 	"time"
@@ -160,26 +161,26 @@ func (tm *Time[D]) scale(val, newRate D) (scaled D, truncated FractionalSecond[D
 	return scaled, FractionalSecond[D]{Numerator: trunc, Denominator: tm.hertz}, nil
 }
 
-// Cmp returns
+// Compare returns
 //
 //	-1 if tm is before u
 //	 0 if tm and u represent the same instant
 //	+1 if tm is after u.
 //
 // Results are undefined if [Time.Rate] is different for the two instants.
-func (tm *Time[D]) Cmp(u *Time[D]) int {
+func (tm *Time[D]) Compare(u *Time[D]) int {
 	if c := cmp.Compare(tm.seconds, u.seconds); c != 0 {
 		return c
 	}
 	return cmp.Compare(tm.fraction, u.fraction)
 }
 
-// CmpUnix is equivalent to [Time.Cmp] against a zero-fractional-second instant
-// in time. Note that it does NOT only compare the seconds and that if `tm` has
-// the same [Time.Unix] as `sec` but non-zero [Time.Fraction] then CmpUnix will
-// return 1.
-func (tm *Time[D]) CmpUnix(sec uint64) int {
-	return tm.Cmp(&Time[D]{seconds: sec})
+// CompareUnix is equivalent to [Time.Compare] against a zero-fractional-second
+// instant in time. Note that it does NOT only compare the seconds and that if
+// `tm` has the same [Time.Unix] as `sec` but non-zero [Time.Fraction] then
+// CompareUnix will return 1.
+func (tm *Time[D]) CompareUnix(sec uint64) int {
+	return tm.Compare(&Time[D]{seconds: sec})
 }
 
 // AsTime converts the proxy time to a standard [time.Time] in UTC. AsTime is

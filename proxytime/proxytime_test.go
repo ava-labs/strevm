@@ -105,10 +105,10 @@ func TestTickAndCmp(t *testing.T) {
 		ticked += s.tick
 		tm.requireEq(t, fmt.Sprintf("%+d", ticked), s.wantSec, frac(s.wantFrac, rate))
 
-		if got, want := tm.Cmp(old), cmp.Compare(s.tick, 0); got != want {
+		if got, want := tm.Compare(old), cmp.Compare(s.tick, 0); got != want {
 			t.Errorf("After %T.Tick(%d); ticked.Cmp(original) got %d; want %d", tm, s.tick, got, want)
 		}
-		if got, want := old.Cmp(tm), cmp.Compare(0, s.tick); got != want {
+		if got, want := old.Compare(tm), cmp.Compare(0, s.tick); got != want {
 			t.Errorf("After %T.Tick(%d); original.Cmp(ticked) got %d; want %d", tm, s.tick, got, want)
 		}
 	}
@@ -281,7 +281,7 @@ func TestCmpUnix(t *testing.T) {
 
 	for _, tt := range tests {
 		tt.tm.Tick(tt.tick)
-		if got := tt.tm.CmpUnix(tt.cmpAgainst); got != tt.want {
+		if got := tt.tm.CompareUnix(tt.cmpAgainst); got != tt.want {
 			t.Errorf("Time{%d + %d/%d}.CmpUnix(%d) got %d; want %d", tt.tm.Unix(), tt.tm.fraction, tt.tm.hertz, tt.cmpAgainst, got, tt.want)
 		}
 	}
