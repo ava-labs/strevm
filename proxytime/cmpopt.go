@@ -20,8 +20,7 @@ type CmpRateInvariantsBy uint64
 
 // Valid [CmpRateInvariantsBy] values.
 const (
-	CmpRateInvariantsByPointer CmpRateInvariantsBy = iota
-	CmpRateInvariantsByValue
+	CmpRateInvariantsByValue CmpRateInvariantsBy = iota
 	IgnoreRateInvariants
 )
 
@@ -50,19 +49,6 @@ func invariantsOpt[D Duration](by CmpRateInvariantsBy) (opt cmp.Option) {
 				vals = append(vals, *x) // [Time.SetRateInvariants] requires that they aren't nil.
 			}
 			return vals
-		})
-
-	case CmpRateInvariantsByPointer:
-		return cmp.Comparer(func(a, b []*D) bool {
-			if len(a) != len(b) {
-				return false
-			}
-			for i := range a {
-				if a[i] != b[i] {
-					return false
-				}
-			}
-			return true
 		})
 	}
 

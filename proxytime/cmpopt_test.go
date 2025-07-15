@@ -14,7 +14,7 @@ func TestCmpOpt(t *testing.T) {
 	// There is enough logic in [CmpOpt] treatment of rate invariants that it
 	// warrants testing the test code.
 
-	defaultOpt := CmpOpt[uint64](CmpRateInvariantsByPointer)
+	defaultOpt := CmpOpt[uint64](CmpRateInvariantsByValue)
 
 	withRateInvariants := func(xs ...*uint64) *Time[uint64] {
 		tm := New[uint64](42, 1)
@@ -69,20 +69,6 @@ func TestCmpOpt(t *testing.T) {
 			a:      withRateInvariants(zeroA),
 			b:      withRateInvariants(one),
 			opt:    CmpOpt[uint64](IgnoreRateInvariants),
-			wantEq: true,
-		},
-		{
-			name:   "invariants_compared_by_address",
-			a:      withRateInvariants(zeroA),
-			b:      withRateInvariants(zeroB),
-			opt:    CmpOpt[uint64](CmpRateInvariantsByPointer),
-			wantEq: false,
-		},
-		{
-			name:   "invariants_compared_by_address",
-			a:      withRateInvariants(zeroA),
-			b:      withRateInvariants(zeroA),
-			opt:    CmpOpt[uint64](CmpRateInvariantsByPointer),
 			wantEq: true,
 		},
 		{
