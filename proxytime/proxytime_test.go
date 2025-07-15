@@ -19,7 +19,7 @@ func frac(num, den uint64) FractionalSecond[uint64] {
 	return FractionalSecond[uint64]{Numerator: num, Denominator: den}
 }
 
-func (tm *Time[D]) assertEq(tb testing.TB, desc string, seconds uint64, fraction FractionalSecond[D]) {
+func (tm *Time[D]) assertEq(tb testing.TB, desc string, seconds uint64, fraction FractionalSecond[D]) (equal bool) {
 	tb.Helper()
 	want := &Time[D]{
 		seconds:  seconds,
@@ -28,14 +28,14 @@ func (tm *Time[D]) assertEq(tb testing.TB, desc string, seconds uint64, fraction
 	}
 	if diff := gocmp.Diff(want, tm, CmpOpt[D](IgnoreRateInvariants)); diff != "" {
 		tb.Errorf("%s diff (-want +got):\n%s", desc, diff)
+		return false
 	}
+	return true
 }
 
 func (tm *Time[D]) requireEq(tb testing.TB, desc string, seconds uint64, fraction FractionalSecond[D]) {
 	tb.Helper()
-	before := tb.Failed()
-	tm.assertEq(tb, desc, seconds, fraction)
-	if !before && tb.Failed() {
+	if !tm.assertEq(tb, desc, seconds, fraction) {
 		tb.FailNow()
 	}
 }
