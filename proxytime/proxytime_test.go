@@ -6,6 +6,7 @@ package proxytime
 import (
 	"cmp"
 	"fmt"
+	"math"
 	"testing"
 	"time"
 
@@ -94,6 +95,17 @@ func TestTickAndCmp(t *testing.T) {
 		{
 			tick:    rate - 1,
 			wantSec: 8, wantFrac: 0,
+		},
+		{
+			// Set fraction to anything non-zero so we can test overflow
+			// prevention with a tick of 2^64-1.
+			tick:    1,
+			wantSec: 8, wantFrac: 1,
+		},
+		{
+			tick:     math.MaxUint64,
+			wantSec:  8 + math.MaxUint64/rate,
+			wantFrac: 1 + math.MaxUint64%rate,
 		},
 	}
 

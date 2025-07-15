@@ -9,6 +9,7 @@ import (
 	"cmp"
 	"fmt"
 	"math"
+	"math/bits"
 	"time"
 
 	"github.com/ava-labs/strevm/intmath"
@@ -82,9 +83,10 @@ func (tm *Time[D]) Rate() D {
 
 // Tick advances the time by `d`.
 func (tm *Time[D]) Tick(d D) {
-	tm.fraction += d
-	tm.seconds += uint64(tm.fraction / tm.hertz)
-	tm.fraction %= tm.hertz
+	frac, carry := bits.Add64(uint64(tm.fraction), uint64(d), 0)
+	quo, rem := bits.Div64(carry, frac, uint64(tm.hertz))
+	tm.seconds += quo
+	tm.fraction = D(rem)
 }
 
 // FastForwardTo sets the time to the specified Unix timestamp if it is in the
