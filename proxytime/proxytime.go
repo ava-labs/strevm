@@ -153,6 +153,9 @@ func (tm *Time[D]) SetRateInvariants(inv ...*D) {
 	tm.rateInvariants = inv
 }
 
+// scale returns `val`, scaled from the existing [Time.Rate] to the newly
+// specified one. See [Time.SetRate] for details about truncation and overflow
+// errors.
 func (tm *Time[D]) scale(val, newRate D) (scaled D, truncated FractionalSecond[D], err error) {
 	scaled, trunc, err := intmath.MulDiv(val, newRate, tm.hertz)
 	if err != nil {
@@ -185,7 +188,8 @@ func (tm *Time[D]) CompareUnix(sec uint64) int {
 
 // AsTime converts the proxy time to a standard [time.Time] in UTC. AsTime is
 // analogous to setting a rate of 1e9 (nanosecond), which might result in
-// truncation.
+// truncation. The second-range limitations documented on [time.Unix] also apply
+// to AsTime.
 func (tm *Time[D]) AsTime() time.Time {
 	if tm.seconds > math.MaxInt64 { // keeps gosec linter happy
 		return time.Unix(math.MaxInt64, math.MaxInt64)
