@@ -205,17 +205,38 @@ func TestAsTime(t *testing.T) {
 }
 
 func TestCanotoRoundTrip(t *testing.T) {
-	const (
-		seconds = 42
-		rate    = 10_000
-		tick    = 1_234
-	)
-	tm := New[uint64](seconds, rate)
-	tm.Tick(tick)
+	tests := []struct {
+		name                string
+		seconds, rate, tick uint64
+	}{
+		{
+			name:    "non_zero_fields",
+			seconds: 42,
+			rate:    10_000,
+			tick:    1_234,
+		},
+		{
+			name: "zero_seconds",
+			rate: 100,
+			tick: 1,
+		},
+		{
+			name:    "zero_fractional_second",
+			seconds: 999,
+			rate:    1,
+		},
+	}
 
-	got := new(Time[uint64])
-	require.NoErrorf(t, got.UnmarshalCanoto(tm.MarshalCanoto()), "%T.UnmarshalCanoto(%[1]T.MarshalCanoto())", got)
-	got.assertEq(t, fmt.Sprintf("%T.UnmarshalCanoto(%[1]T.MarshalCanoto())", tm), seconds, frac(tick, rate))
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tm := New(tt.seconds, tt.rate)
+			tm.Tick(tt.tick)
+
+			got := new(Time[uint64])
+			require.NoErrorf(t, got.UnmarshalCanoto(tm.MarshalCanoto()), "%T.UnmarshalCanoto(%[1]T.MarshalCanoto())", got)
+			got.assertEq(t, fmt.Sprintf("%T.UnmarshalCanoto(%[1]T.MarshalCanoto())", tm), tt.seconds, frac(tt.tick, tt.rate))
+		})
+	}
 }
 
 func TestFastForward(t *testing.T) {
