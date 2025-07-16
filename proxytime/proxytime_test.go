@@ -281,7 +281,7 @@ func TestFastForward(t *testing.T) {
 		assert.Equal(t, s.wantFrac, gotFrac)
 
 		if t.Failed() {
-			break
+			t.FailNow()
 		}
 	}
 }
