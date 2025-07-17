@@ -219,8 +219,8 @@ func (vm *VM) CreateHandlers(context.Context) (map[string]http.Handler, error) {
 	}, nil
 }
 
-func (vm *VM) CreateHTTP2Handler(context.Context) (http.Handler, error) {
-	return nil, errUnimplemented
+func (vm *VM) NewHTTPHandler(context.Context) (http.Handler, error) {
+	return nil, nil
 }
 
 func (vm *VM) GetBlock(ctx context.Context, blkID ids.ID) (*blocks.Block, error) {

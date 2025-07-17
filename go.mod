@@ -7,7 +7,7 @@ toolchain go1.23.10
 require (
 	github.com/StephenButtolph/canoto v0.17.1
 	github.com/arr4n/sink v0.0.0-20250610120507-bd1b0fbb19fa
-	github.com/ava-labs/avalanchego v1.13.3-0.20250707201933-507e6bbb5e7d
+	github.com/ava-labs/avalanchego v1.13.3-rc.2
 	github.com/ava-labs/libevm v1.13.14-0.3.0.rc.1
 	github.com/dustin/go-humanize v1.0.0
 	github.com/google/go-cmp v0.7.0
