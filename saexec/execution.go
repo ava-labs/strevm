@@ -90,7 +90,7 @@ func (e *Executor) execute(ctx context.Context, b *blocks.Block) error {
 
 	header := types.CopyHeader(b.Header())
 	header.BaseFee = e.gasClock.BaseFee().ToBig()
-	e.log.Debug(
+	e.log.Info(
 		"Executing accepted block",
 		zap.Uint64("height", b.Height()),
 		zap.Uint64("timestamp", header.Time),
@@ -138,6 +138,22 @@ func (e *Executor) execute(ctx context.Context, b *blocks.Block) error {
 		// to access them before the end of the block.
 		receipts[ti] = receipt
 	}
+
+	extraOps, err := e.hooks.ExtraBlockOperations(ctx, b.Block)
+	if err != nil {
+		return err
+	}
+	for _, op := range extraOps {
+		blockGasConsumed += op.Gas
+		for from, ad := range op.From {
+			x.statedb.SetNonce(from, ad.Nonce+1)
+			x.statedb.SubBalance(from, &ad.Amount)
+		}
+		for to, amount := range op.To {
+			x.statedb.AddBalance(to, &amount)
+		}
+	}
+
 	endTime := time.Now()
 	hook.AfterBlock(e.gasClock, blockGasConsumed)
 	if e.gasClock.Time.Cmp(perTxClock) != 0 {
@@ -154,13 +170,13 @@ func (e *Executor) execute(ctx context.Context, b *blocks.Block) error {
 	// 1. [blocks.Block.MarkExecuted] guarantees disk then in-memory changes.
 	// 2. Internal indicator of last executed MUST follow in-memory change.
 	// 3. External indicator of last executed MUST follow internal indicator.
-	if err := b.MarkExecuted(e.db, e.gasClock.Clone(), endTime, receipts, root); err != nil {
+	if err := b.MarkExecuted(e.db, e.gasClock.Clone(), endTime, receipts, root, e.hooks); err != nil {
 		return err
 	}
 	e.lastExecuted.Store(b)                      // (2)
 	e.sendPostExecutionEvents(b.Block, receipts) // (3)
 
-	e.log.Debug(
+	e.log.Info(
 		"Block execution complete",
 		zap.Uint64("height", b.Height()),
 		zap.Time("gas_time", e.gasClock.AsTime()),

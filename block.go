@@ -7,6 +7,7 @@ import (
 
 	"github.com/ava-labs/avalanchego/ids"
 	"github.com/ava-labs/avalanchego/snow"
+	"github.com/ava-labs/avalanchego/snow/engine/snowman/block"
 	"github.com/ava-labs/libevm/core"
 	"github.com/ava-labs/libevm/core/rawdb"
 	"github.com/ava-labs/libevm/core/types"
@@ -117,7 +118,20 @@ func (vm *VM) RejectBlock(ctx context.Context, b *blocks.Block) error {
 	return vm.removeBlocksFromMemory(ctx, b)
 }
 
+func (vm *VM) ShouldVerifyBlockWithContext(ctx context.Context, b *blocks.Block) (bool, error) {
+	return true, nil
+}
+
+func (vm *VM) VerifyBlockWithContext(ctx context.Context, blockContext *block.Context, b *blocks.Block) error {
+	// TODO: This could be optimized to only verify this block once.
+	return vm.verifyBlock(ctx, blockContext, b)
+}
+
 func (vm *VM) VerifyBlock(ctx context.Context, b *blocks.Block) error {
+	return vm.verifyBlock(ctx, nil, b)
+}
+
+func (vm *VM) verifyBlock(ctx context.Context, blockContext *block.Context, b *blocks.Block) error {
 	parent, err := vm.GetBlock(ctx, ids.ID(b.ParentHash()))
 	if err != nil {
 		return fmt.Errorf("block parent %#x not found (presumed height %d)", b.ParentHash(), b.Height()-1)
@@ -144,7 +158,12 @@ func (vm *VM) VerifyBlock(ctx context.Context, b *blocks.Block) error {
 		})
 	}
 
-	bb, err := vm.buildBlockWithCandidateTxs(b.Time(), parent, candidates)
+	constructBlock, err := vm.hooks.ConstructBlockFromBlock(ctx, b.Block)
+	if err != nil {
+		return err
+	}
+
+	bb, err := vm.buildBlockWithCandidateTxs(b.Time(), parent, candidates, blockContext, constructBlock)
 	if err != nil {
 		return err
 	}
