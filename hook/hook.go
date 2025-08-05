@@ -16,6 +16,7 @@ import (
 // Points define user-injected hook points.
 type Points interface {
 	GasTarget(parent *types.Block) gas.Gas
+	BeforeExecutingBlock(*types.Block)
 }
 
 // BeforeBlock is intended to be called before processing a block, with the gas

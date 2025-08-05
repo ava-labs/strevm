@@ -36,7 +36,8 @@ func main() {
 
 type hooks struct{}
 
-func (hooks) GasTarget(*types.Block) gas.Gas { return 10e6 }
+func (hooks) GasTarget(*types.Block) gas.Gas    { return 10e6 }
+func (hooks) BeforeExecutingBlock(*types.Block) {}
 
 func run(ctx context.Context) error {
 	vm := &sae.SinceGenesis{

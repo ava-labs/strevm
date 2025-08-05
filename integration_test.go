@@ -56,6 +56,8 @@ func (h *stubHooks) GasTarget(parent *types.Block) gas.Gas {
 	return h.T
 }
 
+func (*stubHooks) BeforeExecutingBlock(*types.Block) {}
+
 func (h *stubHooks) fractionSecondsOfGas(tb testing.TB, num, denom uint64) gas.Gas {
 	tb.Helper()
 	quo, rem, err := intmath.MulDiv(gas.Gas(num), 2*h.T, gas.Gas(denom))

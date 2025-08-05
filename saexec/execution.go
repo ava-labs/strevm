@@ -87,6 +87,7 @@ func (e *Executor) execute(ctx context.Context, b *blocks.Block) error {
 
 	hook.BeforeBlock(e.gasClock, b.Header(), e.hooks.GasTarget(b.ParentBlock().Block))
 	perTxClock := e.gasClock.Time.Clone()
+	e.hooks.BeforeExecutingBlock(b.Block)
 
 	header := types.CopyHeader(b.Header())
 	header.BaseFee = e.gasClock.BaseFee().ToBig()
