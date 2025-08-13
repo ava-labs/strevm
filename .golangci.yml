@@ -1,0 +1,101 @@
+# This file configures github.com/golangci/golangci-lint.
+
+run:
+  timeout: 20m
+  tests: true
+
+linters:
+  enable:
+    # Every available linter at the time of writing was considered (quickly) and
+    # inclusion was liberal. Linters are good at detecting code smells, but if
+    # we find that a particular one causes too many false positives then we can
+    # configure it better or, as a last resort, remove it.
+    - containedctx
+    - errcheck
+    - forcetypeassert
+    - gci
+    - gocheckcompilerdirectives
+    - gofmt
+    - goheader
+    - goimports
+    - gomodguard
+    - gosec
+    - govet
+    - ineffassign
+    # TODO(arr4n): investigate ireturn
+    - misspell
+    - nakedret
+    - nestif
+    - nilerr
+    - nolintlint
+    - reassign
+    - revive
+    - sloglint
+    - staticcheck
+    - tagliatelle
+    - testableexamples
+    - testifylint
+    - thelper
+    - tparallel
+    - unconvert
+    - usestdlibvars
+    - unused
+    - whitespace
+
+linters-settings:
+  gci:
+    custom-order: true
+    sections:
+      - standard
+      - default
+      - localmodule
+      # The rest of these break developer expections, in increasing order of
+      # divergence, so are at the end to increase the chance of being seen.
+      - alias
+      - dot
+      - blank
+  goheader:
+    template-path: .license-header
+
+  gomodguard:
+    blocked:
+      modules:
+        - github.com/ethereum/go-ethereum:
+            reason: "Use ava-labs/libevm instead"
+        - github.com/ava-labs/coreth:
+            reason: "Avoid dependency loop"
+        - github.com/ava-labs/subnet-evm:
+            reason: "Avoid dependency loop"
+  revive:
+    rules:
+      - name: unused-parameter
+        # Method parameters may be required by interfaces and forcing them to be
+        # named _ is of questionable benefit.
+        disabled: true
+      - name: exported
+        severity: error
+        disabled: false
+        exclude: [""]
+        arguments:
+          - "sayRepetitiveInsteadOfStutters"
+      - name: package-comments
+        severity: warning
+        disabled: false
+
+issues:
+  include:
+    # Many of the default exclusions are because, verbatim "Annoying issue",
+    # which defeats the point of a linter.
+    - EXC0002
+    - EXC0004
+    - EXC0005
+    - EXC0006
+    - EXC0007
+    - EXC0008
+    - EXC0009
+    - EXC0010
+    - EXC0011
+    - EXC0012
+    - EXC0013
+    - EXC0014
+    - EXC0015

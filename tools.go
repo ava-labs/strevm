@@ -1,6 +1,9 @@
+// Copyright (C) 2025, Ava Labs, Inc. All rights reserved.
+// See the file LICENSE for licensing terms.
+
 //go:build tools
 
-package sae
+package strevm
 
 // Protects indirect dependencies of tools from being pruned by `go mod tidy`.
 import (

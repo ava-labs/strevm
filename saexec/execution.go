@@ -156,7 +156,7 @@ func (e *Executor) execute(ctx context.Context, b *blocks.Block) error {
 
 	endTime := time.Now()
 	hook.AfterBlock(e.gasClock, blockGasConsumed)
-	if e.gasClock.Time.Cmp(perTxClock) != 0 {
+	if e.gasClock.Time.Compare(perTxClock) != 0 {
 		return fmt.Errorf("broken invariant: block-resolution clock @ %s does not match tx-resolution clock @ %s", e.gasClock.String(), perTxClock.String())
 	}
 

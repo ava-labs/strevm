@@ -1,3 +1,6 @@
+// Copyright (C) 2025, Ava Labs, Inc. All rights reserved.
+// See the file LICENSE for licensing terms.
+
 // Package adaptor provides a generic alternative to the Snowman [block.ChainVM]
 // interface, which doesn't require the block to be aware of the VM
 // implementation.
