@@ -47,7 +47,7 @@ func TestExecutorClock(t *testing.T) {
 		got := exec.TimeNotThreadsafe()
 		want := proxytime.New[gas.Gas](sec, 2*hooks.T) // R = 2T
 		want.Tick(gasThisSec)
-		if got.Cmp(want) != 0 {
+		if got.Compare(want) != 0 {
 			t.Errorf("%T.TimeNotThreadsafe() got %s; want %s", exec, got.String(), want.String())
 		}
 		if got, want := got.Excess(), excess; got != want {

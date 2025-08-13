@@ -1,11 +1,15 @@
+// Copyright (C) 2025, Ava Labs, Inc. All rights reserved.
+// See the file LICENSE for licensing terms.
+
 // Package gastime measures time based on the consumption of gas.
 package gastime
 
 import (
 	"github.com/ava-labs/avalanchego/vms/components/gas"
+	"github.com/holiman/uint256"
+
 	"github.com/ava-labs/strevm/intmath"
 	"github.com/ava-labs/strevm/proxytime"
-	"github.com/holiman/uint256"
 )
 
 // Time represents an instant in time, its passage measured in [gas.Gas]
@@ -77,9 +81,11 @@ func (tm *Time) BaseFee() *uint256.Int {
 
 // SetTarget changes the target gas consumption per second. It is equivalent to
 // [proxytime.Time.SetRate] with `2*t`, but is preferred as it avoids
-// accidentally setting an odd rate.
-func (tm *Time) SetTarget(t gas.Gas) {
-	tm.SetRate(2 * t) // also updates target as it was passed to [proxytime.Time.SetRateInvariants]
+// accidentally setting an odd rate. It returns an error if the scaled
+// [Time.Excess] overflows as a result of the scaling.
+func (tm *Time) SetTarget(t gas.Gas) error {
+	_, err := tm.SetRate(2 * t) // also updates target as it was passed to [proxytime.Time.SetRateInvariants]
+	return err
 }
 
 // Tick is equivalent to [proxytime.Time.Tick] except that it also updates the
@@ -88,7 +94,7 @@ func (tm *Time) Tick(g gas.Gas) {
 	tm.Time.Tick(g)
 
 	R, T := tm.Rate(), tm.Target()
-	quo, _, _ := intmath.MulDiv(g, R-T, R) //nolint:errcheck // R-T < R so the quotient is < g
+	quo, _, _ := intmath.MulDiv(g, R-T, R) // overflow is impossible as (R-T)/R < 1
 	tm.excess += quo
 }
 
@@ -101,6 +107,6 @@ func (tm *Time) FastForwardTo(to uint64) {
 	}
 
 	R, T := tm.Rate(), tm.Target()
-	quo, _, _ := intmath.MulDiv(R*gas.Gas(sec)+frac.Numerator, T, R) //nolint:errcheck // T < R so the quotient is < LHS
+	quo, _, _ := intmath.MulDiv(R*gas.Gas(sec)+frac.Numerator, T, R) // overflow is impossible as T/R < 1
 	tm.excess = intmath.BoundedSubtract(tm.excess, quo, 0)
 }
