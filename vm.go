@@ -11,8 +11,10 @@ import (
 	"github.com/arr4n/sink"
 	"github.com/ava-labs/avalanchego/database"
 	"github.com/ava-labs/avalanchego/ids"
+	"github.com/ava-labs/avalanchego/network/p2p"
 	"github.com/ava-labs/avalanchego/snow"
 	snowcommon "github.com/ava-labs/avalanchego/snow/engine/common"
+	"github.com/ava-labs/avalanchego/snow/engine/snowman/block"
 	"github.com/ava-labs/avalanchego/utils"
 	"github.com/ava-labs/avalanchego/utils/logging"
 	"github.com/ava-labs/avalanchego/version"
@@ -27,18 +29,22 @@ import (
 	"github.com/ava-labs/strevm/hook"
 	"github.com/ava-labs/strevm/queue"
 	"github.com/ava-labs/strevm/saexec"
+	"github.com/prometheus/client_golang/prometheus"
 )
+
+var VMID = ids.ID{'s', 't', 'r', 'e', 'v', 'm'}
 
 // VM implements Streaming Asynchronous Execution (SAE) of EVM blocks. It
 // implements all [adaptor.ChainVM] methods except for `Initialize()`, which
 // MUST be handled by a harness implementation that provides the final
 // synchronous block, which MAY be a standard genesis block.
 type VM struct {
+	*p2p.Network
+
 	snowCtx *snow.Context
-	snowcommon.AppHandler
-	toEngine chan<- snowcommon.Message
-	hooks    hook.Points
-	now      func() time.Time
+	hooks   hook.Points
+	now     func() time.Time
+	metrics *prometheus.Registry
 
 	consensusState utils.Atomic[snow.State]
 
@@ -48,8 +54,9 @@ type VM struct {
 
 	db ethdb.Database
 
-	newTxs  chan *types.Transaction
-	mempool sink.PriorityMutex[*queue.Priority[*pendingTx]]
+	newTxs        chan *types.Transaction
+	mempool       sink.PriorityMutex[*queue.Priority[*pendingTx]]
+	mempoolHasTxs sink.Gate
 
 	exec *saexec.Executor
 
@@ -66,7 +73,17 @@ type (
 )
 
 type Config struct {
-	Hooks       hook.Points
+	Hooks hook.Points
+	// LastExecutedBlockHeight should be >= the LastSynchronousBlock height.
+	//
+	// TODO(StephenButtolph): This allows coreth to specify what atomic txs
+	// (and warp receipts) have been applied. This is needed because the DB that
+	// is written to with Hooks.BlockExecuted is not atomically managed with the
+	// rest of SAE's state. We must ensure that Hooks.BlockExecuted is called
+	// consecutively starting with the block with height
+	// LastExecutedBlockHeight+1.
+	LastExecutedBlockHeight uint64
+
 	ChainConfig *params.ChainConfig
 	DB          ethdb.Database
 	// At the point of upgrade from synchronous to asynchronous execution, the
@@ -77,8 +94,8 @@ type Config struct {
 	// event of a node restart.
 	LastSynchronousBlock LastSynchronousBlock
 
-	ToEngine chan<- snowcommon.Message
-	SnowCtx  *snow.Context
+	SnowCtx   *snow.Context
+	AppSender snowcommon.AppSender
 
 	// Now is optional, defaulting to [time.Now] if nil.
 	Now func() time.Time
@@ -90,25 +107,40 @@ type LastSynchronousBlock struct {
 }
 
 func New(ctx context.Context, c Config) (*VM, error) {
-	quit := make(chan struct{})
+	metrics := prometheus.NewRegistry()
+	if err := c.SnowCtx.Metrics.Register("lib", metrics); err != nil {
+		return nil, err
+	}
+
+	network, err := p2p.NewNetwork(
+		c.SnowCtx.Log,
+		c.AppSender,
+		metrics,
+		"p2p",
+	)
+	if err != nil {
+		return nil, err
+	}
 
 	vm := &VM{
+		// Networking
+		Network: network,
 		// VM
-		snowCtx:    c.SnowCtx,
-		db:         c.DB,
-		toEngine:   c.ToEngine,
-		hooks:      c.Hooks,
-		AppHandler: snowcommon.NewNoOpAppHandler(logging.NoLog{}),
-		now:        c.Now,
-		blocks:     sink.NewMutex(make(blockMap)),
+		snowCtx: c.SnowCtx,
+		db:      c.DB,
+		hooks:   c.Hooks,
+		now:     c.Now,
+		blocks:  sink.NewMutex(make(blockMap)),
 		// Block building
-		newTxs:  make(chan *types.Transaction, 10), // TODO(arr4n) make the buffer configurable
-		mempool: sink.NewPriorityMutex(new(queue.Priority[*pendingTx])),
-		quit:    quit, // both mempool and executor
+		newTxs:        make(chan *types.Transaction, 10), // TODO(arr4n) make the buffer configurable
+		mempool:       sink.NewPriorityMutex(new(queue.Priority[*pendingTx])),
+		mempoolHasTxs: sink.NewGate(),
+		quit:          make(chan struct{}), // both mempool and executor
 	}
 	if vm.now == nil {
 		vm.now = time.Now
 	}
+	vm.mempoolHasTxs.Block() // The mempool is initially empty.
 
 	if err := vm.upgradeLastSynchronousBlock(c.LastSynchronousBlock); err != nil {
 		return nil, err
@@ -179,7 +211,7 @@ func (vm *VM) SetState(ctx context.Context, state snow.State) error {
 }
 
 func (vm *VM) Shutdown(ctx context.Context) error {
-	vm.logger().Debug("Shutting down VM")
+	vm.logger().Info("Shutting down VM")
 	close(vm.quit)
 
 	vm.blocks.Close()
@@ -206,8 +238,8 @@ func (vm *VM) CreateHandlers(context.Context) (map[string]http.Handler, error) {
 	}, nil
 }
 
-func (vm *VM) CreateHTTP2Handler(context.Context) (http.Handler, error) {
-	return nil, errUnimplemented
+func (vm *VM) NewHTTPHandler(context.Context) (http.Handler, error) {
+	return nil, nil
 }
 
 func (vm *VM) GetBlock(ctx context.Context, blkID ids.ID) (*blocks.Block, error) {
@@ -252,7 +284,11 @@ func (vm *VM) ParseBlock(ctx context.Context, blockBytes []byte) (*blocks.Block,
 }
 
 func (vm *VM) BuildBlock(ctx context.Context) (*blocks.Block, error) {
-	return vm.buildBlock(ctx, uint64(vm.now().Unix()), vm.preference.Load())
+	return vm.BuildBlockWithContext(ctx, nil)
+}
+
+func (vm *VM) BuildBlockWithContext(ctx context.Context, blockContext *block.Context) (*blocks.Block, error) {
+	return vm.buildBlock(ctx, blockContext, uint64(vm.now().Unix()), vm.preference.Load())
 }
 
 func (vm *VM) signer(blockNum, timestamp uint64) types.Signer {

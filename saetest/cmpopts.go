@@ -88,7 +88,7 @@ func CmpStateDBs() cmp.Option {
 func CmpTimes() cmp.Option {
 	return cmp.Options{
 		gastime.CmpOpt(),
-		proxytime.CmpOpt[gas.Gas](),
+		proxytime.CmpOpt[gas.Gas](proxytime.IgnoreRateInvariants),
 	}
 }
 

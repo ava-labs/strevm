@@ -13,6 +13,7 @@ import (
 	"github.com/ava-labs/libevm/ethdb"
 	"github.com/ava-labs/libevm/trie"
 	"github.com/ava-labs/strevm/gastime"
+	"github.com/ava-labs/strevm/hook"
 	"github.com/ava-labs/strevm/proxytime"
 )
 
@@ -55,7 +56,14 @@ type executionResults struct {
 //
 // This function MUST NOT be called more than once. The wall-clock [time.Time]
 // is for metrics only.
-func (b *Block) MarkExecuted(db ethdb.Database, byGas *gastime.Time, byWall time.Time, receipts types.Receipts, stateRootPost common.Hash) error {
+func (b *Block) MarkExecuted(
+	db ethdb.Database,
+	byGas *gastime.Time,
+	byWall time.Time,
+	receipts types.Receipts,
+	stateRootPost common.Hash,
+	hooks hook.Points,
+) error {
 	var used gas.Gas
 	for _, r := range receipts {
 		used += gas.Gas(r.GasUsed)
@@ -78,6 +86,10 @@ func (b *Block) MarkExecuted(db ethdb.Database, byGas *gastime.Time, byWall time
 		return err
 	}
 	if err := batch.Write(); err != nil {
+		return err
+	}
+
+	if err := hooks.BlockExecuted(context.TODO(), b.Block, receipts); err != nil {
 		return err
 	}
 

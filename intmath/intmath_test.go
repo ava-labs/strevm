@@ -1,9 +1,12 @@
+// Copyright (C) 2025, Ava Labs, Inc. All rights reserved.
+// See the file LICENSE for licensing terms.
+
 package intmath
 
 import (
 	"errors"
 	"math"
-	"math/rand"
+	"math/rand/v2"
 	"testing"
 )
 
@@ -13,13 +16,13 @@ func TestBoundedSubtract(t *testing.T) {
 	tests := []struct {
 		a, b, floor, want uint64
 	}{
-		{1, 2, 0, 0}, // a < b
-		{2, 1, 0, 1}, // not bounded
-		{2, 1, 1, 1}, // a - b == floor
-		{2, 2, 1, 1}, // bounded
-		{3, 1, 1, 2},
-		{max, 10, max - 9, max - 9}, // `a` threshold (`max+1`) would overflow uint64
-		{max, 10, max - 11, max - 10},
+		{a: 1, b: 2, floor: 0, want: 0}, // a < b
+		{a: 2, b: 1, floor: 0, want: 1}, // not bounded
+		{a: 2, b: 1, floor: 1, want: 1}, // a - b == floor
+		{a: 2, b: 2, floor: 1, want: 1}, // bounded
+		{a: 3, b: 1, floor: 1, want: 2},
+		{a: max, b: 10, floor: max - 9, want: max - 9}, // `a` threshold (`max+1`) would overflow uint64
+		{a: max, b: 10, floor: max - 11, want: max - 10},
 	}
 
 	for _, tt := range tests {
@@ -34,16 +37,16 @@ func TestMulDiv(t *testing.T) {
 		a, b, div, wantQuo, wantRem uint64
 	}{
 		{
-			5, 2, 3, // 10/3
-			3, 1,
+			a: 5, b: 2, div: 3, // 10/3
+			wantQuo: 3, wantRem: 1,
 		},
 		{
-			5, 3, 3, // 15/3
-			5, 0,
+			a: 5, b: 3, div: 3, // 15/3
+			wantQuo: 5, wantRem: 0,
 		},
 		{
-			max, 4, 8, // must avoid overflow
-			max / 2, 4,
+			a: max, b: 4, div: 8, // must avoid overflow
+			wantQuo: max / 2, wantRem: 4,
 		},
 	}
 
@@ -64,26 +67,26 @@ func TestCeilDiv(t *testing.T) {
 	}
 
 	tests := []test{
-		{4, 2, 2},
-		{4, 1, 4},
-		{4, 3, 2},
-		{10, 3, 4},
-		{max, 2, 1 << 63}, // must not overflow
+		{num: 4, den: 2, want: 2},
+		{num: 4, den: 1, want: 4},
+		{num: 4, den: 3, want: 2},
+		{num: 10, den: 3, want: 4},
+		{num: max, den: 2, want: 1 << 63}, // must not overflow
 	}
 
-	rng := rand.New(rand.NewSource(0))
+	rng := rand.New(rand.NewPCG(0, 0)) //nolint:gosec // Reproducibility is valuable for tests
 	for range 50 {
-		l := uint64(rng.Int63n(math.MaxUint32))
-		r := uint64(rng.Int63n(math.MaxUint32))
+		l := uint64(rng.Uint32())
+		r := uint64(rng.Uint32())
 
 		tests = append(tests, []test{
-			{l*r + 1, l, r + 1},
-			{l*r + 0, l, r},
-			{l*r - 1, l, r},
+			{num: l*r + 1, den: l, want: r + 1},
+			{num: l*r + 0, den: l, want: r},
+			{num: l*r - 1, den: l, want: r},
 			// l <-> r
-			{l*r + 1, r, l + 1},
-			{l*r + 0, r, l},
-			{l*r - 1, r, l},
+			{num: l*r + 1, den: r, want: l + 1},
+			{num: l*r + 0, den: r, want: l},
+			{num: l*r - 1, den: r, want: l},
 		}...)
 	}
 

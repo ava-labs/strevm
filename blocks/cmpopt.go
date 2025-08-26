@@ -52,7 +52,7 @@ func (b *Block) equalForTests(c *Block) bool {
 
 func (e *executionResults) equalForTests(f *executionResults) bool {
 	fn := saetest.ComparerWithNilCheck(func(e, f *executionResults) bool {
-		return e.byGas.Cmp(f.byGas.Time) == 0 &&
+		return e.byGas.Compare(f.byGas.Time) == 0 &&
 			e.gasUsed == f.gasUsed &&
 			e.receiptRoot == f.receiptRoot &&
 			e.stateRootPost == f.stateRootPost
