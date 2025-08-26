@@ -11,6 +11,7 @@ import (
 	"github.com/arr4n/sink"
 	"github.com/ava-labs/avalanchego/database"
 	"github.com/ava-labs/avalanchego/ids"
+	"github.com/ava-labs/avalanchego/network/p2p"
 	"github.com/ava-labs/avalanchego/snow"
 	snowcommon "github.com/ava-labs/avalanchego/snow/engine/common"
 	"github.com/ava-labs/avalanchego/snow/engine/snowman/block"
@@ -28,6 +29,7 @@ import (
 	"github.com/ava-labs/strevm/hook"
 	"github.com/ava-labs/strevm/queue"
 	"github.com/ava-labs/strevm/saexec"
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 var VMID = ids.ID{'s', 't', 'r', 'e', 'v', 'm'}
@@ -37,10 +39,12 @@ var VMID = ids.ID{'s', 't', 'r', 'e', 'v', 'm'}
 // MUST be handled by a harness implementation that provides the final
 // synchronous block, which MAY be a standard genesis block.
 type VM struct {
+	*p2p.Network
+
 	snowCtx *snow.Context
-	snowcommon.AppHandler
-	hooks hook.Points
-	now   func() time.Time
+	hooks   hook.Points
+	now     func() time.Time
+	metrics *prometheus.Registry
 
 	consensusState utils.Atomic[snow.State]
 
@@ -90,7 +94,8 @@ type Config struct {
 	// event of a node restart.
 	LastSynchronousBlock LastSynchronousBlock
 
-	SnowCtx *snow.Context
+	SnowCtx   *snow.Context
+	AppSender snowcommon.AppSender
 
 	// Now is optional, defaulting to [time.Now] if nil.
 	Now func() time.Time
@@ -102,21 +107,35 @@ type LastSynchronousBlock struct {
 }
 
 func New(ctx context.Context, c Config) (*VM, error) {
-	quit := make(chan struct{})
+	metrics := prometheus.NewRegistry()
+	if err := c.SnowCtx.Metrics.Register("lib", metrics); err != nil {
+		return nil, err
+	}
+
+	network, err := p2p.NewNetwork(
+		c.SnowCtx.Log,
+		c.AppSender,
+		metrics,
+		"p2p",
+	)
+	if err != nil {
+		return nil, err
+	}
 
 	vm := &VM{
+		// Networking
+		Network: network,
 		// VM
-		snowCtx:    c.SnowCtx,
-		db:         c.DB,
-		hooks:      c.Hooks,
-		AppHandler: snowcommon.NewNoOpAppHandler(logging.NoLog{}),
-		now:        c.Now,
-		blocks:     sink.NewMutex(make(blockMap)),
+		snowCtx: c.SnowCtx,
+		db:      c.DB,
+		hooks:   c.Hooks,
+		now:     c.Now,
+		blocks:  sink.NewMutex(make(blockMap)),
 		// Block building
 		newTxs:        make(chan *types.Transaction, 10), // TODO(arr4n) make the buffer configurable
 		mempool:       sink.NewPriorityMutex(new(queue.Priority[*pendingTx])),
 		mempoolHasTxs: sink.NewGate(),
-		quit:          quit, // both mempool and executor
+		quit:          make(chan struct{}), // both mempool and executor
 	}
 	if vm.now == nil {
 		vm.now = time.Now
