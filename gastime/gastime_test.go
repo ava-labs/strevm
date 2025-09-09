@@ -67,8 +67,8 @@ func (tm *Time) requireState(tb testing.TB, desc string, want state, opts ...cmp
 
 func (tm *Time) mustSetRate(tb testing.TB, rate gas.Gas) {
 	tb.Helper()
-	_, err := tm.SetRate(rate)
-	require.NoError(tb, err, "%T.SetRate(%d)", tm, rate)
+	_, err := tm.TimeMarshaler.SetRate(rate)
+	require.NoErrorf(tb, err, "%T.%T.SetRate(%d)", tm, TimeMarshaler{}, rate)
 }
 
 func (tm *Time) mustSetTarget(tb testing.TB, target gas.Gas) {
@@ -271,5 +271,25 @@ func TestExcessScalingFactor(t *testing.T) {
 	for _, tt := range tests {
 		require.NoErrorf(t, tm.SetTarget(tt.target), "%T.SetTarget(%v)", tm, tt.target)
 		assert.Equalf(t, tt.want, tm.excessScalingFactor(), "T = %d", tt.target)
+	}
+}
+
+func TestTargetClamping(t *testing.T) {
+	tm := New(0, MaxTarget+1, 0)
+	require.Equal(t, MaxTarget, tm.Target(), "tm.Target() clamped by constructor")
+
+	tests := []struct {
+		setTo, want gas.Gas
+	}{
+		{setTo: 10, want: 10},
+		{setTo: MaxTarget + 1, want: MaxTarget},
+		{setTo: 20, want: 20},
+		{setTo: math.MaxUint64, want: MaxTarget},
+	}
+
+	for _, tt := range tests {
+		require.NoErrorf(t, tm.SetTarget(tt.setTo), "%T.SetTarget(%d)", tm, tt.setTo)
+		assert.Equalf(t, tt.want, tm.Target(), "%T.Target() after setting to %#x", tm, tt.setTo)
+		assert.Equalf(t, tm.Target()*TargetToRate, tm.Rate(), "%T.Rate() == %d * %[1]T.Target()", tm, TargetToRate)
 	}
 }

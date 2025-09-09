@@ -48,10 +48,22 @@ func (tm *Time) establishInvariants() {
 }
 
 // New returns a new [Time], set from a Unix timestamp. The consumption of
-// `2*target` units of [gas.Gas] is equivalent to a tick of 1 second.
+// `target` * [TargetToRate] units of [gas.Gas] is equivalent to a tick of 1
+// second. Targets are clamped to [MaxTarget].
 func New(unixSeconds uint64, target, startingExcess gas.Gas) *Time {
-	return makeTime(proxytime.New(unixSeconds, 2*target), target, startingExcess)
+	target = clampTarget(target)
+	return makeTime(proxytime.New(unixSeconds, rateOf(target)), target, startingExcess)
 }
+
+// TargetToRate is the ratio between [Time.Target] and [proxytime.Time.Rate].
+const TargetToRate = 2
+
+// MaxTarget is the maximum allowable [Time.Target] to avoid overflows of the
+// associated [proxytime.Time.Rate]. Values above this are silently clamped.
+const MaxTarget = gas.Gas(math.MaxUint64 / TargetToRate)
+
+func rateOf(target gas.Gas) gas.Gas { return target * TargetToRate }
+func clampTarget(t gas.Gas) gas.Gas { return min(t, MaxTarget) }
 
 // Clone returns a deep copy of the time.
 func (tm *Time) Clone() *Time {
@@ -94,12 +106,15 @@ func (tm *Time) BaseFee() *uint256.Int {
 	return uint256.NewInt(uint64(tm.Price()))
 }
 
-// SetTarget changes the target gas consumption per second. It is equivalent to
-// [proxytime.Time.SetRate] with `2*t`, but is preferred as it avoids
-// accidentally setting an odd rate. It returns an error if the scaled
-// [Time.Excess] overflows as a result of the scaling.
+// SetRate shadows the embedded [proxytime.Time.SetRate] method of the same name
+// and always panics. Use [Time.SetTarget] instead.
+func (tm *Time) SetRate() { panic("use SetTarget()") }
+
+// SetTarget changes the target gas consumption per second, clamping the
+// argument to [MaxTarget]. It returns an error if the scaled [Time.Excess]
+// overflows as a result of the scaling.
 func (tm *Time) SetTarget(t gas.Gas) error {
-	_, err := tm.SetRate(2 * t) // also updates target as it was passed to [proxytime.Time.SetRateInvariants]
+	_, err := tm.TimeMarshaler.SetRate(rateOf(clampTarget(t))) // also updates [Time.Target] as it was passed to [proxytime.Time.SetRateInvariants]
 	return err
 }
 

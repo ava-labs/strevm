@@ -13,7 +13,7 @@ import (
 //go:generate go run github.com/StephenButtolph/canoto/canoto $GOFILE
 
 // A TimeMarshaler can marshal a time to and from canoto. It is of limited use
-// by itself and SHOULD only be used via a wrapping [Time].
+// by itself and MUST only be used via a wrapping [Time].
 type TimeMarshaler struct { //nolint:tagliatelle // TODO(arr4n) submit linter bug report
 	*proxytime.Time[gas.Gas] `canoto:"pointer,1"`
 	target                   gas.Gas `canoto:"uint,2"`
