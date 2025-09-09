@@ -107,6 +107,34 @@ func (tm *Time) FastForwardTo(to uint64) {
 	}
 
 	R, T := tm.Rate(), tm.Target()
-	quo, _, _ := intmath.MulDiv(R*gas.Gas(sec)+frac.Numerator, T, R) // overflow is impossible as T/R < 1
+
+	// Excess is reduced by the amount of gas skipped (g), multiplied by T/R.
+	// However, to avoid overflow, the implementation needs to be a bit more
+	// complicated. The reduction in excess can be calculated as follows (math
+	// notation, not code, and ignoring the bounding at zero):
+	//
+	// s := seconds fast-forwarded (`sec`)
+	// f := `frac.Numerator`
+	// x := excess
+	//
+	// dx = -g·T/R
+	// = -(sR + f)·T/R
+	// = -sR·T/R - fT/R
+	// = -sT - fT/R
+	//
+	// Note that this is equivalent to the ACP reduction of T·dt because dt is
+	// equal to s + f/R since `frac.Denominator == R` is a documented invariant.
+	// Therefore dx = -(s + f/R)·T, but we separate the terms differently for
+	// our implementation.
+
+	// -sT
+	if s := gas.Gas(sec); tm.excess/T >= s { // sT <= x; division is safe because T > 0
+		tm.excess -= s * T
+	} else { // sT > x
+		tm.excess = 0
+	}
+
+	// -fT/R
+	quo, _, _ := intmath.MulDiv(frac.Numerator, T, R) // overflow is impossible as T/R < 1
 	tm.excess = intmath.BoundedSubtract(tm.excess, quo, 0)
 }

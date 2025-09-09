@@ -240,7 +240,8 @@ func TestCanotoRoundTrip(t *testing.T) {
 }
 
 func TestFastForward(t *testing.T) {
-	tm := New(42, uint64(1000))
+	const rate = uint64(1000)
+	tm := New(42, rate)
 
 	steps := []struct {
 		tickBefore uint64
@@ -252,25 +253,25 @@ func TestFastForward(t *testing.T) {
 			tickBefore: 100, // 42.100
 			ffTo:       42,  // in the past
 			wantSec:    0,
-			wantFrac:   frac(0, 1000),
+			wantFrac:   frac(0, rate),
 		},
 		{
 			tickBefore: 0, // 42.100
 			ffTo:       43,
 			wantSec:    0,
-			wantFrac:   frac(900, 1000),
+			wantFrac:   frac(900, rate),
 		},
 		{
 			tickBefore: 0, // 43.000
 			ffTo:       44,
 			wantSec:    1,
-			wantFrac:   frac(0, 1000),
+			wantFrac:   frac(0, rate),
 		},
 		{
 			tickBefore: 200, // 44.200
 			ffTo:       50,
 			wantSec:    5,
-			wantFrac:   frac(800, 1000),
+			wantFrac:   frac(800, rate),
 		},
 	}
 

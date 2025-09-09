@@ -4,6 +4,7 @@
 package gastime
 
 import (
+	"math"
 	"testing"
 
 	"github.com/ava-labs/avalanchego/vms/components/gas"
@@ -224,6 +225,15 @@ func TestExcess(t *testing.T) {
 				UnixTime:           55,
 				ConsumedThisSecond: frac(0),
 				Excess:             45*rate/8 - 7*rate/8,
+			},
+		},
+		{
+			desc:       "fast forward causes overflow when seconds multiplied by R",
+			ffToBefore: math.MaxUint64,
+			want: state{
+				UnixTime:           math.MaxUint64,
+				ConsumedThisSecond: frac(0),
+				Excess:             0,
 			},
 		},
 	}
