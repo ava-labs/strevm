@@ -269,7 +269,7 @@ func TestExcessScalingFactor(t *testing.T) {
 
 	tm := New(0, 1, 0)
 	for _, tt := range tests {
-		tm.SetTarget(tt.target)
+		require.NoErrorf(t, tm.SetTarget(tt.target), "%T.SetTarget(%v)", tm, tt.target)
 		assert.Equalf(t, tt.want, tm.excessScalingFactor(), "T = %d", tt.target)
 	}
 }
