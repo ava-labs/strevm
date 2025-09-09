@@ -5,6 +5,8 @@
 package gastime
 
 import (
+	"math"
+
 	"github.com/ava-labs/avalanchego/vms/components/gas"
 	"github.com/holiman/uint256"
 
@@ -70,7 +72,20 @@ func (tm *Time) Excess() gas.Gas {
 
 // Price returns the price of a unit of gas, i.e. the "base fee".
 func (tm *Time) Price() gas.Price {
-	return gas.CalculatePrice(1 /* M */, tm.excess, 87*tm.target /* K */)
+	return gas.CalculatePrice(1 /* M */, tm.excess, tm.excessScalingFactor())
+}
+
+// excessScalingFactor returns the K variable of ACP-103/176, i.e. 87*T, capped
+// at [math.MaxUint64].
+func (tm *Time) excessScalingFactor() gas.Gas {
+	const (
+		targetToK         = 87
+		overflowThreshold = math.MaxUint64 / targetToK
+	)
+	if tm.target > overflowThreshold {
+		return math.MaxUint64
+	}
+	return targetToK * tm.target
 }
 
 // BaseFee is equivalent to [Time.Price], returning the result as a uint256 for

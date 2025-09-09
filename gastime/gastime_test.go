@@ -10,6 +10,7 @@ import (
 	"github.com/ava-labs/avalanchego/vms/components/gas"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/ava-labs/strevm/intmath"
@@ -248,5 +249,27 @@ func TestExcess(t *testing.T) {
 			tm.Tick(tk)
 		}
 		tm.requireState(t, s.desc, s.want, ignore)
+	}
+}
+
+func TestExcessScalingFactor(t *testing.T) {
+	const max = math.MaxUint64
+
+	tests := []struct {
+		target, want gas.Gas
+	}{
+		{1, 87},
+		{2, 174},
+		{max / 87, (max / 87) * 87},
+		{max/87 - 0, max - 81}, // identical to above, but explicit for clarity
+		{max/87 - 1, max - 81 - 87},
+		{max/87 + 1, max}, // because `max - 81 + 87` would overflow
+		{max, max},
+	}
+
+	tm := New(0, 1, 0)
+	for _, tt := range tests {
+		tm.SetTarget(tt.target)
+		assert.Equalf(t, tt.want, tm.excessScalingFactor(), "T = %d", tt.target)
 	}
 }
