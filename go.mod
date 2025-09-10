@@ -7,6 +7,7 @@ toolchain go1.23.10
 require (
 	github.com/ava-labs/avalanchego v1.13.2
 	github.com/google/go-cmp v0.6.0
+	github.com/holiman/uint256 v1.2.4
 	github.com/stretchr/testify v1.10.0
 	golang.org/x/exp v0.0.0-20250620022241-b7579e27df2b
 )
