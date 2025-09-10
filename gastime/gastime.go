@@ -64,6 +64,7 @@ const MaxTarget = gas.Gas(math.MaxUint64 / TargetToRate)
 
 func rateOf(target gas.Gas) gas.Gas { return target * TargetToRate }
 func clampTarget(t gas.Gas) gas.Gas { return min(t, MaxTarget) }
+func roundRate(r gas.Gas) gas.Gas   { return (r / TargetToRate) * TargetToRate }
 
 // Clone returns a deep copy of the time.
 func (tm *Time) Clone() *Time {
@@ -106,9 +107,12 @@ func (tm *Time) BaseFee() *uint256.Int {
 	return uint256.NewInt(uint64(tm.Price()))
 }
 
-// SetRate shadows the embedded [proxytime.Time.SetRate] method of the same name
-// and always panics. Use [Time.SetTarget] instead.
-func (tm *Time) SetRate() { panic("use SetTarget()") }
+// SetRate changes the gas rate per second, rounding down the argument if it is
+// not a multiple of [TargetToRate]. See [Time.SetTarget] re potential error(s).
+func (tm *Time) SetRate(r gas.Gas) error {
+	_, err := tm.TimeMarshaler.SetRate(roundRate(r))
+	return err
+}
 
 // SetTarget changes the target gas consumption per second, clamping the
 // argument to [MaxTarget]. It returns an error if the scaled [Time.Excess]

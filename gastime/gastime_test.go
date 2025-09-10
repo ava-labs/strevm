@@ -4,6 +4,7 @@
 package gastime
 
 import (
+	"fmt"
 	"math"
 	"testing"
 
@@ -67,8 +68,7 @@ func (tm *Time) requireState(tb testing.TB, desc string, want state, opts ...cmp
 
 func (tm *Time) mustSetRate(tb testing.TB, rate gas.Gas) {
 	tb.Helper()
-	_, err := tm.TimeMarshaler.SetRate(rate)
-	require.NoErrorf(tb, err, "%T.%T.SetRate(%d)", tm, TimeMarshaler{}, rate)
+	require.NoErrorf(tb, tm.SetRate(rate), "%T.%T.SetRate(%d)", tm, TimeMarshaler{}, rate)
 }
 
 func (tm *Time) mustSetTarget(tb testing.TB, target gas.Gas) {
@@ -107,20 +107,27 @@ func TestScaling(t *testing.T) {
 	// SetRate is identical to setting via the target, as long as the rate is
 	// even. Although the documentation states that SetTarget is preferred, we
 	// still need to test SetRate.
-	tm.mustSetRate(t, 4e6)
+	const (
+		wantTargetViaRate = 2e6
+		wantRate          = wantTargetViaRate * TargetToRate
+	)
 	want := state{
-		Rate:   4e6,
-		Target: 2e6,
+		Rate:   wantRate,
+		Target: wantTargetViaRate,
 		Excess: (func() gas.Gas {
 			// Scale the _initial_ excess relative to the new and _initial_
 			// rates, not the most recent rate before scaling.
-			x, _, err := intmath.MulDiv(initExcess, 4e6, 3.2e6)
+			x, _, err := intmath.MulDiv(initExcess, wantRate, 3.2e6)
 			require.NoErrorf(t, err, "intmath.MulDiv(%d, %d, %d)", initExcess, 4e6, 3.2e6)
 			return x
 		})(),
 		Price: initPrice, // unchanged
 	}
-	tm.requireState(t, "after SetRate()", want, ignore)
+	for roundingError := range gas.Gas(TargetToRate) {
+		r := wantRate + roundingError
+		tm.mustSetRate(t, r)
+		tm.requireState(t, fmt.Sprintf("after SetRate(%d)", r), want, ignore)
+	}
 
 	testPostClone := func(t *testing.T, cloned *Time) {
 		t.Helper()
