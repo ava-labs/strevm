@@ -107,7 +107,7 @@ func TestSettlementInvariants(t *testing.T) {
 }
 
 func TestPersistLastSettledNumber(t *testing.T) {
-	rng := rand.New(rand.NewPCG(0, 0))
+	rng := rand.New(rand.NewPCG(0, 0)) //nolint:gosec // Reproducibility is useful for tests
 	for range 10 {
 		settledHeight := rng.Uint64()
 		t.Run(fmt.Sprintf("settled_height_%d", settledHeight), func(t *testing.T) {
