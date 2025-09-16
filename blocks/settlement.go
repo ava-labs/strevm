@@ -138,7 +138,7 @@ func LastToSettleAt(settleAt uint64, parent *Block) (*Block, bool) {
 	// therefore we have a guarantee that the loop update will never result in
 	// `block==nil`.
 	for ; ; block, child = block.ParentBlock(), block {
-		if startsNoEarlierThan := block.Time(); startsNoEarlierThan > settleAt {
+		if startsNoEarlierThan := block.BuildTime(); startsNoEarlierThan > settleAt {
 			continue
 		}
 

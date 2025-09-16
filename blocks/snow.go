@@ -49,5 +49,5 @@ func (b *Block) Height() uint64 {
 // Timestamp returns the timestamp of the wrapped [types.Block], at
 // [time.Second] resolution.
 func (b *Block) Timestamp() time.Time {
-	return time.Unix(int64(b.Time()), 0) //nolint:gosec // Won't be a problem for a few millennia
+	return time.Unix(int64(b.BuildTime()), 0) //nolint:gosec // Won't be a problem for a few millennia
 }

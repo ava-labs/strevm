@@ -47,7 +47,7 @@ func TestSettlementInvariants(t *testing.T) {
 
 	db := rawdb.NewMemoryDatabase()
 	for _, b := range []*Block{b, parent, lastSettled} {
-		b.markExecutedForTests(t, db, gastime.New(b.Time(), 1, 0))
+		b.markExecutedForTests(t, db, gastime.New(b.BuildTime(), 1, 0))
 	}
 
 	t.Run("before_MarkSettled", func(t *testing.T) {
@@ -216,7 +216,7 @@ func TestLastToSettleAt(t *testing.T) {
 	t.Run("helper_invariants", func(t *testing.T) {
 		for i, b := range blocks {
 			require.Equal(t, uint64(i), b.Height()) //nolint:gosec // Slice index won't overflow
-			require.Equal(t, b.Time(), b.Height())
+			require.Equal(t, b.BuildTime(), b.Height())
 		}
 	})
 

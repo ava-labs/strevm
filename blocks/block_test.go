@@ -92,7 +92,7 @@ func TestSetAncestors(t *testing.T) {
 	}
 
 	t.Run("incompatible_destination_block", func(t *testing.T) {
-		ethB := newEthBlock(dest.Height()+1 /*mismatch*/, dest.Time(), parent.EthBlock())
+		ethB := newEthBlock(dest.Height()+1 /*mismatch*/, dest.BuildTime(), parent.EthBlock())
 		dest := newBlock(t, ethB, nil, nil)
 		require.ErrorIs(t, dest.CopyAncestorsFrom(source), errHashMismatch)
 	})

@@ -67,7 +67,7 @@ func (b *Block) RestorePostExecutionState(db ethdb.Database, receipts types.Rece
 // [rawdb.ReadReceipts], the results of which are propagated to
 // [Block.RestorePostExecutionState].
 func (b *Block) RestorePostExecutionStateAndReceipts(db ethdb.Database, config *params.ChainConfig) error {
-	rs := rawdb.ReadReceipts(db, b.Hash(), b.NumberU64(), b.Time(), config)
+	rs := rawdb.ReadReceipts(db, b.Hash(), b.NumberU64(), b.BuildTime(), config)
 	return b.RestorePostExecutionState(db, rs)
 }
 
