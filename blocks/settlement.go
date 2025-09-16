@@ -94,15 +94,25 @@ func (b *Block) Settles() []*Block {
 	return settling(b.ParentBlock().LastSettled(), b.LastSettled())
 }
 
-// IfChildSettles is similar to [Block.Settles] but with different definitions
-// of `x` and `y` (as described in [Block.Settles]). It is intended for use
-// during block building and defines `x` as the block height of
-// `b.LastSettled()` while `y` as the height of the argument passed to this
-// method.
+// ChildSettles returns the blocks that would be settled by a child of `b`,
+// given the last-settled block at the child's block time. Note that the
+// last-settled block at the child's time MAY be equal to the last-settled of
+// `b` (its parent), in which case ChildSettles returns an empty slice.
 //
 // The argument is typically the return value of [LastToSettleAt], where that
-// function receives b as the parent. See the Example.
-func (b *Block) IfChildSettles(lastSettledOfChild *Block) []*Block {
+// function receives `b` as the parent. See the Example.
+//
+// ChildSettles MUST only be called before the call to [Block.MarkSettled] on
+// `b`. The intention is that this method is called on the VM's preferred block,
+// which always meets this criterion. This is by definition of settlement, which
+// requires that at least one descendant block has already been accepted, which
+// the preference never has.
+//
+// ChildSettles is similar to [Block.Settles] but with different definitions of
+// `x` and `y` (as described in [Block.Settles]). It is intended for use during
+// block building and defines `x` as the block height of `b.LastSettled()` while
+// `y` as the height of the argument passed to this method.
+func (b *Block) ChildSettles(lastSettledOfChild *Block) []*Block {
 	return settling(b.LastSettled(), lastSettledOfChild)
 }
 
@@ -127,7 +137,7 @@ func settling(lastOfParent, lastOfCurr *Block) []*Block {
 // execution stream is lagging and LastToSettleAt can be called again after some
 // indeterminate delay.
 //
-// See the Example for [Block.IfChildSettles] for one usage of the returned
+// See the Example for [Block.ChildSettles] for one usage of the returned
 // block.
 func LastToSettleAt(settleAt uint64, parent *Block) (*Block, bool) {
 	// These variables are only abstracted for clarity; they are not needed

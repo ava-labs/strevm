@@ -24,7 +24,7 @@ import (
 )
 
 //nolint:testableexamples // Output is meaningless
-func ExampleBlock_IfChildSettles() {
+func ExampleBlock_ChildSettles() {
 	parent := blockBuildingPreference()
 	settle, ok := LastToSettleAt(uint64(time.Now().Unix()), parent) //nolint:gosec // Time won't overflow for quite a while
 	if !ok {
@@ -33,7 +33,7 @@ func ExampleBlock_IfChildSettles() {
 
 	// Returns the (possibly empty) slice of blocks that would be settled by the
 	// block being built.
-	_ = parent.IfChildSettles(settle)
+	_ = parent.ChildSettles(settle)
 }
 
 // blockBuildingPreference exists only to allow examples to build.
@@ -178,26 +178,26 @@ func TestSettles(t *testing.T) {
 	for _, b := range blocks[1:] {
 		tests = append(tests, testCase{
 			name: fmt.Sprintf("Block(%d).IfChildSettles([same as parent])", b.Height()),
-			got:  b.IfChildSettles(b.LastSettled()),
+			got:  b.ChildSettles(b.LastSettled()),
 			want: nil,
 		})
 	}
 
 	tests = append(tests, []testCase{
 		{
-			got:  blocks[7].IfChildSettles(blocks[3]),
+			got:  blocks[7].ChildSettles(blocks[3]),
 			want: nil,
 		},
 		{
-			got:  blocks[7].IfChildSettles(blocks[4]),
+			got:  blocks[7].ChildSettles(blocks[4]),
 			want: numsToBlocks(4),
 		},
 		{
-			got:  blocks[7].IfChildSettles(blocks[5]),
+			got:  blocks[7].ChildSettles(blocks[5]),
 			want: numsToBlocks(4, 5),
 		},
 		{
-			got:  blocks[7].IfChildSettles(blocks[6]),
+			got:  blocks[7].ChildSettles(blocks[6]),
 			want: numsToBlocks(4, 5, 6),
 		},
 	}...)
