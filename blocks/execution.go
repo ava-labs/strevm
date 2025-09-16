@@ -16,6 +16,7 @@ import (
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/ethdb"
 	"github.com/ava-labs/libevm/trie"
+	"go.uber.org/zap"
 
 	"github.com/ava-labs/strevm/gastime"
 	"github.com/ava-labs/strevm/proxytime"
