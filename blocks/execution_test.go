@@ -63,8 +63,8 @@ func TestMarkExecuted(t *testing.T) {
 		defer cancel()
 		require.ErrorIs(t, context.DeadlineExceeded, b.WaitUntilExecuted(ctx), "WaitUntilExecuted()")
 
-		var rec saetest.LogRecorder
-		b.log = &rec
+		rec := saetest.NewLogRecorder(logging.Warn)
+		b.log = rec
 		assertNumErrorLogs := func(t *testing.T, want int) {
 			t.Helper()
 			assert.Len(t, rec.At(logging.Error), want, "Number of ERROR logs")
@@ -112,8 +112,8 @@ func TestMarkExecuted(t *testing.T) {
 		assert.NotEqual(t, b.SettledStateRoot(), b.PostExecutionStateRoot(), "PostExecutionStateRoot() != SettledStateRoot()")
 
 		t.Run("MarkExecuted_again", func(t *testing.T) {
-			var rec saetest.LogRecorder
-			b.log = &rec
+			rec := saetest.NewLogRecorder(logging.Warn)
+			b.log = rec
 			assert.ErrorIs(t, b.MarkExecuted(db, gasTime, wallTime, receipts, stateRoot), errMarkBlockExecutedAgain)
 			// The database's head block might have been corrupted so this MUST
 			// be a fatal action.

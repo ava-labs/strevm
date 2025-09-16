@@ -12,6 +12,8 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/ava-labs/strevm/saetest"
 )
 
 func newEthBlock(num, time uint64, parent *types.Block) *types.Block {
@@ -27,7 +29,7 @@ func newEthBlock(num, time uint64, parent *types.Block) *types.Block {
 
 func newBlock(tb testing.TB, eth *types.Block, parent, lastSettled *Block) *Block {
 	tb.Helper()
-	b, err := New(eth, parent, lastSettled, logging.NoLog{})
+	b, err := New(eth, parent, lastSettled, saetest.NewTBLogger(tb, logging.Warn))
 	require.NoError(tb, err, "New()")
 	return b
 }

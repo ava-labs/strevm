@@ -69,8 +69,8 @@ func TestSettlementInvariants(t *testing.T) {
 		assert.NoError(t, b.WaitUntilSettled(context.Background()), "WaitUntilSettled()")
 		assert.NoError(t, b.CheckInvariants(Settled), "CheckInvariants(Settled)")
 
-		var rec saetest.LogRecorder
-		b.log = &rec
+		rec := saetest.NewLogRecorder(logging.Warn)
+		b.log = rec
 		assertNumErrorLogs := func(t *testing.T, want int) {
 			t.Helper()
 			assert.Len(t, rec.At(logging.Error), want, "Number of ERROR")
@@ -177,7 +177,7 @@ func TestSettles(t *testing.T) {
 
 	for _, b := range blocks[1:] {
 		tests = append(tests, testCase{
-			name: fmt.Sprintf("Block(%d).IfChildSettles([same as parent])", b.Height()),
+			name: fmt.Sprintf("Block(%d).ChildSettles([same as parent])", b.Height()),
 			got:  b.ChildSettles(b.LastSettled()),
 			want: nil,
 		})
