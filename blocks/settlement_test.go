@@ -327,14 +327,8 @@ func TestLastToSettleAt(t *testing.T) {
 		{
 			settleAt: 9,
 			parent:   blocks[9],
-			// The current implementation is very coarse-grained and MAY return
-			// false negatives that would simply require a retry after some
-			// indeterminate period of time. Even though the execution time of
-			// `blocks[8]` guarantees that `blocks[9]` MUST finish execution
-			// after the settlement time, our current implementation doesn't
-			// check this. It is expected that this specific test case will one
-			// day fail, at which point it MUST be updated to want `blocks[7]`.
-			wantOK: false,
+			wantOK:   true,
+			want:     blocks[7],
 		},
 		{
 			settleAt: 15,
