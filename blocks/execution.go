@@ -16,6 +16,7 @@ import (
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/ethdb"
 	"github.com/ava-labs/libevm/trie"
+	"go.uber.org/zap"
 
 	"github.com/ava-labs/strevm/gastime"
 	"github.com/ava-labs/strevm/proxytime"
@@ -118,7 +119,9 @@ func (b *Block) Executed() bool {
 func executionArtefact[T any](b *Block, desc string, get func(*executionResults) T) T {
 	e := b.execution.Load()
 	if e == nil {
-		b.log.Error(fmt.Sprintf("Get block %s before execution", desc))
+		b.log.Error("execution artefact requested before execution",
+			zap.String("artefact", desc),
+		)
 		var zero T
 		return zero
 	}

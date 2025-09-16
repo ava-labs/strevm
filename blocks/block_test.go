@@ -58,7 +58,7 @@ func newChain(tb testing.TB, startHeight, total uint64, lastSettledAtHeight map[
 		blocks = append(blocks, byNum[n])
 
 		parent = byNum[n]
-		ethParent = parent.Block
+		ethParent = parent.EthBlock()
 	}
 
 	return blocks
@@ -67,7 +67,7 @@ func newChain(tb testing.TB, startHeight, total uint64, lastSettledAtHeight map[
 func TestSetAncestors(t *testing.T) {
 	parent := newBlock(t, newEthBlock(5, 5, nil), nil, nil)
 	lastSettled := newBlock(t, newEthBlock(3, 0, nil), nil, nil)
-	child := newEthBlock(6, 6, parent.Block)
+	child := newEthBlock(6, 6, parent.EthBlock())
 
 	t.Run("incorrect_parent", func(t *testing.T) {
 		// Note that the arguments to [New] are inverted.
@@ -92,7 +92,7 @@ func TestSetAncestors(t *testing.T) {
 	}
 
 	t.Run("incompatible_destination_block", func(t *testing.T) {
-		ethB := newEthBlock(dest.Height()+1 /*mismatch*/, dest.Time(), parent.Block)
+		ethB := newEthBlock(dest.Height()+1 /*mismatch*/, dest.BuildTime(), parent.EthBlock())
 		dest := newBlock(t, ethB, nil, nil)
 		require.ErrorIs(t, dest.CopyAncestorsFrom(source), errHashMismatch)
 	})

@@ -19,35 +19,35 @@ import (
 
 var _ adaptor.BlockProperties = (*Block)(nil)
 
-// ID returns [types.Block.Hash] from the embedded [types.Block].
+// ID returns [types.Block.Hash] from the wrapped [types.Block].
 func (b *Block) ID() ids.ID {
 	return ids.ID(b.Hash())
 }
 
-// Parent returns [types.Block.ParentHash] from the embedded [types.Block].
+// Parent returns [types.Block.ParentHash] from the wrapped [types.Block].
 func (b *Block) Parent() ids.ID {
 	return ids.ID(b.ParentHash())
 }
 
-// Bytes returns the RLP encoding of the embedded [types.Block]. If encoding
-// returns an error, it is logged at the WARNING level and a nil slice is
+// Bytes returns the RLP encoding of the wrapped [types.Block]. If encoding
+// returns an error, it is logged at the ERROR level and a nil slice is
 // returned.
 func (b *Block) Bytes() []byte {
 	buf, err := rlp.EncodeToBytes(b)
 	if err != nil {
-		b.log.Warn("RLP encoding error", zap.Error(err))
+		b.log.Error("RLP encoding error", zap.Error(err))
 		return nil
 	}
 	return buf
 }
 
-// Height returns [types.Block.NumberU64] from the embedded [types.Block].
+// Height returns [types.Block.NumberU64] from the wrapped [types.Block].
 func (b *Block) Height() uint64 {
 	return b.NumberU64()
 }
 
-// Timestamp returns the timestamp of the embedded [types.Block], at
+// Timestamp returns the timestamp of the wrapped [types.Block], at
 // [time.Second] resolution.
 func (b *Block) Timestamp() time.Time {
-	return time.Unix(int64(b.Time()), 0) //nolint:gosec // Won't be a problem for a few millennia
+	return time.Unix(int64(b.BuildTime()), 0) //nolint:gosec // Won't be a problem for a few millennia
 }

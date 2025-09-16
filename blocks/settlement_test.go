@@ -24,7 +24,7 @@ import (
 )
 
 //nolint:testableexamples // Output is meaningless
-func ExampleBlock_IfChildSettles() {
+func ExampleBlock_ChildSettles() {
 	parent := blockBuildingPreference()
 	settle, ok := LastToSettleAt(uint64(time.Now().Unix()), parent) //nolint:gosec // Time won't overflow for quite a while
 	if !ok {
@@ -33,7 +33,7 @@ func ExampleBlock_IfChildSettles() {
 
 	// Returns the (possibly empty) slice of blocks that would be settled by the
 	// block being built.
-	_ = parent.IfChildSettles(settle)
+	_ = parent.ChildSettles(settle)
 }
 
 // blockBuildingPreference exists only to allow examples to build.
@@ -43,11 +43,11 @@ func TestSettlementInvariants(t *testing.T) {
 	parent := newBlock(t, newEthBlock(5, 5, nil), nil, nil)
 	lastSettled := newBlock(t, newEthBlock(3, 3, nil), nil, nil)
 
-	b := newBlock(t, newEthBlock(6, 10, parent.Block), parent, lastSettled)
+	b := newBlock(t, newEthBlock(6, 10, parent.EthBlock()), parent, lastSettled)
 
 	db := rawdb.NewMemoryDatabase()
 	for _, b := range []*Block{b, parent, lastSettled} {
-		b.markExecutedForTests(t, db, gastime.New(b.Time(), 1, 0))
+		b.markExecutedForTests(t, db, gastime.New(b.BuildTime(), 1, 0))
 	}
 
 	t.Run("before_MarkSettled", func(t *testing.T) {
@@ -178,26 +178,26 @@ func TestSettles(t *testing.T) {
 	for _, b := range blocks[1:] {
 		tests = append(tests, testCase{
 			name: fmt.Sprintf("Block(%d).IfChildSettles([same as parent])", b.Height()),
-			got:  b.IfChildSettles(b.LastSettled()),
+			got:  b.ChildSettles(b.LastSettled()),
 			want: nil,
 		})
 	}
 
 	tests = append(tests, []testCase{
 		{
-			got:  blocks[7].IfChildSettles(blocks[3]),
+			got:  blocks[7].ChildSettles(blocks[3]),
 			want: nil,
 		},
 		{
-			got:  blocks[7].IfChildSettles(blocks[4]),
+			got:  blocks[7].ChildSettles(blocks[4]),
 			want: numsToBlocks(4),
 		},
 		{
-			got:  blocks[7].IfChildSettles(blocks[5]),
+			got:  blocks[7].ChildSettles(blocks[5]),
 			want: numsToBlocks(4, 5),
 		},
 		{
-			got:  blocks[7].IfChildSettles(blocks[6]),
+			got:  blocks[7].ChildSettles(blocks[6]),
 			want: numsToBlocks(4, 5, 6),
 		},
 	}...)
@@ -216,7 +216,7 @@ func TestLastToSettleAt(t *testing.T) {
 	t.Run("helper_invariants", func(t *testing.T) {
 		for i, b := range blocks {
 			require.Equal(t, uint64(i), b.Height()) //nolint:gosec // Slice index won't overflow
-			require.Equal(t, b.Time(), b.Height())
+			require.Equal(t, b.BuildTime(), b.Height())
 		}
 	})
 

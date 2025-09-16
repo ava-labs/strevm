@@ -20,7 +20,10 @@ import (
 /* ===== Common =====*/
 
 func blockNumDBKey(prefix string, blockNum uint64) []byte {
-	return binary.BigEndian.AppendUint64([]byte(prefix), blockNum)
+	n := len(prefix)
+	key := make([]byte, n, n+8)
+	copy(key, prefix)
+	return binary.BigEndian.AppendUint64(key, blockNum)
 }
 
 func (b *Block) writeToKVStore(w ethdb.KeyValueWriter, key func(uint64) []byte, val []byte) error {
@@ -67,7 +70,7 @@ func (b *Block) RestorePostExecutionState(db ethdb.Database, receipts types.Rece
 // [rawdb.ReadReceipts], the results of which are propagated to
 // [Block.RestorePostExecutionState].
 func (b *Block) RestorePostExecutionStateAndReceipts(db ethdb.Database, config *params.ChainConfig) error {
-	rs := rawdb.ReadReceipts(db, b.Hash(), b.NumberU64(), b.Time(), config)
+	rs := rawdb.ReadReceipts(db, b.Hash(), b.NumberU64(), b.BuildTime(), config)
 	return b.RestorePostExecutionState(db, rs)
 }
 

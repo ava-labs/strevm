@@ -9,12 +9,10 @@ package blocks
 import (
 	"errors"
 	"fmt"
-	"math"
 	"runtime"
 	"sync/atomic"
 
 	"github.com/ava-labs/avalanchego/utils/logging"
-	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core/types"
 	"go.uber.org/zap"
 )
@@ -22,7 +20,7 @@ import (
 // A Block extends a [types.Block] to track SAE-defined concepts of async
 // execution and settlement. It MUST be constructed with [New].
 type Block struct {
-	*types.Block
+	b *types.Block
 	// Invariant: ancestry is non-nil and contains non-nil pointers i.f.f. the
 	// block hasn't itself been settled. A synchronous block (e.g. SAE genesis
 	// or the last pre-SAE block) is always considered settled.
@@ -37,8 +35,11 @@ type Block struct {
 	// have returned without error.
 	execution atomic.Pointer[executionResults]
 
-	// See [Block.SetInterimExecutionTime for setting and [LastToSettleAt] for
-	// usage. The pointer MAY be nil if execution is yet to commence.
+	// Allows this block to be ruled out as able to be settled at a particular
+	// time (i.e. if this field is >= said time). The pointer MAY be nil if
+	// execution is yet to commence. For more details, see
+	// [Block.SetInterimExecutionTime for setting and [LastToSettleAt] for
+	// usage.
 	executionExceededSecond atomic.Pointer[uint64]
 
 	executed chan struct{} // closed after `execution` is set
@@ -47,25 +48,25 @@ type Block struct {
 	log logging.Logger
 }
 
-var inMemoryBlockCount atomic.Uint64
+var inMemoryBlockCount atomic.Int64
 
 // InMemoryBlockCount returns the number of blocks created with [New] that are
 // yet to have their GC finalizers run.
-func InMemoryBlockCount() uint64 {
+func InMemoryBlockCount() int64 {
 	return inMemoryBlockCount.Load()
 }
 
 // New constructs a new Block.
 func New(eth *types.Block, parent, lastSettled *Block, log logging.Logger) (*Block, error) {
 	b := &Block{
-		Block:    eth,
+		b:        eth,
 		executed: make(chan struct{}),
 		settled:  make(chan struct{}),
 	}
 
 	inMemoryBlockCount.Add(1)
 	runtime.AddCleanup(b, func(struct{}) {
-		inMemoryBlockCount.Add(math.MaxUint64) // -1
+		inMemoryBlockCount.Add(-1)
 	}, struct{}{})
 
 	if err := b.setAncestors(parent, lastSettled); err != nil {
@@ -109,16 +110,4 @@ func (b *Block) CopyAncestorsFrom(c *Block) error {
 	}
 	a := c.ancestry.Load()
 	return b.setAncestors(a.parent, a.lastSettled)
-}
-
-// Root is a noop that shadows the equivalent method on [types.Block], which is
-// embedded in the [Block] and is ambiguous under SAE. Use
-// [Block.PostExecutionStateRoot] or [Block.SettledStateRoot] instead.
-func (b *Block) Root() {}
-
-// SettledStateRoot returns the state root after execution of the last block
-// settled by b. It is a convenience wrapper for calling [types.Block.Root] on
-// the embedded [types.Block].
-func (b *Block) SettledStateRoot() common.Hash {
-	return b.Block.Root()
 }
