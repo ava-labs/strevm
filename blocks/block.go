@@ -14,7 +14,6 @@ import (
 	"sync/atomic"
 
 	"github.com/ava-labs/avalanchego/utils/logging"
-	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core/types"
 	"go.uber.org/zap"
 )
@@ -22,7 +21,7 @@ import (
 // A Block extends a [types.Block] to track SAE-defined concepts of async
 // execution and settlement. It MUST be constructed with [New].
 type Block struct {
-	*types.Block
+	b *types.Block
 	// Invariant: ancestry is non-nil and contains non-nil pointers i.f.f. the
 	// block hasn't itself been settled. A synchronous block (e.g. SAE genesis
 	// or the last pre-SAE block) is always considered settled.
@@ -58,7 +57,7 @@ func InMemoryBlockCount() uint64 {
 // New constructs a new Block.
 func New(eth *types.Block, parent, lastSettled *Block, log logging.Logger) (*Block, error) {
 	b := &Block{
-		Block:    eth,
+		b:        eth,
 		executed: make(chan struct{}),
 		settled:  make(chan struct{}),
 	}
@@ -109,16 +108,4 @@ func (b *Block) CopyAncestorsFrom(c *Block) error {
 	}
 	a := c.ancestry.Load()
 	return b.setAncestors(a.parent, a.lastSettled)
-}
-
-// Root is a noop that shadows the equivalent method on [types.Block], which is
-// embedded in the [Block] and is ambiguous under SAE. Use
-// [Block.PostExecutionStateRoot] or [Block.SettledStateRoot] instead.
-func (b *Block) Root() {}
-
-// SettledStateRoot returns the state root after execution of the last block
-// settled by b. It is a convenience wrapper for calling [types.Block.Root] on
-// the embedded [types.Block].
-func (b *Block) SettledStateRoot() common.Hash {
-	return b.Block.Root()
 }

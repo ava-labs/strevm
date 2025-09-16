@@ -108,7 +108,7 @@ func TestMarkExecuted(t *testing.T) {
 		assert.Equal(t, stateRoot, b.PostExecutionStateRoot(), "PostExecutionStateRoot()") // i.e. this block
 		// Although not directly relevant to MarkExecuted, demonstrate that the
 		// two notion's of a state root are in fact different.
-		assert.Equal(t, settles.Block.Root(), b.SettledStateRoot(), "SettledStateRoot()") // i.e. the block this block settles
+		assert.Equal(t, settles.EthBlock().Root(), b.SettledStateRoot(), "SettledStateRoot()") // i.e. the block this block settles
 		assert.NotEqual(t, b.SettledStateRoot(), b.PostExecutionStateRoot(), "PostExecutionStateRoot() != SettledStateRoot()")
 
 		t.Run("MarkExecuted_again", func(t *testing.T) {
@@ -126,7 +126,7 @@ func TestMarkExecuted(t *testing.T) {
 
 	t.Run("database", func(t *testing.T) {
 		t.Run("RestorePostExecutionStateAndReceipts", func(t *testing.T) {
-			clone := newBlock(t, b.Block, nil, settles)
+			clone := newBlock(t, b.EthBlock(), nil, settles)
 			err := clone.RestorePostExecutionStateAndReceipts(
 				db,
 				params.TestChainConfig, // arbitrary

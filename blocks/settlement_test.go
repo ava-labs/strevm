@@ -43,7 +43,7 @@ func TestSettlementInvariants(t *testing.T) {
 	parent := newBlock(t, newEthBlock(5, 5, nil), nil, nil)
 	lastSettled := newBlock(t, newEthBlock(3, 3, nil), nil, nil)
 
-	b := newBlock(t, newEthBlock(6, 10, parent.Block), parent, lastSettled)
+	b := newBlock(t, newEthBlock(6, 10, parent.EthBlock()), parent, lastSettled)
 
 	db := rawdb.NewMemoryDatabase()
 	for _, b := range []*Block{b, parent, lastSettled} {
