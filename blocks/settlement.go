@@ -14,7 +14,10 @@ type ancestry struct {
 	parent, lastSettled *Block
 }
 
-var errBlockResettled = errors.New("block re-settled")
+var (
+	errBlockResettled       = errors.New("block re-settled")
+	errBlockAncestryChanged = errors.New("block ancestry changed during settlement")
+)
 
 // MarkSettled marks the block as having been settled. This function MUST NOT
 // be called more than once.
@@ -31,7 +34,7 @@ func (b *Block) MarkSettled() error {
 		b.log.Fatal("Block ancestry changed during settlement")
 		// We have to return something to keen the compiler happy, even though we
 		// expect the Fatal to be, well, fatal.
-		return errors.New("block ancestry changed during settlement")
+		return errBlockAncestryChanged
 	}
 	close(b.settled)
 	return nil
