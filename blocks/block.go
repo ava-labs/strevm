@@ -9,7 +9,6 @@ package blocks
 import (
 	"errors"
 	"fmt"
-	"math"
 	"runtime"
 	"sync/atomic"
 
@@ -46,11 +45,11 @@ type Block struct {
 	log logging.Logger
 }
 
-var inMemoryBlockCount atomic.Uint64
+var inMemoryBlockCount atomic.Int64
 
 // InMemoryBlockCount returns the number of blocks created with [New] that are
 // yet to have their GC finalizers run.
-func InMemoryBlockCount() uint64 {
+func InMemoryBlockCount() int64 {
 	return inMemoryBlockCount.Load()
 }
 
@@ -64,7 +63,7 @@ func New(eth *types.Block, parent, lastSettled *Block, log logging.Logger) (*Blo
 
 	inMemoryBlockCount.Add(1)
 	runtime.AddCleanup(b, func(struct{}) {
-		inMemoryBlockCount.Add(math.MaxUint64) // -1
+		inMemoryBlockCount.Add(-1)
 	}, struct{}{})
 
 	if err := b.setAncestors(parent, lastSettled); err != nil {
