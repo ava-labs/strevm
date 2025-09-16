@@ -44,10 +44,6 @@ func newChain(tb testing.TB, startHeight, total uint64, lastSettledAtHeight map[
 	)
 	byNum := make(map[uint64]*Block)
 
-	if lastSettledAtHeight == nil {
-		lastSettledAtHeight = make(map[uint64]uint64)
-	}
-
 	for i := range total {
 		n := startHeight + i
 
