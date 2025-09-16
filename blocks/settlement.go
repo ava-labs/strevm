@@ -40,6 +40,15 @@ func (b *Block) MarkSettled() error {
 	return nil
 }
 
+// MarkSynchronous is a special case of [Block.MarkSettled], reserved for the
+// last pre-SAE block, which MAY be the genesis block. These are, by definition,
+// self-settling so require special treatment as such behaviour is impossible
+// under SAE rules.
+func (b *Block) MarkSynchronous() error {
+	b.synchronous = true
+	return b.MarkSettled()
+}
+
 // WaitUntilSettled blocks until either [Block.MarkSettled] is called or the
 // [context.Context] is cancelled.
 func (b *Block) WaitUntilSettled(ctx context.Context) error {
@@ -77,6 +86,9 @@ func (b *Block) ParentBlock() *Block {
 // unless [Block.MarkSettled] has been called, in which case it returns nil.
 // Note that this value might not be distinct between contiguous blocks.
 func (b *Block) LastSettled() *Block {
+	if b.synchronous {
+		return b
+	}
 	return b.ancestor(getSettledOfSettledErrMsg, func(a *ancestry) *Block {
 		return a.lastSettled
 	})
@@ -91,6 +103,9 @@ func (b *Block) LastSettled() *Block {
 // It is not valid to call Settles after a call to [Block.MarkSettled] on either
 // b or its parent.
 func (b *Block) Settles() []*Block {
+	if b.synchronous {
+		return []*Block{b}
+	}
 	return settling(b.ParentBlock().LastSettled(), b.LastSettled())
 }
 
@@ -124,7 +139,7 @@ func settling(lastOfParent, lastOfCurr *Block) []*Block {
 	var settling []*Block
 	// TODO(arr4n) abstract this to combine functionality with iterators
 	// introduced by @StephenButtolph.
-	for s := lastOfCurr; s.ParentBlock() != nil && s.Hash() != lastOfParent.Hash(); s = s.ParentBlock() {
+	for s := lastOfCurr; s.Hash() != lastOfParent.Hash(); s = s.ParentBlock() {
 		settling = append(settling, s)
 	}
 	slices.Reverse(settling)

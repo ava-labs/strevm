@@ -51,13 +51,26 @@ func newChain(tb testing.TB, startHeight, total uint64, lastSettledAtHeight map[
 	for i := range total {
 		n := startHeight + i
 
-		var settle *Block
+		var (
+			settle      *Block
+			synchronous bool
+		)
 		if s, ok := lastSettledAtHeight[n]; ok {
-			settle = byNum[s]
+			if s == n {
+				require.Equal(tb, uint64(0), s, "Only genesis block is self-settling")
+				synchronous = true
+			} else {
+				require.Less(tb, s, n, "Last-settled height MUST be <= current height")
+				settle = byNum[s]
+			}
 		}
 
-		byNum[n] = newBlock(tb, newEthBlock(n, n /*time*/, ethParent), parent, settle)
-		blocks = append(blocks, byNum[n])
+		b := newBlock(tb, newEthBlock(n, n /*time*/, ethParent), parent, settle)
+		byNum[n] = b
+		blocks = append(blocks, b)
+		if synchronous {
+			require.NoError(tb, b.MarkSynchronous(), "MarkSynchronous()")
+		}
 
 		parent = byNum[n]
 		ethParent = parent.EthBlock()

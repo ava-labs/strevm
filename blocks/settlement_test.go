@@ -140,7 +140,7 @@ func TestSettles(t *testing.T) {
 		9: 7,
 	}
 	wantSettles := map[uint64][]uint64{
-		// It is not valid to call Settles() on the genesis block
+		0: {0},
 		1: nil,
 		2: nil,
 		3: nil,
