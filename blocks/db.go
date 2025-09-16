@@ -20,7 +20,10 @@ import (
 /* ===== Common =====*/
 
 func blockNumDBKey(prefix string, blockNum uint64) []byte {
-	return binary.BigEndian.AppendUint64([]byte(prefix), blockNum)
+	n := len(prefix)
+	key := make([]byte, n, n+8)
+	copy(key, prefix)
+	return binary.BigEndian.AppendUint64(key, blockNum)
 }
 
 func (b *Block) writeToKVStore(w ethdb.KeyValueWriter, key func(uint64) []byte, val []byte) error {
