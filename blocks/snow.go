@@ -30,12 +30,12 @@ func (b *Block) Parent() ids.ID {
 }
 
 // Bytes returns the RLP encoding of the wrapped [types.Block]. If encoding
-// returns an error, it is logged at the WARNING level and a nil slice is
+// returns an error, it is logged at the ERROR level and a nil slice is
 // returned.
 func (b *Block) Bytes() []byte {
 	buf, err := rlp.EncodeToBytes(b)
 	if err != nil {
-		b.log.Warn("RLP encoding error", zap.Error(err))
+		b.log.Error("RLP encoding error", zap.Error(err))
 		return nil
 	}
 	return buf
