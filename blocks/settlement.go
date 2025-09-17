@@ -155,7 +155,14 @@ func settling(lastOfParent, lastOfCurr *Block) []*Block {
 //
 // See the Example for [Block.WhenChildSettles] for one usage of the returned
 // block.
-func LastToSettleAt(settleAt uint64, parent *Block) (*Block, bool) {
+func LastToSettleAt(settleAt uint64, parent *Block) (b *Block, ok bool) {
+	defer func() {
+		// Avoids having to perform this check at every return.
+		if !ok {
+			b = nil
+		}
+	}()
+
 	// A block can be the last to settle at some time i.f.f. two criteria are
 	// met:
 	//
@@ -174,6 +181,12 @@ func LastToSettleAt(settleAt uint64, parent *Block) (*Block, bool) {
 	// therefore we have a guarantee that the loop update will never result in
 	// `block==nil`.
 	for block := parent; ; block = block.ParentBlock() {
+		// Guarantees that the loop will always exit as the last pre-SAE block
+		// (perhaps the genesis) is always settled, by definition.
+		if settled := block.ancestry.Load() == nil; settled {
+			return block, known
+		}
+
 		if startsNoEarlierThan := block.BuildTime(); startsNoEarlierThan > settleAt {
 			known = true
 			continue
