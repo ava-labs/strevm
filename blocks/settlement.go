@@ -40,6 +40,15 @@ func (b *Block) MarkSettled() error {
 	return nil
 }
 
+// MarkSynchronous is a special case of [Block.MarkSettled], reserved for the
+// last pre-SAE block, which MAY be the genesis block. These are, by definition,
+// self-settling so require special treatment as such behaviour is impossible
+// under SAE rules.
+func (b *Block) MarkSynchronous() error {
+	b.synchronous = true
+	return b.MarkSettled()
+}
+
 // WaitUntilSettled blocks until either [Block.MarkSettled] is called or the
 // [context.Context] is cancelled.
 func (b *Block) WaitUntilSettled(ctx context.Context) error {
@@ -77,6 +86,9 @@ func (b *Block) ParentBlock() *Block {
 // unless [Block.MarkSettled] has been called, in which case it returns nil.
 // Note that this value might not be distinct between contiguous blocks.
 func (b *Block) LastSettled() *Block {
+	if b.synchronous {
+		return b
+	}
 	return b.ancestor(getSettledOfSettledErrMsg, func(a *ancestry) *Block {
 		return a.lastSettled
 	})
@@ -91,28 +103,32 @@ func (b *Block) LastSettled() *Block {
 // It is not valid to call Settles after a call to [Block.MarkSettled] on either
 // b or its parent.
 func (b *Block) Settles() []*Block {
+	if b.synchronous {
+		return []*Block{b}
+	}
 	return settling(b.ParentBlock().LastSettled(), b.LastSettled())
 }
 
-// ChildSettles returns the blocks that would be settled by a child of `b`,
-// given the last-settled block at the child's block time. Note that the
+// WhenChildSettles returns the blocks that would be settled by a child of `b`,
+// given the last-settled block at that child's block time. Note that the
 // last-settled block at the child's time MAY be equal to the last-settled of
-// `b` (its parent), in which case ChildSettles returns an empty slice.
+// `b` (its parent), in which case WhenChildSettles returns an empty slice.
 //
 // The argument is typically the return value of [LastToSettleAt], where that
 // function receives `b` as the parent. See the Example.
 //
-// ChildSettles MUST only be called before the call to [Block.MarkSettled] on
-// `b`. The intention is that this method is called on the VM's preferred block,
-// which always meets this criterion. This is by definition of settlement, which
-// requires that at least one descendant block has already been accepted, which
-// the preference never has.
+// WhenChildSettles MUST only be called before the call to [Block.MarkSettled]
+// on `b`. The intention is that this method is called on the VM's preferred
+// block, which always meets this criterion. This is by definition of
+// settlement, which requires that at least one descendant block has already
+// been accepted, which the preference never has.
 //
-// ChildSettles is similar to [Block.Settles] but with different definitions of
-// `x` and `y` (as described in [Block.Settles]). It is intended for use during
-// block building and defines `x` as the block height of `b.LastSettled()` while
-// `y` as the height of the argument passed to this method.
-func (b *Block) ChildSettles(lastSettledOfChild *Block) []*Block {
+// WhenChildSettles is similar to [Block.Settles] but with different definitions
+// of `x` and `y` (as described in [Block.Settles]). It is intended for use
+// during block building and defines `x` as the block height of
+// `b.LastSettled()` while `y` as the height of the argument passed to this
+// method.
+func (b *Block) WhenChildSettles(lastSettledOfChild *Block) []*Block {
 	return settling(b.LastSettled(), lastSettledOfChild)
 }
 
@@ -124,7 +140,7 @@ func settling(lastOfParent, lastOfCurr *Block) []*Block {
 	var settling []*Block
 	// TODO(arr4n) abstract this to combine functionality with iterators
 	// introduced by @StephenButtolph.
-	for s := lastOfCurr; s.ParentBlock() != nil && s.Hash() != lastOfParent.Hash(); s = s.ParentBlock() {
+	for s := lastOfCurr; s.Hash() != lastOfParent.Hash(); s = s.ParentBlock() {
 		settling = append(settling, s)
 	}
 	slices.Reverse(settling)
@@ -137,7 +153,7 @@ func settling(lastOfParent, lastOfCurr *Block) []*Block {
 // execution stream is lagging and LastToSettleAt can be called again after some
 // indeterminate delay.
 //
-// See the Example for [Block.ChildSettles] for one usage of the returned
+// See the Example for [Block.WhenChildSettles] for one usage of the returned
 // block.
 func LastToSettleAt(settleAt uint64, parent *Block) (*Block, bool) {
 	// The only way [Block.ParentBlock] can be nil is if `block` was already

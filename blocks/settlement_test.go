@@ -24,7 +24,7 @@ import (
 )
 
 //nolint:testableexamples // Output is meaningless
-func ExampleBlock_ChildSettles() {
+func ExampleBlock_WhenChildSettles() {
 	parent := blockBuildingPreference()
 	settle, ok := LastToSettleAt(uint64(time.Now().Unix()), parent) //nolint:gosec // Time won't overflow for quite a while
 	if !ok {
@@ -33,7 +33,7 @@ func ExampleBlock_ChildSettles() {
 
 	// Returns the (possibly empty) slice of blocks that would be settled by the
 	// block being built.
-	_ = parent.ChildSettles(settle)
+	_ = parent.WhenChildSettles(settle)
 }
 
 // blockBuildingPreference exists only to allow examples to build.
@@ -69,8 +69,8 @@ func TestSettlementInvariants(t *testing.T) {
 		assert.NoError(t, b.WaitUntilSettled(context.Background()), "WaitUntilSettled()")
 		assert.NoError(t, b.CheckInvariants(Settled), "CheckInvariants(Settled)")
 
-		var rec saetest.LogRecorder
-		b.log = &rec
+		rec := saetest.NewLogRecorder(logging.Warn)
+		b.log = rec
 		assertNumErrorLogs := func(t *testing.T, want int) {
 			t.Helper()
 			assert.Len(t, rec.At(logging.Error), want, "Number of ERROR")
@@ -140,7 +140,7 @@ func TestSettles(t *testing.T) {
 		9: 7,
 	}
 	wantSettles := map[uint64][]uint64{
-		// It is not valid to call Settles() on the genesis block
+		0: {0},
 		1: nil,
 		2: nil,
 		3: nil,
@@ -177,27 +177,27 @@ func TestSettles(t *testing.T) {
 
 	for _, b := range blocks[1:] {
 		tests = append(tests, testCase{
-			name: fmt.Sprintf("Block(%d).IfChildSettles([same as parent])", b.Height()),
-			got:  b.ChildSettles(b.LastSettled()),
+			name: fmt.Sprintf("Block(%d).WhenChildSettles([same as parent])", b.Height()),
+			got:  b.WhenChildSettles(b.LastSettled()),
 			want: nil,
 		})
 	}
 
 	tests = append(tests, []testCase{
 		{
-			got:  blocks[7].ChildSettles(blocks[3]),
+			got:  blocks[7].WhenChildSettles(blocks[3]),
 			want: nil,
 		},
 		{
-			got:  blocks[7].ChildSettles(blocks[4]),
+			got:  blocks[7].WhenChildSettles(blocks[4]),
 			want: numsToBlocks(4),
 		},
 		{
-			got:  blocks[7].ChildSettles(blocks[5]),
+			got:  blocks[7].WhenChildSettles(blocks[5]),
 			want: numsToBlocks(4, 5),
 		},
 		{
-			got:  blocks[7].ChildSettles(blocks[6]),
+			got:  blocks[7].WhenChildSettles(blocks[6]),
 			want: numsToBlocks(4, 5, 6),
 		},
 	}...)

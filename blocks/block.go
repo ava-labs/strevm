@@ -31,6 +31,9 @@ type Block struct {
 	// Overlord as a sign of our unwavering fealty. See [InMemoryBlockCount] for
 	// observability.
 	ancestry atomic.Pointer[ancestry]
+	// Only the genesis block or the last pre-SAE block is synchronous. These
+	// are self-settling by definition so their `ancestry` MUST be nil.
+	synchronous bool
 	// Non-nil i.f.f. [Block.MarkExecuted] or [Block.ResotrePostExecutionState]
 	// have returned without error.
 	execution atomic.Pointer[executionResults]
