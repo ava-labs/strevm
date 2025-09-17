@@ -156,39 +156,50 @@ func settling(lastOfParent, lastOfCurr *Block) []*Block {
 // See the Example for [Block.WhenChildSettles] for one usage of the returned
 // block.
 func LastToSettleAt(settleAt uint64, parent *Block) (*Block, bool) {
-	// These variables are only abstracted for clarity; they are not needed
-	// beyond the scope of the `for` loop.
-	var block, child *Block
-	block = parent // therefore `child` remains nil because it's what we're building
+	// A block can be the last to settle at some time i.f.f. two criteria are
+	// met:
+	//
+	// 1. The block has finished execution by said time and;
+	//
+	// 2. The block's child is known to have *not* finished execution or be
+	//    unable to finish by that time.
+	//
+	// The block currently being built can never finish in time, so we start
+	// with criterion (2) being met.
+	known := true
 
 	// The only way [Block.ParentBlock] can be nil is if `block` was already
 	// settled (see invariant in [Block]). If a block was already settled then
 	// only that or a later (i.e. unsettled) block can be returned by this loop,
 	// therefore we have a guarantee that the loop update will never result in
 	// `block==nil`.
-	for ; ; block, child = block.ParentBlock(), block {
+	for block := parent; ; block = block.ParentBlock() {
 		if startsNoEarlierThan := block.BuildTime(); startsNoEarlierThan > settleAt {
+			known = true
 			continue
 		}
+		// TODO(arr4n) more fine-grained checks are possible by computing the
+		// minimum possible gas consumption of blocks. For example,
+		// `block.BuildTime()+block.intrinsicGasSum()` can be compared against
+		// `settleAt`, as can the sum of a chain of blocks.
 
 		if t := block.executionExceededSecond.Load(); t != nil && *t >= settleAt {
+			known = true
 			continue
 		}
 		if e := block.execution.Load(); e != nil {
 			if e.byGas.CompareUnix(settleAt) > 0 {
 				// There may have been a race between this check and the
 				// execution-exceeded one above, so we have to check again.
+				known = true
 				continue
 			}
-			return block, true
+			return block, known
 		}
 
-		// TODO(arr4n) more fine-grained checks are possible for scenarios where
-		// (a) `block` could never execute before `settleAt` so we would
-		// `continue`; and (b) `block` will definitely execute in time and
-		// `child` could never, in which case return `nil, false`.
-		_ = child
-
-		return nil, false
+		// Note that a grandchild block having unknown execution completion time
+		// does not rule out knowing a child's completion time, so this could be
+		// set to true in a future loop iteration.
+		known = false
 	}
 }

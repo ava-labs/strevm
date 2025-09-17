@@ -272,6 +272,11 @@ func TestLastToSettleAt(t *testing.T) {
 	requireTime(t, 13, 1)
 	blocks[8].markExecutedForTests(t, db, tm)
 
+	require.False(
+		t, blocks[9].Executed(),
+		"Block 9 MUST remain unexecuted", // exercises lagging-execution logic when building on 9
+	)
+
 	for i, b := range blocks {
 		// Setting interim execution time isn't required for the algorithm to
 		// work as it just allows [LastToSettleAt] to return definitive results
@@ -327,14 +332,8 @@ func TestLastToSettleAt(t *testing.T) {
 		{
 			settleAt: 9,
 			parent:   blocks[9],
-			// The current implementation is very coarse-grained and MAY return
-			// false negatives that would simply require a retry after some
-			// indeterminate period of time. Even though the execution time of
-			// `blocks[8]` guarantees that `blocks[9]` MUST finish execution
-			// after the settlement time, our current implementation doesn't
-			// check this. It is expected that this specific test case will one
-			// day fail, at which point it MUST be updated to want `blocks[7]`.
-			wantOK: false,
+			wantOK:   true,
+			want:     blocks[7],
 		},
 		{
 			settleAt: 15,
