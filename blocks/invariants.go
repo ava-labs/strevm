@@ -10,17 +10,8 @@ import (
 	"github.com/ava-labs/libevm/trie"
 )
 
-type brokenInvariant struct {
-	b   *Block
-	msg string
-}
-
-func (err brokenInvariant) Error() string {
-	return fmt.Sprintf("block %d: %s", err.b.Height(), err.msg)
-}
-
 func (b *Block) brokenInvariantErr(msg string) error {
-	return brokenInvariant{b: b, msg: msg}
+	return fmt.Errorf("block %d: %s", b.Height(), msg)
 }
 
 // A LifeCycleStage defines the progression of a block from acceptance through
