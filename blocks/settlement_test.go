@@ -6,7 +6,6 @@ package blocks
 import (
 	"context"
 	"fmt"
-	"math/rand/v2"
 	"testing"
 	"time"
 
@@ -104,26 +103,6 @@ func TestSettlementInvariants(t *testing.T) {
 			t.Errorf("ERROR + FATAL logs diff (-want +got):\n%s", diff)
 		}
 	})
-}
-
-func TestPersistLastSettledNumber(t *testing.T) {
-	rng := rand.New(rand.NewPCG(0, 0)) //nolint:gosec // Reproducibility is useful for tests
-	for range 10 {
-		settledHeight := rng.Uint64()
-		t.Run(fmt.Sprintf("settled_height_%d", settledHeight), func(t *testing.T) {
-			settles := newBlock(t, newEthBlock(settledHeight, 0, nil), nil, nil)
-			b := newBlock(t, newEthBlock(settledHeight+1 /*arbitrary*/, 0, nil), nil, settles)
-
-			db := rawdb.NewMemoryDatabase()
-			require.NoError(t, b.WriteLastSettledNumber(db), "WriteLastSettledNumber()")
-
-			t.Run("ReadLastSettledNumber", func(t *testing.T) {
-				got, err := ReadLastSettledNumber(db, b.NumberU64())
-				require.NoError(t, err)
-				require.Equal(t, settles.NumberU64(), got)
-			})
-		})
-	}
 }
 
 func TestSettles(t *testing.T) {

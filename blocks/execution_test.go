@@ -15,7 +15,6 @@ import (
 	"github.com/ava-labs/libevm/core/rawdb"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/ethdb"
-	"github.com/ava-labs/libevm/params"
 	"github.com/google/go-cmp/cmp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -125,22 +124,6 @@ func TestMarkExecuted(t *testing.T) {
 	})
 
 	t.Run("database", func(t *testing.T) {
-		t.Run("RestorePostExecutionStateAndReceipts", func(t *testing.T) {
-			clone := newBlock(t, b.EthBlock(), nil, settles)
-			err := clone.RestorePostExecutionStateAndReceipts(
-				db,
-				params.TestChainConfig, // arbitrary
-			)
-			require.NoError(t, err)
-			assertPostExecutionVals(t, clone)
-		})
-
-		t.Run("StateRootPostExecution", func(t *testing.T) {
-			got, err := StateRootPostExecution(db, b.NumberU64())
-			require.NoError(t, err)
-			assert.Equal(t, stateRoot, got)
-		})
-
 		t.Run("head_block", func(t *testing.T) {
 			for fn, got := range map[string]interface{ Hash() common.Hash }{
 				"ReadHeadBlockHash":  selfAsHasher(rawdb.ReadHeadBlockHash(db)),

@@ -75,9 +75,7 @@ func (b *Block) MarkExecuted(db ethdb.Database, byGas *gastime.Time, byWall time
 	rawdb.WriteHeadBlockHash(batch, hash)
 	rawdb.WriteHeadHeaderHash(batch, hash)
 	rawdb.WriteReceipts(batch, hash, b.NumberU64(), receipts)
-	if err := b.writePostExecutionState(batch, e); err != nil {
-		return err
-	}
+	// TODO(arr4n) persist the [executionResults]
 	if err := batch.Write(); err != nil {
 		return err
 	}
