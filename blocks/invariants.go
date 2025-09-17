@@ -10,10 +10,6 @@ import (
 	"github.com/ava-labs/libevm/trie"
 )
 
-func (b *Block) brokenInvariantErr(msg string) error {
-	return fmt.Errorf("block %d: %s", b.Height(), msg)
-}
-
 // A LifeCycleStage defines the progression of a block from acceptance through
 // to settlement.
 type LifeCycleStage int
@@ -27,6 +23,10 @@ const (
 
 	Accepted = NotExecuted
 )
+
+func (b *Block) brokenInvariantErr(msg string) error {
+	return fmt.Errorf("block %d: %s", b.Height(), msg)
+}
 
 // CheckInvariants checks internal invariants against expected stage, typically
 // only used during database recovery.
