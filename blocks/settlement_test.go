@@ -272,6 +272,11 @@ func TestLastToSettleAt(t *testing.T) {
 	requireTime(t, 13, 1)
 	blocks[8].markExecutedForTests(t, db, tm)
 
+	require.False(
+		t, blocks[9].Executed(),
+		"Block 9 MUST remain unexecuted", // exercises lagging-execution logic when building on 9
+	)
+
 	for i, b := range blocks {
 		// Setting interim execution time isn't required for the algorithm to
 		// work as it just allows [LastToSettleAt] to return definitive results
