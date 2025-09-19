@@ -37,8 +37,8 @@ func (b *Block) SetInterimExecutionTime(t *proxytime.Time[gas.Gas]) {
 }
 
 type executionResults struct {
-	byGas  gastime.Time `canoto:"value,1"`
-	byWall time.Time    // For metrics only; allowed to be incorrect.
+	byGas  gastime.Time
+	byWall time.Time // For metrics only; allowed to be incorrect.
 
 	baseFee *big.Int
 	// Receipts are deliberately not stored by the canoto representation as they
@@ -46,10 +46,8 @@ type executionResults struct {
 	// either accept a [types.Receipts] for comparison against the
 	// `receiptRoot`, or don't care about receipts at all.
 	receipts      types.Receipts
-	receiptRoot   common.Hash `canoto:"fixed bytes,2"`
-	stateRootPost common.Hash `canoto:"fixed bytes,3"`
-
-	canotoData canotoData_executionResults
+	receiptRoot   common.Hash
+	stateRootPost common.Hash
 }
 
 // MarkExecuted marks the block as having been executed at the specified time(s)
