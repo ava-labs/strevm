@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math/big"
 	"slices"
 	"time"
 
@@ -39,6 +40,7 @@ type executionResults struct {
 	byGas  gastime.Time `canoto:"value,1"`
 	byWall time.Time    // For metrics only; allowed to be incorrect.
 
+	baseFee *big.Int
 	// Receipts are deliberately not stored by the canoto representation as they
 	// are already in the database. All methods that read the stored canoto
 	// either accept a [types.Receipts] for comparison against the
@@ -61,10 +63,11 @@ type executionResults struct {
 // This method MUST NOT be called more than once and its usage is mutually
 // exclusive of [Block.RestorePostExecutionState]. The wall-clock [time.Time] is
 // for metrics only.
-func (b *Block) MarkExecuted(db ethdb.Database, byGas *gastime.Time, byWall time.Time, receipts types.Receipts, stateRootPost common.Hash) error {
+func (b *Block) MarkExecuted(db ethdb.Database, byGas *gastime.Time, byWall time.Time, baseFee *big.Int, receipts types.Receipts, stateRootPost common.Hash) error {
 	e := &executionResults{
 		byGas:         *byGas.Clone(),
 		byWall:        byWall,
+		baseFee:       new(big.Int).Set(baseFee),
 		receipts:      slices.Clone(receipts),
 		receiptRoot:   types.DeriveSha(receipts, trie.NewStackTrie(nil)),
 		stateRootPost: stateRootPost,
@@ -139,6 +142,14 @@ func (b *Block) ExecutedByGasTime() *gastime.Time {
 func (b *Block) ExecutedByWallTime() time.Time {
 	return executionArtefact(b, "execution (wall) time", func(e *executionResults) time.Time {
 		return e.byWall
+	})
+}
+
+// BaseFee returns the base gas price passed to [Block.MarkExecuted] or nil if
+// no such successful call has been made.
+func (b *Block) BaseFee() *big.Int {
+	return executionArtefact(b, "receipts", func(e *executionResults) *big.Int {
+		return new(big.Int).Set(e.baseFee)
 	})
 }
 

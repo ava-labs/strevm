@@ -27,7 +27,7 @@ import (
 // post-execution artefacts (other than the gas time).
 func (b *Block) markExecutedForTests(tb testing.TB, db ethdb.Database, tm *gastime.Time) {
 	tb.Helper()
-	require.NoError(tb, b.MarkExecuted(db, tm, time.Time{}, nil, common.Hash{}), "MarkExecuted()")
+	require.NoError(tb, b.MarkExecuted(db, tm, time.Time{}, new(big.Int), nil, common.Hash{}), "MarkExecuted()")
 }
 
 func TestMarkExecuted(t *testing.T) {
@@ -74,6 +74,7 @@ func TestMarkExecuted(t *testing.T) {
 			call   func() any
 		}{
 			{"ExecutedByGasTime()", func() any { return b.ExecutedByGasTime() }},
+			{"BaseFee()", func() any { return b.BaseFee() }},
 			{"Receipts()", func() any { return b.Receipts() }},
 			{"PostExecutionStateRoot()", func() any { return b.PostExecutionStateRoot() }},
 		}
@@ -86,22 +87,23 @@ func TestMarkExecuted(t *testing.T) {
 	gasTime := gastime.New(42, 1e6, 42)
 	wallTime := time.Unix(42, 100)
 	stateRoot := common.Hash{'s', 't', 'a', 't', 'e'}
+	baseFee := big.NewInt(314159)
 	var receipts types.Receipts
 	for _, tx := range txs {
 		receipts = append(receipts, &types.Receipt{
 			TxHash: tx.Hash(),
 		})
 	}
-	require.NoError(t, b.MarkExecuted(db, gasTime, wallTime, receipts, stateRoot), "MarkExecuted()")
+	require.NoError(t, b.MarkExecuted(db, gasTime, wallTime, baseFee, receipts, stateRoot), "MarkExecuted()")
 
-	assertPostExecutionVals := func(t *testing.T, b *Block) {
-		t.Helper()
+	t.Run("after_MarkExecuted", func(t *testing.T) {
 		require.True(t, b.Executed(), "Executed()")
 		assert.NoError(t, b.CheckInvariants(Executed), "CheckInvariants(Executed)")
 
 		require.NoError(t, b.WaitUntilExecuted(context.Background()), "WaitUntilExecuted()")
 
 		assert.Zero(t, b.ExecutedByGasTime().Compare(gasTime.Time), "ExecutedByGasTime().Compare([original input])")
+		assert.Zero(t, b.BaseFee().Cmp(baseFee), "BaseFee().Cmp([original input])")
 		assert.Empty(t, cmp.Diff(receipts, b.Receipts(), saetest.CmpByMerkleRoots[types.Receipts]()), "Receipts()")
 
 		assert.Equal(t, stateRoot, b.PostExecutionStateRoot(), "PostExecutionStateRoot()") // i.e. this block
@@ -113,14 +115,11 @@ func TestMarkExecuted(t *testing.T) {
 		t.Run("MarkExecuted_again", func(t *testing.T) {
 			rec := saetest.NewLogRecorder(logging.Warn)
 			b.log = rec
-			assert.ErrorIs(t, b.MarkExecuted(db, gasTime, wallTime, receipts, stateRoot), errMarkBlockExecutedAgain)
+			assert.ErrorIs(t, b.MarkExecuted(db, gasTime, wallTime, baseFee, receipts, stateRoot), errMarkBlockExecutedAgain)
 			// The database's head block might have been corrupted so this MUST
 			// be a fatal action.
 			assert.Len(t, rec.At(logging.Fatal), 1, "FATAL logs")
 		})
-	}
-	t.Run("after_MarkExecuted", func(t *testing.T) {
-		assertPostExecutionVals(t, b)
 	})
 
 	t.Run("database", func(t *testing.T) {
