@@ -44,6 +44,10 @@ func (b *Block) MarkSettled() error {
 // last pre-SAE block, which MAY be the genesis block. These are, by definition,
 // self-settling so require special treatment as such behaviour is impossible
 // under SAE rules.
+//
+// Wherever MarkSynchronous results in different behaviour to
+// [Block.MarkSettled], the respective methods are documented as such. They can
+// otherwise be considered identical.
 func (b *Block) MarkSynchronous() error {
 	b.synchronous = true
 	return b.MarkSettled()
@@ -83,8 +87,9 @@ func (b *Block) ParentBlock() *Block {
 }
 
 // LastSettled returns the last-settled block at the time of b's acceptance,
-// unless [Block.MarkSettled] has been called, in which case it returns nil.
-// Note that this value might not be distinct between contiguous blocks.
+// unless [Block.MarkSettled] has been called, in which case it returns nil. If
+// [Block.MarkSynchronous] was called instead, LastSettled always returns `b`
+// itself. Note that this value might not be distinct between contiguous blocks.
 func (b *Block) LastSettled() *Block {
 	if b.synchronous {
 		return b
@@ -101,7 +106,8 @@ func (b *Block) LastSettled() *Block {
 // therefore returns a disjoint (and possibly empty) set of historical blocks.
 //
 // It is not valid to call Settles after a call to [Block.MarkSettled] on either
-// b or its parent.
+// b or its parent. If [Block.MarkSynchronous] was called instead, Settles
+// always returns a single-element slice of `b` itself.
 func (b *Block) Settles() []*Block {
 	if b.synchronous {
 		return []*Block{b}
