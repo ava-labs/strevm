@@ -79,7 +79,7 @@ const (
 )
 
 // ParentBlock returns the block's parent unless [Block.MarkSettled] has been
-// called, in which case it returns nil.
+// called, in which case it returns nil and logs an error.
 func (b *Block) ParentBlock() *Block {
 	return b.ancestor(getParentOfSettledErrMsg, func(a *ancestry) *Block {
 		return a.parent
@@ -87,9 +87,10 @@ func (b *Block) ParentBlock() *Block {
 }
 
 // LastSettled returns the last-settled block at the time of b's acceptance,
-// unless [Block.MarkSettled] has been called, in which case it returns nil. If
-// [Block.MarkSynchronous] was called instead, LastSettled always returns `b`
-// itself. Note that this value might not be distinct between contiguous blocks.
+// unless [Block.MarkSettled] has been called, in which case it returns nil and
+// logs an error. If [Block.MarkSynchronous] was called instead, LastSettled
+// always returns `b` itself, without logging. Note that this value might not be
+// distinct between contiguous blocks.
 func (b *Block) LastSettled() *Block {
 	if b.synchronous {
 		return b
