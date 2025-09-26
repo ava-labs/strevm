@@ -28,3 +28,26 @@ func pathIncludes[T any](p cmp.Path) bool {
 	}
 	return false
 }
+
+// WithNilCheck returns a function that returns:
+//
+//	   true if both a and b are nil
+//	  false if exactly one of a or b is nil
+//	fn(a,b) if neither a nor b are nil
+func WithNilCheck[T any](fn func(*T, *T) bool) func(*T, *T) bool {
+	return func(a, b *T) bool {
+		switch an, bn := a == nil, b == nil; {
+		case an && bn:
+			return true
+		case an || bn:
+			return false
+		}
+		return fn(a, b)
+	}
+}
+
+// ComparerWithNilCheck is a convenience wrapper, returning a [cmp.Comparer]
+// after wrapping `fn` in [WithNilCheck].
+func ComparerWithNilCheck[T any](fn func(*T, *T) bool) cmp.Option {
+	return cmp.Comparer(WithNilCheck(fn))
+}
