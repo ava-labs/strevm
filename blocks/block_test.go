@@ -53,7 +53,7 @@ func newChain(tb testing.TB, startHeight, total uint64, lastSettledAtHeight map[
 		)
 		if s, ok := lastSettledAtHeight[n]; ok {
 			if s == n {
-				require.Equal(tb, uint64(0), s, "Only genesis block is self-settling")
+				require.Zero(tb, s, "Only genesis block is self-settling")
 				synchronous = true
 			} else {
 				require.Less(tb, s, n, "Last-settled height MUST be <= current height")
