@@ -92,8 +92,8 @@ func (tm *Time[D]) Tick(d D) {
 
 // FastForwardTo sets the time to the specified Unix timestamp and fraction of a
 // second, if it is in the future, returning the integer and fraction number of
-// seconds by which the time was advanced. The returned fraction is always
-// denominated in [Time.Rate].
+// seconds by which the time was advanced. Both the incoming argument and the
+// returned fraction are denominated in [Time.Rate].
 func (tm *Time[D]) FastForwardTo(to uint64, toFrac D) (uint64, FractionalSecond[D]) {
 	to += uint64(toFrac / tm.hertz)
 	toFrac %= tm.hertz
