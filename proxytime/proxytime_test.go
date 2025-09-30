@@ -246,9 +246,16 @@ func TestFastForward(t *testing.T) {
 	steps := []struct {
 		tickBefore uint64
 		ffTo       uint64
+		ffToFrac   uint64
 		wantSec    uint64
 		wantFrac   FractionalSecond[uint64]
 	}{
+		{
+			tickBefore: 0,
+			ffTo:       41, // in the past
+			wantSec:    0,
+			wantFrac:   frac(0, rate),
+		},
 		{
 			tickBefore: 100, // 42.100
 			ffTo:       42,  // in the past
@@ -273,13 +280,32 @@ func TestFastForward(t *testing.T) {
 			wantSec:    5,
 			wantFrac:   frac(800, rate),
 		},
+		{
+			ffTo:     50,
+			ffToFrac: 900,
+			wantSec:  0,
+			wantFrac: frac(900, rate),
+		},
+		{
+			ffTo:     51,
+			ffToFrac: 100,
+			wantSec:  0,
+			wantFrac: frac(200, rate),
+		},
+		{
+			tickBefore: 100,
+			ffTo:       51,
+			ffToFrac:   200,
+			wantSec:    0,
+			wantFrac:   frac(0, rate),
+		},
 	}
 
 	for _, s := range steps {
 		tm.Tick(s.tickBefore)
-		gotSec, gotFrac := tm.FastForwardTo(s.ffTo)
-		assert.Equal(t, s.wantSec, gotSec)
-		assert.Equal(t, s.wantFrac, gotFrac)
+		gotSec, gotFrac := tm.FastForwardTo(s.ffTo, s.ffToFrac)
+		assert.Equal(t, s.wantSec, gotSec, "Fast-forwarded seconds")
+		assert.Equal(t, s.wantFrac, gotFrac, "Fast-forwarded fractional numerator")
 
 		if t.Failed() {
 			t.FailNow()

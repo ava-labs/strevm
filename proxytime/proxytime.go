@@ -89,25 +89,45 @@ func (tm *Time[D]) Tick(d D) {
 	tm.fraction = D(rem)
 }
 
-// FastForwardTo sets the time to the specified Unix timestamp if it is in the
-// future, returning the integer and fraction number of seconds by which the
-// time was advanced. The fraction is always denominated in [Time.Rate].
-func (tm *Time[D]) FastForwardTo(to uint64) (uint64, FractionalSecond[D]) {
-	if to <= tm.seconds {
+// FastForwardTo sets the time to the specified Unix timestamp and fraction of a
+// second, if it is in the future, returning the integer and fraction number of
+// seconds by which the time was advanced. The returned fraction is always
+// denominated in [Time.Rate].
+func (tm *Time[D]) FastForwardTo(to uint64, toFrac D) (uint64, FractionalSecond[D]) {
+	to += uint64(toFrac / tm.hertz)
+	toFrac %= tm.hertz
+
+	if !tm.isFuture(to, toFrac) {
 		return 0, FractionalSecond[D]{0, tm.hertz}
 	}
 
 	sec := to - tm.seconds
 	var frac D
-	if tm.fraction > 0 {
-		frac = tm.hertz - tm.fraction
+	switch cmp.Compare(tm.fraction, toFrac) {
+	case -1:
+		frac = toFrac - tm.fraction
+	case 0:
+		_ = frac // coverage visualisation
+	case 1:
+		frac = tm.hertz - (tm.fraction - toFrac)
 		sec--
 	}
 
 	tm.seconds = to
-	tm.fraction = 0
+	tm.fraction = toFrac
 
 	return sec, FractionalSecond[D]{frac, tm.hertz}
+}
+
+func (tm *Time[D]) isFuture(sec uint64, num D) bool {
+	switch cmp.Compare(sec, tm.seconds) {
+	case -1:
+		return false
+	case 1:
+		return true
+	default:
+		return num > tm.fraction
+	}
 }
 
 // SetRate changes the unit rate at which time passes. The requisite integer
