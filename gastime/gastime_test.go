@@ -177,9 +177,10 @@ func TestExcess(t *testing.T) {
 	steps := []struct {
 		desc string
 		// Only one of fast-forwarding or ticking per step.
-		ffToBefore uint64
-		tickBefore gas.Gas
-		want       state
+		ffToBefore     uint64
+		ffToBeforeFrac gas.Gas
+		tickBefore     gas.Gas
+		want           state
 	}{
 		{
 			desc:       "initial tick 1/2s",
@@ -236,6 +237,26 @@ func TestExcess(t *testing.T) {
 			},
 		},
 		{
+			desc:           "fast forward 0.5s to 13.5s",
+			ffToBefore:     55,
+			ffToBeforeFrac: rate / 2,
+			want: state{
+				UnixTime:           55,
+				ConsumedThisSecond: frac(rate / 2),
+				Excess:             45*rate/8 - 7*rate/8 - (rate/2)/2,
+			},
+		},
+		{
+			desc:           "fast forward 0.75s to 14.25s",
+			ffToBefore:     56,
+			ffToBeforeFrac: rate / 4,
+			want: state{
+				UnixTime:           56,
+				ConsumedThisSecond: frac(rate / 4),
+				Excess:             45*rate/8 - 7*rate/8 - (rate/2)/2 - 3*(rate/4)/2,
+			},
+		},
+		{
 			desc:       "fast forward causes overflow when seconds multiplied by R",
 			ffToBefore: math.MaxUint64,
 			want: state{
@@ -247,13 +268,16 @@ func TestExcess(t *testing.T) {
 	}
 
 	for _, s := range steps {
-		switch ff, tk := s.ffToBefore, s.tickBefore; {
-		case ff > 0 && tk > 0:
+		ffSec, ffFrac := s.ffToBefore, s.ffToBeforeFrac
+		tick := s.tickBefore
+
+		switch ff := (ffSec > 0 || ffFrac > 0); {
+		case ff && tick > 0:
 			t.Fatalf("Bad test setup (%q) only FastForward() or Tick() before", s.desc)
-		case ff > 0:
-			tm.FastForwardTo(ff)
-		case tk > 0:
-			tm.Tick(tk)
+		case ff:
+			tm.FastForwardTo(ffSec, ffFrac)
+		case tick > 0:
+			tm.Tick(tick)
 		}
 		tm.requireState(t, s.desc, s.want, ignore)
 	}
