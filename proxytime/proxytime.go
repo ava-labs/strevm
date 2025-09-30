@@ -7,6 +7,7 @@ package proxytime
 
 import (
 	"cmp"
+	"errors"
 	"fmt"
 	"math"
 	"math/bits"
@@ -128,6 +129,22 @@ func (tm *Time[D]) isFuture(sec uint64, num D) bool {
 	default:
 		return num > tm.fraction
 	}
+}
+
+var errGtSecond = errors.New("> 1s")
+
+// ConvertMilliseconds returns `ms`, which MUST be <=1000, as a fraction of a
+// second, denominated in [Time.Rate]. If [Time.Rate] is not a multiple of 1000,
+// the returned fraction will be rounded down.
+func (tm *Time[D]) ConvertMilliseconds(ms uint16) (FractionalSecond[D], error) {
+	frac := FractionalSecond[D]{
+		Denominator: tm.hertz,
+	}
+	if ms > 1000 {
+		return frac, fmt.Errorf("%d milliseconds %w", ms, errGtSecond)
+	}
+	frac.Numerator, _, _ = intmath.MulDiv(D(ms), tm.hertz, 1000)
+	return frac, nil
 }
 
 // SetRate changes the unit rate at which time passes. The requisite integer

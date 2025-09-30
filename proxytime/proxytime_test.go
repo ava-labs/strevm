@@ -5,6 +5,7 @@ package proxytime
 
 import (
 	"cmp"
+	"errors"
 	"fmt"
 	"math"
 	"testing"
@@ -309,6 +310,67 @@ func TestFastForward(t *testing.T) {
 
 		if t.Failed() {
 			t.FailNow()
+		}
+	}
+}
+
+func TestConvertMilliseconds(t *testing.T) {
+	tests := []struct {
+		rate    uint64
+		ms      uint16
+		want    uint64
+		wantErr error
+	}{
+		{
+			rate: 1000,
+			ms:   42,
+			want: 42,
+		},
+		{
+			rate: 1234 * 2,
+			ms:   1000 / 2,
+			want: 1234,
+		},
+		{
+			rate: 98765 * 4,
+			ms:   1000 / 4,
+			want: 98765,
+		},
+		{
+			rate: 142857 * 1000,
+			ms:   1,
+			want: 142857,
+		},
+		{
+			rate: 314159,
+			ms:   1000,
+			want: 314159,
+		},
+		{
+			rate:    math.MaxUint64, // arbitrary
+			ms:      1001,
+			wantErr: errGtSecond,
+		},
+		{
+			rate: 1_001,
+			ms:   500,
+			want: 500,
+		},
+		{
+			rate: 1_001,
+			ms:   1000,
+			want: 1_001,
+		},
+	}
+
+	for _, tt := range tests {
+		got, err := New(0, tt.rate).ConvertMilliseconds(tt.ms)
+		want := FractionalSecond[uint64]{
+			Numerator:   tt.want,
+			Denominator: tt.rate,
+		}
+		if got != want || !errors.Is(err, tt.wantErr) {
+			t.Errorf("New(0, %d).ConvertMilliseconds(%d) got (%v, %v); want (%v, %v)", tt.rate, tt.ms, got, err, want, tt.wantErr)
 		}
 	}
 }
