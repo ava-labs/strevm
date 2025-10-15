@@ -102,22 +102,25 @@ func (tm *Time[D]) FastForwardTo(to uint64, toFrac D) (uint64, FractionalSecond[
 		return 0, FractionalSecond[D]{0, tm.hertz}
 	}
 
-	sec := to - tm.seconds
-	var frac D
+	ffSec := to - tm.seconds
+	ffFrac := FractionalSecond[D]{
+		Denominator: tm.hertz,
+	}
+
 	switch cmp.Compare(tm.fraction, toFrac) {
 	case -1:
-		frac = toFrac - tm.fraction
+		ffFrac.Numerator = toFrac - tm.fraction
 	case 0:
-		_ = frac // coverage visualisation
+		_ = ffFrac // coverage visualisation
 	case 1:
-		frac = tm.hertz - (tm.fraction - toFrac)
-		sec--
+		ffFrac.Numerator = tm.hertz - (tm.fraction - toFrac)
+		ffSec--
 	}
 
 	tm.seconds = to
 	tm.fraction = toFrac
 
-	return sec, FractionalSecond[D]{frac, tm.hertz}
+	return ffSec, ffFrac
 }
 
 func (tm *Time[D]) isFuture(sec uint64, num D) bool {
