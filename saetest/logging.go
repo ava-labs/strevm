@@ -4,6 +4,7 @@
 package saetest
 
 import (
+	"context"
 	"runtime"
 	"slices"
 	"testing"
@@ -111,14 +112,26 @@ func (l *LogRecorder) AtLeast(lvl logging.Level) []*LogRecord {
 //
 //nolint:thelper // The outputs include the logging site while the TB site is most useful if here
 func NewTBLogger(tb testing.TB, level logging.Level) logging.Logger {
+	l, _ := NewTBLoggerAndContext(tb.Context(), tb, level)
+	return l
+}
+
+func NewTBLoggerAndContext(ctx context.Context, tb testing.TB, level logging.Level) (logging.Logger, context.Context) {
+	ctx, cancel := context.WithCancel(ctx)
+	tb.Cleanup(cancel)
+
 	return &logger{
-		level:   min(level, logging.Warn),
-		handler: &tbLogger{tb: tb},
-	}
+		level: min(level, logging.Warn),
+		handler: &tbLogger{
+			tb:    tb,
+			fatal: cancel,
+		},
+	}, ctx
 }
 
 type tbLogger struct {
-	tb testing.TB
+	tb    testing.TB
+	fatal context.CancelFunc
 }
 
 func (l *tbLogger) log(lvl logging.Level, msg string, fields ...zap.Field) {
@@ -128,6 +141,7 @@ func (l *tbLogger) log(lvl logging.Level, msg string, fields ...zap.Field) {
 		to = l.tb.Errorf
 	case lvl >= logging.Fatal:
 		to = l.tb.Fatalf
+		defer l.fatal()
 	default:
 		to = l.tb.Logf
 	}

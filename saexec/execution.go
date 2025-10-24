@@ -36,7 +36,7 @@ func (e *Executor) Enqueue(ctx context.Context, block *blocks.Block) error {
 		select {
 		case e.queue <- block:
 			return nil
-		case <-e.quit:
+		case <-e.done:
 			return errExecutorClosed
 		case <-ctx.Done():
 			return ctx.Err()
@@ -87,8 +87,18 @@ func (e *Executor) execute(b *blocks.Block, logger logging.Logger) error {
 		return fmt.Errorf("executing blocks out of order: %d then %d", last, curr)
 	}
 
+	rules := e.chainConfig.Rules(b.Number(), true, b.BuildTime())
+	scratch := &e.executeScratchSpace
+
 	target := e.hooks.GasTarget(b.ParentBlock().EthBlock())
-	if err := hook.BeforeBlock(e.gasClock, b.Header(), target); err != nil {
+	if err := hook.BeforeBlock(
+		e.hooks,
+		b.EthBlock(),
+		rules,
+		scratch.statedb.Copy(),
+		e.gasClock,
+		target,
+	); err != nil {
 		return fmt.Errorf("before-block hook: %v", err)
 	}
 	perTxClock := e.gasClock.Time.Clone()
@@ -99,7 +109,6 @@ func (e *Executor) execute(b *blocks.Block, logger logging.Logger) error {
 	gasPool := core.GasPool(math.MaxUint64) // required by geth but irrelevant so max it out
 	var blockGasConsumed gas.Gas
 
-	scratch := &e.executeScratchSpace
 	receipts := make(types.Receipts, len(b.Transactions()))
 	for ti, tx := range b.Transactions() {
 		scratch.statedb.SetTxContext(tx.Hash(), ti)
@@ -139,7 +148,7 @@ func (e *Executor) execute(b *blocks.Block, logger logging.Logger) error {
 		receipts[ti] = receipt
 	}
 	endTime := time.Now()
-	hook.AfterBlock(e.gasClock, blockGasConsumed)
+	hook.AfterBlock(e.hooks, b.EthBlock(), e.gasClock, blockGasConsumed)
 	if e.gasClock.Time.Compare(perTxClock) != 0 {
 		return fmt.Errorf("broken invariant: block-resolution clock @ %s does not match tx-resolution clock @ %s", e.gasClock.String(), perTxClock.String())
 	}

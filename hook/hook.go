@@ -9,6 +9,7 @@ package hook
 
 import (
 	"github.com/ava-labs/avalanchego/vms/components/gas"
+	"github.com/ava-labs/libevm/core/state"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/params"
 
@@ -20,19 +21,25 @@ import (
 // Points define user-injected hook points.
 type Points interface {
 	GasTarget(parent *types.Block) gas.Gas
+	BeforeBlock(*types.Block, params.Rules, *state.StateDB) error
+	AfterBlock(*types.Block)
 }
 
 // BeforeBlock is intended to be called before processing a block, with the gas
 // target sourced from [Points].
-func BeforeBlock(clock *gastime.Time, block *types.Header, target gas.Gas) error {
-	clock.FastForwardTo(block.Time)
-	return clock.SetTarget(target)
+func BeforeBlock(pts Points, b *types.Block, rules params.Rules, sdb *state.StateDB, clock *gastime.Time, target gas.Gas) error {
+	clock.FastForwardTo(b.Time())
+	if err := clock.SetTarget(target); err != nil {
+		return err
+	}
+	return pts.BeforeBlock(b, rules, sdb)
 }
 
 // AfterBlock is intended to be called after processing a block, with the gas
 // sourced from [types.Block.GasUsed] or equivalent.
-func AfterBlock(clock *gastime.Time, used gas.Gas) {
+func AfterBlock(pts Points, b *types.Block, clock *gastime.Time, used gas.Gas) {
 	clock.Tick(used)
+	pts.AfterBlock(b)
 }
 
 // MinimumGasConsumption MUST be used as the implementation for the respective

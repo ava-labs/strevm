@@ -12,8 +12,10 @@ import (
 	"sync"
 
 	"github.com/ava-labs/avalanchego/vms/components/gas"
+	"github.com/ava-labs/libevm/core/state"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/event"
+	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/trie"
 	"github.com/google/go-cmp/cmp"
 
@@ -105,3 +107,7 @@ var _ hook.Points = (*HookStub)(nil)
 
 // GasTarget ignores its argument and always returns [HookStub.Target].
 func (s *HookStub) GasTarget(*types.Block) gas.Gas { return s.Target }
+
+func (*HookStub) BeforeBlock(*types.Block, params.Rules, *state.StateDB) error { return nil }
+
+func (*HookStub) AfterBlock(*types.Block) {}
