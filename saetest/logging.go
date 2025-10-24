@@ -144,6 +144,7 @@ func (l *TBLogger) log(lvl logging.Level, msg string, fields ...zap.Field) {
 		to = l.tb.Errorf
 	case lvl >= logging.Fatal:
 		to = l.tb.Fatalf
+		defer l.fatal()
 	default:
 		to = l.tb.Logf
 	}

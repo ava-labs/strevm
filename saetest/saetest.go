@@ -11,8 +11,16 @@ import (
 	"slices"
 	"sync"
 
+<<<<<<< HEAD
+||||||| parent of 38060b7 (feat: `paralleltest` package)
+	"github.com/ava-labs/avalanchego/vms/components/gas"
+=======
+	"github.com/ava-labs/avalanchego/vms/components/gas"
+	"github.com/ava-labs/libevm/core/state"
+>>>>>>> 38060b7 (feat: `paralleltest` package)
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/event"
+	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/trie"
 	"github.com/google/go-cmp/cmp"
 )

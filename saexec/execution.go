@@ -33,7 +33,6 @@ func (e *Executor) Enqueue(ctx context.Context, block *blocks.Block) error {
 		select {
 		case e.queue <- block:
 			return nil
-
 		case <-ctx.Done():
 			return ctx.Err()
 
