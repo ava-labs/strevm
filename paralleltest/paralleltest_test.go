@@ -21,6 +21,10 @@ import (
 	"github.com/ava-labs/strevm/saetest"
 )
 
+func TestMain(m *testing.M) {
+	saetest.NoLeak(m)
+}
+
 type handler struct {
 	addr common.Address
 	gas  uint64

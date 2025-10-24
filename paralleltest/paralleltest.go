@@ -78,7 +78,10 @@ func NewExecutor[T Result](
 
 	exec, err := saexec.New(gen, config, db, nil, proc, logger)
 	require.NoError(tb, err)
-	tb.Cleanup(exec.Close)
+	tb.Cleanup(func() {
+		exec.Close()
+		proc.par.Close()
+	})
 
 	return exec
 }
