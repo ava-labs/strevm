@@ -99,12 +99,12 @@ func (*processor[T]) GasTarget(*types.Block) gas.Gas {
 	return 100e6
 }
 
-func (p *processor[T]) BeforeBlock(b *types.Block, rules params.Rules, sdb *state.StateDB) error {
-	return p.par.StartBlock(b, rules, sdb)
+func (p *processor[T]) BeforeBlock(sdb *state.StateDB, rules params.Rules, b *types.Block) error {
+	return p.par.StartBlock(sdb, rules, b)
 }
 
-func (p *processor[T]) AfterBlock(b *types.Block) {
-	p.par.FinishBlock(b)
+func (p *processor[T]) AfterBlock(sdb *state.StateDB, b *types.Block, rs types.Receipts) {
+	p.par.FinishBlock(sdb, b, rs)
 }
 
 func (p *processor[T]) Run(env vm.PrecompileEnvironment, input []byte) (ret []byte, err error) {

@@ -32,7 +32,7 @@ type handler struct {
 
 var _ parallel.Handler[*txHashEchoer] = (*handler)(nil)
 
-func (*handler) BeforeBlock(*types.Header) {}
+func (*handler) BeforeBlock(libevm.StateReader, *types.Block) {}
 
 func (h *handler) Gas(tx *types.Transaction) (uint64, bool) {
 	if to := tx.To(); to == nil || *to != h.addr {
@@ -44,6 +44,8 @@ func (h *handler) Gas(tx *types.Transaction) (uint64, bool) {
 func (*handler) Process(_ libevm.StateReader, _ int, tx *types.Transaction) *txHashEchoer {
 	return &txHashEchoer{hash: tx.Hash()}
 }
+
+func (*handler) AfterBlock(parallel.StateDB, *types.Block, types.Receipts) {}
 
 type txHashEchoer struct {
 	hash common.Hash

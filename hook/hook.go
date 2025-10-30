@@ -24,9 +24,17 @@ import (
 // Points define user-injected hook points.
 type Points interface {
 	GasTarget(parent *types.Block) gas.Gas
+<<<<<<< HEAD
 	SubSecondBlockTime(*types.Block) gas.Gas
 	BeforeBlock(params.Rules, *state.StateDB, *types.Block) error
 	AfterBlock(*state.StateDB, *types.Block, types.Receipts)
+||||||| parent of 8441275 (build!: `libevm/parallel` w/ extended before- and after-block hook arguments)
+	BeforeBlock(*types.Block, params.Rules, *state.StateDB) error
+	AfterBlock(*types.Block)
+=======
+	BeforeBlock(*state.StateDB, params.Rules, *types.Block) error
+	AfterBlock(*state.StateDB, *types.Block, types.Receipts)
+>>>>>>> 8441275 (build!: `libevm/parallel` w/ extended before- and after-block hook arguments)
 }
 
 // BeforeBlock is intended to be called before processing a block, with the gas
