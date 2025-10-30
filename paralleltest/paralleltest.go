@@ -40,15 +40,15 @@ type Result interface {
 // registered, at the provided address, that sources results from the handler.
 // The executor will have a single, genesis block, derived from the provded
 // alloc.
-func NewExecutor[T Result](
+func NewExecutor[Prefetch any, T Result](
 	tb testing.TB,
 	logger logging.Logger,
 	db ethdb.Database,
 	config *params.ChainConfig,
 	alloc types.GenesisAlloc,
 	precompileAddr common.Address,
-	handler parallel.Handler[T],
-	workers int,
+	handler parallel.Handler[Prefetch, T],
+	prefetchers, processors int,
 ) *saexec.Executor {
 	tb.Helper()
 
@@ -66,8 +66,8 @@ func NewExecutor[T Result](
 	))
 	require.NoError(tb, gen.MarkSynchronous())
 
-	proc := &processor[T]{
-		par: parallel.New(handler, workers),
+	proc := &processor[Prefetch, T]{
+		par: parallel.New(handler, prefetchers, processors),
 	}
 	stub := &hookstest.Stub{
 		PrecompileOverrides: map[common.Address]libevm.PrecompiledContract{
@@ -86,28 +86,28 @@ func NewExecutor[T Result](
 	return exec
 }
 
-type processor[T Result] struct {
-	par *parallel.Processor[T]
+type processor[Data any, T Result] struct {
+	par *parallel.Processor[Data, T]
 }
 
 var (
-	_ hook.Points                    = (*processor[Result])(nil)
-	_ vm.PrecompiledStatefulContract = new(processor[Result]).Run
+	_ hook.Points                    = (*processor[any, Result])(nil)
+	_ vm.PrecompiledStatefulContract = new(processor[any, Result]).Run
 )
 
-func (*processor[T]) GasTarget(*types.Block) gas.Gas {
+func (*processor[D, T]) GasTarget(*types.Block) gas.Gas {
 	return 100e6
 }
 
-func (p *processor[T]) BeforeBlock(sdb *state.StateDB, rules params.Rules, b *types.Block) error {
+func (p *processor[D, T]) BeforeBlock(sdb *state.StateDB, rules params.Rules, b *types.Block) error {
 	return p.par.StartBlock(sdb, rules, b)
 }
 
-func (p *processor[T]) AfterBlock(sdb *state.StateDB, b *types.Block, rs types.Receipts) {
+func (p *processor[D, T]) AfterBlock(sdb *state.StateDB, b *types.Block, rs types.Receipts) {
 	p.par.FinishBlock(sdb, b, rs)
 }
 
-func (p *processor[T]) Run(env vm.PrecompileEnvironment, input []byte) (ret []byte, err error) {
+func (p *processor[D, T]) Run(env vm.PrecompileEnvironment, input []byte) (ret []byte, err error) {
 	sdb := env.StateDB()
 
 	res, ok := p.par.Result(sdb.TxIndex())

@@ -30,7 +30,7 @@ type handler struct {
 	gas  uint64
 }
 
-var _ parallel.Handler[*txHashEchoer] = (*handler)(nil)
+var _ parallel.Handler[common.Hash, *txHashEchoer] = (*handler)(nil)
 
 func (*handler) BeforeBlock(libevm.StateReader, *types.Block) {}
 
@@ -41,8 +41,12 @@ func (h *handler) Gas(tx *types.Transaction) (uint64, bool) {
 	return h.gas, true
 }
 
-func (*handler) Process(_ libevm.StateReader, _ int, tx *types.Transaction) *txHashEchoer {
-	return &txHashEchoer{hash: tx.Hash()}
+func (*handler) Prefetch(_ libevm.StateReader, _ int, tx *types.Transaction) common.Hash {
+	return tx.Hash()
+}
+
+func (*handler) Process(_ libevm.StateReader, _ int, _ *types.Transaction, tx common.Hash) *txHashEchoer {
+	return &txHashEchoer{hash: tx}
 }
 
 func (*handler) AfterBlock(parallel.StateDB, *types.Block, types.Receipts) {}
@@ -91,7 +95,7 @@ func TestNewExecutor(t *testing.T) {
 		config,
 		saetest.MaxAllocFor(eoa),
 		precompileAddr,
-		h, 1,
+		h, 1, 1,
 	)
 
 	last := exec.LastExecuted()
