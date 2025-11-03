@@ -40,14 +40,14 @@ type Result interface {
 // registered, at the provided address, that sources results from the handler.
 // The executor will have a single, genesis block, derived from the provded
 // alloc.
-func NewExecutor[Prefetch any, T Result](
+func NewExecutor[Prefetch any, R Result, Aggregated any](
 	tb testing.TB,
 	logger logging.Logger,
 	db ethdb.Database,
 	config *params.ChainConfig,
 	alloc types.GenesisAlloc,
 	precompileAddr common.Address,
-	handler parallel.Handler[Prefetch, T],
+	handler parallel.Handler[Prefetch, R, Aggregated],
 	prefetchers, processors int,
 ) *saexec.Executor {
 	tb.Helper()
@@ -66,7 +66,7 @@ func NewExecutor[Prefetch any, T Result](
 	))
 	require.NoError(tb, gen.MarkSynchronous())
 
-	proc := &processor[Prefetch, T]{
+	proc := &processor[Prefetch, R, Aggregated]{
 		par: parallel.New(handler, prefetchers, processors),
 	}
 	stub := &hookstest.Stub{
@@ -86,28 +86,28 @@ func NewExecutor[Prefetch any, T Result](
 	return exec
 }
 
-type processor[Data any, T Result] struct {
-	par *parallel.Processor[Data, T]
+type processor[Data any, R Result, Aggregated any] struct {
+	par *parallel.Processor[Data, R, Aggregated]
 }
 
 var (
-	_ hook.Points                    = (*processor[any, Result])(nil)
-	_ vm.PrecompiledStatefulContract = new(processor[any, Result]).Run
+	_ hook.Points                    = (*processor[any, Result, any])(nil)
+	_ vm.PrecompiledStatefulContract = new(processor[any, Result, any]).Run
 )
 
-func (*processor[D, T]) GasTarget(*types.Block) gas.Gas {
+func (*processor[D, R, A]) GasTarget(*types.Block) gas.Gas {
 	return 100e6
 }
 
-func (p *processor[D, T]) BeforeBlock(sdb *state.StateDB, rules params.Rules, b *types.Block) error {
+func (p *processor[D, R, A]) BeforeBlock(sdb *state.StateDB, rules params.Rules, b *types.Block) error {
 	return p.par.StartBlock(sdb, rules, b)
 }
 
-func (p *processor[D, T]) AfterBlock(sdb *state.StateDB, b *types.Block, rs types.Receipts) {
+func (p *processor[D, R, A]) AfterBlock(sdb *state.StateDB, b *types.Block, rs types.Receipts) {
 	p.par.FinishBlock(sdb, b, rs)
 }
 
-func (p *processor[D, T]) Run(env vm.PrecompileEnvironment, input []byte) (ret []byte, err error) {
+func (p *processor[D, R, A]) Run(env vm.PrecompileEnvironment, input []byte) (ret []byte, err error) {
 	sdb := env.StateDB()
 
 	res, ok := p.par.Result(sdb.TxIndex())

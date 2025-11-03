@@ -1,6 +1,7 @@
 package paralleltest
 
 import (
+	"iter"
 	"math/big"
 	"slices"
 	"testing"
@@ -30,7 +31,7 @@ type handler struct {
 	gas  uint64
 }
 
-var _ parallel.Handler[common.Hash, *txHashEchoer] = (*handler)(nil)
+var _ parallel.Handler[common.Hash, *txHashEchoer, map[int]common.Hash] = (*handler)(nil)
 
 func (*handler) BeforeBlock(libevm.StateReader, *types.Block) {}
 
@@ -49,7 +50,15 @@ func (*handler) Process(_ libevm.StateReader, _ int, _ *types.Transaction, tx co
 	return &txHashEchoer{hash: tx}
 }
 
-func (*handler) AfterBlock(parallel.StateDB, *types.Block, types.Receipts) {}
+func (*handler) PostProcess(it iter.Seq2[int, *txHashEchoer]) map[int]common.Hash {
+	out := make(map[int]common.Hash)
+	for txIdx, echo := range it {
+		out[txIdx] = echo.hash
+	}
+	return out
+}
+
+func (*handler) AfterBlock(parallel.StateDB, map[int]common.Hash, *types.Block, types.Receipts) {}
 
 type txHashEchoer struct {
 	hash common.Hash
