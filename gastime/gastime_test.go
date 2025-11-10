@@ -4,11 +4,14 @@
 package gastime
 
 import (
+	"fmt"
+	"math"
 	"testing"
 
 	"github.com/ava-labs/avalanchego/vms/components/gas"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/ava-labs/strevm/intmath"
@@ -65,8 +68,7 @@ func (tm *Time) requireState(tb testing.TB, desc string, want state, opts ...cmp
 
 func (tm *Time) mustSetRate(tb testing.TB, rate gas.Gas) {
 	tb.Helper()
-	_, err := tm.SetRate(rate)
-	require.NoError(tb, err, "%T.SetRate(%d)", tm, rate)
+	require.NoErrorf(tb, tm.SetRate(rate), "%T.%T.SetRate(%d)", tm, TimeMarshaler{}, rate)
 }
 
 func (tm *Time) mustSetTarget(tb testing.TB, target gas.Gas) {
@@ -105,20 +107,27 @@ func TestScaling(t *testing.T) {
 	// SetRate is identical to setting via the target, as long as the rate is
 	// even. Although the documentation states that SetTarget is preferred, we
 	// still need to test SetRate.
-	tm.mustSetRate(t, 4e6)
+	const (
+		wantTargetViaRate = 2e6
+		wantRate          = wantTargetViaRate * TargetToRate
+	)
 	want := state{
-		Rate:   4e6,
-		Target: 2e6,
+		Rate:   wantRate,
+		Target: wantTargetViaRate,
 		Excess: (func() gas.Gas {
 			// Scale the _initial_ excess relative to the new and _initial_
 			// rates, not the most recent rate before scaling.
-			x, _, err := intmath.MulDiv(initExcess, 4e6, 3.2e6)
+			x, _, err := intmath.MulDiv(initExcess, wantRate, 3.2e6)
 			require.NoErrorf(t, err, "intmath.MulDiv(%d, %d, %d)", initExcess, 4e6, 3.2e6)
 			return x
 		})(),
 		Price: initPrice, // unchanged
 	}
-	tm.requireState(t, "after SetRate()", want, ignore)
+	for roundingError := range gas.Gas(TargetToRate) {
+		r := wantRate + roundingError
+		tm.mustSetRate(t, r)
+		tm.requireState(t, fmt.Sprintf("after SetRate(%d)", r), want, ignore)
+	}
 
 	testPostClone := func(t *testing.T, cloned *Time) {
 		t.Helper()
@@ -226,6 +235,15 @@ func TestExcess(t *testing.T) {
 				Excess:             45*rate/8 - 7*rate/8,
 			},
 		},
+		{
+			desc:       "fast forward causes overflow when seconds multiplied by R",
+			ffToBefore: math.MaxUint64,
+			want: state{
+				UnixTime:           math.MaxUint64,
+				ConsumedThisSecond: frac(0),
+				Excess:             0,
+			},
+		},
 	}
 
 	for _, s := range steps {
@@ -238,5 +256,47 @@ func TestExcess(t *testing.T) {
 			tm.Tick(tk)
 		}
 		tm.requireState(t, s.desc, s.want, ignore)
+	}
+}
+
+func TestExcessScalingFactor(t *testing.T) {
+	const max = math.MaxUint64
+
+	tests := []struct {
+		target, want gas.Gas
+	}{
+		{1, 87},
+		{2, 174},
+		{max / 87, (max / 87) * 87},
+		{max/87 - 0, max - 81}, // identical to above, but explicit for clarity
+		{max/87 - 1, max - 81 - 87},
+		{max/87 + 1, max}, // because `max - 81 + 87` would overflow
+		{max, max},
+	}
+
+	tm := New(0, 1, 0)
+	for _, tt := range tests {
+		require.NoErrorf(t, tm.SetTarget(tt.target), "%T.SetTarget(%v)", tm, tt.target)
+		assert.Equalf(t, tt.want, tm.excessScalingFactor(), "T = %d", tt.target)
+	}
+}
+
+func TestTargetClamping(t *testing.T) {
+	tm := New(0, MaxTarget+1, 0)
+	require.Equal(t, MaxTarget, tm.Target(), "tm.Target() clamped by constructor")
+
+	tests := []struct {
+		setTo, want gas.Gas
+	}{
+		{setTo: 10, want: 10},
+		{setTo: MaxTarget + 1, want: MaxTarget},
+		{setTo: 20, want: 20},
+		{setTo: math.MaxUint64, want: MaxTarget},
+	}
+
+	for _, tt := range tests {
+		require.NoErrorf(t, tm.SetTarget(tt.setTo), "%T.SetTarget(%d)", tm, tt.setTo)
+		assert.Equalf(t, tt.want, tm.Target(), "%T.Target() after setting to %#x", tm, tt.setTo)
+		assert.Equalf(t, tm.Target()*TargetToRate, tm.Rate(), "%T.Rate() == %d * %[1]T.Target()", tm, TargetToRate)
 	}
 }
