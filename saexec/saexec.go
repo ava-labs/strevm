@@ -31,13 +31,15 @@ type Executor struct {
 	log        logging.Logger
 	hooks      hook.Points
 
-	gasClock     *gastime.Time
-	queue        chan *blocks.Block
-	lastExecuted atomic.Pointer[blocks.Block]
+	gasClock *gastime.Time
+	queue    chan *blocks.Block
 
-	headEvents  event.FeedOf[core.ChainHeadEvent]
-	chainEvents event.FeedOf[core.ChainEvent]
-	logEvents   event.FeedOf[[]*types.Log]
+	lastEnqueued, lastExecuted atomic.Pointer[blocks.Block]
+
+	enqueueEvents event.FeedOf[*types.Block]
+	headEvents    event.FeedOf[core.ChainHeadEvent]
+	chainEvents   event.FeedOf[core.ChainEvent]
+	logEvents     event.FeedOf[[]*types.Log]
 
 	chainConfig *params.ChainConfig
 	db          ethdb.Database
@@ -71,6 +73,7 @@ func New(
 		db:          db,
 		stateCache:  state.NewDatabaseWithConfig(db, triedbConfig),
 	}
+	e.lastEnqueued.Store(lastExecuted)
 	e.lastExecuted.Store(lastExecuted)
 	if err := e.init(); err != nil {
 		return nil, err
@@ -129,6 +132,11 @@ func (e *Executor) StateCache() state.Database {
 // LastExecuted returns the last-executed block in a threadsafe manner.
 func (e *Executor) LastExecuted() *blocks.Block {
 	return e.lastExecuted.Load()
+}
+
+// LastEnqueued returns the last-enqueued block in a threadsafe manner.
+func (e *Executor) LastEnqueued() *blocks.Block {
+	return e.lastEnqueued.Load()
 }
 
 // TimeNotThreadsafe returns a clone of the gas clock that times execution. It

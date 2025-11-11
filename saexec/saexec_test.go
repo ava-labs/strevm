@@ -60,10 +60,7 @@ func newExec(tb testing.TB, db ethdb.Database, hooks hook.Points, alloc types.Ge
 	tb.Helper()
 
 	config := params.AllDevChainProtocolChanges
-	ethGenesis := saetest.Genesis(tb, db, config, alloc)
-	genesis := blockstest.NewBlock(tb, ethGenesis, nil, nil)
-	require.NoErrorf(tb, genesis.MarkExecuted(db, gastime.New(0, 1, 0), time.Time{}, new(big.Int), nil, ethGenesis.Root()), "%T.MarkExecuted()", genesis)
-	require.NoErrorf(tb, genesis.MarkSynchronous(), "%T.MarkSynchronous()", genesis)
+	genesis := blockstest.NewGenesis(tb, db, config, alloc)
 
 	e, err := New(genesis, config, db, (*triedb.Config)(nil), hooks, saetest.NewTBLogger(tb, logging.Warn))
 	require.NoError(tb, err, "New()")
