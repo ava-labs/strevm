@@ -32,6 +32,8 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 )
 
+const maxValidatorSetStaleness = time.Minute
+
 var VMID = ids.ID{'s', 't', 'r', 'e', 'v', 'm'}
 
 // VM implements Streaming Asynchronous Execution (SAE) of EVM blocks. It
@@ -40,6 +42,7 @@ var VMID = ids.ID{'s', 't', 'r', 'e', 'v', 'm'}
 // synchronous block, which MAY be a standard genesis block.
 type VM struct {
 	*p2p.Network
+	P2PValidators *p2p.Validators
 
 	snowCtx *snow.Context
 	hooks   hook.Points
@@ -112,11 +115,19 @@ func New(ctx context.Context, c Config) (*VM, error) {
 		return nil, err
 	}
 
+	p2pValidators := p2p.NewValidators(
+		c.SnowCtx.Log,
+		c.SnowCtx.SubnetID,
+		c.SnowCtx.ValidatorState,
+		maxValidatorSetStaleness,
+	)
+
 	network, err := p2p.NewNetwork(
 		c.SnowCtx.Log,
 		c.AppSender,
 		metrics,
 		"p2p",
+		p2pValidators,
 	)
 	if err != nil {
 		return nil, err
@@ -124,7 +135,8 @@ func New(ctx context.Context, c Config) (*VM, error) {
 
 	vm := &VM{
 		// Networking
-		Network: network,
+		Network:       network,
+		P2PValidators: p2pValidators,
 		// VM
 		snowCtx: c.SnowCtx,
 		db:      c.DB,
