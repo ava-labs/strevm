@@ -1,14 +1,14 @@
 module github.com/ava-labs/strevm
 
-go 1.23.9
+go 1.24.8
 
-toolchain go1.23.10
+toolchain go1.24.9
 
 require (
 	github.com/StephenButtolph/canoto v0.17.1
 	github.com/arr4n/sink v0.0.0-20250610120507-bd1b0fbb19fa
 	github.com/ava-labs/avalanchego v1.13.5-rc.4
-	github.com/ava-labs/libevm v1.13.14-0.3.0.rc.6
+	github.com/ava-labs/libevm v1.13.15-0.20251113215524-d0d2e6e207df
 	github.com/dustin/go-humanize v1.0.0
 	github.com/google/go-cmp v0.7.0
 	github.com/holiman/uint256 v1.2.4
@@ -17,7 +17,7 @@ require (
 	go.uber.org/goleak v1.3.0
 	go.uber.org/zap v1.26.0
 	golang.org/x/exp v0.0.0-20241215155358-4a5509556b9e
-	golang.org/x/term v0.30.0
+	golang.org/x/term v0.36.0
 )
 
 require (
@@ -99,13 +99,13 @@ require (
 	go.opentelemetry.io/otel/trace v1.22.0 // indirect
 	go.opentelemetry.io/proto/otlp v1.0.0 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
-	golang.org/x/crypto v0.36.0 // indirect
-	golang.org/x/mod v0.22.0 // indirect
-	golang.org/x/net v0.38.0 // indirect
-	golang.org/x/sync v0.12.0 // indirect
-	golang.org/x/sys v0.31.0 // indirect
-	golang.org/x/text v0.23.0 // indirect
-	golang.org/x/tools v0.29.0 // indirect
+	golang.org/x/crypto v0.43.0 // indirect
+	golang.org/x/mod v0.29.0 // indirect
+	golang.org/x/net v0.46.0 // indirect
+	golang.org/x/sync v0.17.0 // indirect
+	golang.org/x/sys v0.37.0 // indirect
+	golang.org/x/text v0.30.0 // indirect
+	golang.org/x/tools v0.38.0 // indirect
 	gonum.org/v1/gonum v0.11.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20240604185151-ef581f913117 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20240827150818-7e3bb234dfed // indirect

@@ -30,9 +30,12 @@ func (vm *VM) ethRPCServer() *rpc.Server {
 	b := &ethAPIBackend{vm: vm}
 	s := rpc.NewServer()
 
-	s.RegisterName("eth", ethapi.NewBlockChainAPI(b))
-	s.RegisterName("eth", ethapi.NewTransactionAPI(b, new(ethapi.AddrLocker)))
-	s.RegisterName("eth", filters.NewFilterAPI(
+	_ = s.RegisterName("eth", ethapi.NewEthereumAPI(b))
+	_ = s.RegisterName("eth", ethapi.NewBlockChainAPI(b))
+	_ = s.RegisterName("eth", ethapi.NewTransactionAPI(b, new(ethapi.AddrLocker)))
+	_ = s.RegisterName("txpool", ethapi.NewTxPoolAPI(b))
+	_ = s.RegisterName("debug", ethapi.NewDebugAPI(b))
+	_ = s.RegisterName("eth", filters.NewFilterAPI(
 		filters.NewFilterSystem(b, filters.Config{}),
 		false, // lightMode TODO(arr4n) investigate further
 	))
