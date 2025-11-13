@@ -17,6 +17,7 @@ import (
 	"github.com/ava-labs/libevm/core/state"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/ethdb"
+	"github.com/ava-labs/libevm/libevm/options"
 	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/triedb"
 	"github.com/stretchr/testify/require"
@@ -26,14 +27,26 @@ import (
 	"github.com/ava-labs/strevm/saetest"
 )
 
+// An EthBlockOption configures the [types.Header] created by [NewEthBlock]. It
+// SHOULD NOT modify the `Number` and `ParentHash`, but MAY modify any other
+// field.
+type EthBlockOption = options.Option[types.Header]
+
 // NewEthBlock constructs a raw Ethereum block with the given arguments.
-func NewEthBlock(parent *types.Block, time uint64, txs types.Transactions) *types.Block {
+func NewEthBlock(parent *types.Block, txs types.Transactions, opts ...EthBlockOption) *types.Block {
 	hdr := &types.Header{
 		Number:     new(big.Int).Add(parent.Number(), big.NewInt(1)),
-		Time:       time,
 		ParentHash: parent.Hash(),
+		BaseFee:    big.NewInt(0),
 	}
+	hdr = options.ApplyTo(hdr, opts...)
 	return types.NewBlock(hdr, txs, nil, nil, saetest.TrieHasher())
+}
+
+// ModifyHeader returns an option to modify the [types.Header] constructed by
+// [NewEthBlock]. See [EthBlockOption] for caveats.
+func ModifyHeader(fn func(*types.Header)) EthBlockOption {
+	return options.Func[types.Header](fn)
 }
 
 // NewBlock constructs an SAE block, wrapping the raw Ethereum block.

@@ -8,14 +8,12 @@
 package blockstest
 
 import (
-	"math/big"
 	"testing"
 
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core/types"
 
 	"github.com/ava-labs/strevm/blocks"
-	"github.com/ava-labs/strevm/saetest"
 )
 
 // A ChainBuilder builds a chain of blocks, maintaining necessary invariants.
@@ -36,15 +34,10 @@ func NewChainBuilder(genesis *blocks.Block) *ChainBuilder {
 }
 
 // NewBlock constructs and returns a new block in the chain.
-func (cb *ChainBuilder) NewBlock(tb testing.TB, txs ...*types.Transaction) *blocks.Block {
+func (cb *ChainBuilder) NewBlock(tb testing.TB, txs []*types.Transaction, opts ...EthBlockOption) *blocks.Block {
+	tb.Helper()
 	last := cb.Last()
-	hdr := &types.Header{
-		Number:     new(big.Int).Add(last.Number(), big.NewInt(1)),
-		ParentHash: last.Hash(),
-		BaseFee:    big.NewInt(1),
-	}
-	eth := types.NewBlock(hdr, txs, nil, nil, saetest.TrieHasher())
-
+	eth := NewEthBlock(last.EthBlock(), txs, opts...)
 	cb.chain = append(cb.chain, NewBlock(tb, eth, last, nil))
 	return cb.Last()
 }
@@ -53,14 +46,4 @@ func (cb *ChainBuilder) NewBlock(tb testing.TB, txs ...*types.Transaction) *bloc
 // genesis block passed to the constructor.
 func (cb *ChainBuilder) Last() *blocks.Block {
 	return cb.chain[len(cb.chain)-1]
-}
-
-// GetBlock returns the block with the given hash and number. If either argument
-// fails to match a known block then GetBlock returns `nil, false`.
-func (cb *ChainBuilder) GetBlock(hash common.Hash, number uint64) (*blocks.Block, bool) {
-	b, ok := cb.byHash[hash]
-	if !ok || b == nil || b.NumberU64() != number {
-		return nil, false
-	}
-	return b, true
 }
