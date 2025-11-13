@@ -236,8 +236,8 @@ func (vm *VM) Version(context.Context) (string, error) {
 }
 
 const (
-	HTTPHandlerKey = "/sae/http"
-	WSHandlerKey   = "/sae/ws"
+	HTTPHandlerKey = "/rpc"
+	WSHandlerKey   = "/ws"
 )
 
 func (vm *VM) CreateHandlers(context.Context) (map[string]http.Handler, error) {
