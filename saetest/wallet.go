@@ -54,8 +54,10 @@ func (w *Wallet) Addresses() []common.Address {
 	return addrs
 }
 
-// SetNonceAndSign overrides the nonce with the next one for the account, before
-// signing and returning the transaction.
+// SetNonceAndSign overrides the nonce in the `data` with the next one for the
+// account, then signs and returns the transaction. The wallet's record of the
+// account nonce begins at zero and increments after every successful call to
+// this method.
 func (w *Wallet) SetNonceAndSign(tb testing.TB, account int, data types.TxData) *types.Transaction {
 	tb.Helper()
 
