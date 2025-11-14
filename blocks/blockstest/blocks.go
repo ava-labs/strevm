@@ -9,6 +9,7 @@ package blockstest
 
 import (
 	"math/big"
+	"slices"
 	"testing"
 	"time"
 
@@ -27,26 +28,43 @@ import (
 	"github.com/ava-labs/strevm/saetest"
 )
 
-// An EthBlockOption configures the [types.Header] created by [NewEthBlock]. It
-// SHOULD NOT modify the `Number` and `ParentHash`, but MAY modify any other
-// field.
-type EthBlockOption = options.Option[types.Header]
+// An EthBlockOption configures the default block properties created by
+// [NewEthBlock].
+type EthBlockOption = options.Option[ethBlockProperties]
 
 // NewEthBlock constructs a raw Ethereum block with the given arguments.
 func NewEthBlock(parent *types.Block, txs types.Transactions, opts ...EthBlockOption) *types.Block {
-	hdr := &types.Header{
-		Number:     new(big.Int).Add(parent.Number(), big.NewInt(1)),
-		ParentHash: parent.Hash(),
-		BaseFee:    big.NewInt(0),
+	props := &ethBlockProperties{
+		header: &types.Header{
+			Number:     new(big.Int).Add(parent.Number(), big.NewInt(1)),
+			ParentHash: parent.Hash(),
+			BaseFee:    big.NewInt(0),
+		},
 	}
-	hdr = options.ApplyTo(hdr, opts...)
-	return types.NewBlock(hdr, txs, nil, nil, saetest.TrieHasher())
+	props = options.ApplyTo(props, opts...)
+	return types.NewBlock(props.header, txs, nil, props.receipts, saetest.TrieHasher())
+}
+
+type ethBlockProperties struct {
+	header   *types.Header
+	receipts types.Receipts
 }
 
 // ModifyHeader returns an option to modify the [types.Header] constructed by
-// [NewEthBlock]. See [EthBlockOption] for caveats.
+// [NewEthBlock]. It SHOULD NOT modify the `Number` and `ParentHash`, but MAY
+// modify any other field.
 func ModifyHeader(fn func(*types.Header)) EthBlockOption {
-	return options.Func[types.Header](fn)
+	return options.Func[ethBlockProperties](func(p *ethBlockProperties) {
+		fn(p.header)
+	})
+}
+
+// WithReceipts returns an option to set the receipts of a block constructed by
+// [NewEthBlock].
+func WithReceipts(rs types.Receipts) EthBlockOption {
+	return options.Func[ethBlockProperties](func(p *ethBlockProperties) {
+		p.receipts = slices.Clone(rs)
+	})
 }
 
 // NewBlock constructs an SAE block, wrapping the raw Ethereum block.
