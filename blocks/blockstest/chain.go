@@ -10,7 +10,6 @@ package blockstest
 import (
 	"testing"
 
-	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core/types"
 
 	"github.com/ava-labs/strevm/blocks"
@@ -18,8 +17,7 @@ import (
 
 // A ChainBuilder builds a chain of blocks, maintaining necessary invariants.
 type ChainBuilder struct {
-	chain  []*blocks.Block
-	byHash map[common.Hash]*blocks.Block
+	chain []*blocks.Block
 }
 
 // NewChainBuilder returns a new ChainBuilder starting from the provided block,
@@ -27,9 +25,6 @@ type ChainBuilder struct {
 func NewChainBuilder(genesis *blocks.Block) *ChainBuilder {
 	return &ChainBuilder{
 		chain: []*blocks.Block{genesis},
-		byHash: map[common.Hash]*blocks.Block{
-			genesis.Hash(): genesis,
-		},
 	}
 }
 
