@@ -59,7 +59,8 @@ func TestIntegration(t *testing.T) {
 	build := NewChainBuilder(NewBlock(t, bc.Genesis(), nil, nil))
 	dest := common.Address{'d', 'e', 's', 't'}
 	for i := range numBlocks {
-		blockNum := uint64(i + 1) // Genesis is block 0
+		// Genesis is block 0
+		blockNum := uint64(i + 1) //nolint:gosec // Known to not overflow
 
 		var txs types.Transactions
 		for range txsPerAccountPerBlock {
