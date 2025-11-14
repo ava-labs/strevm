@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+
+	"go.uber.org/zap"
 )
 
 type ancestry struct {
@@ -66,7 +68,10 @@ func (b *Block) LastSettled() *Block {
 	if a := b.ancestry.Load(); a != nil {
 		return a.lastSettled
 	}
-	b.log.Error(getSettledOfSettledMsg)
+	b.log.Error(
+		getSettledOfSettledMsg,
+		zap.Stack("stacktrace"),
+	)
 	return nil
 }
 
