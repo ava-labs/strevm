@@ -66,7 +66,7 @@ func (vm *VM) upgradeLastSynchronousBlock(lastSync LastSynchronousBlock) error {
 	if err := block.WriteLastSettledNumber(vm.db); err != nil {
 		return err
 	}
-	if err := block.MarkSettled(); err != nil {
+	if err := block.MarkSynchronous(); err != nil {
 		return err
 	}
 

@@ -207,14 +207,12 @@ func (vm *VM) buildBlockOnHistory(
 		receipts []types.Receipts
 		gasUsed  uint64
 	)
-	if !parent.IsSettled() {
-		// The parent can only be settled here if it was settled synchronously.
-		for _, b := range parent.WhenChildSettles(lastSettled) {
-			brs := b.Receipts()
-			receipts = append(receipts, brs)
-			for _, r := range brs {
-				gasUsed += r.GasUsed
-			}
+	// The parent can only be settled here if it was settled synchronously.
+	for _, b := range parent.WhenChildSettles(lastSettled) {
+		brs := b.Receipts()
+		receipts = append(receipts, brs)
+		for _, r := range brs {
+			gasUsed += r.GasUsed
 		}
 	}
 
