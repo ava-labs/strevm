@@ -64,7 +64,14 @@ type executionResults struct {
 // This method MUST NOT be called more than once and its usage is mutually
 // exclusive of [Block.RestorePostExecutionState]. The wall-clock [time.Time] is
 // for metrics only.
-func (b *Block) MarkExecuted(db ethdb.Database, byGas *gastime.Time, byWall time.Time, baseFee *big.Int, receipts types.Receipts, stateRootPost common.Hash) error {
+func (b *Block) MarkExecuted(
+	db ethdb.Database,
+	byGas *gastime.Time,
+	byWall time.Time,
+	baseFee *big.Int,
+	receipts types.Receipts,
+	stateRootPost common.Hash,
+) error {
 	e := &executionResults{
 		byGas:         *byGas.Clone(),
 		byWall:        byWall,
