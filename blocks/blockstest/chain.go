@@ -33,7 +33,7 @@ func (cb *ChainBuilder) NewBlock(tb testing.TB, txs []*types.Transaction, opts .
 	tb.Helper()
 	last := cb.Last()
 	eth := NewEthBlock(last.EthBlock(), txs, opts...)
-	cb.chain = append(cb.chain, NewBlock(tb, eth, last, nil))
+	cb.chain = append(cb.chain, NewBlock(tb, eth, last, nil)) // TODO(arr4n) support last-settled blocks
 	return cb.Last()
 }
 
