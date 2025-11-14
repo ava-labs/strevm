@@ -40,6 +40,11 @@ func (b *Block) MarkSettled() error {
 	return nil
 }
 
+// IsSettled returns true if the block has been settled.
+func (b *Block) IsSettled() bool {
+	return b.ancestry.Load() == nil
+}
+
 // MarkSynchronous is a special case of [Block.MarkSettled], reserved for the
 // last pre-SAE block, which MAY be the genesis block. These are, by definition,
 // self-settling so require special treatment as such behaviour is impossible
@@ -51,6 +56,11 @@ func (b *Block) MarkSettled() error {
 func (b *Block) MarkSynchronous() error {
 	b.synchronous = true
 	return b.MarkSettled()
+}
+
+// IsSynchronous returns true if the block was settled synchronously.
+func (b *Block) IsSynchronous() bool {
+	return b.synchronous
 }
 
 // WaitUntilSettled blocks until either [Block.MarkSettled] is called or the

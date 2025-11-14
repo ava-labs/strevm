@@ -207,14 +207,14 @@ func (vm *VM) buildBlockOnHistory(
 		receipts []types.Receipts
 		gasUsed  uint64
 	)
-	// We can never concurrently build and accept a block on the same parent,
-	// which guarantees that `parent` won't be settled, so the [Block] invariant
-	// means that `parent.lastSettled != nil`.
-	for _, b := range parent.WhenChildSettles(lastSettled) {
-		brs := b.Receipts()
-		receipts = append(receipts, brs)
-		for _, r := range brs {
-			gasUsed += r.GasUsed
+	if !parent.IsSettled() {
+		// The parent can only be settled here if it was settled synchronously.
+		for _, b := range parent.WhenChildSettles(lastSettled) {
+			brs := b.Receipts()
+			receipts = append(receipts, brs)
+			for _, r := range brs {
+				gasUsed += r.GasUsed
+			}
 		}
 	}
 
