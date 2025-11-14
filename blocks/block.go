@@ -20,7 +20,7 @@ import (
 // A Block extends a [types.Block] to track SAE-defined concepts of async
 // execution and settlement. It MUST be constructed with [New].
 type Block struct {
-	b *types.Block
+	*types.Block
 	// Invariant: ancestry is non-nil and contains non-nil pointers i.f.f. the
 	// block hasn't itself been settled. A synchronous block (e.g. SAE genesis
 	// or the last pre-SAE block) is always considered settled.
@@ -62,7 +62,7 @@ func InMemoryBlockCount() int64 {
 // New constructs a new Block.
 func New(eth *types.Block, parent, lastSettled *Block, log logging.Logger) (*Block, error) {
 	b := &Block{
-		b:        eth,
+		Block:    eth,
 		executed: make(chan struct{}),
 		settled:  make(chan struct{}),
 	}
