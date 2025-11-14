@@ -54,7 +54,6 @@ func (s *SinceGenesis) Initialize(
 	genesisBytes []byte,
 	_ []byte,
 	_ []byte,
-	toEngine chan<- snowcommon.Message,
 	_ []*snowcommon.Fx,
 	_ snowcommon.AppSender,
 ) error {
@@ -89,9 +88,8 @@ func (s *SinceGenesis) Initialize(
 				Target:      genesisBlockGasTarget,
 				ExcessAfter: 0,
 			},
-			ToEngine: toEngine,
-			SnowCtx:  chainCtx,
-			Now:      s.Now,
+			SnowCtx: chainCtx,
+			Now:     s.Now,
 		},
 	)
 	if err != nil {

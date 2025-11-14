@@ -30,9 +30,12 @@ func (vm *VM) ethRPCServer() *rpc.Server {
 	b := &ethAPIBackend{vm: vm}
 	s := rpc.NewServer()
 
-	s.RegisterName("eth", ethapi.NewBlockChainAPI(b))
-	s.RegisterName("eth", ethapi.NewTransactionAPI(b, new(ethapi.AddrLocker)))
-	s.RegisterName("eth", filters.NewFilterAPI(
+	_ = s.RegisterName("eth", ethapi.NewEthereumAPI(b))
+	_ = s.RegisterName("eth", ethapi.NewBlockChainAPI(b))
+	_ = s.RegisterName("eth", ethapi.NewTransactionAPI(b, new(ethapi.AddrLocker)))
+	_ = s.RegisterName("txpool", ethapi.NewTxPoolAPI(b))
+	_ = s.RegisterName("debug", ethapi.NewDebugAPI(b))
+	_ = s.RegisterName("eth", filters.NewFilterAPI(
 		filters.NewFilterSystem(b, filters.Config{}),
 		false, // lightMode TODO(arr4n) investigate further
 	))
@@ -222,7 +225,7 @@ func (b *ethAPIBackend) GetReceipts(ctx context.Context, hash common.Hash) (type
 
 func (b *ethAPIBackend) GetTransaction(ctx context.Context, txHash common.Hash) (bool, *types.Transaction, common.Hash, uint64, uint64, error) {
 	tx, blockHash, blockNum, index := rawdb.ReadTransaction(b.vm.db, txHash)
-	if tx == nil {
+	if tx == nil || blockNum > b.vm.last.executed.Load().NumberU64() {
 		return false, nil, common.Hash{}, 0, 0, nil
 	}
 	return true, tx, blockHash, blockNum, index, nil

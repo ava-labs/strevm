@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+
+	"go.uber.org/zap"
 )
 
 type ancestry struct {
@@ -56,7 +58,7 @@ func (b *Block) ParentBlock() *Block {
 	if a := b.ancestry.Load(); a != nil {
 		return a.parent
 	}
-	b.log.Error(getParentOfSettledMsg)
+	b.log.Debug(getParentOfSettledMsg)
 	return nil
 }
 
@@ -66,7 +68,10 @@ func (b *Block) LastSettled() *Block {
 	if a := b.ancestry.Load(); a != nil {
 		return a.lastSettled
 	}
-	b.log.Error(getSettledOfSettledMsg)
+	b.log.Error(
+		getSettledOfSettledMsg,
+		zap.Stack("stacktrace"),
+	)
 	return nil
 }
 
@@ -137,7 +142,7 @@ func LastToSettleAt(settleAt uint64, parent *Block) (*Block, bool) {
 			continue
 		}
 		if e := block.execution.Load(); e != nil {
-			if e.byGas.CmpUnix(settleAt) > 0 {
+			if e.byGas.CompareUnix(settleAt) > 0 {
 				// Although this check is redundant because of the similar one
 				// just above, it's fast so there's no harm in double-checking.
 				continue

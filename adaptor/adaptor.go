@@ -1,3 +1,6 @@
+// Copyright (C) 2025, Ava Labs, Inc. All rights reserved.
+// See the file LICENSE for licensing terms.
+
 // Package adaptor provides a generic alternative to the Snowman [block.ChainVM]
 // interface, which doesn't require the block to be aware of the VM
 // implementation.
@@ -13,6 +16,12 @@ import (
 	"github.com/ava-labs/avalanchego/snow/engine/snowman/block"
 )
 
+// Enforce optional interfaces
+var (
+	_ block.BuildBlockWithContextChainVM = adaptor[BlockProperties]{}
+	_ block.WithVerifyContext            = Block[BlockProperties]{}
+)
+
 // ChainVM defines the functionality required in order to be converted into a
 // Snowman VM. See the respective methods on [block.ChainVM] and [snowman.Block]
 // for detailed documentation.
@@ -21,9 +30,12 @@ type ChainVM[BP BlockProperties] interface {
 
 	GetBlock(context.Context, ids.ID) (BP, error)
 	ParseBlock(context.Context, []byte) (BP, error)
+	BuildBlockWithContext(context.Context, *block.Context) (BP, error)
 	BuildBlock(context.Context) (BP, error)
 
-	// Transferred from [snowman.Block].
+	// Transferred from [snowman.Block] and [block.WithVerifyContext].
+	ShouldVerifyBlockWithContext(context.Context, BP) (bool, error)
+	VerifyBlockWithContext(context.Context, *block.Context, BP) error
 	VerifyBlock(context.Context, BP) error
 	AcceptBlock(context.Context, BP) error
 	RejectBlock(context.Context, BP) error
@@ -46,7 +58,7 @@ type BlockProperties interface {
 // Convert transforms a generic [ChainVM] into a standard [block.ChainVM]. All
 // [snowman.Block] values returned by methods of the returned chain will be of
 // the concrete type [Block] with type parameter `BP`.
-func Convert[BP BlockProperties](vm ChainVM[BP]) block.ChainVM {
+func Convert[BP BlockProperties](vm ChainVM[BP]) *adaptor[BP] {
 	return &adaptor[BP]{vm}
 }
 
@@ -79,10 +91,20 @@ func (vm adaptor[BP]) ParseBlock(ctx context.Context, blockBytes []byte) (snowma
 	return vm.newBlock(vm.ChainVM.ParseBlock(ctx, blockBytes))
 }
 
+func (vm adaptor[BP]) BuildBlockWithContext(ctx context.Context, blockContext *block.Context) (snowman.Block, error) {
+	return vm.newBlock(vm.ChainVM.BuildBlockWithContext(ctx, blockContext))
+}
+
 func (vm adaptor[BP]) BuildBlock(ctx context.Context) (snowman.Block, error) {
 	return vm.newBlock(vm.ChainVM.BuildBlock(ctx))
 }
 
+func (b Block[BP]) ShouldVerifyWithContext(ctx context.Context) (bool, error) {
+	return b.vm.ShouldVerifyBlockWithContext(ctx, b.b)
+}
+func (b Block[BP]) VerifyWithContext(ctx context.Context, blockContext *block.Context) error {
+	return b.vm.VerifyBlockWithContext(ctx, blockContext, b.b)
+}
 func (b Block[BP]) Verify(ctx context.Context) error { return b.vm.VerifyBlock(ctx, b.b) }
 func (b Block[BP]) Accept(ctx context.Context) error { return b.vm.AcceptBlock(ctx, b.b) }
 func (b Block[BP]) Reject(ctx context.Context) error { return b.vm.RejectBlock(ctx, b.b) }
