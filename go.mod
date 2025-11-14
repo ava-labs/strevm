@@ -2,8 +2,6 @@ module github.com/ava-labs/strevm
 
 go 1.24.8
 
-toolchain go1.24.10
-
 require (
 	github.com/ava-labs/avalanchego v1.13.2
 	github.com/ava-labs/libevm v1.13.15-0.20251112182915-1ec8741af98f
