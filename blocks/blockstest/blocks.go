@@ -53,7 +53,7 @@ func ModifyHeader(fn func(*types.Header)) EthBlockOption {
 func NewBlock(tb testing.TB, eth *types.Block, parent, lastSettled *blocks.Block) *blocks.Block {
 	tb.Helper()
 	b, err := blocks.New(eth, parent, lastSettled, saetest.NewTBLogger(tb, logging.Warn))
-	require.NoError(tb, err, "New()")
+	require.NoError(tb, err, "blocks.New()")
 	return b
 }
 
