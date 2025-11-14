@@ -8,6 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+
+	"go.uber.org/zap"
 )
 
 type ancestry struct {
@@ -120,10 +122,24 @@ func (b *Block) LastSettled() *Block {
 // b or its parent. If [Block.MarkSynchronous] was called instead, Settles
 // always returns a single-element slice of `b` itself.
 func (b *Block) Settles() []*Block {
+	b.log.Warn("calling settles on block",
+		zap.Uint64("height", b.Height()),
+		zap.Bool("synchronous", b.IsSynchronous()),
+		zap.Bool("settled", b.IsSettled()),
+	)
 	if b.synchronous {
 		return []*Block{b}
 	}
-	return settling(b.ParentBlock().LastSettled(), b.LastSettled())
+	parent := b.ParentBlock()
+	b.log.Warn("calling settling",
+		zap.Uint64("height", b.Height()),
+		zap.Bool("synchronous", b.IsSynchronous()),
+		zap.Bool("settled", b.IsSettled()),
+		zap.Uint64("parentHeight", parent.Height()),
+		zap.Bool("parentSynchronous", parent.IsSynchronous()),
+		zap.Bool("parentSettled", parent.IsSettled()),
+	)
+	return settling(parent.LastSettled(), b.LastSettled())
 }
 
 // WhenChildSettles returns the blocks that would be settled by a child of `b`,
