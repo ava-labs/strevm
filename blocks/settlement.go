@@ -1,3 +1,6 @@
+// Copyright (C) 2025, Ava Labs, Inc. All rights reserved.
+// See the file LICENSE for licensing terms.
+
 package blocks
 
 import (
@@ -5,17 +8,18 @@ import (
 	"errors"
 	"fmt"
 	"slices"
-
-	"go.uber.org/zap"
 )
 
 type ancestry struct {
 	parent, lastSettled *Block
 }
 
-var errBlockResettled = errors.New("block re-settled")
+var (
+	errBlockResettled       = errors.New("block re-settled")
+	errBlockAncestryChanged = errors.New("block ancestry changed during settlement")
+)
 
-// MarkSettled marks the block as having being settled. This function MUST NOT
+// MarkSettled marks the block as having been settled. This function MUST NOT
 // be called more than once.
 //
 // After a call to MarkSettled, future calls to [Block.ParentBlock] and
@@ -26,14 +30,27 @@ func (b *Block) MarkSettled() error {
 		b.log.Error(errBlockResettled.Error())
 		return fmt.Errorf("%w: block height %d", errBlockResettled, b.Height())
 	}
-	if b.ancestry.CompareAndSwap(a, nil) {
-		close(b.settled)
-		return nil
+	if !b.ancestry.CompareAndSwap(a, nil) { // almost certainly means concurrent calls to this method
+		b.log.Fatal("Block ancestry changed during settlement")
+		// We have to return something to keen the compiler happy, even though we
+		// expect the Fatal to be, well, fatal.
+		return errBlockAncestryChanged
 	}
-	b.log.Fatal("Block ancestry changed")
-	// We have to return something to keen the compiler happy, even though we
-	// expect the Fatal to be, well, fatal.
-	return errors.New("block ancestry changed")
+	close(b.settled)
+	return nil
+}
+
+// MarkSynchronous is a special case of [Block.MarkSettled], reserved for the
+// last pre-SAE block, which MAY be the genesis block. These are, by definition,
+// self-settling so require special treatment as such behaviour is impossible
+// under SAE rules.
+//
+// Wherever MarkSynchronous results in different behaviour to
+// [Block.MarkSettled], the respective methods are documented as such. They can
+// otherwise be considered identical.
+func (b *Block) MarkSynchronous() error {
+	b.synchronous = true
+	return b.MarkSettled()
 }
 
 // WaitUntilSettled blocks until either [Block.MarkSettled] is called or the
@@ -47,54 +64,78 @@ func (b *Block) WaitUntilSettled(ctx context.Context) error {
 	}
 }
 
+func (b *Block) ancestor(ifSettledErrMsg string, get func(*ancestry) *Block) *Block {
+	a := b.ancestry.Load()
+	if a == nil {
+		b.log.Error(ifSettledErrMsg)
+		return nil
+	}
+	return get(a)
+}
+
 const (
-	getParentOfSettledMsg  = "Get parent of settled block"
-	getSettledOfSettledMsg = "Get last-settled of settled block"
+	getParentOfSettledErrMsg  = "Get parent of settled block"
+	getSettledOfSettledErrMsg = "Get last-settled of settled block"
 )
 
 // ParentBlock returns the block's parent unless [Block.MarkSettled] has been
-// called, in which case it returns nil.
+// called, in which case it returns nil and logs an error.
 func (b *Block) ParentBlock() *Block {
-	if a := b.ancestry.Load(); a != nil {
+	return b.ancestor(getParentOfSettledErrMsg, func(a *ancestry) *Block {
 		return a.parent
-	}
-	b.log.Debug(getParentOfSettledMsg)
-	return nil
+	})
 }
 
 // LastSettled returns the last-settled block at the time of b's acceptance,
-// unless [Block.MarkSettled] has been called, in which case it returns nil.
+// unless [Block.MarkSettled] has been called, in which case it returns nil and
+// logs an error. If [Block.MarkSynchronous] was called instead, LastSettled
+// always returns `b` itself, without logging. Note that this value might not be
+// distinct between contiguous blocks.
 func (b *Block) LastSettled() *Block {
-	if a := b.ancestry.Load(); a != nil {
-		return a.lastSettled
+	if b.synchronous {
+		return b
 	}
-	b.log.Error(
-		getSettledOfSettledMsg,
-		zap.Stack("stacktrace"),
-	)
-	return nil
+	return b.ancestor(getSettledOfSettledErrMsg, func(a *ancestry) *Block {
+		return a.lastSettled
+	})
 }
 
 // Settles returns the executed blocks that b settles if it is accepted by
 // consensus. If `x` is the block height of the `b.ParentBlock().LastSettled()`
 // and `y` is the height of the `b.LastSettled()`, then Settles returns the
-// contiguous, half-open range (x,y] or an empty slice i.f.f. x==y.
+// contiguous, half-open range (x,y] or an empty slice i.f.f. x==y. Every block
+// therefore returns a disjoint (and possibly empty) set of historical blocks.
 //
 // It is not valid to call Settles after a call to [Block.MarkSettled] on either
-// b or its parent.
+// b or its parent. If [Block.MarkSynchronous] was called instead, Settles
+// always returns a single-element slice of `b` itself.
 func (b *Block) Settles() []*Block {
-	return b.ParentBlock().IfChildSettles(b.LastSettled())
+	if b.synchronous {
+		return []*Block{b}
+	}
+	return settling(b.ParentBlock().LastSettled(), b.LastSettled())
 }
 
-// IfChildSettles is similar to [Block.Settles] but with different definitions
+// WhenChildSettles returns the blocks that would be settled by a child of `b`,
+// given the last-settled block at that child's block time. Note that the
+// last-settled block at the child's time MAY be equal to the last-settled of
+// `b` (its parent), in which case WhenChildSettles returns an empty slice.
+//
+// The argument is typically the return value of [LastToSettleAt], where that
+// function receives `b` as the parent. See the Example.
+//
+// WhenChildSettles MUST only be called before the call to [Block.MarkSettled]
+// on `b`. The intention is that this method is called on the VM's preferred
+// block, which always meets this criterion. This is by definition of
+// settlement, which requires that at least one descendant block has already
+// been accepted, which the preference never has.
+//
+// WhenChildSettles is similar to [Block.Settles] but with different definitions
 // of `x` and `y` (as described in [Block.Settles]). It is intended for use
 // during block building and defines `x` as the block height of
 // `b.LastSettled()` while `y` as the height of the argument passed to this
 // method.
-//
-// The argument is typically the return value of [LastToSettleAt], where that
-// function receives b as the parent. See the Example.
-func (b *Block) IfChildSettles(lastSettledOfChild *Block) []*Block {
+func (b *Block) WhenChildSettles(lastSettledOfChild *Block) []*Block {
 	return settling(b.LastSettled(), lastSettledOfChild)
 }
 
@@ -104,58 +145,81 @@ func (b *Block) IfChildSettles(lastSettledOfChild *Block) []*Block {
 // arguments have the same block hash.
 func settling(lastOfParent, lastOfCurr *Block) []*Block {
 	var settling []*Block
-	for s := lastOfCurr; s.ParentBlock() != nil && s.Hash() != lastOfParent.Hash(); s = s.ParentBlock() {
+	// TODO(arr4n) abstract this to combine functionality with iterators
+	// introduced by @StephenButtolph.
+	for s := lastOfCurr; s.Hash() != lastOfParent.Hash(); s = s.ParentBlock() {
 		settling = append(settling, s)
 	}
 	slices.Reverse(settling)
 	return settling
 }
 
-// LastToSettleAt returns the last block to be settled at time `settleAt` if
-// building on the specified parent block, and a boolean to indicate if
+// LastToSettleAt returns (a) the last block to be settled at time `settleAt` if
+// building on the specified parent block, and (b) a boolean to indicate if
 // settlement is currently possible. If the returned boolean is false, the
 // execution stream is lagging and LastToSettleAt can be called again after some
 // indeterminate delay.
 //
-// See the Example for [Block.IfChildSettles] for one usage of the returned
+// See the Example for [Block.WhenChildSettles] for one usage of the returned
 // block.
-func LastToSettleAt(settleAt uint64, parent *Block) (*Block, bool) {
-	// These variables are only abstracted for clarity; they are not needed
-	// beyond the scope of the `for` loop.
-	var block, child *Block
-	block = parent // therefore `child` remains nil
+func LastToSettleAt(settleAt uint64, parent *Block) (b *Block, ok bool) {
+	defer func() {
+		// Avoids having to perform this check at every return.
+		if !ok {
+			b = nil
+		}
+	}()
 
-	// The only way [Block.parent] can be nil is if it was already settled (see
-	// invariant in [Block]). If a block was already settled then only that or a
-	// later (i.e. unsettled) block can be returned by this loop, therefore we
-	// have a guarantee that the loop update will never result in `block==nil`.
-	// Framed differently, because `settleAt` is >= what it was when this
-	// function was used to build `parent`, if `block.parent==nil` then it will
-	// have already been settled in `parent` and therefore executed by
-	// `<=settleAt` so will be returned here.
-	for ; ; block, child = block.ParentBlock(), block {
-		if block.Time() > settleAt {
-			continue
+	// A block can be the last to settle at some time i.f.f. two criteria are
+	// met:
+	//
+	// 1. The block has finished execution by said time and;
+	//
+	// 2. The block's child is known to have *not* finished execution or be
+	//    unable to finish by that time.
+	//
+	// The block currently being built can never finish in time, so we start
+	// with criterion (2) being met.
+	known := true
+
+	// The only way [Block.ParentBlock] can be nil is if `block` was already
+	// settled (see invariant in [Block]). If a block was already settled then
+	// only that or a later (i.e. unsettled) block can be returned by this loop,
+	// therefore we have a guarantee that the loop update will never result in
+	// `block==nil`.
+	for block := parent; ; block = block.ParentBlock() {
+		// Guarantees that the loop will always exit as the last pre-SAE block
+		// (perhaps the genesis) is always settled, by definition.
+		if settled := block.ancestry.Load() == nil; settled {
+			return block, known
 		}
 
+		if startsNoEarlierThan := block.BuildTime(); startsNoEarlierThan > settleAt {
+			known = true
+			continue
+		}
+		// TODO(arr4n) more fine-grained checks are possible by computing the
+		// minimum possible gas consumption of blocks. For example,
+		// `block.BuildTime()+block.intrinsicGasSum()` can be compared against
+		// `settleAt`, as can the sum of a chain of blocks.
+
 		if t := block.executionExceededSecond.Load(); t != nil && *t >= settleAt {
+			known = true
 			continue
 		}
 		if e := block.execution.Load(); e != nil {
 			if e.byGas.CompareUnix(settleAt) > 0 {
-				// Although this check is redundant because of the similar one
-				// just above, it's fast so there's no harm in double-checking.
+				// There may have been a race between this check and the
+				// execution-exceeded one above, so we have to check again.
+				known = true
 				continue
 			}
-			return block, true
+			return block, known
 		}
 
-		// TODO(arr4n) more fine-grained checks are possible for scenarios where
-		// (a) `block` could never execute before `settleAt` so we would
-		// `continue`; and (b) `block` will definitely execute in time and
-		// `child` could never, in which case return `nil, false`.
-		_ = child
-
-		return nil, false
+		// Note that a grandchild block having unknown execution completion time
+		// does not rule out knowing a child's completion time, so this could be
+		// set to true in a future loop iteration.
+		known = false
 	}
 }

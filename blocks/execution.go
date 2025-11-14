@@ -1,8 +1,13 @@
+// Copyright (C) 2025, Ava Labs, Inc. All rights reserved.
+// See the file LICENSE for licensing terms.
+
 package blocks
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"math/big"
 	"slices"
 	"time"
 
@@ -12,8 +17,9 @@ import (
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/ethdb"
 	"github.com/ava-labs/libevm/trie"
+	"go.uber.org/zap"
+
 	"github.com/ava-labs/strevm/gastime"
-	"github.com/ava-labs/strevm/hook"
 	"github.com/ava-labs/strevm/proxytime"
 )
 
@@ -23,89 +29,76 @@ import (
 // transactions, with the highest-known gas time. This MAY be at any resolution
 // but MUST be monotonic.
 func (b *Block) SetInterimExecutionTime(t *proxytime.Time[gas.Gas]) {
-	p := t.Unix()
+	sec := t.Unix()
 	if t.Fraction().Numerator == 0 {
-		p--
+		sec--
 	}
-	b.executionExceededSecond.Store(&p)
+	b.executionExceededSecond.Store(&sec)
 }
 
 type executionResults struct {
-	byGas  gastime.Time `canoto:"value,1"`
-	byWall time.Time    // For metrics only; allowed to be incorrect.
+	byGas  gastime.Time
+	byWall time.Time // For metrics only; allowed to be incorrect.
 
+	baseFee *big.Int
 	// Receipts are deliberately not stored by the canoto representation as they
-	// are already in the database. Only [Block.RestorePostExecutionState] reads
-	// the stored canoto, also accepting a [types.Receipts] argument that it
-	// checks against `receiptRoot`.
+	// are already in the database. All methods that read the stored canoto
+	// either accept a [types.Receipts] for comparison against the
+	// `receiptRoot`, or don't care about receipts at all.
 	receipts      types.Receipts
-	receiptRoot   common.Hash `canoto:"fixed bytes,2"`
-	gasUsed       gas.Gas     `canoto:"uint,3"`
-	stateRootPost common.Hash `canoto:"fixed bytes,4"`
-
-	canotoData canotoData_executionResults
+	receiptRoot   common.Hash
+	stateRootPost common.Hash
 }
 
-// MarkExecuted marks the block as having being executed at the specified
-// time(s) and with the specified results. It also sets the chain's head block
-// to b.
+// MarkExecuted marks the block as having been executed at the specified time(s)
+// and with the specified results. It also sets the chain's head block to b.
 //
 // MarkExecuted guarantees that state is persisted to the database before
 // in-memory indicators of execution are updated. [Block.Executed] returning
-// true is therefore indicative of a successful database write by MarkExecuted.
+// true and [Block.WaitUntilExecuted] returning cleanly are both therefore
+// indicative of a successful database write by MarkExecuted.
 //
-// This function MUST NOT be called more than once. The wall-clock [time.Time]
-// is for metrics only.
-func (b *Block) MarkExecuted(
-	db ethdb.Database,
-	byGas *gastime.Time,
-	byWall time.Time,
-	receipts types.Receipts,
-	stateRootPost common.Hash,
-	hooks hook.Points,
-) error {
-	var used gas.Gas
-	for _, r := range receipts {
-		used += gas.Gas(r.GasUsed)
-	}
-
+// This method MUST NOT be called more than once and its usage is mutually
+// exclusive of [Block.RestorePostExecutionState]. The wall-clock [time.Time] is
+// for metrics only.
+func (b *Block) MarkExecuted(db ethdb.Database, byGas *gastime.Time, byWall time.Time, baseFee *big.Int, receipts types.Receipts, stateRootPost common.Hash) error {
 	e := &executionResults{
 		byGas:         *byGas.Clone(),
 		byWall:        byWall,
+		baseFee:       new(big.Int).Set(baseFee),
 		receipts:      slices.Clone(receipts),
-		gasUsed:       used,
 		receiptRoot:   types.DeriveSha(receipts, trie.NewStackTrie(nil)),
 		stateRootPost: stateRootPost,
 	}
 
 	batch := db.NewBatch()
-	rawdb.WriteHeadBlockHash(batch, b.Hash())
-	rawdb.WriteHeadHeaderHash(batch, b.Hash())
-	rawdb.WriteReceipts(batch, b.Hash(), b.NumberU64(), receipts)
-	if err := b.writePostExecutionState(batch, e); err != nil {
-		return err
-	}
+	hash := b.Hash()
+	rawdb.WriteHeadBlockHash(batch, hash)
+	rawdb.WriteHeadHeaderHash(batch, hash)
+	rawdb.WriteReceipts(batch, hash, b.NumberU64(), receipts)
+	// TODO(arr4n) persist the [executionResults]
 	if err := batch.Write(); err != nil {
-		return err
-	}
-
-	if err := hooks.BlockExecuted(context.TODO(), b.Block, receipts); err != nil {
 		return err
 	}
 
 	return b.markExecuted(e)
 }
 
+var errMarkBlockExecutedAgain = errors.New("block re-marked as executed")
+
 func (b *Block) markExecuted(e *executionResults) error {
 	if !b.execution.CompareAndSwap(nil, e) {
-		b.log.Error("Block re-marked as executed")
-		return fmt.Errorf("block %d re-marked as executed", b.Height())
+		// This is fatal because we corrupted the database's head block if we
+		// got here by [Block.MarkExecuted] being called twice (an invalid use
+		// of the API).
+		b.log.Fatal("Block re-marked as executed")
+		return fmt.Errorf("%w: height %d", errMarkBlockExecutedAgain, b.Height())
 	}
 	close(b.executed)
 	return nil
 }
 
-// WaitUntilExecuted blocks until either [Block.MarkExecuted] is called or the
+// WaitUntilExecuted blocks until [Block.MarkExecuted] is called or the
 // [context.Context] is cancelled.
 func (b *Block) WaitUntilExecuted(ctx context.Context) error {
 	select {
@@ -116,50 +109,60 @@ func (b *Block) WaitUntilExecuted(ctx context.Context) error {
 	}
 }
 
-// Executed reports whether [Block.MarkExecuted] has been called and returned
-// without error.
+// Executed reports whether [Block.MarkExecuted] has been called without
+// resulting in an error.
 func (b *Block) Executed() bool {
 	return b.execution.Load() != nil
 }
 
-func zero[T any]() (z T) { return }
+func executionArtefact[T any](b *Block, desc string, get func(*executionResults) T) T {
+	e := b.execution.Load()
+	if e == nil {
+		b.log.Error("execution artefact requested before execution",
+			zap.String("artefact", desc),
+		)
+		var zero T
+		return zero
+	}
+	return get(e)
+}
 
 // ExecutedByGasTime returns a clone of the gas time passed to
 // [Block.MarkExecuted] or nil if no such successful call has been made.
 func (b *Block) ExecutedByGasTime() *gastime.Time {
-	if e := b.execution.Load(); e != nil {
+	return executionArtefact(b, "execution (gas) time", func(e *executionResults) *gastime.Time {
 		return e.byGas.Clone()
-	}
-	b.log.Error("Get block execution (gas) time before execution")
-	return nil
+	})
 }
 
 // ExecutedByWallTime returns the wall time passed to [Block.MarkExecuted] or
 // the zero time if no such successful call has been made.
 func (b *Block) ExecutedByWallTime() time.Time {
-	if e := b.execution.Load(); e != nil {
+	return executionArtefact(b, "execution (wall) time", func(e *executionResults) time.Time {
 		return e.byWall
-	}
-	b.log.Error("Get block execution (wall) time before execution")
-	return zero[time.Time]()
+	})
+}
+
+// BaseFee returns the base gas price passed to [Block.MarkExecuted] or nil if
+// no such successful call has been made.
+func (b *Block) BaseFee() *big.Int {
+	return executionArtefact(b, "receipts", func(e *executionResults) *big.Int {
+		return new(big.Int).Set(e.baseFee)
+	})
 }
 
 // Receipts returns the receipts passed to [Block.MarkExecuted] or nil if no
 // such successful call has been made.
 func (b *Block) Receipts() types.Receipts {
-	if e := b.execution.Load(); e != nil {
+	return executionArtefact(b, "receipts", func(e *executionResults) types.Receipts {
 		return slices.Clone(e.receipts)
-	}
-	b.log.Error("Get block receipts before execution")
-	return nil
+	})
 }
 
 // PostExecutionStateRoot returns the state root passed to [Block.MarkExecuted]
 // or the zero hash if no such successful call has been made.
 func (b *Block) PostExecutionStateRoot() common.Hash {
-	if e := b.execution.Load(); e != nil {
+	return executionArtefact(b, "state root", func(e *executionResults) common.Hash {
 		return e.stateRootPost
-	}
-	b.log.Error("Get block state root before execution")
-	return zero[common.Hash]()
+	})
 }

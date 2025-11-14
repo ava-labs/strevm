@@ -1,3 +1,6 @@
+// Copyright (C) 2025, Ava Labs, Inc. All rights reserved.
+// See the file LICENSE for licensing terms.
+
 package blocks
 
 import (
@@ -9,6 +12,8 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/ava-labs/strevm/saetest"
 )
 
 func newEthBlock(num, time uint64, parent *types.Block) *types.Block {
@@ -24,7 +29,7 @@ func newEthBlock(num, time uint64, parent *types.Block) *types.Block {
 
 func newBlock(tb testing.TB, eth *types.Block, parent, lastSettled *Block) *Block {
 	tb.Helper()
-	b, err := New(eth, parent, lastSettled, logging.NoLog{})
+	b, err := New(eth, parent, lastSettled, saetest.NewTBLogger(tb, logging.Warn))
 	require.NoError(tb, err, "New()")
 	return b
 }
@@ -39,34 +44,41 @@ func newChain(tb testing.TB, startHeight, total uint64, lastSettledAtHeight map[
 	)
 	byNum := make(map[uint64]*Block)
 
-	if lastSettledAtHeight == nil {
-		lastSettledAtHeight = make(map[uint64]uint64)
-	}
-
 	for i := range total {
 		n := startHeight + i
 
-		var settle *Block
+		var (
+			settle      *Block
+			synchronous bool
+		)
 		if s, ok := lastSettledAtHeight[n]; ok {
-			settle = byNum[s]
+			if s == n {
+				require.Zero(tb, s, "Only genesis block is self-settling")
+				synchronous = true
+			} else {
+				require.Less(tb, s, n, "Last-settled height MUST be <= current height")
+				settle = byNum[s]
+			}
 		}
 
-		byNum[n] = newBlock(tb, newEthBlock(n, n /*time*/, ethParent), parent, settle)
-		blocks = append(blocks, byNum[n])
+		b := newBlock(tb, newEthBlock(n, n /*time*/, ethParent), parent, settle)
+		byNum[n] = b
+		blocks = append(blocks, b)
+		if synchronous {
+			require.NoError(tb, b.MarkSynchronous(), "MarkSynchronous()")
+		}
 
 		parent = byNum[n]
-		ethParent = parent.Block
+		ethParent = parent.EthBlock()
 	}
 
 	return blocks
 }
 
 func TestSetAncestors(t *testing.T) {
-	t.Parallel()
-
 	parent := newBlock(t, newEthBlock(5, 5, nil), nil, nil)
 	lastSettled := newBlock(t, newEthBlock(3, 0, nil), nil, nil)
-	child := newEthBlock(6, 6, parent.Block)
+	child := newEthBlock(6, 6, parent.EthBlock())
 
 	t.Run("incorrect_parent", func(t *testing.T) {
 		// Note that the arguments to [New] are inverted.
@@ -78,8 +90,8 @@ func TestSetAncestors(t *testing.T) {
 	dest := newBlock(t, child, nil, nil)
 
 	t.Run("destination_before_copy", func(t *testing.T) {
-		assert.Nilf(t, dest.ParentBlock(), "%T.ParentBlock()")
-		assert.Nilf(t, dest.LastSettled(), "%T.LastSettled()")
+		assert.Nilf(t, dest.ParentBlock(), "%T.ParentBlock()", dest)
+		assert.Nilf(t, dest.LastSettled(), "%T.LastSettled()", dest)
 	})
 	if t.Failed() {
 		t.FailNow()
@@ -91,7 +103,7 @@ func TestSetAncestors(t *testing.T) {
 	}
 
 	t.Run("incompatible_destination_block", func(t *testing.T) {
-		ethB := newEthBlock(dest.Height()+1 /*mismatch*/, dest.Time(), parent.Block)
+		ethB := newEthBlock(dest.Height()+1 /*mismatch*/, dest.BuildTime(), parent.EthBlock())
 		dest := newBlock(t, ethB, nil, nil)
 		require.ErrorIs(t, dest.CopyAncestorsFrom(source), errHashMismatch)
 	})
