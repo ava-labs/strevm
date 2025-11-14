@@ -282,14 +282,14 @@ func TestFastForward(t *testing.T) {
 			wantFrac:   frac(800, rate),
 		},
 		{
-            tickBefore: 0, // 50.000 
+			tickBefore: 0, // 50.000
 			ffTo:       50,
 			ffToFrac:   900,
 			wantSec:    0,
 			wantFrac:   frac(900, rate),
 		},
 		{
-		    tickBefore: 0, // 50.900
+			tickBefore: 0, // 50.900
 			ffTo:       51,
 			ffToFrac:   100,
 			wantSec:    0,
