@@ -22,7 +22,7 @@ import (
 	"github.com/ava-labs/strevm/saetest"
 )
 
-func TestChainBuilder(t *testing.T) {
+func TestIntegration(t *testing.T) {
 	const (
 		numAccounts           = 2
 		numBlocks             = 3
@@ -58,7 +58,9 @@ func TestChainBuilder(t *testing.T) {
 
 	build := NewChainBuilder(NewBlock(t, bc.Genesis(), nil, nil))
 	dest := common.Address{'d', 'e', 's', 't'}
-	for range numBlocks {
+	for i := range numBlocks {
+		blockNum := uint64(i + 1) // Genesis is block 0
+
 		var txs types.Transactions
 		for range txsPerAccountPerBlock {
 			for i := range numAccounts {
@@ -79,6 +81,7 @@ func TestChainBuilder(t *testing.T) {
 		require.NoError(t, err, "%T.Process(%T.NewBlock().EthBlock()...)", stateProc, build)
 		for _, r := range receipts {
 			assert.Equal(t, types.ReceiptStatusSuccessful, r.Status, "%T.Status", r)
+			assert.Equal(t, blockNum, r.BlockNumber.Uint64(), "%T.BlockNumber", r)
 		}
 	}
 
