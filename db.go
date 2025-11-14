@@ -56,17 +56,21 @@ func (vm *VM) upgradeLastSynchronousBlock(lastSync LastSynchronousBlock) error {
 	clock := gastime.New(block.Time(), lastSync.Target, lastSync.ExcessAfter)
 
 	receipts := rawdb.ReadRawReceipts(vm.db, lastSync.Hash, block.Height())
-	if err := block.MarkExecuted(vm.db, clock, block.Timestamp(), receipts, block.Block.Root(), vm.hooks); err != nil {
+	baseFee := block.BaseFee()
+	if baseFee == nil {
+		baseFee = big.NewInt(0)
+	}
+	if err := block.MarkExecuted(vm.db, clock, block.Timestamp(), baseFee, receipts, block.Block.Root(), vm.hooks); err != nil {
 		return err
 	}
 	if err := block.WriteLastSettledNumber(vm.db); err != nil {
 		return err
 	}
-	if err := block.MarkSettled(); err != nil {
+	if err := block.MarkSynchronous(); err != nil {
 		return err
 	}
 
-	if err := block.CheckInvariants(true, true); err != nil {
+	if err := block.CheckInvariants(blocks.Settled); err != nil {
 		return fmt.Errorf("upgrading last synchronous block: %v", err)
 	}
 	vm.logger().Info(

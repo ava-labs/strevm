@@ -1,3 +1,6 @@
+// Copyright (C) 2025, Ava Labs, Inc. All rights reserved.
+// See the file LICENSE for licensing terms.
+
 package blocks
 
 import (
@@ -8,71 +11,43 @@ import (
 
 	"github.com/ava-labs/avalanchego/utils/logging"
 	"github.com/ava-labs/avalanchego/vms/components/gas"
-	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core/rawdb"
-	"github.com/ava-labs/libevm/core/types"
-	"github.com/ava-labs/libevm/ethdb"
-	"github.com/ava-labs/strevm/gastime"
-	"github.com/ava-labs/strevm/hook/hooktest"
-	"github.com/ava-labs/strevm/proxytime"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.uber.org/zap"
+
+	"github.com/ava-labs/strevm/gastime"
+	"github.com/ava-labs/strevm/proxytime"
+	"github.com/ava-labs/strevm/saetest"
 )
 
-func ExampleBlock_IfChildSettles() {
+//nolint:testableexamples // Output is meaningless
+func ExampleBlock_WhenChildSettles() {
 	parent := blockBuildingPreference()
-	settle, ok := LastToSettleAt(uint64(time.Now().Unix()), parent)
+	settle, ok := LastToSettleAt(uint64(time.Now().Unix()), parent) //nolint:gosec // Time won't overflow for quite a while
 	if !ok {
 		return // execution is lagging; please come back soon
 	}
 
-	// Returns the (possibly empty) slice of blocks that may be settled by the
+	// Returns the (possibly empty) slice of blocks that would be settled by the
 	// block being built.
-	_ = parent.IfChildSettles(settle)
+	_ = parent.WhenChildSettles(settle)
 }
 
-func blockBuildingPreference() *Block {
-	b, _ := New(&types.Block{}, nil, nil, nil)
-	return b
-}
-
-type logRecorder struct {
-	logging.NoLog
-	records []logRecord
-}
-
-type logRecord struct {
-	level  logging.Level
-	msg    string
-	fields []zap.Field
-}
-
-func (l *logRecorder) Error(msg string, fields ...zap.Field) {
-	l.records = append(l.records, logRecord{
-		level:  logging.Error,
-		msg:    msg,
-		fields: fields,
-	})
-}
-
-func (l *logRecorder) Fatal(msg string, fields ...zap.Field) {
-	l.records = append(l.records, logRecord{
-		level:  logging.Fatal,
-		msg:    msg,
-		fields: fields,
-	})
-}
+// blockBuildingPreference exists only to allow examples to build.
+func blockBuildingPreference() *Block { return nil }
 
 func TestSettlementInvariants(t *testing.T) {
-	t.Parallel()
-
 	parent := newBlock(t, newEthBlock(5, 5, nil), nil, nil)
 	lastSettled := newBlock(t, newEthBlock(3, 3, nil), nil, nil)
 
-	b := newBlock(t, newEthBlock(0, 0, parent.Block), parent, lastSettled)
+	b := newBlock(t, newEthBlock(6, 10, parent.EthBlock()), parent, lastSettled)
+
+	db := rawdb.NewMemoryDatabase()
+	for _, b := range []*Block{b, parent, lastSettled} {
+		b.markExecutedForTests(t, db, gastime.New(b.BuildTime(), 1, 0))
+	}
 
 	t.Run("before_MarkSettled", func(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
@@ -81,6 +56,7 @@ func TestSettlementInvariants(t *testing.T) {
 
 		assert.True(t, b.ParentBlock().equalForTests(parent), "ParentBlock().equalForTests([constructor arg])")
 		assert.True(t, b.LastSettled().equalForTests(lastSettled), "LastSettled().equalForTests([constructor arg])")
+		assert.NoError(t, b.CheckInvariants(Executed), "CheckInvariants(Executed)")
 	})
 	if t.Failed() {
 		t.FailNow()
@@ -90,35 +66,40 @@ func TestSettlementInvariants(t *testing.T) {
 
 	t.Run("after_MarkSettled", func(t *testing.T) {
 		assert.NoError(t, b.WaitUntilSettled(context.Background()), "WaitUntilSettled()")
+		assert.NoError(t, b.CheckInvariants(Settled), "CheckInvariants(Settled)")
 
-		var rec logRecorder
-		b.log = &rec
+		rec := saetest.NewLogRecorder(logging.Warn)
+		b.log = rec
+		assertNumErrorLogs := func(t *testing.T, want int) {
+			t.Helper()
+			assert.Len(t, rec.At(logging.Error), want, "Number of ERROR")
+		}
 
 		assert.Nil(t, b.ParentBlock(), "ParentBlock()")
-		assert.Len(t, rec.records, 1, "Number of ERROR or FATAL logs")
+		assertNumErrorLogs(t, 1)
 		assert.Nil(t, b.LastSettled(), "LastSettled()")
-		assert.Len(t, rec.records, 2, "Number of ERROR or FATAL logs")
+		assertNumErrorLogs(t, 2)
 		assert.ErrorIs(t, b.MarkSettled(), errBlockResettled, "second call to MarkSettled()")
-		assert.Len(t, rec.records, 3, "Number of ERROR or FATAL logs")
+		assertNumErrorLogs(t, 3)
 		if t.Failed() {
 			t.FailNow()
 		}
 
-		want := []logRecord{
+		want := []*saetest.LogRecord{
 			{
-				level: logging.Error,
-				msg:   getParentOfSettledMsg,
+				Level: logging.Error,
+				Msg:   getParentOfSettledErrMsg,
 			},
 			{
-				level: logging.Error,
-				msg:   getSettledOfSettledMsg,
+				Level: logging.Error,
+				Msg:   getSettledOfSettledErrMsg,
 			},
 			{
-				level: logging.Error,
-				msg:   errBlockResettled.Error(),
+				Level: logging.Error,
+				Msg:   errBlockResettled.Error(),
 			},
 		}
-		if diff := cmp.Diff(want, rec.records, cmp.AllowUnexported(logRecord{})); diff != "" {
+		if diff := cmp.Diff(want, rec.AtLeast(logging.Error)); diff != "" {
 			t.Errorf("ERROR + FATAL logs diff (-want +got):\n%s", diff)
 		}
 	})
@@ -138,7 +119,7 @@ func TestSettles(t *testing.T) {
 		9: 7,
 	}
 	wantSettles := map[uint64][]uint64{
-		// It is not valid to call Settles() on the genesis block
+		0: {0},
 		1: nil,
 		2: nil,
 		3: nil,
@@ -175,27 +156,27 @@ func TestSettles(t *testing.T) {
 
 	for _, b := range blocks[1:] {
 		tests = append(tests, testCase{
-			name: fmt.Sprintf("Block(%d).IfChildSettles([same as parent])", b.Height()),
-			got:  b.IfChildSettles(b.LastSettled()),
+			name: fmt.Sprintf("Block(%d).WhenChildSettles([same as parent])", b.Height()),
+			got:  b.WhenChildSettles(b.LastSettled()),
 			want: nil,
 		})
 	}
 
 	tests = append(tests, []testCase{
 		{
-			got:  blocks[7].IfChildSettles(blocks[3]),
+			got:  blocks[7].WhenChildSettles(blocks[3]),
 			want: nil,
 		},
 		{
-			got:  blocks[7].IfChildSettles(blocks[4]),
+			got:  blocks[7].WhenChildSettles(blocks[4]),
 			want: numsToBlocks(4),
 		},
 		{
-			got:  blocks[7].IfChildSettles(blocks[5]),
+			got:  blocks[7].WhenChildSettles(blocks[5]),
 			want: numsToBlocks(4, 5),
 		},
 		{
-			got:  blocks[7].IfChildSettles(blocks[6]),
+			got:  blocks[7].WhenChildSettles(blocks[6]),
 			want: numsToBlocks(4, 5, 6),
 		},
 	}...)
@@ -203,23 +184,18 @@ func TestSettles(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			if diff := cmp.Diff(tt.want, tt.got, cmpopts.EquateEmpty(), CmpOpt()); diff != "" {
-				t.Errorf("diff (-want +got):\n%s", diff)
+				t.Errorf("Settles() diff (-want +got):\n%s", diff)
 			}
 		})
 	}
-}
-
-func (b *Block) markExecutedForTests(tb testing.TB, db ethdb.Database, tm *gastime.Time) {
-	tb.Helper()
-	require.NoError(tb, b.MarkExecuted(db, tm, time.Time{}, nil, common.Hash{}, hooktest.Simple{}), "MarkExecuted()")
 }
 
 func TestLastToSettleAt(t *testing.T) {
 	blocks := newChain(t, 0, 30, nil)
 	t.Run("helper_invariants", func(t *testing.T) {
 		for i, b := range blocks {
-			require.Equal(t, uint64(i), b.Height())
-			require.Equal(t, b.Time(), b.Height())
+			require.Equal(t, uint64(i), b.Height()) //nolint:gosec // Slice index won't overflow
+			require.Equal(t, b.BuildTime(), b.Height())
 		}
 	})
 
@@ -275,15 +251,21 @@ func TestLastToSettleAt(t *testing.T) {
 	requireTime(t, 13, 1)
 	blocks[8].markExecutedForTests(t, db, tm)
 
-	for _, b := range blocks {
-		if !b.Executed() {
-			continue
-		}
+	require.False(
+		t, blocks[9].Executed(),
+		"Block 9 MUST remain unexecuted", // exercises lagging-execution logic when building on 9
+	)
+
+	for i, b := range blocks {
 		// Setting interim execution time isn't required for the algorithm to
 		// work as it just allows [LastToSettleAt] to return definitive results
 		// earlier in execution. It does, however, risk an edge-case error for
-		// blocks that complete execution on an exact second boundary; see the
-		// [Block.SetInterimExecutionTime] implementation for details.
+		// blocks that complete execution on an exact second boundary so needs
+		// to be tested; see the [Block.SetInterimExecutionTime] implementation
+		// for details.
+		if i%2 == 0 || !b.Executed() {
+			continue
+		}
 		b.SetInterimExecutionTime(b.ExecutedByGasTime().Time)
 	}
 
@@ -329,14 +311,8 @@ func TestLastToSettleAt(t *testing.T) {
 		{
 			settleAt: 9,
 			parent:   blocks[9],
-			// The current implementation is very coarse-grained and MAY return
-			// false negatives that would simply require a retry after some
-			// indeterminate period of time. Even though the execution time of
-			// `blocks[8]` guarantees that `blocks[9]` MUST finish execution
-			// after the settlement time, our current implementation doesn't
-			// check this. It is expected that this specific test case will one
-			// day fail, at which point it MUST be updated to want `blocks[7]`.
-			wantOK: false,
+			wantOK:   true,
+			want:     blocks[7],
 		},
 		{
 			settleAt: 15,

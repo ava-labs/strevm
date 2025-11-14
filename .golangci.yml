@@ -82,6 +82,11 @@ linters-settings:
         severity: warning
         disabled: false
 
+  testifylint:
+    enable-all: true
+    disable:
+      - require-error # Blanket usage of require over assert is an anti-pattern
+
 issues:
   include:
     # Many of the default exclusions are because, verbatim "Annoying issue",
