@@ -66,7 +66,7 @@ func (vm *VM) upgradeLastSynchronousBlock(lastSync LastSynchronousBlock) error {
 		return err
 	}
 
-	if err := block.CheckInvariants(true, true); err != nil {
+	if err := block.CheckInvariants(blocks.Settled); err != nil {
 		return fmt.Errorf("upgrading last synchronous block: %v", err)
 	}
 	vm.logger().Info(
