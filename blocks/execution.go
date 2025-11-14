@@ -17,10 +17,10 @@ import (
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/ethdb"
 	"github.com/ava-labs/libevm/trie"
-	"go.uber.org/zap"
-
 	"github.com/ava-labs/strevm/gastime"
+	"github.com/ava-labs/strevm/hook"
 	"github.com/ava-labs/strevm/proxytime"
+	"go.uber.org/zap"
 )
 
 //go:generate go run github.com/StephenButtolph/canoto/canoto $GOFILE
@@ -71,12 +71,19 @@ func (b *Block) MarkExecuted(
 	baseFee *big.Int,
 	receipts types.Receipts,
 	stateRootPost common.Hash,
+	hooks hook.Points,
 ) error {
+	var used gas.Gas
+	for _, r := range receipts {
+		used += gas.Gas(r.GasUsed)
+	}
+
 	e := &executionResults{
 		byGas:         *byGas.Clone(),
 		byWall:        byWall,
 		baseFee:       new(big.Int).Set(baseFee),
 		receipts:      slices.Clone(receipts),
+		gasUsed:       used,
 		receiptRoot:   types.DeriveSha(receipts, trie.NewStackTrie(nil)),
 		stateRootPost: stateRootPost,
 	}
@@ -86,8 +93,14 @@ func (b *Block) MarkExecuted(
 	rawdb.WriteHeadBlockHash(batch, hash)
 	rawdb.WriteHeadHeaderHash(batch, hash)
 	rawdb.WriteReceipts(batch, hash, b.NumberU64(), receipts)
-	// TODO(arr4n) persist the [executionResults]
+	if err := b.writePostExecutionState(batch, e); err != nil {
+		return err
+	}
 	if err := batch.Write(); err != nil {
+		return err
+	}
+
+	if err := hooks.BlockExecuted(context.TODO(), b.Block, receipts); err != nil {
 		return err
 	}
 
