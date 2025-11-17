@@ -10,7 +10,6 @@ import (
 	"math/big"
 	"math/rand/v2"
 	"testing"
-	"time"
 
 	"github.com/ava-labs/avalanchego/utils/logging"
 	"github.com/ava-labs/avalanchego/vms/components/gas"
@@ -58,25 +57,40 @@ type SUT struct {
 	*Executor
 	chain  *blockstest.ChainBuilder
 	wallet *saetest.Wallet
+	logger logging.Logger
 }
 
-func newSUT(tb testing.TB, hooks hook.Points) SUT {
+// newSUT returns a new SUT. Any >= [logging.Error] on the logger will also
+// cancel the returned context, which is useful when waiting for blocks that
+// can never finish execution because of an error.
+func newSUT(tb testing.TB, hooks hook.Points) (context.Context, SUT) {
 	tb.Helper()
+
+	logger := saetest.NewTBLogger(tb, logging.Warn)
+	ctx := logger.CancelOnError(tb.Context())
 
 	config := params.AllDevChainProtocolChanges
 	db := rawdb.NewMemoryDatabase()
+	tdbConfig := &triedb.Config{}
 
 	wallet := saetest.NewUNSAFEWallet(tb, 1, types.LatestSigner(config))
 	alloc := saetest.MaxAllocFor(wallet.Addresses()...)
-	genesis := blockstest.NewGenesis(tb, db, config, alloc)
+	genesis := blockstest.NewGenesis(tb, db, config, alloc, blockstest.WithTrieDBConfig(tdbConfig))
 
-	e, err := New(genesis, config, db, (*triedb.Config)(nil), hooks, saetest.NewTBLogger(tb, logging.Warn))
+	e, err := New(genesis, config, db, tdbConfig, hooks, logger)
 	require.NoError(tb, err, "New()")
 	tb.Cleanup(e.Close)
-	return SUT{
+
+	chain := blockstest.NewChainBuilder(e.LastExecuted())
+	chain.SetDefaultOptions(blockstest.WithBlockOptions(
+		blockstest.WithLogger(logger)),
+	)
+
+	return ctx, SUT{
 		Executor: e,
-		chain:    blockstest.NewChainBuilder(e.LastExecuted()),
+		chain:    chain,
 		wallet:   wallet,
+		logger:   logger,
 	}
 }
 
@@ -89,8 +103,7 @@ func TestImmediateShutdownNonBlocking(t *testing.T) {
 }
 
 func TestExecutionSynchronisation(t *testing.T) {
-	ctx := context.Background()
-	sut := newSUT(t, defaultHooks())
+	ctx, sut := newSUT(t, defaultHooks())
 	e, chain := sut.Executor, sut.chain
 
 	for range uint64(10) {
@@ -108,10 +121,7 @@ func TestExecutionSynchronisation(t *testing.T) {
 }
 
 func TestReceiptPropagation(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-
-	sut := newSUT(t, defaultHooks())
+	ctx, sut := newSUT(t, defaultHooks())
 	e, chain, wallet := sut.Executor, sut.chain, sut.wallet
 
 	var want [][]*types.Receipt
@@ -146,10 +156,7 @@ func TestReceiptPropagation(t *testing.T) {
 }
 
 func TestSubscriptions(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-
-	sut := newSUT(t, defaultHooks())
+	ctx, sut := newSUT(t, defaultHooks())
 	e, chain, wallet := sut.Executor, sut.chain, sut.wallet
 
 	precompile := common.Address{'p', 'r', 'e'}
@@ -227,10 +234,7 @@ func testEvents[T any](tb testing.TB, got *saetest.EventCollector[T], want []T, 
 }
 
 func TestExecution(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-
-	sut := newSUT(t, defaultHooks())
+	ctx, sut := newSUT(t, defaultHooks())
 	wallet := sut.wallet
 	eoa := wallet.Addresses()[0]
 
@@ -335,8 +339,8 @@ func TestExecution(t *testing.T) {
 }
 
 func TestGasAccounting(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
+	hooks := &saetest.HookStub{}
+	ctx, sut := newSUT(t, hooks)
 
 	const gasPerTx = gas.Gas(params.TxGas)
 	at := func(blockTime, txs uint64, rate gas.Gas) *proxytime.Time[gas.Gas] {
@@ -437,8 +441,6 @@ func TestGasAccounting(t *testing.T) {
 		},
 	}
 
-	hooks := &saetest.HookStub{}
-	sut := newSUT(t, hooks)
 	e, chain, wallet := sut.Executor, sut.chain, sut.wallet
 
 	for i, step := range steps {
@@ -454,9 +456,11 @@ func TestGasAccounting(t *testing.T) {
 			})
 		}
 
-		b := chain.NewBlock(t, txs, blockstest.ModifyHeader(func(h *types.Header) {
-			h.Time = step.blockTime
-		}))
+		b := chain.NewBlock(t, txs, blockstest.WithEthBlockOptions(
+			blockstest.ModifyHeader(func(h *types.Header) {
+				h.Time = step.blockTime
+			}),
+		))
 		require.NoError(t, e.Enqueue(ctx, b), "Enqueue()")
 		require.NoErrorf(t, b.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", b)
 

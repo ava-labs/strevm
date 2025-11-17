@@ -67,12 +67,32 @@ func WithReceipts(rs types.Receipts) EthBlockOption {
 	})
 }
 
+// A BlockOption configures the default block properties created by [NewBlock].
+type BlockOption = options.Option[blockProperties]
+
 // NewBlock constructs an SAE block, wrapping the raw Ethereum block.
-func NewBlock(tb testing.TB, eth *types.Block, parent, lastSettled *blocks.Block) *blocks.Block {
+func NewBlock(tb testing.TB, eth *types.Block, parent, lastSettled *blocks.Block, opts ...BlockOption) *blocks.Block {
 	tb.Helper()
-	b, err := blocks.New(eth, parent, lastSettled, saetest.NewTBLogger(tb, logging.Warn))
+
+	props := options.ApplyTo(&blockProperties{}, opts...)
+	if props.logger == nil {
+		props.logger = saetest.NewTBLogger(tb, logging.Warn)
+	}
+
+	b, err := blocks.New(eth, parent, lastSettled, props.logger)
 	require.NoError(tb, err, "blocks.New()")
 	return b
+}
+
+type blockProperties struct {
+	logger logging.Logger
+}
+
+// WithLogger overrides the logger passed to [blocks.New] by [NewBlock].
+func WithLogger(l logging.Logger) BlockOption {
+	return options.Func[blockProperties](func(p *blockProperties) {
+		p.logger = l
+	})
 }
 
 // NewGenesis constructs a new [core.Genesis], writes it to the database, and

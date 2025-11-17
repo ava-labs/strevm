@@ -74,9 +74,11 @@ func TestIntegration(t *testing.T) {
 				txs = append(txs, tx)
 			}
 		}
-		b := build.NewBlock(t, txs, ModifyHeader(func(h *types.Header) {
-			h.GasLimit = 100e6
-		}))
+		b := build.NewBlock(t, txs, WithEthBlockOptions(
+			ModifyHeader(func(h *types.Header) {
+				h.GasLimit = 100e6
+			})),
+		)
 
 		receipts, _, _, err := stateProc.Process(b.EthBlock(), sdb, *bc.GetVMConfig())
 		require.NoError(t, err, "%T.Process(%T.NewBlock().EthBlock()...)", stateProc, build)
