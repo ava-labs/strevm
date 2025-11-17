@@ -21,7 +21,6 @@ import (
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/core/vm"
 	"github.com/ava-labs/libevm/crypto"
-	"github.com/ava-labs/libevm/ethdb"
 	"github.com/ava-labs/libevm/libevm"
 	"github.com/ava-labs/libevm/libevm/hookstest"
 	"github.com/ava-labs/libevm/params"
@@ -61,10 +60,12 @@ type SUT struct {
 	wallet *saetest.Wallet
 }
 
-func newSUT(tb testing.TB, db ethdb.Database, hooks hook.Points) SUT {
+func newSUT(tb testing.TB, hooks hook.Points) SUT {
 	tb.Helper()
 
 	config := params.AllDevChainProtocolChanges
+	db := rawdb.NewMemoryDatabase()
+
 	wallet := saetest.NewUNSAFEWallet(tb, 1, types.LatestSigner(config))
 	alloc := saetest.MaxAllocFor(wallet.Addresses()...)
 	genesis := blockstest.NewGenesis(tb, db, config, alloc)
@@ -84,12 +85,12 @@ func defaultHooks() *saetest.HookStub {
 }
 
 func TestImmediateShutdownNonBlocking(t *testing.T) {
-	newSUT(t, rawdb.NewMemoryDatabase(), defaultHooks()) // calls [Executor.Close] in test cleanup
+	newSUT(t, defaultHooks()) // calls [Executor.Close] in test cleanup
 }
 
 func TestExecutionSynchronisation(t *testing.T) {
 	ctx := context.Background()
-	sut := newSUT(t, rawdb.NewMemoryDatabase(), defaultHooks())
+	sut := newSUT(t, defaultHooks())
 	e, chain := sut.Executor, sut.chain
 
 	for range uint64(10) {
@@ -110,7 +111,7 @@ func TestReceiptPropagation(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	sut := newSUT(t, rawdb.NewMemoryDatabase(), defaultHooks())
+	sut := newSUT(t, defaultHooks())
 	e, chain, wallet := sut.Executor, sut.chain, sut.wallet
 
 	var want [][]*types.Receipt
@@ -148,7 +149,7 @@ func TestSubscriptions(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	sut := newSUT(t, rawdb.NewMemoryDatabase(), defaultHooks())
+	sut := newSUT(t, defaultHooks())
 	e, chain, wallet := sut.Executor, sut.chain, sut.wallet
 
 	precompile := common.Address{'p', 'r', 'e'}
@@ -229,7 +230,7 @@ func TestExecution(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	sut := newSUT(t, rawdb.NewMemoryDatabase(), defaultHooks())
+	sut := newSUT(t, defaultHooks())
 	wallet := sut.wallet
 	eoa := wallet.Addresses()[0]
 
@@ -437,7 +438,7 @@ func TestGasAccounting(t *testing.T) {
 	}
 
 	hooks := &saetest.HookStub{}
-	sut := newSUT(t, rawdb.NewMemoryDatabase(), hooks)
+	sut := newSUT(t, hooks)
 	e, chain, wallet := sut.Executor, sut.chain, sut.wallet
 
 	for i, step := range steps {
