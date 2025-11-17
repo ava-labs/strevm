@@ -125,14 +125,10 @@ func (tm *Time[D]) FastForwardTo(to uint64, toFrac D) (uint64, FractionalSecond[
 }
 
 func (tm *Time[D]) isFuture(sec uint64, num D) bool {
-	switch cmp.Compare(sec, tm.seconds) {
-	case -1:
-		return false
-	case 1:
-		return true
-	default:
-		return num > tm.fraction
+	if sec != tm.seconds {
+		return sec > tm.seconds
 	}
+	return num > tm.fraction
 }
 
 var errGtSecond = errors.New("> 1s")
