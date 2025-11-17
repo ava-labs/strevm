@@ -44,7 +44,7 @@ func (cb *ChainBuilder) Last() *blocks.Block {
 	return cb.chain[len(cb.chain)-1]
 }
 
-// AllBlocks returns all blocks, including the genesis past to
+// AllBlocks returns all blocks, including the genesis passed to
 // [NewChainBuilder].
 func (cb *ChainBuilder) AllBlocks() []*blocks.Block {
 	return slices.Clone(cb.chain)
