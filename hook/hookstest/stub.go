@@ -25,7 +25,7 @@ func (s *Stub) GasTarget(parent *types.Block) gas.Gas {
 	return s.Target
 }
 
-// SubSecondBlock time ignores its argument and always returns 0.
+// SubSecondBlockTime time ignores its argument and always returns 0.
 func (*Stub) SubSecondBlockTime(*types.Block) gas.Gas {
 	return 0
 }

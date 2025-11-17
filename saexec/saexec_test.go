@@ -21,7 +21,6 @@ import (
 	"github.com/ava-labs/libevm/core/vm"
 	"github.com/ava-labs/libevm/crypto"
 	"github.com/ava-labs/libevm/libevm"
-	libevmhookstest "github.com/ava-labs/libevm/libevm/hookstest"
 	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/triedb"
 	"github.com/google/go-cmp/cmp"
@@ -35,10 +34,12 @@ import (
 	"github.com/ava-labs/strevm/cmputils"
 	"github.com/ava-labs/strevm/gastime"
 	"github.com/ava-labs/strevm/hook"
-	saehookstest "github.com/ava-labs/strevm/hook/hookstest"
 	"github.com/ava-labs/strevm/proxytime"
 	"github.com/ava-labs/strevm/saetest"
 	"github.com/ava-labs/strevm/saetest/escrow"
+
+	libevmhookstest "github.com/ava-labs/libevm/libevm/hookstest"
+	saehookstest "github.com/ava-labs/strevm/hook/hookstest"
 )
 
 func TestMain(m *testing.M) {
