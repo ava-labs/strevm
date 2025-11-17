@@ -39,7 +39,7 @@ import (
 	"github.com/ava-labs/strevm/hook"
 	"github.com/ava-labs/strevm/proxytime"
 	"github.com/ava-labs/strevm/saetest"
-	"github.com/ava-labs/strevm/saetest/weth"
+	"github.com/ava-labs/strevm/saetest/escrow"
 )
 
 func TestMain(m *testing.M) {
@@ -239,7 +239,7 @@ func TestExecution(t *testing.T) {
 	)
 	deploy := wallet.SetNonceAndSign(t, 0, &types.LegacyTx{
 		Nonce:    0,
-		Data:     weth.CreationCode(),
+		Data:     escrow.CreationCode(),
 		GasPrice: big.NewInt(1),
 		Gas:      1e7,
 	})
@@ -254,7 +254,7 @@ func TestExecution(t *testing.T) {
 	copy(eoaAsHash[12:], eoa[:])
 
 	rng := rand.New(rand.NewPCG(0, 0)) //nolint:gosec // Reproducibility is useful for tests
-	var wantWethBalance uint64
+	var wantEscrowBalance uint64
 	for range 10 {
 		val := rng.Uint64N(100_000)
 		tx := wallet.SetNonceAndSign(t, 0, &types.LegacyTx{
@@ -262,8 +262,12 @@ func TestExecution(t *testing.T) {
 			Value:    new(big.Int).SetUint64(val),
 			GasPrice: big.NewInt(1),
 			Gas:      1e6,
+			Data: append(
+				crypto.Keccak256([]byte("deposit(address)"))[:4],
+				eoaAsHash[:]...,
+			),
 		})
-		wantWethBalance += val
+		wantEscrowBalance += val
 		t.Logf("Depositing %d", val)
 
 		txs = append(txs, tx)
@@ -274,9 +278,11 @@ func TestExecution(t *testing.T) {
 				TxHash:  tx.Hash(),
 				Topics: []common.Hash{
 					crypto.Keccak256Hash([]byte("Deposit(address,uint256)")),
-					eoaAsHash,
 				},
-				Data: tx.Value().FillBytes(make([]byte, 32)),
+				Data: append(
+					eoaAsHash[:],
+					tx.Value().FillBytes(make([]byte, 32))...,
+				),
 			}},
 		})
 	}
@@ -321,19 +327,25 @@ func TestExecution(t *testing.T) {
 		sdb, err := state.New(b.PostExecutionStateRoot(), e.StateCache(), nil)
 		require.NoErrorf(t, err, "state.New(%T.PostExecutionStateRoot(), %T.StateCache(), nil)", b, e)
 
-		if got, want := sdb.GetBalance(contract).ToBig(), new(big.Int).SetUint64(wantWethBalance); got.Cmp(want) != 0 {
-			t.Errorf("After WETH deposits, got contract balance %v; want %v", got, want)
+		if got, want := sdb.GetBalance(contract).ToBig(), new(big.Int).SetUint64(wantEscrowBalance); got.Cmp(want) != 0 {
+			t.Errorf("After Escrow deposits, got contract balance %v; want %v", got, want)
 		}
 
+		enablePUSH0 := vm.BlockContext{
+			BlockNumber: big.NewInt(1),
+			Time:        1,
+			Random:      &common.Hash{},
+		}
+		evm := vm.NewEVM(enablePUSH0, vm.TxContext{}, sdb, e.ChainConfig(), vm.Config{})
+
 		callData := append(
-			crypto.Keccak256([]byte("balanceOf(address)"))[:4],
+			crypto.Keccak256([]byte("balance(address)"))[:4],
 			eoaAsHash[:]...,
 		)
-		evm := vm.NewEVM(vm.BlockContext{Transfer: core.Transfer}, vm.TxContext{}, sdb, e.ChainConfig(), vm.Config{})
-		got, _, err := evm.Call(vm.AccountRef(eoa), contract, callData, 1e6, uint256.NewInt(0))
-		require.NoErrorf(t, err, "%T.Call([weth contract], [balanceOf(eoa)])", evm)
-		if got, want := new(uint256.Int).SetBytes(got), uint256.NewInt(wantWethBalance); !got.Eq(want) {
-			t.Errorf("WETH9.balanceOf([eoa]) got %v; want %v", got, want)
+		got, _, err := evm.StaticCall(vm.AccountRef(eoa), contract, callData, 1e6)
+		require.NoErrorf(t, err, "%T.Call([Escrow contract], [balance(eoa)])", evm)
+		if got, want := new(uint256.Int).SetBytes(got), uint256.NewInt(wantEscrowBalance); !got.Eq(want) {
+			t.Errorf("Escrow.balance([eoa]) got %v; want %v", got, want)
 		}
 	})
 }
