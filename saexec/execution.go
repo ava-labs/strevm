@@ -120,8 +120,6 @@ func (e *Executor) execute(b *blocks.Block, logger logging.Logger) error {
 			// has a bug.
 			logger.Error(
 				"Transaction execution errored (not reverted)",
-				zap.Stringer("block_hash", b.Hash()),
-				zap.Uint64("block_height", b.Height()),
 				zap.Int("tx_index", ti),
 				zap.Stringer("tx_hash", tx.Hash()),
 				zap.Error(err),
