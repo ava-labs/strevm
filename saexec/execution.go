@@ -65,7 +65,7 @@ func (e *Executor) processQueue() {
 			)
 
 			if err := e.execute(block, logger); err != nil {
-				logger.Fatal("Block execution failed", zap.Error(err))
+				logger.Error("Block execution failed", zap.Error(err))
 				return
 			}
 		}
@@ -116,7 +116,17 @@ func (e *Executor) execute(b *blocks.Block, logger logging.Logger) error {
 			vm.Config{},
 		)
 		if err != nil {
-			return fmt.Errorf("tx[%d]: %w", ti, err)
+			// This almost certainly means that the worst-case block inclusion
+			// has a bug.
+			logger.Error(
+				"Transaction execution errored (not reverted)",
+				zap.Stringer("block_hash", b.Hash()),
+				zap.Uint64("block_height", b.Height()),
+				zap.Int("tx_index", ti),
+				zap.Stringer("tx_hash", tx.Hash()),
+				zap.Error(err),
+			)
+			continue
 		}
 
 		perTxClock.Tick(gas.Gas(receipt.GasUsed))
