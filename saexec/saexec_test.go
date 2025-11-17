@@ -250,9 +250,6 @@ func TestExecution(t *testing.T) {
 		ContractAddress: contract,
 	})
 
-	var eoaAsHash common.Hash
-	copy(eoaAsHash[12:], eoa[:])
-
 	rng := rand.New(rand.NewPCG(0, 0)) //nolint:gosec // Reproducibility is useful for tests
 	var wantEscrowBalance uint64
 	for range 10 {
@@ -262,28 +259,18 @@ func TestExecution(t *testing.T) {
 			Value:    new(big.Int).SetUint64(val),
 			GasPrice: big.NewInt(1),
 			Gas:      1e6,
-			Data: append(
-				crypto.Keccak256([]byte("deposit(address)"))[:4],
-				eoaAsHash[:]...,
-			),
+			Data:     escrow.CallDataToDeposit(eoa),
 		})
 		wantEscrowBalance += val
 		t.Logf("Depositing %d", val)
 
 		txs = append(txs, tx)
+		ev := escrow.DepositEvent(eoa, uint256.NewInt(val))
+		ev.Address = contract
+		ev.TxHash = tx.Hash()
 		want = append(want, &types.Receipt{
 			TxHash: tx.Hash(),
-			Logs: []*types.Log{{
-				Address: contract,
-				TxHash:  tx.Hash(),
-				Topics: []common.Hash{
-					crypto.Keccak256Hash([]byte("Deposit(address,uint256)")),
-				},
-				Data: append(
-					eoaAsHash[:],
-					tx.Value().FillBytes(make([]byte, 32))...,
-				),
-			}},
+			Logs:   []*types.Log{ev},
 		})
 	}
 
@@ -338,11 +325,7 @@ func TestExecution(t *testing.T) {
 		}
 		evm := vm.NewEVM(enablePUSH0, vm.TxContext{}, sdb, e.ChainConfig(), vm.Config{})
 
-		callData := append(
-			crypto.Keccak256([]byte("balance(address)"))[:4],
-			eoaAsHash[:]...,
-		)
-		got, _, err := evm.StaticCall(vm.AccountRef(eoa), contract, callData, 1e6)
+		got, _, err := evm.StaticCall(vm.AccountRef(eoa), contract, escrow.CallDataForBalance(eoa), 1e6)
 		require.NoErrorf(t, err, "%T.Call([Escrow contract], [balance(eoa)])", evm)
 		if got, want := new(uint256.Int).SetBytes(got), uint256.NewInt(wantEscrowBalance); !got.Eq(want) {
 			t.Errorf("Escrow.balance([eoa]) got %v; want %v", got, want)
