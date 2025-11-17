@@ -12,6 +12,7 @@ import (
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/crypto"
 	"github.com/ava-labs/libevm/libevm/ethtest"
+	"github.com/holiman/uint256"
 	"github.com/stretchr/testify/require"
 )
 
@@ -53,8 +54,10 @@ func (w *Wallet) Addresses() []common.Address {
 	return addrs
 }
 
-// SetNonceAndSign overrides the nonce with the next one for the account, before
-// signing and returning the transaction.
+// SetNonceAndSign overrides the nonce in the `data` with the next one for the
+// account, then signs and returns the transaction. The wallet's record of the
+// account nonce begins at zero and increments after every successful call to
+// this method.
 func (w *Wallet) SetNonceAndSign(tb testing.TB, account int, data types.TxData) *types.Transaction {
 	tb.Helper()
 
@@ -76,4 +79,16 @@ func (w *Wallet) SetNonceAndSign(tb testing.TB, account int, data types.TxData) 
 
 	acc.nonce++
 	return tx
+}
+
+// MaxAllocFor returns a genesis allocation with [MaxUint256] as the balance for
+// all addresses provided.
+func MaxAllocFor(addrs ...common.Address) types.GenesisAlloc {
+	alloc := make(types.GenesisAlloc)
+	for _, a := range addrs {
+		alloc[a] = types.Account{
+			Balance: new(uint256.Int).SetAllOne().ToBig(),
+		}
+	}
+	return alloc
 }

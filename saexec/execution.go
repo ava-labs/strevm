@@ -67,7 +67,7 @@ func (e *Executor) processQueue() {
 			)
 
 			if err := e.execute(block, logger); err != nil {
-				logger.Fatal("Block execution failed", zap.Error(err))
+				logger.Error("Block execution failed", zap.Error(err))
 				return
 			}
 		}
@@ -89,8 +89,10 @@ func (e *Executor) execute(b *blocks.Block, logger logging.Logger) error {
 		return fmt.Errorf("executing blocks out of order: %d then %d", last, curr)
 	}
 
-	target := e.hooks.GasTarget(b.ParentBlock().EthBlock())
-	if err := hook.BeforeBlock(e.gasClock, b.Header(), target); err != nil {
+	scratch := &e.executeScratchSpace
+	rules := e.chainConfig.Rules(b.Number(), true /*isMerge*/, b.BuildTime())
+
+	if err := hook.BeforeBlock(e.hooks, rules, scratch.statedb, b, e.gasClock); err != nil {
 		return fmt.Errorf("before-block hook: %v", err)
 	}
 	perTxClock := e.gasClock.Time.Clone()
@@ -101,7 +103,6 @@ func (e *Executor) execute(b *blocks.Block, logger logging.Logger) error {
 	gasPool := core.GasPool(math.MaxUint64) // required by geth but irrelevant so max it out
 	var blockGasConsumed gas.Gas
 
-	scratch := &e.executeScratchSpace
 	receipts := make(types.Receipts, len(b.Transactions()))
 	for ti, tx := range b.Transactions() {
 		scratch.statedb.SetTxContext(tx.Hash(), ti)
@@ -118,7 +119,15 @@ func (e *Executor) execute(b *blocks.Block, logger logging.Logger) error {
 			vm.Config{},
 		)
 		if err != nil {
-			return fmt.Errorf("tx[%d]: %w", ti, err)
+			// This almost certainly means that the worst-case block inclusion
+			// has a bug.
+			logger.Error(
+				"Transaction execution errored (not reverted)",
+				zap.Int("tx_index", ti),
+				zap.Stringer("tx_hash", tx.Hash()),
+				zap.Error(err),
+			)
+			continue
 		}
 
 		perTxClock.Tick(gas.Gas(receipt.GasUsed))
@@ -141,7 +150,7 @@ func (e *Executor) execute(b *blocks.Block, logger logging.Logger) error {
 		receipts[ti] = receipt
 	}
 	endTime := time.Now()
-	hook.AfterBlock(e.gasClock, blockGasConsumed)
+	hook.AfterBlock(e.hooks, scratch.statedb, b.EthBlock(), e.gasClock, blockGasConsumed, receipts)
 	if e.gasClock.Time.Compare(perTxClock) != 0 {
 		return fmt.Errorf("broken invariant: block-resolution clock @ %s does not match tx-resolution clock @ %s", e.gasClock.String(), perTxClock.String())
 	}

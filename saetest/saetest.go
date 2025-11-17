@@ -11,13 +11,10 @@ import (
 	"slices"
 	"sync"
 
-	"github.com/ava-labs/avalanchego/vms/components/gas"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/event"
 	"github.com/ava-labs/libevm/trie"
 	"github.com/google/go-cmp/cmp"
-
-	"github.com/ava-labs/strevm/hook"
 )
 
 // TrieHasher returns an arbitrary trie hasher.
@@ -95,13 +92,3 @@ func (c *EventCollector[T]) WaitForAtLeast(n int) {
 	}
 	c.cond.L.Unlock()
 }
-
-// HookStub implements [hook.Points].
-type HookStub struct {
-	Target gas.Gas
-}
-
-var _ hook.Points = (*HookStub)(nil)
-
-// GasTarget ignores its argument and always returns [HookStub.Target].
-func (s *HookStub) GasTarget(*types.Block) gas.Gas { return s.Target }

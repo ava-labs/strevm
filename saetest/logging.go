@@ -4,6 +4,7 @@
 package saetest
 
 import (
+	"context"
 	"runtime"
 	"slices"
 	"testing"
@@ -104,24 +105,39 @@ func (l *LogRecorder) AtLeast(lvl logging.Level) []*LogRecord {
 	return l.Filter(func(r *LogRecord) bool { return r.Level >= lvl })
 }
 
-// NewTBLogger constructs a logger that propagates logs to the [testing.TB].
-// WARNING and ERROR logs are sent to [testing.TB.Errorf] while FATAL is sent to
+// NewTBLogger constructs a logger that propagates logs to [testing.TB]. WARNING
+// and ERROR logs are sent to [testing.TB.Errorf] while FATAL is sent to
 // [testing.TB.Fatalf]. All other logs are sent to [testing.TB.Logf]. Although
 // the level can be configured, it is silently capped at [logging.Warn].
 //
 //nolint:thelper // The outputs include the logging site while the TB site is most useful if here
-func NewTBLogger(tb testing.TB, level logging.Level) logging.Logger {
-	return &logger{
+func NewTBLogger(tb testing.TB, level logging.Level) *TBLogger {
+	l := &TBLogger{tb: tb}
+	l.logger = &logger{
+		handler: l, // TODO(arr4n) remove the recursion here and in [LogRecorder]
 		level:   min(level, logging.Warn),
-		handler: &tbLogger{tb: tb},
 	}
+	return l
 }
 
-type tbLogger struct {
-	tb testing.TB
+// TBLogger is a [logging.Logger] that propagates logs to [testing.TB].
+type TBLogger struct {
+	*logger
+	tb      testing.TB
+	onError []context.CancelFunc
 }
 
-func (l *tbLogger) log(lvl logging.Level, msg string, fields ...zap.Field) {
+// CancelOnError pipes `ctx` to and from [context.WithCancel], calling the
+// [context.CancelFunc] after logs >= [logging.Error], and during [testing.TB]
+// cleanup.
+func (l *TBLogger) CancelOnError(ctx context.Context) context.Context {
+	ctx, cancel := context.WithCancel(ctx)
+	l.onError = append(l.onError, cancel)
+	l.tb.Cleanup(cancel)
+	return ctx
+}
+
+func (l *TBLogger) log(lvl logging.Level, msg string, fields ...zap.Field) {
 	var to func(string, ...any)
 	switch {
 	case lvl == logging.Warn || lvl == logging.Error: // because @ARR4N says warnings in tests are errors
@@ -131,6 +147,15 @@ func (l *tbLogger) log(lvl logging.Level, msg string, fields ...zap.Field) {
 	default:
 		to = l.tb.Logf
 	}
+
+	defer func() {
+		if lvl < logging.Error {
+			return
+		}
+		for _, fn := range l.onError {
+			fn()
+		}
+	}()
 
 	enc := zapcore.NewMapObjectEncoder()
 	for _, f := range fields {
