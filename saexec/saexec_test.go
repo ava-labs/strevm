@@ -5,7 +5,6 @@ package saexec
 
 import (
 	"context"
-	"crypto/ecdsa"
 	"fmt"
 	"math"
 	"math/big"
@@ -34,7 +33,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
 
-	"github.com/ava-labs/strevm/blocks"
 	"github.com/ava-labs/strevm/blocks/blockstest"
 	"github.com/ava-labs/strevm/cmputils"
 	"github.com/ava-labs/strevm/gastime"
@@ -56,25 +54,29 @@ func TestMain(m *testing.M) {
 	)
 }
 
-func newExec(tb testing.TB, db ethdb.Database, hooks hook.Points, alloc types.GenesisAlloc) *Executor {
+// SUT is the system under test, primarily the [Executor].
+type SUT struct {
+	*Executor
+	chain  *blockstest.ChainBuilder
+	wallet *saetest.Wallet
+}
+
+func newSUT(tb testing.TB, db ethdb.Database, hooks hook.Points) SUT {
 	tb.Helper()
 
 	config := params.AllDevChainProtocolChanges
-	ethGenesis := saetest.Genesis(tb, db, config, alloc)
-	genesis := blockstest.NewBlock(tb, ethGenesis, nil, nil)
-	require.NoErrorf(tb, genesis.MarkExecuted(db, gastime.New(0, 1, 0), time.Time{}, new(big.Int), nil, ethGenesis.Root()), "%T.MarkExecuted()", genesis)
-	require.NoErrorf(tb, genesis.MarkSynchronous(), "%T.MarkSynchronous()", genesis)
+	wallet := saetest.NewUNSAFEWallet(tb, 1, types.LatestSigner(config))
+	alloc := saetest.MaxAllocFor(wallet.Addresses()...)
+	genesis := blockstest.NewGenesis(tb, db, config, alloc)
 
 	e, err := New(genesis, config, db, (*triedb.Config)(nil), hooks, saetest.NewTBLogger(tb, logging.Warn))
 	require.NoError(tb, err, "New()")
 	tb.Cleanup(e.Close)
-	return e
-}
-
-func newExecWithMaxAlloc(tb testing.TB, db ethdb.Database, hooks hook.Points) (*Executor, *ecdsa.PrivateKey) {
-	tb.Helper()
-	key, alloc := saetest.KeyWithMaxAlloc(tb)
-	return newExec(tb, db, hooks, alloc), key
+	return SUT{
+		Executor: e,
+		chain:    blockstest.NewChainBuilder(e.LastExecuted()),
+		wallet:   wallet,
+	}
 }
 
 func defaultHooks() *saetest.HookStub {
@@ -82,31 +84,24 @@ func defaultHooks() *saetest.HookStub {
 }
 
 func TestImmediateShutdownNonBlocking(t *testing.T) {
-	newExec(t, rawdb.NewMemoryDatabase(), defaultHooks(), nil) // calls [Executor.Close] in test cleanup
+	newSUT(t, rawdb.NewMemoryDatabase(), defaultHooks()) // calls [Executor.Close] in test cleanup
 }
 
 func TestExecutionSynchronisation(t *testing.T) {
 	ctx := context.Background()
-	e := newExec(t, rawdb.NewMemoryDatabase(), defaultHooks(), nil)
+	sut := newSUT(t, rawdb.NewMemoryDatabase(), defaultHooks())
+	e, chain := sut.Executor, sut.chain
 
-	var chain []*blocks.Block
-	parent := e.LastExecuted() // genesis
-	for tm := range uint64(10) {
-		ethB := blockstest.NewEthBlock(parent.EthBlock(), tm, nil)
-		b := blockstest.NewBlock(t, ethB, parent, nil)
-		chain = append(chain, b)
-		parent = b
-	}
-
-	for _, b := range chain {
+	for range uint64(10) {
+		b := chain.NewBlock(t, nil)
 		require.NoError(t, e.Enqueue(ctx, b), "Enqueue()")
 	}
 
-	final := chain[len(chain)-1]
+	final := chain.Last()
 	require.NoErrorf(t, final.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted() on last-enqueued block", final)
 	assert.Equal(t, final.NumberU64(), e.LastExecuted().NumberU64(), "Last-executed atomic pointer holds last-enqueued block")
 
-	for _, b := range chain {
+	for _, b := range chain.AllBlocks() {
 		assert.Truef(t, b.Executed(), "%T[%d].Executed()", b, b.NumberU64())
 	}
 }
@@ -115,15 +110,10 @@ func TestReceiptPropagation(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	e, key := newExecWithMaxAlloc(t, rawdb.NewMemoryDatabase(), defaultHooks())
-	signer := types.LatestSigner(e.ChainConfig())
+	sut := newSUT(t, rawdb.NewMemoryDatabase(), defaultHooks())
+	e, chain, wallet := sut.Executor, sut.chain, sut.wallet
 
-	var (
-		chain []*blocks.Block
-		want  []types.Receipts
-		nonce uint64
-	)
-	parent := e.LastExecuted()
+	var want [][]*types.Receipt
 	for range 10 {
 		var (
 			txs      types.Transactions
@@ -131,27 +121,22 @@ func TestReceiptPropagation(t *testing.T) {
 		)
 
 		for range 5 {
-			tx := types.MustSignNewTx(key, signer, &types.LegacyTx{
-				Nonce:    nonce,
+			tx := wallet.SetNonceAndSign(t, 0, &types.LegacyTx{
 				Gas:      1e5,
 				GasPrice: big.NewInt(1),
 			})
-			nonce++
 			txs = append(txs, tx)
 			receipts = append(receipts, &types.Receipt{TxHash: tx.Hash()})
 		}
 		want = append(want, receipts)
 
-		ethB := blockstest.NewEthBlock(parent.EthBlock(), 0 /*time*/, txs)
-		b := blockstest.NewBlock(t, ethB, parent, nil)
-		chain = append(chain, b)
+		b := chain.NewBlock(t, txs)
 		require.NoError(t, e.Enqueue(ctx, b), "Enqueue()")
-		parent = b
 	}
-	require.NoErrorf(t, parent.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted() on last-enqueued block", parent)
+	require.NoErrorf(t, chain.Last().WaitUntilExecuted(ctx), "%T.WaitUntilExecuted() on last-enqueued block", chain.Last())
 
-	var got []types.Receipts
-	for _, b := range chain {
+	var got [][]*types.Receipt
+	for _, b := range chain.AllExceptGenesis() {
 		got = append(got, b.Receipts())
 	}
 	if diff := cmp.Diff(want, got, cmputils.ReceiptsByTxHash()); diff != "" {
@@ -163,8 +148,8 @@ func TestSubscriptions(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	e, key := newExecWithMaxAlloc(t, rawdb.NewMemoryDatabase(), defaultHooks())
-	signer := types.LatestSigner(e.ChainConfig())
+	sut := newSUT(t, rawdb.NewMemoryDatabase(), defaultHooks())
+	e, chain, wallet := sut.Executor, sut.chain, sut.wallet
 
 	precompile := common.Address{'p', 'r', 'e'}
 	stub := &hookstest.Stub{
@@ -188,22 +173,18 @@ func TestSubscriptions(t *testing.T) {
 		wantLogsEvents      [][]*types.Log
 	)
 
-	parent := e.LastExecuted()
-	for nonce := uint64(0); nonce < 10; nonce++ {
-		tx := types.MustSignNewTx(key, signer, &types.LegacyTx{
-			Nonce:    nonce,
+	for range 10 {
+		tx := wallet.SetNonceAndSign(t, 0, &types.LegacyTx{
 			To:       &precompile,
 			GasPrice: big.NewInt(1),
 			Gas:      1e6,
 		})
 
-		ethB := blockstest.NewEthBlock(parent.EthBlock(), 0 /*time*/, types.Transactions{tx})
-		b := blockstest.NewBlock(t, ethB, parent, nil)
+		b := chain.NewBlock(t, types.Transactions{tx})
 		require.NoError(t, e.Enqueue(ctx, b), "Enqueue()")
-		parent = b
 
 		wantChainHeadEvents = append(wantChainHeadEvents, core.ChainHeadEvent{
-			Block: ethB,
+			Block: b.EthBlock(),
 		})
 		logs := []*types.Log{{
 			Address:     precompile,
@@ -212,7 +193,7 @@ func TestSubscriptions(t *testing.T) {
 			BlockHash:   b.Hash(),
 		}}
 		wantChainEvents = append(wantChainEvents, core.ChainEvent{
-			Block: ethB,
+			Block: b.EthBlock(),
 			Hash:  b.Hash(),
 			Logs:  logs,
 		})
@@ -248,15 +229,15 @@ func TestExecution(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	e, key := newExecWithMaxAlloc(t, rawdb.NewMemoryDatabase(), defaultHooks())
-	eoa := crypto.PubkeyToAddress(key.PublicKey)
-	signer := types.LatestSigner(e.ChainConfig())
+	sut := newSUT(t, rawdb.NewMemoryDatabase(), defaultHooks())
+	wallet := sut.wallet
+	eoa := wallet.Addresses()[0]
 
 	var (
 		txs  types.Transactions
 		want types.Receipts
 	)
-	deploy := types.MustSignNewTx(key, signer, &types.LegacyTx{
+	deploy := wallet.SetNonceAndSign(t, 0, &types.LegacyTx{
 		Nonce:    0,
 		Data:     weth.CreationCode(),
 		GasPrice: big.NewInt(1),
@@ -274,10 +255,9 @@ func TestExecution(t *testing.T) {
 
 	rng := rand.New(rand.NewPCG(0, 0)) //nolint:gosec // Reproducibility is useful for tests
 	var wantWethBalance uint64
-	for nonce := uint64(1); nonce < 10; nonce++ {
+	for range 10 {
 		val := rng.Uint64N(100_000)
-		tx := types.MustSignNewTx(key, signer, &types.LegacyTx{
-			Nonce:    nonce,
+		tx := wallet.SetNonceAndSign(t, 0, &types.LegacyTx{
 			To:       &contract,
 			Value:    new(big.Int).SetUint64(val),
 			GasPrice: big.NewInt(1),
@@ -301,9 +281,7 @@ func TestExecution(t *testing.T) {
 		})
 	}
 
-	genesis := e.LastExecuted()
-	ethB := blockstest.NewEthBlock(genesis.EthBlock(), 0, txs)
-	b := blockstest.NewBlock(t, ethB, genesis, nil)
+	b := sut.chain.NewBlock(t, txs)
 
 	var logIndex uint
 	for i, r := range want {
@@ -323,6 +301,7 @@ func TestExecution(t *testing.T) {
 		}
 	}
 
+	e := sut.Executor
 	require.NoError(t, e.Enqueue(ctx, b), "Enqueue()")
 	require.NoErrorf(t, b.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", b)
 
@@ -362,10 +341,6 @@ func TestExecution(t *testing.T) {
 func TestGasAccounting(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-
-	hooks := &saetest.HookStub{}
-	e, key := newExecWithMaxAlloc(t, rawdb.NewMemoryDatabase(), hooks)
-	signer := types.LatestSigner(e.ChainConfig())
 
 	const gasPerTx = gas.Gas(params.TxGas)
 	at := func(blockTime, txs uint64, rate gas.Gas) *proxytime.Time[gas.Gas] {
@@ -466,28 +441,28 @@ func TestGasAccounting(t *testing.T) {
 		},
 	}
 
-	parent := e.LastExecuted()
-	var nonce uint64
+	hooks := &saetest.HookStub{}
+	sut := newSUT(t, rawdb.NewMemoryDatabase(), hooks)
+	e, chain, wallet := sut.Executor, sut.chain, sut.wallet
+
 	for i, step := range steps {
 		hooks.Target = step.target
 
 		txs := make(types.Transactions, step.numTxs)
 		for i := range txs {
-			txs[i] = types.MustSignNewTx(key, signer, &types.DynamicFeeTx{
-				Nonce:     nonce,
+			txs[i] = wallet.SetNonceAndSign(t, 0, &types.DynamicFeeTx{
 				To:        &common.Address{},
 				Gas:       params.TxGas,
 				GasTipCap: big.NewInt(0),
 				GasFeeCap: big.NewInt(100),
 			})
-			nonce++
 		}
 
-		ethB := blockstest.NewEthBlock(parent.EthBlock(), step.blockTime, txs)
-		b := blockstest.NewBlock(t, ethB, parent, nil)
+		b := chain.NewBlock(t, txs, blockstest.ModifyHeader(func(h *types.Header) {
+			h.Time = step.blockTime
+		}))
 		require.NoError(t, e.Enqueue(ctx, b), "Enqueue()")
 		require.NoErrorf(t, b.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", b)
-		parent = b
 
 		for desc, got := range map[string]*gastime.Time{
 			fmt.Sprintf("%T.ExecutedByGasTime()", b): b.ExecutedByGasTime(),
