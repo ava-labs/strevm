@@ -246,9 +246,16 @@ func TestFastForward(t *testing.T) {
 	steps := []struct {
 		tickBefore uint64
 		ffTo       uint64
+		ffToFrac   uint64
 		wantSec    uint64
 		wantFrac   FractionalSecond[uint64]
 	}{
+		{
+			tickBefore: 0,
+			ffTo:       41, // in the past
+			wantSec:    0,
+			wantFrac:   frac(0, rate),
+		},
 		{
 			tickBefore: 100, // 42.100
 			ffTo:       42,  // in the past
@@ -273,16 +280,97 @@ func TestFastForward(t *testing.T) {
 			wantSec:    5,
 			wantFrac:   frac(800, rate),
 		},
+		{
+			tickBefore: 0, // 50.000
+			ffTo:       50,
+			ffToFrac:   900,
+			wantSec:    0,
+			wantFrac:   frac(900, rate),
+		},
+		{
+			tickBefore: 0, // 50.900
+			ffTo:       51,
+			ffToFrac:   100,
+			wantSec:    0,
+			wantFrac:   frac(200, rate),
+		},
+		{
+			tickBefore: 100, // 51.200
+			ffTo:       51,
+			ffToFrac:   200,
+			wantSec:    0,
+			wantFrac:   frac(0, rate),
+		},
 	}
 
 	for _, s := range steps {
 		tm.Tick(s.tickBefore)
-		gotSec, gotFrac := tm.FastForwardTo(s.ffTo)
-		assert.Equal(t, s.wantSec, gotSec)
-		assert.Equal(t, s.wantFrac, gotFrac)
+		gotSec, gotFrac := tm.FastForwardTo(s.ffTo, s.ffToFrac)
+		assert.Equal(t, s.wantSec, gotSec, "Fast-forwarded seconds")
+		assert.Equal(t, s.wantFrac, gotFrac, "Fast-forwarded fractional numerator")
 
 		if t.Failed() {
 			t.FailNow()
+		}
+	}
+}
+
+func TestConvertMilliseconds(t *testing.T) {
+	type Hz uint64
+
+	tests := []struct {
+		rate          Hz
+		ms            uint64
+		wantSec       uint64
+		wantNumerator Hz // ms * (rate / 1000)
+	}{
+		{
+			rate:          1000,
+			ms:            42,
+			wantNumerator: 42,
+		},
+		{
+			rate:          1234 * 2,
+			ms:            1000 / 2,
+			wantNumerator: 1234,
+		},
+		{
+			rate:          98765 * 4,
+			ms:            1000 / 4,
+			wantNumerator: 98765,
+		},
+		{
+			rate:          142857 * 1000,
+			ms:            1,
+			wantNumerator: 142857,
+		},
+		{
+			rate:          1_001,
+			ms:            500,
+			wantNumerator: 500,
+		},
+		{
+			rate:          1000,
+			ms:            1001,
+			wantSec:       1,
+			wantNumerator: 1,
+		},
+		{
+			rate:          1000,
+			ms:            314_159,
+			wantSec:       314,
+			wantNumerator: 159,
+		},
+	}
+
+	for _, tt := range tests {
+		gotSec, gotFrac := ConvertMilliseconds(tt.rate, tt.ms)
+		wantFrac := FractionalSecond[Hz]{
+			Numerator:   tt.wantNumerator,
+			Denominator: tt.rate,
+		}
+		if gotSec != tt.wantSec || gotFrac != wantFrac {
+			t.Errorf("ConvertMilliseconds(%d, %d) got (%v, %v); want (%v, %v)", tt.ms, tt.rate, gotSec, gotFrac, tt.wantSec, wantFrac)
 		}
 	}
 }
