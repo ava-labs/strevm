@@ -11,6 +11,7 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/libevm/options"
 
@@ -19,15 +20,18 @@ import (
 
 // A ChainBuilder builds a chain of blocks, maintaining necessary invariants.
 type ChainBuilder struct {
-	chain []*blocks.Block
-	opts  []ChainOption
+	chain  []*blocks.Block
+	byHash map[common.Hash]*blocks.Block
+
+	opts []ChainOption
 }
 
 // NewChainBuilder returns a new ChainBuilder starting from the provided block,
 // which MUST NOT be nil.
 func NewChainBuilder(genesis *blocks.Block) *ChainBuilder {
 	return &ChainBuilder{
-		chain: []*blocks.Block{genesis},
+		chain:  []*blocks.Block{genesis},
+		byHash: make(map[common.Hash]*blocks.Block),
 	}
 }
 
@@ -96,4 +100,15 @@ func (cb *ChainBuilder) AllBlocks() []*blocks.Block {
 // AllExceptGenesis returns all blocks created with [ChainBuilder.NewBlock].
 func (cb *ChainBuilder) AllExceptGenesis() []*blocks.Block {
 	return slices.Clone(cb.chain[1:])
+}
+
+// GetBlock returns the block with specified hash and height, and a flag
+// indicating if it was found. If either argument does not match, it returns
+// `nil, false`.
+func (cb *ChainBuilder) GetBlock(h common.Hash, num uint64) (*blocks.Block, bool) {
+	b, ok := cb.byHash[h]
+	if !ok || b.NumberU64() != num {
+		return nil, false
+	}
+	return b, true
 }

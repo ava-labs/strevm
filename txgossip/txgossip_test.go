@@ -31,6 +31,7 @@ import (
 	"go.uber.org/goleak"
 
 	"github.com/ava-labs/strevm/blocks/blockstest"
+	"github.com/ava-labs/strevm/hook/hookstest"
 	"github.com/ava-labs/strevm/saetest"
 	"github.com/ava-labs/strevm/saexec"
 )
@@ -64,7 +65,7 @@ func newSUT(t *testing.T, numAccounts uint) sut {
 	db := rawdb.NewMemoryDatabase()
 	genesis := blockstest.NewGenesis(t, db, config, saetest.MaxAllocFor(wallet.Addresses()...))
 
-	exec, err := saexec.New(genesis, config, db, nil, &saetest.HookStub{Target: 1e6}, logger)
+	exec, err := saexec.New(genesis, config, db, nil, &hookstest.Stub{Target: 1e6}, logger)
 	require.NoError(t, err, "saexec.New()")
 	t.Cleanup(exec.Close)
 
@@ -160,7 +161,7 @@ func TestExecutorIntegration(t *testing.T) {
 	}
 	require.Lenf(t, txs, numTxs, "%T.TransactionsByPriority()", s.Set)
 
-	b := s.chain.NewBlock(t, txs...)
+	b := s.chain.NewBlock(t, txs)
 	require.NoErrorf(t, s.exec.Enqueue(ctx, b), "%T.Enqueue([txs from %T.TransactionsByPriority()])", s.exec, s.Set)
 
 	assert.EventuallyWithTf(
