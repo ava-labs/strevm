@@ -89,25 +89,55 @@ func (tm *Time[D]) Tick(d D) {
 	tm.fraction = D(rem)
 }
 
-// FastForwardTo sets the time to the specified Unix timestamp if it is in the
-// future, returning the integer and fraction number of seconds by which the
-// time was advanced. The fraction is always denominated in [Time.Rate].
-func (tm *Time[D]) FastForwardTo(to uint64) (uint64, FractionalSecond[D]) {
-	if to <= tm.seconds {
+// FastForwardTo sets the time to the specified Unix timestamp and fraction of a
+// second, if it is in the future, returning the integer and fraction number of
+// seconds by which the time was advanced. Both the incoming argument and the
+// returned fraction are denominated in [Time.Rate]. Behaviour is undefined if
+// `to + toFrac / tm.Rate()` overflows 64 bits, which is impossible in practice.
+func (tm *Time[D]) FastForwardTo(to uint64, toFrac D) (uint64, FractionalSecond[D]) {
+	to += uint64(toFrac / tm.hertz)
+	toFrac %= tm.hertz
+
+	if !tm.isFuture(to, toFrac) {
 		return 0, FractionalSecond[D]{0, tm.hertz}
 	}
 
-	sec := to - tm.seconds
-	var frac D
-	if tm.fraction > 0 {
-		frac = tm.hertz - tm.fraction
-		sec--
+	ffSec := to - tm.seconds
+	ffFrac := FractionalSecond[D]{
+		Denominator: tm.hertz,
+	}
+
+	if tm.fraction > toFrac {
+		ffSec--
+		ffFrac.Numerator = tm.hertz - (tm.fraction - toFrac)
+	} else {
+		ffFrac.Numerator = toFrac - tm.fraction
 	}
 
 	tm.seconds = to
-	tm.fraction = 0
+	tm.fraction = toFrac
 
-	return sec, FractionalSecond[D]{frac, tm.hertz}
+	return ffSec, ffFrac
+}
+
+func (tm *Time[D]) isFuture(sec uint64, num D) bool {
+	if sec != tm.seconds {
+		return sec > tm.seconds
+	}
+	return num > tm.fraction
+}
+
+// ConvertMilliseconds returns `ms` as a number of seconds and a fraction of a
+// second, denominated in `rate` and rounded down if `rate` is not a multiple of
+// 1000.
+func ConvertMilliseconds[D Duration](rate D, ms uint64) (sec uint64, _ FractionalSecond[D]) {
+	sec = ms / 1000
+	ms %= 1000
+	frac := FractionalSecond[D]{
+		Denominator: rate,
+	}
+	frac.Numerator, _, _ = intmath.MulDiv(D(ms), rate, 1000) // overflow is impossible as ms < 1000
+	return sec, frac
 }
 
 // SetRate changes the unit rate at which time passes. The requisite integer
