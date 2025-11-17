@@ -5,7 +5,6 @@ package proxytime
 
 import (
 	"cmp"
-	"errors"
 	"fmt"
 	"math"
 	"testing"
@@ -317,62 +316,61 @@ func TestFastForward(t *testing.T) {
 }
 
 func TestConvertMilliseconds(t *testing.T) {
+	type Hz uint64
+
 	tests := []struct {
-		rate    uint64
-		ms      uint16
-		want    uint64
-		wantErr error
+		rate          Hz
+		ms            uint64
+		wantSec       uint64
+		wantNumerator Hz // ms * (rate / 1000)
 	}{
 		{
-			rate: 1000,
-			ms:   42,
-			want: 42,
+			rate:          1000,
+			ms:            42,
+			wantNumerator: 42,
 		},
 		{
-			rate: 1234 * 2,
-			ms:   1000 / 2,
-			want: 1234,
+			rate:          1234 * 2,
+			ms:            1000 / 2,
+			wantNumerator: 1234,
 		},
 		{
-			rate: 98765 * 4,
-			ms:   1000 / 4,
-			want: 98765,
+			rate:          98765 * 4,
+			ms:            1000 / 4,
+			wantNumerator: 98765,
 		},
 		{
-			rate: 142857 * 1000,
-			ms:   1,
-			want: 142857,
+			rate:          142857 * 1000,
+			ms:            1,
+			wantNumerator: 142857,
 		},
 		{
-			rate: 314159,
-			ms:   1000,
-			want: 314159,
+			rate:          1_001,
+			ms:            500,
+			wantNumerator: 500,
 		},
 		{
-			rate:    math.MaxUint64, // arbitrary
-			ms:      1001,
-			wantErr: errGtSecond,
+			rate:          1000,
+			ms:            1001,
+			wantSec:       1,
+			wantNumerator: 1,
 		},
 		{
-			rate: 1_001,
-			ms:   500,
-			want: 500,
-		},
-		{
-			rate: 1_001,
-			ms:   1000,
-			want: 1_001,
+			rate:          1000,
+			ms:            314_159,
+			wantSec:       314,
+			wantNumerator: 159,
 		},
 	}
 
 	for _, tt := range tests {
-		got, err := New(0, tt.rate).ConvertMilliseconds(tt.ms)
-		want := FractionalSecond[uint64]{
-			Numerator:   tt.want,
+		gotSec, gotFrac := ConvertMilliseconds(tt.rate, tt.ms)
+		wantFrac := FractionalSecond[Hz]{
+			Numerator:   tt.wantNumerator,
 			Denominator: tt.rate,
 		}
-		if got != want || !errors.Is(err, tt.wantErr) {
-			t.Errorf("New(0, %d).ConvertMilliseconds(%d) got (%v, %v); want (%v, %v)", tt.rate, tt.ms, got, err, want, tt.wantErr)
+		if gotSec != tt.wantSec || gotFrac != wantFrac {
+			t.Errorf("ConvertMilliseconds(%d, %d) got (%v, %v); want (%v, %v)", tt.ms, tt.rate, gotSec, gotFrac, tt.wantSec, wantFrac)
 		}
 	}
 }
