@@ -90,8 +90,7 @@ func (e *Executor) execute(b *blocks.Block, logger logging.Logger) error {
 	scratch := &e.executeScratchSpace
 	rules := e.chainConfig.Rules(b.Number(), true /*isMerge*/, b.BuildTime())
 
-	target := e.hooks.GasTarget(b.ParentBlock().EthBlock())
-	if err := hook.BeforeBlock(e.hooks, rules, scratch.statedb, b.EthBlock(), e.gasClock, target); err != nil {
+	if err := hook.BeforeBlock(e.hooks, rules, scratch.statedb, b, e.gasClock); err != nil {
 		return fmt.Errorf("before-block hook: %v", err)
 	}
 	perTxClock := e.gasClock.Time.Clone()

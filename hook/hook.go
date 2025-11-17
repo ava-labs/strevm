@@ -15,6 +15,7 @@ import (
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/params"
 
+	"github.com/ava-labs/strevm/blocks"
 	"github.com/ava-labs/strevm/gastime"
 	"github.com/ava-labs/strevm/intmath"
 	saeparams "github.com/ava-labs/strevm/params"
@@ -23,18 +24,23 @@ import (
 // Points define user-injected hook points.
 type Points interface {
 	GasTarget(parent *types.Block) gas.Gas
+	SubSecondBlockTime(*types.Block) gas.Gas
 	BeforeBlock(params.Rules, *state.StateDB, *types.Block) error
 	AfterBlock(*state.StateDB, *types.Block, types.Receipts)
 }
 
 // BeforeBlock is intended to be called before processing a block, with the gas
 // target sourced from [Points].
-func BeforeBlock(pts Points, rules params.Rules, sdb *state.StateDB, b *types.Block, clock *gastime.Time, target gas.Gas) error {
-	clock.FastForwardTo(b.Time())
+func BeforeBlock(pts Points, rules params.Rules, sdb *state.StateDB, b *blocks.Block, clock *gastime.Time) error {
+	clock.FastForwardTo(
+		b.BuildTime(),
+		pts.SubSecondBlockTime(b.EthBlock()),
+	)
+	target := pts.GasTarget(b.ParentBlock().EthBlock())
 	if err := clock.SetTarget(target); err != nil {
 		return fmt.Errorf("%T.SetTarget() before block: %w", clock, err)
 	}
-	return pts.BeforeBlock(rules, sdb, b)
+	return pts.BeforeBlock(rules, sdb, b.EthBlock())
 }
 
 // AfterBlock is intended to be called after processing a block, with the gas

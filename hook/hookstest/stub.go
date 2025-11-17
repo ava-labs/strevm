@@ -1,0 +1,39 @@
+// Copyright (C) 2025, Ava Labs, Inc. All rights reserved.
+// See the file LICENSE for licensing terms.
+
+// Package hookstest provides a test double for SAE's [hook] package.
+package hookstest
+
+import (
+	"github.com/ava-labs/avalanchego/vms/components/gas"
+	"github.com/ava-labs/libevm/core/state"
+	"github.com/ava-labs/libevm/core/types"
+	"github.com/ava-labs/libevm/params"
+
+	"github.com/ava-labs/strevm/hook"
+)
+
+// Stub implements [hook.Points].
+type Stub struct {
+	Target gas.Gas
+}
+
+var _ hook.Points = (*Stub)(nil)
+
+// GasTarget ignores its argument and always returns [Stub.Target].
+func (s *Stub) GasTarget(parent *types.Block) gas.Gas {
+	return s.Target
+}
+
+// SubSecondBlock time ignores its argument and always returns 0.
+func (*Stub) SubSecondBlockTime(*types.Block) gas.Gas {
+	return 0
+}
+
+// BeforeBlock is a no-op that always returns nil.
+func (*Stub) BeforeBlock(params.Rules, *state.StateDB, *types.Block) error {
+	return nil
+}
+
+// AfterBlock is a no-op.
+func (*Stub) AfterBlock(*state.StateDB, *types.Block, types.Receipts) {}

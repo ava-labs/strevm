@@ -21,7 +21,7 @@ import (
 	"github.com/ava-labs/libevm/core/vm"
 	"github.com/ava-labs/libevm/crypto"
 	"github.com/ava-labs/libevm/libevm"
-	"github.com/ava-labs/libevm/libevm/hookstest"
+	libevmhookstest "github.com/ava-labs/libevm/libevm/hookstest"
 	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/triedb"
 	"github.com/google/go-cmp/cmp"
@@ -35,6 +35,7 @@ import (
 	"github.com/ava-labs/strevm/cmputils"
 	"github.com/ava-labs/strevm/gastime"
 	"github.com/ava-labs/strevm/hook"
+	saehookstest "github.com/ava-labs/strevm/hook/hookstest"
 	"github.com/ava-labs/strevm/proxytime"
 	"github.com/ava-labs/strevm/saetest"
 	"github.com/ava-labs/strevm/saetest/escrow"
@@ -94,8 +95,8 @@ func newSUT(tb testing.TB, hooks hook.Points) (context.Context, SUT) {
 	}
 }
 
-func defaultHooks() *saetest.HookStub {
-	return &saetest.HookStub{Target: 1e6}
+func defaultHooks() *saehookstest.Stub {
+	return &saehookstest.Stub{Target: 1e6}
 }
 
 func TestImmediateShutdownNonBlocking(t *testing.T) {
@@ -160,7 +161,7 @@ func TestSubscriptions(t *testing.T) {
 	e, chain, wallet := sut.Executor, sut.chain, sut.wallet
 
 	precompile := common.Address{'p', 'r', 'e'}
-	stub := &hookstest.Stub{
+	stub := &libevmhookstest.Stub{
 		PrecompileOverrides: map[common.Address]libevm.PrecompiledContract{
 			precompile: vm.NewStatefulPrecompile(func(env vm.PrecompileEnvironment, input []byte) (ret []byte, err error) {
 				env.StateDB().AddLog(&types.Log{
@@ -339,7 +340,7 @@ func TestExecution(t *testing.T) {
 }
 
 func TestGasAccounting(t *testing.T) {
-	hooks := &saetest.HookStub{}
+	hooks := &saehookstest.Stub{}
 	ctx, sut := newSUT(t, hooks)
 
 	const gasPerTx = gas.Gas(params.TxGas)
