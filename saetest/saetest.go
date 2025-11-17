@@ -12,8 +12,10 @@ import (
 	"sync"
 
 	"github.com/ava-labs/avalanchego/vms/components/gas"
+	"github.com/ava-labs/libevm/core/state"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/event"
+	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/trie"
 	"github.com/google/go-cmp/cmp"
 
@@ -104,4 +106,14 @@ type HookStub struct {
 var _ hook.Points = (*HookStub)(nil)
 
 // GasTarget ignores its argument and always returns [HookStub.Target].
-func (s *HookStub) GasTarget(*types.Block) gas.Gas { return s.Target }
+func (s *HookStub) GasTarget(*types.Block) gas.Gas {
+	return s.Target
+}
+
+// BeforeBlock is a no-op that always returns nil.
+func (*HookStub) BeforeBlock(params.Rules, *state.StateDB, *types.Block) error {
+	return nil
+}
+
+// AfterBlock is a no-op.
+func (*HookStub) AfterBlock(*state.StateDB, *types.Block, types.Receipts) {}
