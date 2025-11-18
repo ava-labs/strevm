@@ -56,6 +56,7 @@ type sut struct {
 }
 
 func newSUT(t *testing.T, numAccounts uint) sut {
+	t.Helper()
 	logger := saetest.NewTBLogger(t, logging.Warn)
 
 	config := params.AllDevChainProtocolChanges
