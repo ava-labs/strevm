@@ -445,8 +445,8 @@ func TestGasAccounting(t *testing.T) {
 			numTxs:          30 * gastime.TargetToExcessScaling, // deliberate, see below
 			wantExecutedBy:  at(21, 30*gastime.TargetToExcessScaling, 10*gasPerTx),
 			wantExcessAfter: 3 * ((5 * gasPerTx /*T*/) * gastime.TargetToExcessScaling /* == K */),
-			// Excess is now 3·K so the price is e^3 = 20.09
-			wantPriceAfter: 20,
+			// Excess is now 3·K so the price is e^3
+			wantPriceAfter: gas.Price(math.Floor(math.Pow(math.E, 3 /* <----- NB */))),
 		},
 		{
 			target:          5 * gasPerTx,
