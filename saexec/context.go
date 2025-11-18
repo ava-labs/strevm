@@ -20,12 +20,12 @@ type BlockSource func(hash common.Hash, number uint64) *blocks.Block
 var _ core.ChainContext = (*chainContext)(nil)
 
 type chainContext struct {
-	BlockSource
-	log logging.Logger
+	blocks BlockSource
+	log    logging.Logger
 }
 
 func (c *chainContext) GetHeader(h common.Hash, n uint64) *types.Header {
-	b := c.BlockSource(h, n)
+	b := c.blocks(h, n)
 	if b == nil {
 		return nil
 	}
