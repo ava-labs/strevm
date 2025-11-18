@@ -12,10 +12,8 @@ import (
 
 	"github.com/ava-labs/avalanchego/utils/logging"
 	"github.com/ava-labs/avalanchego/vms/components/gas"
-	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core"
 	"github.com/ava-labs/libevm/core/state"
-	"github.com/ava-labs/libevm/core/state/snapshot"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/core/vm"
 	"go.uber.org/zap"
@@ -75,11 +73,6 @@ func (e *Executor) processQueue() {
 	}
 }
 
-type executionScratchSpace struct {
-	snaps   *snapshot.Tree
-	statedb *state.StateDB
-}
-
 func (e *Executor) execute(b *blocks.Block, logger logging.Logger) error {
 	logger.Debug("Executing block")
 
@@ -90,10 +83,14 @@ func (e *Executor) execute(b *blocks.Block, logger logging.Logger) error {
 		return fmt.Errorf("executing blocks out of order: %d then %d", last, curr)
 	}
 
-	scratch := &e.executeScratchSpace
 	rules := e.chainConfig.Rules(b.Number(), true /*isMerge*/, b.BuildTime())
 
-	if err := hook.BeforeBlock(e.hooks, rules, scratch.statedb, b, e.gasClock); err != nil {
+	stateDB, err := state.New(b.ParentBlock().PostExecutionStateRoot(), e.stateCache, e.snaps)
+	if err != nil {
+		return fmt.Errorf("state.New(%#x, ...): %v", b.ParentBlock().PostExecutionStateRoot(), err)
+	}
+
+	if err := hook.BeforeBlock(e.hooks, rules, stateDB, b, e.gasClock); err != nil {
 		return fmt.Errorf("before-block hook: %v", err)
 	}
 	perTxClock := e.gasClock.Time.Clone()
@@ -106,14 +103,14 @@ func (e *Executor) execute(b *blocks.Block, logger logging.Logger) error {
 
 	receipts := make(types.Receipts, len(b.Transactions()))
 	for ti, tx := range b.Transactions() {
-		scratch.statedb.SetTxContext(tx.Hash(), ti)
+		stateDB.SetTxContext(tx.Hash(), ti)
 
 		receipt, err := core.ApplyTransaction(
 			e.chainConfig,
 			e.chainContext,
 			&header.Coinbase,
 			&gasPool,
-			scratch.statedb,
+			stateDB,
 			header,
 			tx,
 			(*uint64)(&blockGasConsumed),
@@ -151,7 +148,7 @@ func (e *Executor) execute(b *blocks.Block, logger logging.Logger) error {
 		receipts[ti] = receipt
 	}
 	endTime := time.Now()
-	hook.AfterBlock(e.hooks, scratch.statedb, b.EthBlock(), e.gasClock, blockGasConsumed, receipts)
+	hook.AfterBlock(e.hooks, stateDB, b.EthBlock(), e.gasClock, blockGasConsumed, receipts)
 	if e.gasClock.Time.Compare(perTxClock) != 0 {
 		return fmt.Errorf("broken invariant: block-resolution clock @ %s does not match tx-resolution clock @ %s", e.gasClock.String(), perTxClock.String())
 	}
@@ -163,9 +160,9 @@ func (e *Executor) execute(b *blocks.Block, logger logging.Logger) error {
 		zap.Time("wall_time", endTime),
 	)
 
-	root, err := e.commitState(scratch, b.NumberU64())
+	root, err := stateDB.Commit(b.NumberU64(), true)
 	if err != nil {
-		return err
+		return fmt.Errorf("%T.Commit() at end of block %d: %w", stateDB, b.NumberU64(), err)
 	}
 	// The strict ordering of the next 3 calls guarantees invariants that MUST
 	// NOT be broken:
@@ -179,18 +176,4 @@ func (e *Executor) execute(b *blocks.Block, logger logging.Logger) error {
 	e.lastExecuted.Store(b)                           // (2)
 	e.sendPostExecutionEvents(b.EthBlock(), receipts) // (3)
 	return nil
-}
-
-func (e *Executor) commitState(scratch *executionScratchSpace, blockNum uint64) (common.Hash, error) {
-	root, err := scratch.statedb.Commit(blockNum, true)
-	if err != nil {
-		return common.Hash{}, fmt.Errorf("%T.Commit() at end of block %d: %w", scratch.statedb, blockNum, err)
-	}
-
-	db, err := state.New(root, e.stateCache, scratch.snaps)
-	if err != nil {
-		return common.Hash{}, err
-	}
-	scratch.statedb = db
-	return root, nil
 }

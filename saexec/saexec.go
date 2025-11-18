@@ -43,9 +43,9 @@ type Executor struct {
 	chainConfig  *params.ChainConfig
 	db           ethdb.Database
 	stateCache   state.Database
-	// executeScratchSpace MUST NOT be accessed by any methods other than
-	// [Executor.init], [Executor.execute], and [Executor.Close].
-	executeScratchSpace executionScratchSpace
+	// snaps MUST NOT be accessed by any methods other than [Executor.execute]
+	// and [Executor.Close].
+	snaps *snapshot.Tree
 }
 
 // New constructs and starts a new [Executor]. Call [Executor.Close] to release
@@ -63,49 +63,33 @@ func New(
 	hooks hook.Points,
 	log logging.Logger,
 ) (*Executor, error) {
+	cache := state.NewDatabaseWithConfig(db, triedbConfig)
+	snapConf := snapshot.Config{
+		CacheSize:  128, // MB
+		AsyncBuild: true,
+	}
+	snaps, err := snapshot.New(snapConf, db, cache.TrieDB(), lastExecuted.PostExecutionStateRoot())
+	if err != nil {
+		return nil, err
+	}
+
 	e := &Executor{
 		quit:         make(chan struct{}), // closed by [Executor.Close]
 		done:         make(chan struct{}), // closed by [Executor.processQueue] after `quit` is closed
 		log:          log,
 		hooks:        hooks,
+		gasClock:     lastExecuted.ExecutedByGasTime().Clone(),
 		queue:        make(chan *blocks.Block, 4096), // arbitrarily sized
 		chainContext: &chainContext{blockSrc, log},
 		chainConfig:  chainConfig,
 		db:           db,
-		stateCache:   state.NewDatabaseWithConfig(db, triedbConfig),
+		stateCache:   cache,
+		snaps:        snaps,
 	}
 	e.lastExecuted.Store(lastExecuted)
-	if err := e.init(); err != nil {
-		return nil, err
-	}
 
 	go e.processQueue()
 	return e, nil
-}
-
-func (e *Executor) init() error {
-	last := e.lastExecuted.Load()
-	e.gasClock = last.ExecutedByGasTime().Clone()
-
-	root := last.PostExecutionStateRoot()
-	snapConf := snapshot.Config{
-		CacheSize:  128, // MB
-		AsyncBuild: true,
-	}
-	snaps, err := snapshot.New(snapConf, e.db, e.stateCache.TrieDB(), root)
-	if err != nil {
-		return err
-	}
-	statedb, err := state.New(root, e.stateCache, snaps)
-	if err != nil {
-		return err
-	}
-
-	e.executeScratchSpace = executionScratchSpace{
-		snaps:   snaps,
-		statedb: statedb,
-	}
-	return nil
 }
 
 // Close shuts down the [Executor], waits for the currently executing block
@@ -114,9 +98,8 @@ func (e *Executor) Close() {
 	close(e.quit)
 	<-e.done
 
-	snaps := e.executeScratchSpace.snaps
-	snaps.Disable()
-	snaps.Release()
+	e.snaps.Disable()
+	e.snaps.Release()
 }
 
 // ChainConfig returns the config originally passed to [New].
