@@ -586,7 +586,7 @@ func TestContextualOpCodes(t *testing.T) {
 		wantTopicFn func() common.Hash // if non-nil, overrides `wantTopic`
 	}{
 		{
-			name:      "BALANCE",
+			name:      "BALANCE_of_ADDRESS",
 			code:      logTopOfStackAfter(vm.ADDRESS, vm.BALANCE),
 			wantTopic: common.Hash{31: txValueSend},
 		},
@@ -603,6 +603,13 @@ func TestContextualOpCodes(t *testing.T) {
 		{
 			name: "ORIGIN",
 			code: logTopOfStackAfter(vm.ORIGIN),
+			wantTopic: common.BytesToHash(
+				sut.wallet.Addresses()[0].Bytes(),
+			),
+		},
+		{
+			name: "CALLER",
+			code: logTopOfStackAfter(vm.CALLER),
 			wantTopic: common.BytesToHash(
 				sut.wallet.Addresses()[0].Bytes(),
 			),
@@ -648,6 +655,14 @@ func TestContextualOpCodes(t *testing.T) {
 		{
 			name: "PREVRANDAO",
 			code: logTopOfStackAfter(vm.PREVRANDAO),
+		},
+		{
+			name: "GASLIMIT",
+			code: logTopOfStackAfter(vm.GASLIMIT),
+			header: func(h *types.Header) {
+				h.GasLimit = 0xA11CEB0B
+			},
+			wantTopic: common.BytesToHash([]byte{0xA1, 0x1C, 0xEB, 0x0B}),
 		},
 		{
 			name:      "CHAINID",
