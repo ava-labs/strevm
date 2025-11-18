@@ -22,7 +22,6 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/ava-labs/strevm/blocks"
-	"github.com/ava-labs/strevm/dummy"
 	"github.com/ava-labs/strevm/hook"
 )
 
@@ -107,7 +106,7 @@ func (e *Executor) execute(b *blocks.Block, logger logging.Logger) error {
 
 		receipt, err := core.ApplyTransaction(
 			e.chainConfig,
-			dummy.ChainContext(),
+			e.chainContext,
 			&header.Coinbase,
 			&gasPool,
 			scratch.statedb,

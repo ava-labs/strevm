@@ -9,6 +9,7 @@ import (
 	"math"
 	"math/big"
 	"math/rand/v2"
+	"slices"
 	"testing"
 
 	"github.com/ava-labs/avalanchego/utils/logging"
@@ -31,6 +32,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
 
+	"github.com/ava-labs/strevm/blocks"
 	"github.com/ava-labs/strevm/blocks/blockstest"
 	"github.com/ava-labs/strevm/cmputils"
 	"github.com/ava-labs/strevm/gastime"
@@ -78,14 +80,21 @@ func newSUT(tb testing.TB, hooks hook.Points) (context.Context, SUT) {
 	alloc := saetest.MaxAllocFor(wallet.Addresses()...)
 	genesis := blockstest.NewGenesis(tb, db, config, alloc, blockstest.WithTrieDBConfig(tdbConfig))
 
-	e, err := New(genesis, config, db, tdbConfig, hooks, logger)
-	require.NoError(tb, err, "New()")
-	tb.Cleanup(e.Close)
-
-	chain := blockstest.NewChainBuilder(e.LastExecuted())
+	chain := blockstest.NewChainBuilder(genesis)
 	chain.SetDefaultOptions(blockstest.WithBlockOptions(
 		blockstest.WithLogger(logger)),
 	)
+	src := BlockSource(func(h common.Hash, n uint64) *blocks.Block {
+		b, ok := chain.GetBlock(h, n)
+		if !ok {
+			return nil
+		}
+		return b
+	})
+
+	e, err := New(genesis, src, config, db, tdbConfig, hooks, logger)
+	require.NoError(tb, err, "New()")
+	tb.Cleanup(e.Close)
 
 	return ctx, SUT{
 		Executor: e,
@@ -501,4 +510,178 @@ func TestGasAccounting(t *testing.T) {
 			assert.Equalf(t, wantBaseFee, gas.Price(b.BaseFee().Uint64()), "%T.BaseFee().Uint64()", b)
 		})
 	}
+}
+
+func TestContextualOpCodes(t *testing.T) {
+	ctx, sut := newSUT(t, defaultHooks())
+
+	chain := sut.chain
+	for range 5 {
+		// Historical blocks, required to already be in `chain`, for testing
+		// BLOCKHASH.
+		b := chain.NewBlock(t, nil)
+		require.NoErrorf(t, sut.Enqueue(ctx, b), "Enqueue([empty block])")
+	}
+
+	// log1 returns contract bytecode that logs the value on the top of the
+	// stack after executing `pre`.
+	log1 := func(pre ...vm.OpCode) []vm.OpCode {
+		return slices.Concat(pre, []vm.OpCode{vm.PUSH0, vm.PUSH0, vm.LOG1})
+	}
+
+	bigToHash := func(b *big.Int) common.Hash {
+		return uint256.MustFromBig(b).Bytes32()
+	}
+
+	// For specific tests.
+	const txValueSend = 42
+	saveBlockNum := &blockNumSaver{}
+
+	tests := []struct {
+		name        string
+		code        []vm.OpCode
+		header      func(*types.Header)
+		wantTopic   common.Hash
+		wantTopicFn func() common.Hash // if non-nil, overrides `wantTopic`
+	}{
+		{
+			name:      "BALANCE",
+			code:      log1(vm.ADDRESS, vm.BALANCE),
+			wantTopic: common.Hash{31: txValueSend},
+		},
+		{
+			name:      "CALLVALUE",
+			code:      log1(vm.CALLVALUE),
+			wantTopic: common.Hash{31: txValueSend},
+		},
+		{
+			name:      "SELFBALANCE",
+			code:      log1(vm.SELFBALANCE),
+			wantTopic: common.Hash{31: txValueSend},
+		},
+		{
+			name: "ORIGIN",
+			code: log1(vm.ORIGIN),
+			wantTopic: common.BytesToHash(
+				sut.wallet.Addresses()[0].Bytes(),
+			),
+		},
+		{
+			name:      "BLOCKHASH_genesis",
+			code:      log1(vm.PUSH0, vm.BLOCKHASH),
+			wantTopic: chain.AllBlocks()[0].Hash(),
+		},
+		{
+			name:      "BLOCKHASH_arbitrary",
+			code:      log1(vm.PUSH1, 3, vm.BLOCKHASH),
+			wantTopic: chain.AllBlocks()[3].Hash(),
+		},
+		{
+			name:   "NUMBER",
+			code:   log1(vm.NUMBER),
+			header: saveBlockNum.store,
+			wantTopicFn: func() common.Hash {
+				return bigToHash(saveBlockNum.num)
+			},
+		},
+		{
+			name: "COINBASE_arbitrary",
+			code: log1(vm.COINBASE),
+			header: func(h *types.Header) {
+				h.Coinbase = common.Address{17: 0xC0, 18: 0xFF, 19: 0xEE}
+			},
+			wantTopic: common.BytesToHash([]byte{0xC0, 0xFF, 0xEE}),
+		},
+		{
+			name: "COINBASE_zero",
+			code: log1(vm.COINBASE),
+		},
+		{
+			name: "TIMESTAMP",
+			code: log1(vm.TIMESTAMP),
+			header: func(h *types.Header) {
+				h.Time = 0xDECAFBAD
+			},
+			wantTopic: common.BytesToHash([]byte{0xDE, 0xCA, 0xFB, 0xAD}),
+		},
+		{
+			name: "PREVRANDAO",
+			code: log1(vm.PREVRANDAO),
+		},
+		{
+			name:      "CHAINID",
+			code:      log1(vm.CHAINID),
+			wantTopic: bigToHash(sut.ChainConfig().ChainID),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			data := make([]byte, len(tt.code))
+			for i, op := range tt.code {
+				data[i] = byte(op)
+			}
+			tx := sut.wallet.SetNonceAndSign(t, 0, &types.LegacyTx{
+				To:       nil, // contract creation runs the call data (one sneaky trick blockchain developers don't want you to know)
+				GasPrice: big.NewInt(1),
+				Gas:      100e6,
+				Data:     data,
+				Value:    big.NewInt(txValueSend),
+			})
+
+			var opts []blockstest.ChainOption
+			if tt.header != nil {
+				opts = append(opts, blockstest.WithEthBlockOptions(
+					blockstest.ModifyHeader(tt.header),
+				))
+			}
+
+			b := sut.chain.NewBlock(t, types.Transactions{tx}, opts...)
+			require.NoError(t, sut.Enqueue(ctx, b), "Enqueue()")
+			require.NoErrorf(t, b.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", b)
+			require.Lenf(t, b.Receipts(), 1, "%T.Receipts()", b)
+
+			got := b.Receipts()[0]
+			diffopts := cmp.Options{
+				cmpopts.IgnoreFields(
+					types.Receipt{},
+					"Bloom", "ContractAddress", "CumulativeGasUsed", "GasUsed",
+				),
+				cmpopts.IgnoreFields(
+					types.Log{},
+					"Address",
+				),
+				cmputils.BigInts(),
+			}
+			wantTopic := tt.wantTopic
+			if tt.wantTopicFn != nil {
+				wantTopic = tt.wantTopicFn()
+			}
+			want := &types.Receipt{
+				Status:      types.ReceiptStatusSuccessful,
+				BlockHash:   b.Hash(),
+				BlockNumber: b.Number(),
+				TxHash:      tx.Hash(),
+				Logs: []*types.Log{{
+					Topics:      []common.Hash{wantTopic},
+					BlockHash:   b.Hash(),
+					BlockNumber: b.NumberU64(),
+					TxHash:      tx.Hash(),
+				}},
+			}
+			if diff := cmp.Diff(want, got, diffopts); diff != "" {
+				t.Errorf("%T diff (-want +got):\n%s", got, diff)
+			}
+		})
+	}
+}
+
+type blockNumSaver struct {
+	num *big.Int
+}
+
+var _ = blockstest.ModifyHeader((*blockNumSaver)(nil).store)
+
+func (e *blockNumSaver) store(h *types.Header) {
+	e.num = new(big.Int).Set(h.Number)
 }

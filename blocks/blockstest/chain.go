@@ -11,6 +11,7 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/libevm/options"
 
@@ -19,15 +20,18 @@ import (
 
 // A ChainBuilder builds a chain of blocks, maintaining necessary invariants.
 type ChainBuilder struct {
-	chain []*blocks.Block
-	opts  []ChainOption
+	chain  []*blocks.Block
+	byHash map[common.Hash]*blocks.Block
+
+	defaultOpts []ChainOption
 }
 
 // NewChainBuilder returns a new ChainBuilder starting from the provided block,
 // which MUST NOT be nil.
 func NewChainBuilder(genesis *blocks.Block) *ChainBuilder {
 	return &ChainBuilder{
-		chain: []*blocks.Block{genesis},
+		chain:  []*blocks.Block{genesis},
+		byHash: make(map[common.Hash]*blocks.Block),
 	}
 }
 
@@ -37,7 +41,7 @@ type ChainOption = options.Option[chainOptions]
 // SetDefaultOptions sets the default options upon which all
 // additional options passed to [ChainBuilder.NewBlock] are appended.
 func (cb *ChainBuilder) SetDefaultOptions(opts ...ChainOption) {
-	cb.opts = opts
+	cb.defaultOpts = opts
 }
 
 type chainOptions struct {
@@ -72,11 +76,13 @@ func blockOptions(opts []ChainOption) []BlockOption {
 // NewBlock constructs and returns a new block in the chain.
 func (cb *ChainBuilder) NewBlock(tb testing.TB, txs []*types.Transaction, opts ...ChainOption) *blocks.Block {
 	tb.Helper()
-	opts = slices.Concat(cb.opts, opts)
+	opts = slices.Concat(cb.defaultOpts, opts)
 
 	last := cb.Last()
 	eth := NewEthBlock(last.EthBlock(), txs, ethBlockOptions(opts)...)
-	cb.chain = append(cb.chain, NewBlock(tb, eth, last, nil, blockOptions(opts)...)) // TODO(arr4n) support last-settled blocks
+	b := NewBlock(tb, eth, last, nil, blockOptions(opts)...) // TODO(arr4n) support last-settled blocks
+	cb.chain = append(cb.chain, b)
+	cb.byHash[b.Hash()] = b
 
 	return cb.Last()
 }
@@ -96,4 +102,15 @@ func (cb *ChainBuilder) AllBlocks() []*blocks.Block {
 // AllExceptGenesis returns all blocks created with [ChainBuilder.NewBlock].
 func (cb *ChainBuilder) AllExceptGenesis() []*blocks.Block {
 	return slices.Clone(cb.chain[1:])
+}
+
+// GetBlock returns the block with specified hash and height, and a flag
+// indicating if it was found. If either argument does not match, it returns
+// `nil, false`.
+func (cb *ChainBuilder) GetBlock(h common.Hash, num uint64) (*blocks.Block, bool) {
+	b, ok := cb.byHash[h]
+	if !ok || b.NumberU64() != num {
+		return nil, false
+	}
+	return b, true
 }
