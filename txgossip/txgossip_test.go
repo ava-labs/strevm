@@ -8,7 +8,6 @@ import (
 	"math/big"
 	"math/rand/v2"
 	"path/filepath"
-	"runtime"
 	"slices"
 	"testing"
 	"time"
@@ -30,6 +29,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
 
+	"github.com/ava-labs/strevm/blocks"
 	"github.com/ava-labs/strevm/blocks/blockstest"
 	"github.com/ava-labs/strevm/hook/hookstest"
 	"github.com/ava-labs/strevm/saetest"
@@ -64,15 +64,22 @@ func newSUT(t *testing.T, numAccounts uint) sut {
 
 	db := rawdb.NewMemoryDatabase()
 	genesis := blockstest.NewGenesis(t, db, config, saetest.MaxAllocFor(wallet.Addresses()...))
+	chain := blockstest.NewChainBuilder(genesis)
+	blockSrc := func(h common.Hash, num uint64) *blocks.Block {
+		b, ok := chain.GetBlock(h, num)
+		if !ok {
+			return nil
+		}
+		return b
+	}
 
-	exec, err := saexec.New(genesis, config, db, nil, &hookstest.Stub{Target: 1e6}, logger)
+	exec, err := saexec.New(genesis, blockSrc, config, db, nil, &hookstest.Stub{Target: 1e6}, logger)
 	require.NoError(t, err, "saexec.New()")
 	t.Cleanup(exec.Close)
 
 	bloom, err := gossip.NewBloomFilter(prometheus.NewRegistry(), "", 1, 1e-9, 1e-9)
 	require.NoError(t, err, "gossip.NewBloomFilter([1 in a billion FP])")
 
-	chain := blockstest.NewChainBuilder(genesis)
 	bc := NewBlockChain(exec, func(h common.Hash, n uint64) *types.Block {
 		b, ok := chain.GetBlock(h, n)
 		if !ok {
@@ -223,8 +230,8 @@ func TestP2PIntegration(t *testing.T) {
 			gossiper: func(l logging.Logger, sendID ids.NodeID, send *Set, recvID ids.NodeID, recv *Set) (gossip.Gossiper, error) {
 				c := p2ptest.NewClient(
 					t, ctx,
-					recvID, gossip.NewHandler(l, Marshaller{}, recv, metrics, 0),
 					sendID, gossip.NewHandler(l, Marshaller{}, send, metrics, 0),
+					recvID, gossip.NewHandler(l, Marshaller{}, recv, metrics, 0),
 				)
 				return gossip.NewPullGossiper(l, Marshaller{}, recv, c, metrics, 1), nil
 			},
@@ -234,6 +241,7 @@ func TestP2PIntegration(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			logger := saetest.NewTBLogger(t, logging.Debug)
+			ctx = logger.CancelOnError(ctx)
 
 			sendID := ids.GenerateTestNodeID()
 			recvID := ids.GenerateTestNodeID()
@@ -258,13 +266,21 @@ func TestP2PIntegration(t *testing.T) {
 			if push, ok := gossiper.(*gossip.PushGossiper[Transaction]); ok {
 				push.Add(tx)
 			}
+			require.NoErrorf(t, gossiper.Gossip(ctx), "%T.Gossip()", gossiper)
 
-			// Instrumenting the receiving [Set] or intercepting the p2p layer
-			// is overkill when we can just retry and spin.
-			for ; !recv.Has(tx.GossipID()); runtime.Gosched() {
-				require.NoErrorf(t, gossiper.Gossip(ctx), "%T.Gossip()", gossiper)
-				require.NoErrorf(t, recv.Pool.Sync(), "receiver %T.Sync()", recv.Pool)
-			}
+			// The Bloom filter is the deepest in the stack of recipients, going
+			// [Set.Add] -> [txpool.TxPool] -> [legacypool.LegacyPool] ->
+			// [core.NewTxsEvent] -> [gossip.BloomFilter]. If it has it then
+			// everything upstream does too.
+			require.Eventuallyf(
+				t, func() bool {
+					return recv.bloom.Has(tx)
+				},
+				3*time.Second, 50*time.Millisecond,
+				"Receiving %T.bloom.Has(tx)", recv.Set,
+			)
+
+			assert.True(t, recv.Has(tx.GossipID()), "receiving %T.Has([tx])", recv.Set)
 
 			want := slices.Collect(send.Iterate)
 			got := slices.Collect(recv.Iterate)
@@ -274,14 +290,6 @@ func TestP2PIntegration(t *testing.T) {
 			if diff := cmp.Diff(want, got, opt); diff != "" {
 				t.Errorf("slices.Collect(%T.Iterate) diff (-sender +receiver):\n%s", send.Set, diff)
 			}
-
-			require.Eventuallyf(
-				t, func() bool {
-					return recv.bloom.Has(tx)
-				},
-				2*time.Second, 50*time.Millisecond,
-				"Receiving %T.bloom.Has(tx)", recv.Set,
-			)
 		})
 	}
 }
