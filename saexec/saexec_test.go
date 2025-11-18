@@ -261,12 +261,11 @@ func TestExecution(t *testing.T) {
 		want types.Receipts
 	)
 	deploy := wallet.SetNonceAndSign(t, 0, &types.LegacyTx{
-		Nonce:    0,
 		Data:     escrow.CreationCode(),
 		GasPrice: big.NewInt(1),
 		Gas:      1e7,
 	})
-	contract := crypto.CreateAddress(eoa, 0)
+	contract := crypto.CreateAddress(eoa, deploy.Nonce())
 	txs = append(txs, deploy)
 	want = append(want, &types.Receipt{
 		TxHash:          deploy.Hash(),
