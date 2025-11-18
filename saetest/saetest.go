@@ -87,8 +87,8 @@ func (c *EventCollector[T]) Unsubscribe() error {
 // WaitForAtLeast blocks until at least `n` events have been received.
 func (c *EventCollector[T]) WaitForAtLeast(n int) {
 	c.cond.L.Lock()
+	defer c.cond.L.Unlock()
 	for len(c.all) < n {
 		c.cond.Wait()
 	}
-	c.cond.L.Unlock()
 }
