@@ -41,9 +41,10 @@ type Executor struct {
 	chainEvents   event.FeedOf[core.ChainEvent]
 	logEvents     event.FeedOf[[]*types.Log]
 
-	chainConfig *params.ChainConfig
-	db          ethdb.Database
-	stateCache  state.Database
+	chainContext core.ChainContext
+	chainConfig  *params.ChainConfig
+	db           ethdb.Database
+	stateCache   state.Database
 	// executeScratchSpace MUST NOT be accessed by any methods other than
 	// [Executor.init], [Executor.execute], and [Executor.Close].
 	executeScratchSpace executionScratchSpace
@@ -57,6 +58,7 @@ type Executor struct {
 // executed block after shutdown and recovery.
 func New(
 	lastExecuted *blocks.Block,
+	blockSrc BlockSource,
 	chainConfig *params.ChainConfig,
 	db ethdb.Database,
 	triedbConfig *triedb.Config,
@@ -64,14 +66,15 @@ func New(
 	log logging.Logger,
 ) (*Executor, error) {
 	e := &Executor{
-		quit:        make(chan struct{}), // closed by [Executor.Close]
-		done:        make(chan struct{}), // closed by [Executor.processQueue] after `quit` is closed
-		log:         log,
-		hooks:       hooks,
-		queue:       make(chan *blocks.Block, 4096), // arbitrarily sized
-		chainConfig: chainConfig,
-		db:          db,
-		stateCache:  state.NewDatabaseWithConfig(db, triedbConfig),
+		quit:         make(chan struct{}), // closed by [Executor.Close]
+		done:         make(chan struct{}), // closed by [Executor.processQueue] after `quit` is closed
+		log:          log,
+		hooks:        hooks,
+		queue:        make(chan *blocks.Block, 4096), // arbitrarily sized
+		chainContext: &chainContext{blockSrc, log},
+		chainConfig:  chainConfig,
+		db:           db,
+		stateCache:   state.NewDatabaseWithConfig(db, triedbConfig),
 	}
 	e.lastEnqueued.Store(lastExecuted)
 	e.lastExecuted.Store(lastExecuted)
@@ -137,11 +140,4 @@ func (e *Executor) LastExecuted() *blocks.Block {
 // LastEnqueued returns the last-enqueued block in a threadsafe manner.
 func (e *Executor) LastEnqueued() *blocks.Block {
 	return e.lastEnqueued.Load()
-}
-
-// TimeNotThreadsafe returns a clone of the gas clock that times execution. It
-// is only safe to call when all blocks passed to [Executor.Enqueue]
-// have been executed, and is only intended for use in tests.
-func (e *Executor) TimeNotThreadsafe() *gastime.Time {
-	return e.gasClock.Clone()
 }

@@ -23,7 +23,7 @@ type ChainBuilder struct {
 	chain  []*blocks.Block
 	byHash map[common.Hash]*blocks.Block
 
-	opts []ChainOption
+	defaultOpts []ChainOption
 }
 
 // NewChainBuilder returns a new ChainBuilder starting from the provided block,
@@ -41,19 +41,19 @@ type ChainOption = options.Option[chainOptions]
 // SetDefaultOptions sets the default options upon which all
 // additional options passed to [ChainBuilder.NewBlock] are appended.
 func (cb *ChainBuilder) SetDefaultOptions(opts ...ChainOption) {
-	cb.opts = opts
+	cb.defaultOpts = opts
 }
 
 type chainOptions struct {
-	ethOpts []EthBlockOption
-	saeOpts []BlockOption
+	eth []EthBlockOption
+	sae []BlockOption
 }
 
 // WithEthBlockOptions wraps the options that [ChainBuilder.NewBlock] propagates
 // to [NewEthBlock].
 func WithEthBlockOptions(opts ...EthBlockOption) ChainOption {
 	return options.Func[chainOptions](func(co *chainOptions) {
-		co.ethOpts = append(co.ethOpts, opts...)
+		co.eth = append(co.eth, opts...)
 	})
 }
 
@@ -61,26 +61,23 @@ func WithEthBlockOptions(opts ...EthBlockOption) ChainOption {
 // [NewBlock].
 func WithBlockOptions(opts ...BlockOption) ChainOption {
 	return options.Func[chainOptions](func(co *chainOptions) {
-		co.saeOpts = append(co.saeOpts, opts...)
+		co.sae = append(co.sae, opts...)
 	})
-}
-
-func ethBlockOptions(opts []ChainOption) []EthBlockOption {
-	return options.ApplyTo(&chainOptions{}, opts...).ethOpts
-}
-
-func blockOptions(opts []ChainOption) []BlockOption {
-	return options.ApplyTo(&chainOptions{}, opts...).saeOpts
 }
 
 // NewBlock constructs and returns a new block in the chain.
 func (cb *ChainBuilder) NewBlock(tb testing.TB, txs []*types.Transaction, opts ...ChainOption) *blocks.Block {
 	tb.Helper()
-	opts = slices.Concat(cb.opts, opts)
+
+	allOpts := new(chainOptions)
+	options.ApplyTo(allOpts, cb.defaultOpts...)
+	options.ApplyTo(allOpts, opts...)
 
 	last := cb.Last()
-	eth := NewEthBlock(last.EthBlock(), txs, ethBlockOptions(opts)...)
-	cb.chain = append(cb.chain, NewBlock(tb, eth, last, nil, blockOptions(opts)...)) // TODO(arr4n) support last-settled blocks
+	eth := NewEthBlock(last.EthBlock(), txs, allOpts.eth...)
+	b := NewBlock(tb, eth, last, nil, allOpts.sae...) // TODO(arr4n) support last-settled blocks
+	cb.chain = append(cb.chain, b)
+	cb.byHash[b.Hash()] = b
 
 	return cb.Last()
 }
