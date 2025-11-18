@@ -5,6 +5,7 @@ package saexec
 
 import (
 	"context"
+	"encoding/binary"
 	"fmt"
 	"math"
 	"math/big"
@@ -517,6 +518,45 @@ func TestGasAccounting(t *testing.T) {
 			assert.Equalf(t, wantBaseFee, gas.Price(b.BaseFee().Uint64()), "%T.BaseFee().Uint64()", b)
 		})
 	}
+
+	t.Run("BASEFEE_op_code", func(t *testing.T) {
+		if t.Failed() {
+			t.Skip("Chain in unexpected state")
+		}
+
+		finalPrice := uint64(steps[len(steps)-1].wantPriceAfter)
+
+		tx := wallet.SetNonceAndSign(t, 0, &types.LegacyTx{
+			To:       nil, // runs call data as a constructor
+			Gas:      100e6,
+			GasPrice: new(big.Int).SetUint64(finalPrice),
+			Data:     asBytes(logTopOfStackAfter(vm.BASEFEE)...),
+		})
+
+		b := chain.NewBlock(t, types.Transactions{tx})
+		require.NoError(t, e.Enqueue(ctx, b), "Enqueue()")
+		require.NoErrorf(t, b.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", b)
+		require.Lenf(t, b.Receipts(), 1, "%T.Receipts()", b)
+		require.Lenf(t, b.Receipts()[0].Logs, 1, "%T.Receipts()[0].Logs", b)
+
+		got := b.Receipts()[0].Logs[0].Topics[0]
+		want := common.BytesToHash(binary.BigEndian.AppendUint64(nil, finalPrice))
+		assert.Equal(t, want, got)
+	})
+}
+
+// logTopOfStackAfter returns contract bytecode that logs the value on the top
+// of the stack after executing `pre`.
+func logTopOfStackAfter(pre ...vm.OpCode) []vm.OpCode {
+	return slices.Concat(pre, []vm.OpCode{vm.PUSH0, vm.PUSH0, vm.LOG1})
+}
+
+func asBytes(ops ...vm.OpCode) []byte {
+	buf := make([]byte, len(ops))
+	for i, op := range ops {
+		buf[i] = byte(op)
+	}
+	return buf
 }
 
 func TestContextualOpCodes(t *testing.T) {
@@ -528,12 +568,6 @@ func TestContextualOpCodes(t *testing.T) {
 		// BLOCKHASH.
 		b := chain.NewBlock(t, nil)
 		require.NoErrorf(t, sut.Enqueue(ctx, b), "Enqueue([empty block])")
-	}
-
-	// log1 returns contract bytecode that logs the value on the top of the
-	// stack after executing `pre`.
-	log1 := func(pre ...vm.OpCode) []vm.OpCode {
-		return slices.Concat(pre, []vm.OpCode{vm.PUSH0, vm.PUSH0, vm.LOG1})
 	}
 
 	bigToHash := func(b *big.Int) common.Hash {
@@ -553,39 +587,39 @@ func TestContextualOpCodes(t *testing.T) {
 	}{
 		{
 			name:      "BALANCE",
-			code:      log1(vm.ADDRESS, vm.BALANCE),
+			code:      logTopOfStackAfter(vm.ADDRESS, vm.BALANCE),
 			wantTopic: common.Hash{31: txValueSend},
 		},
 		{
 			name:      "CALLVALUE",
-			code:      log1(vm.CALLVALUE),
+			code:      logTopOfStackAfter(vm.CALLVALUE),
 			wantTopic: common.Hash{31: txValueSend},
 		},
 		{
 			name:      "SELFBALANCE",
-			code:      log1(vm.SELFBALANCE),
+			code:      logTopOfStackAfter(vm.SELFBALANCE),
 			wantTopic: common.Hash{31: txValueSend},
 		},
 		{
 			name: "ORIGIN",
-			code: log1(vm.ORIGIN),
+			code: logTopOfStackAfter(vm.ORIGIN),
 			wantTopic: common.BytesToHash(
 				sut.wallet.Addresses()[0].Bytes(),
 			),
 		},
 		{
 			name:      "BLOCKHASH_genesis",
-			code:      log1(vm.PUSH0, vm.BLOCKHASH),
+			code:      logTopOfStackAfter(vm.PUSH0, vm.BLOCKHASH),
 			wantTopic: chain.AllBlocks()[0].Hash(),
 		},
 		{
 			name:      "BLOCKHASH_arbitrary",
-			code:      log1(vm.PUSH1, 3, vm.BLOCKHASH),
+			code:      logTopOfStackAfter(vm.PUSH1, 3, vm.BLOCKHASH),
 			wantTopic: chain.AllBlocks()[3].Hash(),
 		},
 		{
 			name:   "NUMBER",
-			code:   log1(vm.NUMBER),
+			code:   logTopOfStackAfter(vm.NUMBER),
 			header: saveBlockNum.store,
 			wantTopicFn: func() common.Hash {
 				return bigToHash(saveBlockNum.num)
@@ -593,7 +627,7 @@ func TestContextualOpCodes(t *testing.T) {
 		},
 		{
 			name: "COINBASE_arbitrary",
-			code: log1(vm.COINBASE),
+			code: logTopOfStackAfter(vm.COINBASE),
 			header: func(h *types.Header) {
 				h.Coinbase = common.Address{17: 0xC0, 18: 0xFF, 19: 0xEE}
 			},
@@ -601,11 +635,11 @@ func TestContextualOpCodes(t *testing.T) {
 		},
 		{
 			name: "COINBASE_zero",
-			code: log1(vm.COINBASE),
+			code: logTopOfStackAfter(vm.COINBASE),
 		},
 		{
 			name: "TIMESTAMP",
-			code: log1(vm.TIMESTAMP),
+			code: logTopOfStackAfter(vm.TIMESTAMP),
 			header: func(h *types.Header) {
 				h.Time = 0xDECAFBAD
 			},
@@ -613,26 +647,24 @@ func TestContextualOpCodes(t *testing.T) {
 		},
 		{
 			name: "PREVRANDAO",
-			code: log1(vm.PREVRANDAO),
+			code: logTopOfStackAfter(vm.PREVRANDAO),
 		},
 		{
 			name:      "CHAINID",
-			code:      log1(vm.CHAINID),
+			code:      logTopOfStackAfter(vm.CHAINID),
 			wantTopic: bigToHash(sut.ChainConfig().ChainID),
 		},
+		// BASEFEE is tested in [TestGasAccounting] because getting the clock
+		// excess to a specific value is complicated.
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			data := make([]byte, len(tt.code))
-			for i, op := range tt.code {
-				data[i] = byte(op)
-			}
 			tx := sut.wallet.SetNonceAndSign(t, 0, &types.LegacyTx{
 				To:       nil, // contract creation runs the call data (one sneaky trick blockchain developers don't want you to know)
 				GasPrice: big.NewInt(1),
 				Gas:      100e6,
-				Data:     data,
+				Data:     asBytes(tt.code...),
 				Value:    big.NewInt(txValueSend),
 			})
 
