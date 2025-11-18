@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"runtime"
 	"time"
 
 	"github.com/ava-labs/avalanchego/utils/logging"
@@ -31,6 +30,7 @@ var errExecutorClosed = errors.New("saexec.Executor closed")
 // before [blocks.Block.Executed] returns true then there is no guarantee that
 // the block will be executed.
 func (e *Executor) Enqueue(ctx context.Context, block *blocks.Block) error {
+	warnAfter := time.Millisecond
 	for {
 		select {
 		case e.queue <- block:
@@ -39,10 +39,14 @@ func (e *Executor) Enqueue(ctx context.Context, block *blocks.Block) error {
 			return errExecutorClosed
 		case <-ctx.Done():
 			return ctx.Err()
-		default:
+		case <-time.After(warnAfter):
 			// If this happens then increase the channel's buffer size.
-			e.log.Warn("Execution queue buffer too small")
-			runtime.Gosched()
+			e.log.Warn(
+				"Execution queue buffer too small",
+				zap.Duration("wait", warnAfter),
+				zap.Uint64("block_height", block.Height()),
+			)
+			warnAfter *= 2
 		}
 	}
 }
