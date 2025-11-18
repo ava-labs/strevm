@@ -59,7 +59,7 @@ func (e *Executor) processQueue() {
 			logger := e.log.With(
 				zap.Uint64("block_height", block.Height()),
 				zap.Uint64("block_time", block.BuildTime()),
-				zap.Any("block_hash", block.Hash()),
+				zap.Stringer("block_hash", block.Hash()),
 				zap.Int("tx_count", len(block.Transactions())),
 			)
 
