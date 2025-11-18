@@ -124,7 +124,7 @@ func TestExecutionSynchronisation(t *testing.T) {
 	ctx, sut := newSUT(t, defaultHooks())
 	e, chain := sut.Executor, sut.chain
 
-	for range uint64(10) {
+	for range 10 {
 		b := chain.NewBlock(t, nil)
 		require.NoError(t, e.Enqueue(ctx, b), "Enqueue()")
 	}
