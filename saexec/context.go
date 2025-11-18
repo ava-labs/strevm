@@ -37,5 +37,5 @@ func (c *chainContext) Engine() consensus.Engine {
 	// not enough to be fatal. It will also cause tests to fail if ever called,
 	// so we can catch it early.
 	c.log.Error("ChainContext.Engine() called unexpectedly")
-	return struct{ consensus.Engine }{}
+	return nil
 }
