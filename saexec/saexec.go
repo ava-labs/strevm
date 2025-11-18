@@ -21,7 +21,6 @@ import (
 	"github.com/ava-labs/libevm/triedb"
 
 	"github.com/ava-labs/strevm/blocks"
-	"github.com/ava-labs/strevm/gastime"
 	"github.com/ava-labs/strevm/hook"
 )
 
@@ -31,7 +30,6 @@ type Executor struct {
 	log        logging.Logger
 	hooks      hook.Points
 
-	gasClock     *gastime.Time
 	queue        chan *blocks.Block
 	lastExecuted atomic.Pointer[blocks.Block]
 
@@ -78,7 +76,6 @@ func New(
 		done:         make(chan struct{}), // closed by [Executor.processQueue] after `quit` is closed
 		log:          log,
 		hooks:        hooks,
-		gasClock:     lastExecuted.ExecutedByGasTime().Clone(),
 		queue:        make(chan *blocks.Block, 4096), // arbitrarily sized
 		chainContext: &chainContext{blockSrc, log},
 		chainConfig:  chainConfig,

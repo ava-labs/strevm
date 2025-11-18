@@ -85,18 +85,23 @@ func (e *Executor) execute(b *blocks.Block, logger logging.Logger) error {
 
 	rules := e.chainConfig.Rules(b.Number(), true /*isMerge*/, b.BuildTime())
 
-	stateDB, err := state.New(b.ParentBlock().PostExecutionStateRoot(), e.stateCache, e.snaps)
-	if err != nil {
-		return fmt.Errorf("state.New(%#x, ...): %v", b.ParentBlock().PostExecutionStateRoot(), err)
-	}
+	// Since `b` hasn't been executed, it definitely hasn't been settled, so we
+	// are guaranteed to have a non-nil parent available.
+	parent := b.ParentBlock()
 
-	if err := hook.BeforeBlock(e.hooks, rules, stateDB, b, e.gasClock); err != nil {
+	stateDB, err := state.New(parent.PostExecutionStateRoot(), e.stateCache, e.snaps)
+	if err != nil {
+		return fmt.Errorf("state.New(%#x, ...): %v", parent.PostExecutionStateRoot(), err)
+	}
+	gasClock := parent.ExecutedByGasTime().Clone()
+
+	if err := hook.BeforeBlock(e.hooks, rules, stateDB, b, gasClock); err != nil {
 		return fmt.Errorf("before-block hook: %v", err)
 	}
-	perTxClock := e.gasClock.Time.Clone()
+	perTxClock := gasClock.Time.Clone()
 
 	header := types.CopyHeader(b.Header())
-	header.BaseFee = e.gasClock.BaseFee().ToBig()
+	header.BaseFee = gasClock.BaseFee().ToBig()
 
 	gasPool := core.GasPool(math.MaxUint64) // required by geth but irrelevant so max it out
 	var blockGasConsumed gas.Gas
@@ -148,15 +153,15 @@ func (e *Executor) execute(b *blocks.Block, logger logging.Logger) error {
 		receipts[ti] = receipt
 	}
 	endTime := time.Now()
-	hook.AfterBlock(e.hooks, stateDB, b.EthBlock(), e.gasClock, blockGasConsumed, receipts)
-	if e.gasClock.Time.Compare(perTxClock) != 0 {
-		return fmt.Errorf("broken invariant: block-resolution clock @ %s does not match tx-resolution clock @ %s", e.gasClock.String(), perTxClock.String())
+	hook.AfterBlock(e.hooks, stateDB, b.EthBlock(), gasClock, blockGasConsumed, receipts)
+	if gasClock.Time.Compare(perTxClock) != 0 {
+		return fmt.Errorf("broken invariant: block-resolution clock @ %s does not match tx-resolution clock @ %s", gasClock.String(), perTxClock.String())
 	}
 
 	logger.Debug(
 		"Block execution complete",
 		zap.Uint64("gas_consumed", uint64(blockGasConsumed)),
-		zap.Time("gas_time", e.gasClock.AsTime()),
+		zap.Time("gas_time", gasClock.AsTime()),
 		zap.Time("wall_time", endTime),
 	)
 
@@ -170,7 +175,7 @@ func (e *Executor) execute(b *blocks.Block, logger logging.Logger) error {
 	// 1. [blocks.Block.MarkExecuted] guarantees disk then in-memory changes.
 	// 2. Internal indicator of last executed MUST follow in-memory change.
 	// 3. External indicator of last executed MUST follow internal indicator.
-	if err := b.MarkExecuted(e.db, e.gasClock.Clone(), endTime, header.BaseFee, receipts, root); err != nil {
+	if err := b.MarkExecuted(e.db, gasClock.Clone(), endTime, header.BaseFee, receipts, root); err != nil {
 		return err
 	}
 	e.lastExecuted.Store(b)                           // (2)
