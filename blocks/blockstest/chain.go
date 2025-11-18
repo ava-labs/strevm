@@ -9,6 +9,7 @@ package blockstest
 
 import (
 	"slices"
+	"sync"
 	"testing"
 
 	"github.com/ava-labs/libevm/common"
@@ -20,8 +21,8 @@ import (
 
 // A ChainBuilder builds a chain of blocks, maintaining necessary invariants.
 type ChainBuilder struct {
-	chain  []*blocks.Block
-	byHash map[common.Hash]*blocks.Block
+	chain        []*blocks.Block
+	blocksByHash sync.Map
 
 	defaultOpts []ChainOption
 }
@@ -30,8 +31,7 @@ type ChainBuilder struct {
 // which MUST NOT be nil.
 func NewChainBuilder(genesis *blocks.Block) *ChainBuilder {
 	return &ChainBuilder{
-		chain:  []*blocks.Block{genesis},
-		byHash: make(map[common.Hash]*blocks.Block),
+		chain: []*blocks.Block{genesis},
 	}
 }
 
@@ -77,9 +77,9 @@ func (cb *ChainBuilder) NewBlock(tb testing.TB, txs []*types.Transaction, opts .
 	eth := NewEthBlock(last.EthBlock(), txs, allOpts.eth...)
 	b := NewBlock(tb, eth, last, nil, allOpts.sae...) // TODO(arr4n) support last-settled blocks
 	cb.chain = append(cb.chain, b)
-	cb.byHash[b.Hash()] = b
+	cb.blocksByHash.Store(b.Hash(), b)
 
-	return cb.Last()
+	return b
 }
 
 // Last returns the last block to be built by the builder, which MAY be the
@@ -103,7 +103,8 @@ func (cb *ChainBuilder) AllExceptGenesis() []*blocks.Block {
 // indicating if it was found. If either argument does not match, it returns
 // `nil, false`.
 func (cb *ChainBuilder) GetBlock(h common.Hash, num uint64) (*blocks.Block, bool) {
-	b, ok := cb.byHash[h]
+	ifc, _ := cb.blocksByHash.Load(h)
+	b, ok := ifc.(*blocks.Block)
 	if !ok || b.NumberU64() != num {
 		return nil, false
 	}
