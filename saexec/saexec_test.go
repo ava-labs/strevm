@@ -104,6 +104,13 @@ func newSUT(tb testing.TB, hooks hook.Points) (context.Context, SUT) {
 	}
 }
 
+// timeNotThreadsafe returns a clone of the gas clock that times execution. It
+// is only safe to call when all blocks passed to [Executor.Enqueue]
+// have been executed.
+func (e *Executor) timeNotThreadsafe() *gastime.Time {
+	return e.gasClock.Clone()
+}
+
 func defaultHooks() *saehookstest.Stub {
 	return &saehookstest.Stub{Target: 1e6}
 }
@@ -476,7 +483,7 @@ func TestGasAccounting(t *testing.T) {
 
 		for desc, got := range map[string]*gastime.Time{
 			fmt.Sprintf("%T.ExecutedByGasTime()", b): b.ExecutedByGasTime(),
-			fmt.Sprintf("%T.TimeNotThreadSafe()", e): e.TimeNotThreadsafe(),
+			fmt.Sprintf("%T.TimeNotThreadSafe()", e): e.timeNotThreadsafe(),
 		} {
 			opt := proxytime.CmpOpt[gas.Gas](proxytime.IgnoreRateInvariants)
 			if diff := cmp.Diff(step.wantExecutedBy, got.Time, opt); diff != "" {
@@ -498,7 +505,7 @@ func TestGasAccounting(t *testing.T) {
 		}
 
 		t.Run("gas_price", func(t *testing.T) {
-			tm := e.TimeNotThreadsafe()
+			tm := e.timeNotThreadsafe()
 			assert.Equalf(t, step.wantExcessAfter, tm.Excess(), "%T.Excess()", tm)
 			assert.Equalf(t, step.wantPriceAfter, tm.Price(), "%T.Price()", tm)
 

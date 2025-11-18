@@ -133,10 +133,3 @@ func (e *Executor) StateCache() state.Database {
 func (e *Executor) LastExecuted() *blocks.Block {
 	return e.lastExecuted.Load()
 }
-
-// TimeNotThreadsafe returns a clone of the gas clock that times execution. It
-// is only safe to call when all blocks passed to [Executor.Enqueue]
-// have been executed, and is only intended for use in tests.
-func (e *Executor) TimeNotThreadsafe() *gastime.Time {
-	return e.gasClock.Clone()
-}
