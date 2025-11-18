@@ -9,6 +9,7 @@ import (
 	"github.com/ava-labs/libevm/consensus"
 	"github.com/ava-labs/libevm/core"
 	"github.com/ava-labs/libevm/core/types"
+
 	"github.com/ava-labs/strevm/blocks"
 )
 
