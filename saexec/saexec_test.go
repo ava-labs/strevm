@@ -32,7 +32,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
 
-	"github.com/ava-labs/strevm/blocks"
 	"github.com/ava-labs/strevm/blocks/blockstest"
 	"github.com/ava-labs/strevm/cmputils"
 	"github.com/ava-labs/strevm/gastime"
@@ -84,15 +83,8 @@ func newSUT(tb testing.TB, hooks hook.Points) (context.Context, SUT) {
 	chain.SetDefaultOptions(blockstest.WithBlockOptions(
 		blockstest.WithLogger(logger),
 	))
-	src := BlockSource(func(h common.Hash, n uint64) *blocks.Block {
-		b, ok := chain.GetBlock(h, n)
-		if !ok {
-			return nil
-		}
-		return b
-	})
 
-	e, err := New(genesis, src, config, db, tdbConfig, hooks, logger)
+	e, err := New(genesis, chain.GetBlock, config, db, tdbConfig, hooks, logger)
 	require.NoError(tb, err, "New()")
 	tb.Cleanup(e.Close)
 

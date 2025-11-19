@@ -13,12 +13,9 @@ import (
 	"github.com/ava-labs/libevm/event"
 	"github.com/ava-labs/libevm/params"
 
+	"github.com/ava-labs/strevm/blocks"
 	"github.com/ava-labs/strevm/saexec"
 )
-
-// A BlockSource returns a block that matches both a hash and number, or nil
-// if not found.
-type BlockSource func(common.Hash, uint64) *types.Block
 
 // A BlockChain is the union of [txpool.BlockChain] and [legacypool.BlockChain].
 type BlockChain interface {
@@ -28,7 +25,7 @@ type BlockChain interface {
 
 // NewBlockChain wraps an [saexec.Executor] to be compatible with a
 // non-blob-transaction mempool.
-func NewBlockChain(exec *saexec.Executor, blocks BlockSource) BlockChain {
+func NewBlockChain(exec *saexec.Executor, blocks blocks.Source) BlockChain {
 	return &blockchain{
 		exec:   exec,
 		blocks: blocks,
@@ -37,7 +34,7 @@ func NewBlockChain(exec *saexec.Executor, blocks BlockSource) BlockChain {
 
 type blockchain struct {
 	exec   *saexec.Executor
-	blocks BlockSource
+	blocks blocks.Source
 }
 
 func (bc *blockchain) Config() *params.ChainConfig {
@@ -49,7 +46,7 @@ func (bc *blockchain) CurrentBlock() *types.Header {
 }
 
 func (bc *blockchain) GetBlock(hash common.Hash, number uint64) *types.Block {
-	return bc.blocks(hash, number)
+	return bc.blocks.EthBlock(hash, number)
 }
 
 func (bc *blockchain) StateAt(root common.Hash) (*state.StateDB, error) {

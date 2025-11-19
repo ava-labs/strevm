@@ -29,7 +29,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
 
-	"github.com/ava-labs/strevm/blocks"
 	"github.com/ava-labs/strevm/blocks/blockstest"
 	"github.com/ava-labs/strevm/hook/hookstest"
 	"github.com/ava-labs/strevm/saetest"
@@ -66,29 +65,15 @@ func newSUT(t *testing.T, numAccounts uint) sut {
 	db := rawdb.NewMemoryDatabase()
 	genesis := blockstest.NewGenesis(t, db, config, saetest.MaxAllocFor(wallet.Addresses()...))
 	chain := blockstest.NewChainBuilder(genesis)
-	blockSrc := func(h common.Hash, num uint64) *blocks.Block {
-		b, ok := chain.GetBlock(h, num)
-		if !ok {
-			return nil
-		}
-		return b
-	}
 
-	exec, err := saexec.New(genesis, blockSrc, config, db, nil, &hookstest.Stub{Target: 1e6}, logger)
+	exec, err := saexec.New(genesis, chain.GetBlock, config, db, nil, &hookstest.Stub{Target: 1e6}, logger)
 	require.NoError(t, err, "saexec.New()")
 	t.Cleanup(exec.Close)
 
 	bloom, err := gossip.NewBloomFilter(prometheus.NewRegistry(), "", 1, 1e-9, 1e-9)
 	require.NoError(t, err, "gossip.NewBloomFilter([1 in a billion FP])")
 
-	bc := NewBlockChain(exec, func(h common.Hash, n uint64) *types.Block {
-		b, ok := chain.GetBlock(h, n)
-		if !ok {
-			return nil
-		}
-		return b.EthBlock()
-	})
-
+	bc := NewBlockChain(exec, chain.GetBlock)
 	set, cleanup := NewSet(logger, newTxPool(t, bc), bloom, 1)
 	t.Cleanup(func() {
 		require.NoError(t, cleanup(), "cleanup function returned by NewSet()")

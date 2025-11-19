@@ -13,6 +13,7 @@ import (
 	"sync/atomic"
 
 	"github.com/ava-labs/avalanchego/utils/logging"
+	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core/types"
 	"go.uber.org/zap"
 )
@@ -113,4 +114,28 @@ func (b *Block) CopyAncestorsFrom(c *Block) error {
 	}
 	a := c.ancestry.Load()
 	return b.setAncestors(a.parent, a.lastSettled)
+}
+
+// A Source returns a [Block] that matches both a hash and number, and a boolean
+// indicating if such a block was found.
+type Source func(hash common.Hash, number uint64) (*Block, bool)
+
+// EthBlock returns the [types.Block] with the given hash and number, or nil if
+// not found.
+func (s Source) EthBlock(h common.Hash, n uint64) *types.Block {
+	b, ok := s(h, n)
+	if !ok {
+		return nil
+	}
+	return b.EthBlock()
+}
+
+// Header returns the [types.Header] with the given hash and number, or nil if
+// not found.
+func (s Source) Header(h common.Hash, n uint64) *types.Header {
+	b, ok := s(h, n)
+	if !ok {
+		return nil
+	}
+	return b.Header()
 }

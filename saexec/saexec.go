@@ -56,7 +56,7 @@ type Executor struct {
 // executed block after shutdown and recovery.
 func New(
 	lastExecuted *blocks.Block,
-	blockSrc BlockSource,
+	blockSrc blocks.Source,
 	chainConfig *params.ChainConfig,
 	db ethdb.Database,
 	triedbConfig *triedb.Config,
