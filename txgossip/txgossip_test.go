@@ -30,6 +30,7 @@ import (
 	"go.uber.org/goleak"
 
 	"github.com/ava-labs/strevm/blocks/blockstest"
+	"github.com/ava-labs/strevm/cmputils"
 	"github.com/ava-labs/strevm/hook/hookstest"
 	"github.com/ava-labs/strevm/saetest"
 	"github.com/ava-labs/strevm/saexec"
@@ -248,7 +249,7 @@ func TestP2PIntegration(t *testing.T) {
 			require.NoErrorf(t, send.Pool.Sync(), "sender %T.Sync()", send.Pool)
 
 			gossiper, err := tt.gossiper(logger, sendID, send.Set, recvID, recv.Set)
-			require.NoError(t, err)
+			require.NoError(t, err, "Bad test setup: gossiper creation failed")
 			if push, ok := gossiper.(*gossip.PushGossiper[Transaction]); ok {
 				push.Add(tx)
 			}
@@ -270,10 +271,7 @@ func TestP2PIntegration(t *testing.T) {
 
 			want := slices.Collect(send.Iterate)
 			got := slices.Collect(recv.Iterate)
-			opt := cmp.Comparer(func(a, b Transaction) bool {
-				return a.Hash() == b.Hash()
-			})
-			if diff := cmp.Diff(want, got, opt); diff != "" {
+			if diff := cmp.Diff(want, got, cmputils.TransactionsByHash()); diff != "" {
 				t.Errorf("slices.Collect(%T.Iterate) diff (-sender +receiver):\n%s", send.Set, diff)
 			}
 		})
