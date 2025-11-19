@@ -6,8 +6,10 @@
 //
 // Copyright 2024 Divergence Tech Ltd.
 
-// Package escrow provides bytecode and helpers for the Escrow.sol contract
+// Package escrow provides bytecode and helpers for the [Escrow.sol] contract
 // deployed to 0x370F21541173E8B773571c135e3b5617d7f38C54 on Ethereum mainnet.
+//
+// [Escrow.sol]: https://github.com/ARR4N/SWAP2/blob/fe724e87bdc998c3b497c16e35fed354e53dc3e9/src/Escrow.sol
 package escrow
 
 import (

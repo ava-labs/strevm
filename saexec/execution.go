@@ -8,15 +8,12 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"runtime"
 	"time"
 
 	"github.com/ava-labs/avalanchego/utils/logging"
 	"github.com/ava-labs/avalanchego/vms/components/gas"
-	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core"
 	"github.com/ava-labs/libevm/core/state"
-	"github.com/ava-labs/libevm/core/state/snapshot"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/core/vm"
 	"go.uber.org/zap"
@@ -31,20 +28,31 @@ var errExecutorClosed = errors.New("saexec.Executor closed")
 // before [blocks.Block.Executed] returns true then there is no guarantee that
 // the block will be executed.
 func (e *Executor) Enqueue(ctx context.Context, block *blocks.Block) error {
+	warnAfter := time.Millisecond
 	for {
 		select {
 		case e.queue <- block:
 			e.lastEnqueued.Store(block)
 			e.enqueueEvents.Send(block.EthBlock())
 			return nil
-		case <-e.quit:
-			return errExecutorClosed
+
 		case <-ctx.Done():
 			return ctx.Err()
-		default:
+
+		case <-e.quit:
+			return errExecutorClosed
+		case <-e.done:
+			// `e.done` can also close due to [Executor.execute] errors.
+			return errExecutorClosed
+
+		case <-time.After(warnAfter):
 			// If this happens then increase the channel's buffer size.
-			e.log.Warn("Execution queue buffer too small")
-			runtime.Gosched()
+			e.log.Warn(
+				"Execution queue buffer too small",
+				zap.Duration("wait", warnAfter),
+				zap.Uint64("block_height", block.Height()),
+			)
+			warnAfter *= 2
 		}
 	}
 }
@@ -66,16 +74,15 @@ func (e *Executor) processQueue() {
 			)
 
 			if err := e.execute(block, logger); err != nil {
-				logger.Error("Block execution failed", zap.Error(err))
+				logger.Fatal(
+					"Block execution failed; see emergency playbook",
+					zap.Error(err),
+					zap.String("playbook", "https://github.com/ava-labs/strevm/issues/28"),
+				)
 				return
 			}
 		}
 	}
-}
-
-type executionScratchSpace struct {
-	snaps   *snapshot.Tree
-	statedb *state.StateDB
 }
 
 func (e *Executor) execute(b *blocks.Block, logger logging.Logger) error {
@@ -88,45 +95,53 @@ func (e *Executor) execute(b *blocks.Block, logger logging.Logger) error {
 		return fmt.Errorf("executing blocks out of order: %d then %d", last, curr)
 	}
 
-	scratch := &e.executeScratchSpace
 	rules := e.chainConfig.Rules(b.Number(), true /*isMerge*/, b.BuildTime())
 
-	if err := hook.BeforeBlock(e.hooks, rules, scratch.statedb, b, e.gasClock); err != nil {
+	// Since `b` hasn't been executed, it definitely hasn't been settled, so we
+	// are guaranteed to have a non-nil parent available.
+	parent := b.ParentBlock()
+
+	stateDB, err := state.New(parent.PostExecutionStateRoot(), e.stateCache, e.snaps)
+	if err != nil {
+		return fmt.Errorf("state.New(%#x, ...): %v", parent.PostExecutionStateRoot(), err)
+	}
+	gasClock := parent.ExecutedByGasTime().Clone()
+
+	if err := hook.BeforeBlock(e.hooks, rules, stateDB, b, gasClock); err != nil {
 		return fmt.Errorf("before-block hook: %v", err)
 	}
-	perTxClock := e.gasClock.Time.Clone()
+	perTxClock := gasClock.Time.Clone()
 
 	header := types.CopyHeader(b.Header())
-	header.BaseFee = e.gasClock.BaseFee().ToBig()
+	header.BaseFee = gasClock.BaseFee().ToBig()
 
 	gasPool := core.GasPool(math.MaxUint64) // required by geth but irrelevant so max it out
 	var blockGasConsumed gas.Gas
 
 	receipts := make(types.Receipts, len(b.Transactions()))
 	for ti, tx := range b.Transactions() {
-		scratch.statedb.SetTxContext(tx.Hash(), ti)
+		stateDB.SetTxContext(tx.Hash(), ti)
 
 		receipt, err := core.ApplyTransaction(
 			e.chainConfig,
 			e.chainContext,
 			&header.Coinbase,
 			&gasPool,
-			scratch.statedb,
+			stateDB,
 			header,
 			tx,
 			(*uint64)(&blockGasConsumed),
 			vm.Config{},
 		)
 		if err != nil {
-			// This almost certainly means that the worst-case block inclusion
-			// has a bug.
-			logger.Error(
-				"Transaction execution errored (not reverted)",
+			logger.Fatal(
+				"Transaction execution errored (not reverted); see emergency playbook",
 				zap.Int("tx_index", ti),
 				zap.Stringer("tx_hash", tx.Hash()),
+				zap.String("playbook", "https://github.com/ava-labs/strevm/issues/28"),
 				zap.Error(err),
 			)
-			continue
+			return err
 		}
 
 		perTxClock.Tick(gas.Gas(receipt.GasUsed))
@@ -149,21 +164,21 @@ func (e *Executor) execute(b *blocks.Block, logger logging.Logger) error {
 		receipts[ti] = receipt
 	}
 	endTime := time.Now()
-	hook.AfterBlock(e.hooks, scratch.statedb, b.EthBlock(), e.gasClock, blockGasConsumed, receipts)
-	if e.gasClock.Time.Compare(perTxClock) != 0 {
-		return fmt.Errorf("broken invariant: block-resolution clock @ %s does not match tx-resolution clock @ %s", e.gasClock.String(), perTxClock.String())
+	hook.AfterBlock(e.hooks, stateDB, b.EthBlock(), gasClock, blockGasConsumed, receipts)
+	if gasClock.Time.Compare(perTxClock) != 0 {
+		return fmt.Errorf("broken invariant: block-resolution clock @ %s does not match tx-resolution clock @ %s", gasClock.String(), perTxClock.String())
 	}
 
 	logger.Debug(
 		"Block execution complete",
 		zap.Uint64("gas_consumed", uint64(blockGasConsumed)),
-		zap.Time("gas_time", e.gasClock.AsTime()),
+		zap.Time("gas_time", gasClock.AsTime()),
 		zap.Time("wall_time", endTime),
 	)
 
-	root, err := e.commitState(scratch, b.NumberU64())
+	root, err := stateDB.Commit(b.NumberU64(), true)
 	if err != nil {
-		return err
+		return fmt.Errorf("%T.Commit() at end of block %d: %w", stateDB, b.NumberU64(), err)
 	}
 	// The strict ordering of the next 3 calls guarantees invariants that MUST
 	// NOT be broken:
@@ -171,24 +186,10 @@ func (e *Executor) execute(b *blocks.Block, logger logging.Logger) error {
 	// 1. [blocks.Block.MarkExecuted] guarantees disk then in-memory changes.
 	// 2. Internal indicator of last executed MUST follow in-memory change.
 	// 3. External indicator of last executed MUST follow internal indicator.
-	if err := b.MarkExecuted(e.db, e.gasClock.Clone(), endTime, header.BaseFee, receipts, root); err != nil {
+	if err := b.MarkExecuted(e.db, gasClock.Clone(), endTime, header.BaseFee, receipts, root); err != nil {
 		return err
 	}
 	e.lastExecuted.Store(b)                           // (2)
 	e.sendPostExecutionEvents(b.EthBlock(), receipts) // (3)
 	return nil
-}
-
-func (e *Executor) commitState(scratch *executionScratchSpace, blockNum uint64) (common.Hash, error) {
-	root, err := scratch.statedb.Commit(blockNum, true)
-	if err != nil {
-		return common.Hash{}, fmt.Errorf("%T.Commit() at end of block %d: %w", scratch.statedb, blockNum, err)
-	}
-
-	db, err := state.New(root, e.stateCache, scratch.snaps)
-	if err != nil {
-		return common.Hash{}, err
-	}
-	scratch.statedb = db
-	return root, nil
 }

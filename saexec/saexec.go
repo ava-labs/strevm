@@ -19,9 +19,9 @@ import (
 	"github.com/ava-labs/libevm/event"
 	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/triedb"
+	"go.uber.org/zap"
 
 	"github.com/ava-labs/strevm/blocks"
-	"github.com/ava-labs/strevm/gastime"
 	"github.com/ava-labs/strevm/hook"
 )
 
@@ -31,9 +31,7 @@ type Executor struct {
 	log        logging.Logger
 	hooks      hook.Points
 
-	gasClock *gastime.Time
-	queue    chan *blocks.Block
-
+	queue                      chan *blocks.Block
 	lastEnqueued, lastExecuted atomic.Pointer[blocks.Block]
 
 	enqueueEvents event.FeedOf[*types.Block]
@@ -45,9 +43,9 @@ type Executor struct {
 	chainConfig  *params.ChainConfig
 	db           ethdb.Database
 	stateCache   state.Database
-	// executeScratchSpace MUST NOT be accessed by any methods other than
-	// [Executor.init], [Executor.execute], and [Executor.Close].
-	executeScratchSpace executionScratchSpace
+	// snaps MUST NOT be accessed by any methods other than [Executor.execute]
+	// and [Executor.Close].
+	snaps *snapshot.Tree
 }
 
 // New constructs and starts a new [Executor]. Call [Executor.Close] to release
@@ -65,6 +63,16 @@ func New(
 	hooks hook.Points,
 	log logging.Logger,
 ) (*Executor, error) {
+	cache := state.NewDatabaseWithConfig(db, triedbConfig)
+	snapConf := snapshot.Config{
+		CacheSize:  128, // MB
+		AsyncBuild: true,
+	}
+	snaps, err := snapshot.New(snapConf, db, cache.TrieDB(), lastExecuted.PostExecutionStateRoot())
+	if err != nil {
+		return nil, err
+	}
+
 	e := &Executor{
 		quit:         make(chan struct{}), // closed by [Executor.Close]
 		done:         make(chan struct{}), // closed by [Executor.processQueue] after `quit` is closed
@@ -74,41 +82,14 @@ func New(
 		chainContext: &chainContext{blockSrc, log},
 		chainConfig:  chainConfig,
 		db:           db,
-		stateCache:   state.NewDatabaseWithConfig(db, triedbConfig),
+		stateCache:   cache,
+		snaps:        snaps,
 	}
 	e.lastEnqueued.Store(lastExecuted)
 	e.lastExecuted.Store(lastExecuted)
-	if err := e.init(); err != nil {
-		return nil, err
-	}
 
 	go e.processQueue()
 	return e, nil
-}
-
-func (e *Executor) init() error {
-	last := e.lastExecuted.Load()
-	e.gasClock = last.ExecutedByGasTime().Clone()
-
-	root := last.PostExecutionStateRoot()
-	snapConf := snapshot.Config{
-		CacheSize:  128, // MB
-		AsyncBuild: true,
-	}
-	snaps, err := snapshot.New(snapConf, e.db, e.stateCache.TrieDB(), root)
-	if err != nil {
-		return err
-	}
-	statedb, err := state.New(root, e.stateCache, snaps)
-	if err != nil {
-		return err
-	}
-
-	e.executeScratchSpace = executionScratchSpace{
-		snaps:   snaps,
-		statedb: statedb,
-	}
-	return nil
 }
 
 // Close shuts down the [Executor], waits for the currently executing block
@@ -117,9 +98,20 @@ func (e *Executor) Close() {
 	close(e.quit)
 	<-e.done
 
-	snaps := e.executeScratchSpace.snaps
-	snaps.Disable()
-	snaps.Release()
+	// We don't use [snapshot.Tree.Journal] because re-orgs are impossible under
+	// SAE so we don't mind flattening all snapshot layers to disk. Note that
+	// calling `Cap([disk root], 0)` returns an error when it's actually a
+	// no-op, so we ignore it.
+	root := e.LastExecuted().PostExecutionStateRoot()
+	if err := e.snaps.Cap(root, 0); err != nil && root != e.snaps.DiskRoot() {
+		e.log.Warn(
+			"snapshot.Tree.Cap([last post-execution state root], 0)",
+			zap.Error(err),
+		)
+	}
+
+	e.snaps.Disable()
+	e.snaps.Release()
 }
 
 // ChainConfig returns the config originally passed to [New].

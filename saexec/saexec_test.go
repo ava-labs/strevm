@@ -6,7 +6,6 @@ package saexec
 import (
 	"context"
 	"encoding/binary"
-	"fmt"
 	"math"
 	"math/big"
 	"math/rand/v2"
@@ -83,8 +82,8 @@ func newSUT(tb testing.TB, hooks hook.Points) (context.Context, SUT) {
 
 	chain := blockstest.NewChainBuilder(genesis)
 	chain.SetDefaultOptions(blockstest.WithBlockOptions(
-		blockstest.WithLogger(logger)),
-	)
+		blockstest.WithLogger(logger),
+	))
 	src := BlockSource(func(h common.Hash, n uint64) *blocks.Block {
 		b, ok := chain.GetBlock(h, n)
 		if !ok {
@@ -105,13 +104,6 @@ func newSUT(tb testing.TB, hooks hook.Points) (context.Context, SUT) {
 	}
 }
 
-// timeNotThreadsafe returns a clone of the gas clock that times execution. It
-// is only safe to call when all blocks passed to [Executor.Enqueue]
-// have been executed.
-func (e *Executor) timeNotThreadsafe() *gastime.Time {
-	return e.gasClock.Clone()
-}
-
 func defaultHooks() *saehookstest.Stub {
 	return &saehookstest.Stub{Target: 1e6}
 }
@@ -124,7 +116,7 @@ func TestExecutionSynchronisation(t *testing.T) {
 	ctx, sut := newSUT(t, defaultHooks())
 	e, chain := sut.Executor, sut.chain
 
-	for range uint64(10) {
+	for range 10 {
 		b := chain.NewBlock(t, nil)
 		require.NoError(t, e.Enqueue(ctx, b), "Enqueue()")
 	}
@@ -261,12 +253,11 @@ func TestExecution(t *testing.T) {
 		want types.Receipts
 	)
 	deploy := wallet.SetNonceAndSign(t, 0, &types.LegacyTx{
-		Nonce:    0,
 		Data:     escrow.CreationCode(),
 		GasPrice: big.NewInt(1),
 		Gas:      1e7,
 	})
-	contract := crypto.CreateAddress(eoa, 0)
+	contract := crypto.CreateAddress(eoa, deploy.Nonce())
 	txs = append(txs, deploy)
 	want = append(want, &types.Receipt{
 		TxHash:          deploy.Hash(),
@@ -446,8 +437,8 @@ func TestGasAccounting(t *testing.T) {
 			numTxs:          30 * gastime.TargetToExcessScaling, // deliberate, see below
 			wantExecutedBy:  at(21, 30*gastime.TargetToExcessScaling, 10*gasPerTx),
 			wantExcessAfter: 3 * ((5 * gasPerTx /*T*/) * gastime.TargetToExcessScaling /* == K */),
-			// Excess is now 3·K so the price is e^3 = 20.09
-			wantPriceAfter: 20,
+			// Excess is now 3·K so the price is e^3
+			wantPriceAfter: gas.Price(math.Floor(math.Pow(math.E, 3 /* <----- NB */))),
 		},
 		{
 			target:          5 * gasPerTx,
@@ -482,14 +473,9 @@ func TestGasAccounting(t *testing.T) {
 		require.NoError(t, e.Enqueue(ctx, b), "Enqueue()")
 		require.NoErrorf(t, b.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", b)
 
-		for desc, got := range map[string]*gastime.Time{
-			fmt.Sprintf("%T.ExecutedByGasTime()", b): b.ExecutedByGasTime(),
-			fmt.Sprintf("%T.TimeNotThreadSafe()", e): e.timeNotThreadsafe(),
-		} {
-			opt := proxytime.CmpOpt[gas.Gas](proxytime.IgnoreRateInvariants)
-			if diff := cmp.Diff(step.wantExecutedBy, got.Time, opt); diff != "" {
-				t.Errorf("%s diff (-want +got):\n%s", desc, diff)
-			}
+		opt := proxytime.CmpOpt[gas.Gas](proxytime.IgnoreRateInvariants)
+		if diff := cmp.Diff(step.wantExecutedBy, b.ExecutedByGasTime().Time, opt); diff != "" {
+			t.Errorf("%T.ExecutedByGasTime().Time diff (-want +got):\n%s", b, diff)
 		}
 
 		t.Run("CumulativeGasUsed", func(t *testing.T) {
@@ -506,7 +492,7 @@ func TestGasAccounting(t *testing.T) {
 		}
 
 		t.Run("gas_price", func(t *testing.T) {
-			tm := e.timeNotThreadsafe()
+			tm := b.ExecutedByGasTime().Clone()
 			assert.Equalf(t, step.wantExcessAfter, tm.Excess(), "%T.Excess()", tm)
 			assert.Equalf(t, step.wantPriceAfter, tm.Price(), "%T.Price()", tm)
 
@@ -518,12 +504,11 @@ func TestGasAccounting(t *testing.T) {
 			assert.Equalf(t, wantBaseFee, gas.Price(b.BaseFee().Uint64()), "%T.BaseFee().Uint64()", b)
 		})
 	}
+	if t.Failed() {
+		t.Skip("Chain in unexpected state")
+	}
 
 	t.Run("BASEFEE_op_code", func(t *testing.T) {
-		if t.Failed() {
-			t.Skip("Chain in unexpected state")
-		}
-
 		finalPrice := uint64(steps[len(steps)-1].wantPriceAfter)
 
 		tx := wallet.SetNonceAndSign(t, 0, &types.LegacyTx{
