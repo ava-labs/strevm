@@ -505,7 +505,7 @@ func TestGasAccounting(t *testing.T) {
 		})
 	}
 	if t.Failed() {
-		t.Skip("Chain in unexpected state")
+		t.Fatal("Chain in unexpected state")
 	}
 
 	t.Run("BASEFEE_op_code", func(t *testing.T) {

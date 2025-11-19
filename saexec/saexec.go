@@ -100,12 +100,14 @@ func (e *Executor) Close() {
 	// SAE so we don't mind flattening all snapshot layers to disk. Note that
 	// calling `Cap([disk root], 0)` returns an error when it's actually a
 	// no-op, so we ignore it.
-	root := e.LastExecuted().PostExecutionStateRoot()
-	if err := e.snaps.Cap(root, 0); err != nil && root != e.snaps.DiskRoot() {
-		e.log.Warn(
-			"snapshot.Tree.Cap([last post-execution state root], 0)",
-			zap.Error(err),
-		)
+	if root := e.LastExecuted().PostExecutionStateRoot(); root != e.snaps.DiskRoot() {
+		if err := e.snaps.Cap(root, 0); err != nil {
+			e.log.Warn(
+				"snapshot.Tree.Cap([last post-execution state root], 0)",
+				zap.Stringer("root", root),
+				zap.Error(err),
+			)
+		}
 	}
 
 	e.snaps.Disable()
