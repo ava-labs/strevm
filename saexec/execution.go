@@ -33,10 +33,16 @@ func (e *Executor) Enqueue(ctx context.Context, block *blocks.Block) error {
 		select {
 		case e.queue <- block:
 			return nil
-		case <-e.quit:
-			return errExecutorClosed
+
 		case <-ctx.Done():
 			return ctx.Err()
+
+		case <-e.quit:
+			return errExecutorClosed
+		case <-e.done:
+			// `e.done` can also close due to [Executor.execute] errors.
+			return errExecutorClosed
+
 		case <-time.After(warnAfter):
 			// If this happens then increase the channel's buffer size.
 			e.log.Warn(
@@ -66,7 +72,11 @@ func (e *Executor) processQueue() {
 			)
 
 			if err := e.execute(block, logger); err != nil {
-				logger.Error("Block execution failed", zap.Error(err))
+				logger.Fatal(
+					"Block execution failed; see emergency playbook",
+					zap.Error(err),
+					zap.String("playbook", "https://github.com/ava-labs/strevm/issues/28"),
+				)
 				return
 			}
 		}
@@ -122,15 +132,14 @@ func (e *Executor) execute(b *blocks.Block, logger logging.Logger) error {
 			vm.Config{},
 		)
 		if err != nil {
-			// This almost certainly means that the worst-case block inclusion
-			// has a bug.
-			logger.Error(
-				"Transaction execution errored (not reverted)",
+			logger.Fatal(
+				"Transaction execution errored (not reverted); see emergency playbook",
 				zap.Int("tx_index", ti),
 				zap.Stringer("tx_hash", tx.Hash()),
+				zap.String("playbook", "https://github.com/ava-labs/strevm/issues/28"),
 				zap.Error(err),
 			)
-			continue
+			return err
 		}
 
 		perTxClock.Tick(gas.Gas(receipt.GasUsed))
