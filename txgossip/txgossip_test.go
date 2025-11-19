@@ -144,11 +144,11 @@ func TestExecutorIntegration(t *testing.T) {
 			switch {
 			case last == nil:
 			case tx.Sender == last.Sender:
-				require.Equal(t, last.Tx.Nonce()+1, tx.Tx.Nonce())
+				require.Equal(t, last.Tx.Nonce()+1, tx.Tx.Nonce(), "incrementing nonce for same sender")
 			case tx.GasTipCap.Eq(last.GasTipCap):
-				require.True(t, last.Time.Before(tx.Time))
+				require.True(t, last.Time.Before(tx.Time), "equal gas tips ordered by first seen")
 			default:
-				require.GreaterOrEqual(t, last.GasTipCap.Uint64(), tx.GasTipCap.Uint64())
+				require.Greater(t, last.GasTipCap.Uint64(), tx.GasTipCap.Uint64(), "larger gas tips first")
 			}
 		})
 	}
@@ -170,9 +170,9 @@ func TestExecutorIntegration(t *testing.T) {
 	)
 
 	t.Run("block_execution", func(t *testing.T) {
-		// Although not strictly necessary, this is a secondary check for the
-		// maintenance of nonce ordering. It is more reliable than our manual
-		// confirmation earlier, so worth the 3 lines.
+		// The above test for nonce ordering only runs if the same sender has 2
+		// consecutive transactions. Successful execution demonstrates correct
+		// nonce ordering across the board.
 		require.NoErrorf(t, b.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", b)
 		for i, r := range b.Receipts() {
 			assert.Equalf(t, types.ReceiptStatusSuccessful, r.Status, "%T[%d].Status", r, i)
