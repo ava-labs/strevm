@@ -5,9 +5,10 @@ go 1.24.8
 require (
 	github.com/ava-labs/avalanchego v1.13.2
 	github.com/ava-labs/libevm v1.13.15-0.20251112182915-1ec8741af98f
-	github.com/google/go-cmp v0.6.0
+	github.com/google/go-cmp v0.7.0
 	github.com/holiman/uint256 v1.2.4
 	github.com/stretchr/testify v1.10.0
+	go.uber.org/goleak v1.3.0
 	golang.org/x/exp v0.0.0-20250620022241-b7579e27df2b
 )
 

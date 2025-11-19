@@ -58,6 +58,13 @@ func New(unixSeconds uint64, target, startingExcess gas.Gas) *Time {
 // TargetToRate is the ratio between [Time.Target] and [proxytime.Time.Rate].
 const TargetToRate = 2
 
+// TargetToExcessScaling is the ratio between [Time.Target] and the reciprocal
+// of the [Time.Excess] coefficient used in calculating [Time.Price]. In
+// [ACP-176] this is the K variable.
+//
+// [ACP-176]: https://github.com/avalanche-foundation/ACPs/tree/main/ACPs/176-dynamic-evm-gas-limit-and-price-discovery-updates
+const TargetToExcessScaling = 87
+
 // MaxTarget is the maximum allowable [Time.Target] to avoid overflows of the
 // associated [proxytime.Time.Rate]. Values above this are silently clamped.
 const MaxTarget = gas.Gas(math.MaxUint64 / TargetToRate)
@@ -91,14 +98,11 @@ func (tm *Time) Price() gas.Price {
 // excessScalingFactor returns the K variable of ACP-103/176, i.e. 87*T, capped
 // at [math.MaxUint64].
 func (tm *Time) excessScalingFactor() gas.Gas {
-	const (
-		targetToK         = 87
-		overflowThreshold = math.MaxUint64 / targetToK
-	)
+	const overflowThreshold = math.MaxUint64 / TargetToExcessScaling
 	if tm.target > overflowThreshold {
 		return math.MaxUint64
 	}
-	return targetToK * tm.target
+	return TargetToExcessScaling * tm.target
 }
 
 // BaseFee is equivalent to [Time.Price], returning the result as a uint256 for

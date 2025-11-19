@@ -37,6 +37,9 @@ func (b *Block) BuildTime() uint64 { return b.b.Time() }
 // Hash returns [types.Block.Hash] from the wrapped [types.Block].
 func (b *Block) Hash() common.Hash { return b.b.Hash() }
 
+// Header returns [types.Block.Header] from the wrapped [types.Block].
+func (b *Block) Header() *types.Header { return b.b.Header() }
+
 // ParentHash returns [types.Block.ParentHash] from the wrapped [types.Block].
 func (b *Block) ParentHash() common.Hash { return b.b.ParentHash() }
 
@@ -45,3 +48,6 @@ func (b *Block) NumberU64() uint64 { return b.b.NumberU64() }
 
 // Number returns [types.Block.Number] from the wrapped [types.Block].
 func (b *Block) Number() *big.Int { return b.b.Number() }
+
+// Transactions returns [types.Block.Transactions] from the wrapped [types.Block].
+func (b *Block) Transactions() types.Transactions { return b.b.Transactions() }
