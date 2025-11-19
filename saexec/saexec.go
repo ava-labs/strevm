@@ -19,6 +19,7 @@ import (
 	"github.com/ava-labs/libevm/event"
 	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/triedb"
+	"go.uber.org/zap"
 
 	"github.com/ava-labs/strevm/blocks"
 	"github.com/ava-labs/strevm/hook"
@@ -94,6 +95,18 @@ func New(
 func (e *Executor) Close() {
 	close(e.quit)
 	<-e.done
+
+	// We don't use [snapshot.Tree.Journal] because re-orgs are impossible under
+	// SAE so we don't mind flattening all snapshot layers to disk. Note that
+	// calling `Cap([disk root], 0)` returns an error when it's actually a
+	// no-op, so we ignore it.
+	root := e.LastExecuted().PostExecutionStateRoot()
+	if err := e.snaps.Cap(root, 0); err != nil && root != e.snaps.DiskRoot() {
+		e.log.Warn(
+			"snapshot.Tree.Cap([last post-execution state root], 0)",
+			zap.Error(err),
+		)
+	}
 
 	e.snaps.Disable()
 	e.snaps.Release()
