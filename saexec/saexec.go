@@ -110,7 +110,6 @@ func (e *Executor) Close() {
 		}
 	}
 
-	e.snaps.Disable()
 	e.snaps.Release()
 }
 
