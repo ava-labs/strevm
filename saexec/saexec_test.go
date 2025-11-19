@@ -98,7 +98,7 @@ func newSUT(tb testing.TB, hooks hook.Points) (context.Context, SUT) {
 	e, err := New(genesis, src, config, db, tdbConfig, hooks, logger)
 	require.NoError(tb, err, "New()")
 	tb.Cleanup(func() {
-		require.NoErrorf(tb, e.Close(), "%T.Close()")
+		require.NoErrorf(tb, e.Close(), "%T.Close()", e)
 	})
 
 	return ctx, SUT{
@@ -765,7 +765,7 @@ func TestSnapshotPersistence(t *testing.T) {
 	snaps, err := snapshot.New(conf, sut.db, e.StateCache().TrieDB(), last.PostExecutionStateRoot())
 	require.NoError(t, err, "snapshot.New(..., [post-execution state root of last-executed block])")
 	snap := snaps.Snapshot(last.PostExecutionStateRoot())
-	require.NotNilf(t, snap, "%T.Snapshot([post-execution state root of last-executed block])")
+	require.NotNilf(t, snap, "%T.Snapshot([post-execution state root of last-executed block])", snaps)
 
 	t.Run("snap.Account(EOA)", func(t *testing.T) {
 		eoa := wallet.Addresses()[0]
