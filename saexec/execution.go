@@ -86,25 +86,23 @@ func (e *Executor) processQueue() {
 func (e *Executor) execute(b *blocks.Block, logger logging.Logger) error {
 	logger.Debug("Executing block")
 
-	// If the VM were to encounter an error after enqueuing the block, we would
-	// receive the same block twice for execution should consensus retry
-	// acceptance.
-	if last, curr := e.lastExecuted.Load().Height(), b.Height(); curr != last+1 {
-		return fmt.Errorf("executing blocks out of order: %d then %d", last, curr)
-	}
-
-	rules := e.chainConfig.Rules(b.Number(), true /*isMerge*/, b.BuildTime())
-
 	// Since `b` hasn't been executed, it definitely hasn't been settled, so we
 	// are guaranteed to have a non-nil parent available.
 	parent := b.ParentBlock()
+	// If the VM were to encounter an error after enqueuing the block, we would
+	// receive the same block twice for execution should consensus retry
+	// acceptance.
+	if last := e.lastExecuted.Load().Hash(); last != parent.Hash() {
+		return fmt.Errorf("executing block built on parent %#x when last executed %#x", parent.Hash(), last)
+	}
 
 	stateDB, err := state.New(parent.PostExecutionStateRoot(), e.stateCache, e.snaps)
 	if err != nil {
 		return fmt.Errorf("state.New(%#x, ...): %v", parent.PostExecutionStateRoot(), err)
 	}
-	gasClock := parent.ExecutedByGasTime().Clone()
 
+	rules := e.chainConfig.Rules(b.Number(), true /*isMerge*/, b.BuildTime())
+	gasClock := parent.ExecutedByGasTime().Clone()
 	if err := hook.BeforeBlock(e.hooks, rules, stateDB, b, gasClock); err != nil {
 		return fmt.Errorf("before-block hook: %v", err)
 	}
