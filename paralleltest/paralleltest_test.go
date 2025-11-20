@@ -10,7 +10,6 @@ import (
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core/rawdb"
 	"github.com/ava-labs/libevm/core/types"
-	"github.com/ava-labs/libevm/crypto"
 	"github.com/ava-labs/libevm/libevm"
 	"github.com/ava-labs/libevm/libevm/precompiles/parallel"
 	"github.com/ava-labs/libevm/params"
@@ -18,7 +17,6 @@ import (
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/stretchr/testify/require"
 
-	"github.com/ava-labs/strevm/blocks"
 	"github.com/ava-labs/strevm/saetest"
 )
 
@@ -87,66 +85,41 @@ func (e *txHashEchoer) ReturnData() []byte {
 }
 
 func TestNewExecutor(t *testing.T) {
-	logger, ctx := saetest.NewTBLoggerAndContext(t.Context(), t, logging.Warn)
+	logger := saetest.NewTBLogger(t, logging.Warn)
+	ctx := logger.CancelOnError(t.Context())
 
-	key, err := crypto.GenerateKey()
-	require.NoError(t, err)
-	eoa := crypto.PubkeyToAddress(key.PublicKey)
+	config := params.MergedTestChainConfig
+	signer := types.LatestSigner(config)
+	wallet := saetest.NewUNSAFEWallet(t, 1, signer)
 
 	precompileAddr := common.Address{'p', 'r', 'e'}
 	const precompileGas = 1000
 	h := &handler{precompileAddr, precompileGas}
-	config := params.MergedTestChainConfig
 
-	exec := NewExecutor(
+	exec, chain := NewExecutor(
 		t, logger,
 		rawdb.NewMemoryDatabase(),
 		config,
-		saetest.MaxAllocFor(eoa),
+		saetest.MaxAllocFor(wallet.Addresses()...),
 		precompileAddr,
 		h, 1, 1,
 	)
 
-	last := exec.LastExecuted()
-	signer := types.LatestSigner(config)
-	var (
-		chain []*blocks.Block
-		nonce uint64
-		txs   []common.Hash
-	)
-
+	var txs []common.Hash
 	for range 10 {
-		tx := types.MustSignNewTx(key, signer, &types.LegacyTx{
-			Nonce:    nonce,
+		tx := wallet.SetNonceAndSign(t, 0, &types.LegacyTx{
 			To:       &precompileAddr,
 			GasPrice: big.NewInt(1),
 			Gas:      params.TxGas + precompileGas,
 		})
-		nonce++
 		txs = append(txs, tx.Hash())
 
-		b, err := blocks.New(
-			types.NewBlock(
-				&types.Header{
-					Number:     new(big.Int).Add(last.Number(), big.NewInt(1)),
-					ParentHash: last.Hash(),
-				},
-				types.Transactions{tx},
-				nil, nil, saetest.TrieHasher(),
-			),
-			last, nil,
-			logger,
-		)
-		require.NoError(t, err)
+		b := chain.NewBlock(t, types.Transactions{tx})
 		require.NoError(t, exec.Enqueue(ctx, b))
-
-		chain = append(chain, b)
-		last = b
 	}
+	require.NoError(t, chain.Last().WaitUntilExecuted(ctx))
 
-	require.NoError(t, last.WaitUntilExecuted(ctx))
-
-	for i, b := range chain {
+	for i, b := range chain.AllExceptGenesis() {
 		require.Len(t, b.Receipts(), 1)
 
 		ignore := cmp.Options{

@@ -3,9 +3,7 @@
 package paralleltest
 
 import (
-	"math/big"
 	"testing"
-	"time"
 
 	"github.com/ava-labs/avalanchego/utils/logging"
 	"github.com/ava-labs/avalanchego/vms/components/gas"
@@ -22,9 +20,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/ava-labs/strevm/blocks"
-	"github.com/ava-labs/strevm/gastime"
+	"github.com/ava-labs/strevm/blocks/blockstest"
 	"github.com/ava-labs/strevm/hook"
-	"github.com/ava-labs/strevm/saetest"
 	"github.com/ava-labs/strevm/saexec"
 )
 
@@ -49,22 +46,11 @@ func NewExecutor[Prefetch any, R Result, Aggregated any](
 	precompileAddr common.Address,
 	handler parallel.Handler[Prefetch, R, Aggregated],
 	prefetchers, processors int,
-) *saexec.Executor {
+) (*saexec.Executor, *blockstest.ChainBuilder) {
 	tb.Helper()
 
-	gen, err := blocks.New(
-		saetest.Genesis(tb, db, config, alloc),
-		nil, nil, logger,
-	)
-	require.NoError(tb, err)
-
-	require.NoError(tb, gen.MarkExecuted(
-		db,
-		gastime.New(gen.BuildTime(), 1, 0), time.Time{},
-		big.NewInt(0), nil,
-		gen.EthBlock().Root(),
-	))
-	require.NoError(tb, gen.MarkSynchronous())
+	gen := blockstest.NewGenesis(tb, db, config, alloc)
+	chain := blockstest.NewChainBuilder(gen)
 
 	proc := &processor[Prefetch, R, Aggregated]{
 		par: parallel.New(handler, prefetchers, processors),
@@ -76,14 +62,22 @@ func NewExecutor[Prefetch any, R Result, Aggregated any](
 	}
 	stub.Register(tb)
 
-	exec, err := saexec.New(gen, config, db, nil, proc, logger)
+	src := func(h common.Hash, n uint64) *blocks.Block {
+		b, ok := chain.GetBlock(h, n)
+		if !ok {
+			return nil
+		}
+		return b
+	}
+
+	exec, err := saexec.New(gen, src, config, db, nil, proc, logger)
 	require.NoError(tb, err)
 	tb.Cleanup(func() {
 		exec.Close()
 		proc.par.Close()
 	})
 
-	return exec
+	return exec, chain
 }
 
 type processor[Data any, R Result, Aggregated any] struct {
@@ -99,7 +93,11 @@ func (*processor[D, R, A]) GasTarget(*types.Block) gas.Gas {
 	return 100e6
 }
 
-func (p *processor[D, R, A]) BeforeBlock(sdb *state.StateDB, rules params.Rules, b *types.Block) error {
+func (*processor[D, R, A]) SubSecondBlockTime(*types.Block) gas.Gas {
+	return 0
+}
+
+func (p *processor[D, R, A]) BeforeBlock(rules params.Rules, sdb *state.StateDB, b *types.Block) error {
 	return p.par.StartBlock(sdb, rules, b)
 }
 
