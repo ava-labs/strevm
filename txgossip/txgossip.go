@@ -70,8 +70,6 @@ type Set struct {
 // NewSet returns a new [gossip.Set]. [Set.Close] MUST be called to release
 // resources.
 func NewSet(logger logging.Logger, pool *txpool.TxPool, bloom *gossip.BloomFilter) *Set {
-	fillBloomFilter(pool, bloom)
-
 	txs := make(chan core.NewTxsEvent)
 	s := &Set{
 		Pool:      pool,
@@ -79,17 +77,19 @@ func NewSet(logger logging.Logger, pool *txpool.TxPool, bloom *gossip.BloomFilte
 		txSub:     pool.SubscribeTransactions(txs, false),
 		bloomDone: make(chan error, 1),
 	}
+
+	s.fillBloomFilter()
 	go s.maintainBloomFilter(logger, txs)
 
 	return s
 }
 
-func fillBloomFilter(pool *txpool.TxPool, bloom *gossip.BloomFilter) {
-	pending, queued := pool.Content()
+func (s *Set) fillBloomFilter() {
+	pending, queued := s.Pool.Content()
 	for _, txSet := range []map[common.Address][]*types.Transaction{pending, queued} {
 		for _, txs := range txSet {
 			for _, tx := range txs {
-				bloom.Add(Transaction{tx})
+				s.bloom.Add(Transaction{tx})
 			}
 		}
 	}
@@ -100,9 +100,14 @@ func (s *Set) maintainBloomFilter(logger logging.Logger, txs <-chan core.NewTxsE
 		select {
 		case ev := <-txs:
 			pending, queued := s.Pool.Stats()
-			if _, err := gossip.ResetBloomFilterIfNeeded(s.bloom, 2*(pending+queued)); err != nil {
+			reset, err := gossip.ResetBloomFilterIfNeeded(s.bloom, 2*(pending+queued))
+			if err != nil {
 				logger.Error("Resetting mempool bloom filter", zap.Error(err))
 			}
+			if reset {
+				s.fillBloomFilter()
+			}
+
 			for _, tx := range ev.Txs {
 				s.bloom.Add(Transaction{tx})
 			}
