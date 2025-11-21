@@ -5,6 +5,7 @@ package txgossip
 
 import (
 	"context"
+	"errors"
 	"math/big"
 	"math/rand/v2"
 	"path/filepath"
@@ -47,21 +48,31 @@ func TestMain(m *testing.M) {
 	)
 }
 
-// sut is the system under test, primarily the [Set].
-type sut struct {
+// SUT is the system under test, primarily the [Set].
+type SUT struct {
 	*Set
 	chain  *blockstest.ChainBuilder
 	wallet *saetest.Wallet
 	exec   *saexec.Executor
+	bloom  *gossip.BloomFilter
 }
 
-func newSUT(t *testing.T, numAccounts uint) sut {
+func chainConfig() *params.ChainConfig {
+	return params.AllDevChainProtocolChanges
+}
+
+func newWallet(tb testing.TB, numAccounts uint) *saetest.Wallet {
+	tb.Helper()
+	signer := types.LatestSigner(chainConfig())
+	return saetest.NewUNSAFEWallet(tb, numAccounts, signer)
+}
+
+func newSUT(t *testing.T, numAccounts uint, existingTxs ...*types.Transaction) SUT {
 	t.Helper()
 	logger := saetest.NewTBLogger(t, logging.Warn)
 
-	config := params.AllDevChainProtocolChanges
-	signer := types.LatestSigner(config)
-	wallet := saetest.NewUNSAFEWallet(t, numAccounts, signer)
+	wallet := newWallet(t, numAccounts)
+	config := chainConfig()
 
 	db := rawdb.NewMemoryDatabase()
 	genesis := blockstest.NewGenesis(t, db, config, saetest.MaxAllocFor(wallet.Addresses()...))
@@ -78,17 +89,19 @@ func newSUT(t *testing.T, numAccounts uint) sut {
 
 	bc := NewBlockChain(exec, chain.GetBlock)
 	pool := newTxPool(t, bc)
+	require.NoErrorf(t, errors.Join(pool.Add(existingTxs, false, true)...), "%T.Add([existing txs in setup], local=false, sync=true)", pool)
 	set := NewSet(logger, pool, bloom, 1)
 	t.Cleanup(func() {
 		assert.NoErrorf(t, set.Close(), "%T.Close()", set)
 		assert.NoErrorf(t, pool.Close(), "%T.Close()", pool)
 	})
 
-	return sut{
+	return SUT{
 		Set:    set,
 		chain:  chain,
 		wallet: wallet,
 		exec:   exec,
+		bloom:  bloom,
 	}
 }
 
@@ -297,4 +310,24 @@ func (p *stubPeers) Sample(context.Context, int) []ids.NodeID {
 
 func (p *stubPeers) Top(context.Context, float64) []ids.NodeID {
 	return p.ids
+}
+
+func TestExistingTxsInBloomFilter(t *testing.T) {
+	// Note that the wallet addresses are deterministic, so this single address
+	// will have sufficient funds when the SUT is created below.
+	wallet := newWallet(t, 1)
+
+	var txs types.Transactions
+	for range 10 {
+		txs = append(txs, wallet.SetNonceAndSign(t, 0, &types.LegacyTx{
+			To:       &common.Address{},
+			Gas:      params.TxGas,
+			GasPrice: big.NewInt(1),
+		}))
+	}
+
+	sut := newSUT(t, 1, txs...)
+	for _, tx := range txs {
+		assert.True(t, sut.bloom.Has(Transaction{tx}), "%T.Has(%#x [tx already in %T when constructing %T])", tx.Hash(), sut.bloom, sut.Pool, sut.Set)
+	}
 }

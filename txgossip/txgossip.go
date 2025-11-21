@@ -70,12 +70,25 @@ type Set struct {
 // NewSet returns a new [gossip.Set]. [Set.Close] MUST be called to release
 // resources.
 func NewSet(logger logging.Logger, pool *txpool.TxPool, bloom *gossip.BloomFilter, targetBloomElements int) *Set {
+	fillBloomFilter(pool, bloom)
+
 	txs := make(chan core.NewTxsEvent)
 	sub := pool.SubscribeTransactions(txs, false)
 	done := make(chan error, 1)
 	go maintainBloomFilter(logger, bloom, txs, sub.Err(), done, targetBloomElements)
 
 	return &Set{pool, bloom, sub, done}
+}
+
+func fillBloomFilter(pool *txpool.TxPool, bloom *gossip.BloomFilter) {
+	pending, queued := pool.Content()
+	for _, txSet := range []map[common.Address][]*types.Transaction{pending, queued} {
+		for _, txs := range txSet {
+			for _, tx := range txs {
+				bloom.Add(Transaction{tx})
+			}
+		}
+	}
 }
 
 func maintainBloomFilter(logger logging.Logger, bloom *gossip.BloomFilter, txs <-chan core.NewTxsEvent, errs <-chan error, done chan<- error, targetBloomElements int) {
