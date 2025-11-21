@@ -80,29 +80,40 @@ type pipe struct {
 	quit, done chan struct{}
 }
 
-func (p *pipe) loop() {
-	defer close(p.done)
-	for {
-		select {
-		case b := <-p.in:
-			select {
-			case p.out <- core.ChainHeadEvent{Block: b}:
-
-			case <-p.quit:
-				return
-			}
-		case <-p.quit:
-			return
-		}
-	}
+func (p *pipe) Unsubscribe() {
+	p.sub.Unsubscribe()
+	close(p.quit)
+	<-p.done
 }
 
 func (p *pipe) Err() <-chan error {
 	return p.sub.Err()
 }
 
-func (p *pipe) Unsubscribe() {
-	p.sub.Unsubscribe()
-	close(p.quit)
-	<-p.done
+func (p *pipe) loop() {
+	for {
+		b, ok := p.read()
+		if !ok || !p.write(b) {
+			close(p.done)
+			return
+		}
+	}
+}
+
+func (p *pipe) read() (*types.Block, bool) {
+	select {
+	case b := <-p.in:
+		return b, true
+	case <-p.quit:
+		return nil, false
+	}
+}
+
+func (p *pipe) write(b *types.Block) bool {
+	select {
+	case p.out <- core.ChainHeadEvent{Block: b}:
+		return true
+	case <-p.quit:
+		return false
+	}
 }
