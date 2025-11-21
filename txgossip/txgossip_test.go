@@ -312,13 +312,14 @@ func (p *stubPeers) Top(context.Context, float64) []ids.NodeID {
 	return p.ids
 }
 
-func TestExistingTxsInBloomFilter(t *testing.T) {
+func TestTxPoolPopulatesBloomFilter(t *testing.T) {
 	// Note that the wallet addresses are deterministic, so this single address
 	// will have sufficient funds when the SUT is created below.
 	wallet := newWallet(t, 1)
 
 	var txs types.Transactions
-	for range 10 {
+	const n = 10
+	for range n {
 		txs = append(txs, wallet.SetNonceAndSign(t, 0, &types.LegacyTx{
 			To:       &common.Address{},
 			Gas:      params.TxGas,
@@ -326,8 +327,19 @@ func TestExistingTxsInBloomFilter(t *testing.T) {
 		}))
 	}
 
-	sut := newSUT(t, 1, txs...)
-	for _, tx := range txs {
-		assert.True(t, sut.bloom.Has(Transaction{tx}), "%T.Has(%#x [tx already in %T when constructing %T])", tx.Hash(), sut.bloom, sut.Pool, sut.Set)
+	existing := txs[:n/2]
+	deferred := txs[n/2:]
+
+	sut := newSUT(t, 1, existing...)
+	for i, tx := range existing {
+		assert.True(t, sut.bloom.Has(Transaction{tx}), "%T.Has(%#x [tx[%d] already in %T when constructing %T])", sut.bloom, tx.Hash(), i, sut.Pool, sut.Set)
 	}
+
+	require.NoError(t, errors.Join(sut.Pool.Add(deferred, false, true)...))
+	require.EventuallyWithT(t, func(c *assert.CollectT) {
+		for i, tx := range deferred {
+			idx := i + n/2
+			require.Truef(c, sut.bloom.Has(Transaction{tx}), "%T.Has(%#x [tx[%d] added to %T after constructing %T])", sut.bloom, tx.Hash(), idx, sut.Pool, sut.Set)
+		}
+	}, 2*time.Second, 20*time.Millisecond)
 }
