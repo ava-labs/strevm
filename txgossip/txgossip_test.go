@@ -75,9 +75,11 @@ func newSUT(t *testing.T, numAccounts uint) sut {
 	require.NoError(t, err, "gossip.NewBloomFilter([1 in a billion FP])")
 
 	bc := NewBlockChain(exec, chain.GetBlock)
-	set, cleanup := NewSet(logger, newTxPool(t, bc), bloom, 1)
+	pool := newTxPool(t, bc)
+	set := NewSet(logger, pool, bloom, 1)
 	t.Cleanup(func() {
-		require.NoError(t, cleanup(), "cleanup function returned by NewSet()")
+		assert.NoErrorf(t, set.Close(), "%T.Close()", set)
+		assert.NoErrorf(t, pool.Close(), "%T.Close()", pool)
 	})
 
 	return sut{

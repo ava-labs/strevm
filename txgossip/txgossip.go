@@ -17,6 +17,7 @@ import (
 	"github.com/ava-labs/libevm/core"
 	"github.com/ava-labs/libevm/core/txpool"
 	"github.com/ava-labs/libevm/core/types"
+	"github.com/ava-labs/libevm/event"
 	"github.com/ava-labs/libevm/rlp"
 	"go.uber.org/zap"
 )
@@ -61,26 +62,23 @@ func (Marshaller) UnmarshalGossip(buf []byte) (Transaction, error) {
 type Set struct {
 	Pool  *txpool.TxPool
 	bloom *gossip.BloomFilter
+
+	txSub     event.Subscription
+	bloomDone <-chan error
 }
 
-// NewSet returns a new [gossip.Set] and a cleanup function that MUST be called
-// to release resources.
-func NewSet(logger logging.Logger, pool *txpool.TxPool, bloom *gossip.BloomFilter, targetBloomElements int) (*Set, func() error) {
+// NewSet returns a new [gossip.Set]. [Set.Close] MUST be called to release
+// resources.
+func NewSet(logger logging.Logger, pool *txpool.TxPool, bloom *gossip.BloomFilter, targetBloomElements int) *Set {
 	txs := make(chan core.NewTxsEvent)
 	sub := pool.SubscribeTransactions(txs, false)
-	done := make(chan struct{})
+	done := make(chan error, 1)
 	go maintainBloomFilter(logger, bloom, txs, sub.Err(), done, targetBloomElements)
 
-	return &Set{pool, bloom}, func() error {
-		sub.Unsubscribe()
-		<-done
-		return pool.Close()
-	}
+	return &Set{pool, bloom, sub, done}
 }
 
-func maintainBloomFilter(logger logging.Logger, bloom *gossip.BloomFilter, txs <-chan core.NewTxsEvent, errs <-chan error, done chan<- struct{}, targetBloomElements int) {
-	defer close(done)
-
+func maintainBloomFilter(logger logging.Logger, bloom *gossip.BloomFilter, txs <-chan core.NewTxsEvent, errs <-chan error, done chan<- error, targetBloomElements int) {
 	for {
 		select {
 		case ev := <-txs:
@@ -92,12 +90,25 @@ func maintainBloomFilter(logger logging.Logger, bloom *gossip.BloomFilter, txs <
 			}
 
 		case err, ok := <-errs:
-			if !ok {
-				return
+			// [event.Subscription] documents semantics of its error channel,
+			// stating that at most one error will ever be sent, and that it
+			// will be closed when unsubscribing.
+			if ok {
+				logger.Error("TxPool subscription", zap.Error(err))
+				done <- err
+			} else {
+				close(done)
 			}
-			logger.Error("TxPool subscription", zap.Error(err))
+			return
 		}
 	}
+}
+
+// Close stops background work being performed by the [Set], and returns the
+// last error encountered by said processes.
+func (s *Set) Close() error {
+	s.txSub.Unsubscribe()
+	return <-s.bloomDone
 }
 
 // Add is a wrapper around [txpool.TxPool.Add], exposed to accept transactions
