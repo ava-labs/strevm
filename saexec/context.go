@@ -13,23 +13,15 @@ import (
 	"github.com/ava-labs/strevm/blocks"
 )
 
-// A BlockSource returns a block that matches both a hash and number, or nil
-// if not found.
-type BlockSource func(hash common.Hash, number uint64) *blocks.Block
-
 var _ core.ChainContext = (*chainContext)(nil)
 
 type chainContext struct {
-	blocks BlockSource
+	blocks blocks.Source
 	log    logging.Logger
 }
 
 func (c *chainContext) GetHeader(h common.Hash, n uint64) *types.Header {
-	b := c.blocks(h, n)
-	if b == nil {
-		return nil
-	}
-	return b.Header()
+	return c.blocks.Header(h, n)
 }
 
 func (c *chainContext) Engine() consensus.Engine {

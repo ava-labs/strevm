@@ -26,6 +26,14 @@ func BlocksByHash() cmp.Option {
 	})
 }
 
+// TransactionsByHash returns a [cmp.Comparer] for [types.Transaction] pointers,
+// equating them by hash alone.
+func TransactionsByHash() cmp.Option {
+	return ComparerWithNilCheck(func(t, u *types.Transaction) bool {
+		return t.Hash() == u.Hash()
+	})
+}
+
 // ReceiptsByTxHash returns a [cmp.Comparer] for [types.Receipt] pointers,
 // equating them by transaction hash alone.
 func ReceiptsByTxHash() cmp.Option {
