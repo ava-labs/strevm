@@ -64,20 +64,24 @@ type Set struct {
 	bloom *gossip.BloomFilter
 
 	txSub     event.Subscription
-	bloomDone <-chan error
+	bloomDone chan error
 }
 
 // NewSet returns a new [gossip.Set]. [Set.Close] MUST be called to release
 // resources.
-func NewSet(logger logging.Logger, pool *txpool.TxPool, bloom *gossip.BloomFilter, targetBloomElements int) *Set {
+func NewSet(logger logging.Logger, pool *txpool.TxPool, bloom *gossip.BloomFilter) *Set {
 	fillBloomFilter(pool, bloom)
 
 	txs := make(chan core.NewTxsEvent)
-	sub := pool.SubscribeTransactions(txs, false)
-	done := make(chan error, 1)
-	go maintainBloomFilter(logger, bloom, txs, sub.Err(), done, targetBloomElements)
+	s := &Set{
+		Pool:      pool,
+		bloom:     bloom,
+		txSub:     pool.SubscribeTransactions(txs, false),
+		bloomDone: make(chan error, 1),
+	}
+	go s.maintainBloomFilter(logger, txs)
 
-	return &Set{pool, bloom, sub, done}
+	return s
 }
 
 func fillBloomFilter(pool *txpool.TxPool, bloom *gossip.BloomFilter) {
@@ -91,26 +95,27 @@ func fillBloomFilter(pool *txpool.TxPool, bloom *gossip.BloomFilter) {
 	}
 }
 
-func maintainBloomFilter(logger logging.Logger, bloom *gossip.BloomFilter, txs <-chan core.NewTxsEvent, errs <-chan error, done chan<- error, targetBloomElements int) {
+func (s *Set) maintainBloomFilter(logger logging.Logger, txs <-chan core.NewTxsEvent) {
 	for {
 		select {
 		case ev := <-txs:
-			if _, err := gossip.ResetBloomFilterIfNeeded(bloom, targetBloomElements); err != nil {
+			pending, queued := s.Pool.Stats()
+			if _, err := gossip.ResetBloomFilterIfNeeded(s.bloom, 2*(pending+queued)); err != nil {
 				logger.Error("Resetting mempool bloom filter", zap.Error(err))
 			}
 			for _, tx := range ev.Txs {
-				bloom.Add(Transaction{tx})
+				s.bloom.Add(Transaction{tx})
 			}
 
-		case err, ok := <-errs:
+		case err, ok := <-s.txSub.Err():
 			// [event.Subscription] documents semantics of its error channel,
 			// stating that at most one error will ever be sent, and that it
 			// will be closed when unsubscribing.
 			if ok {
 				logger.Error("TxPool subscription", zap.Error(err))
-				done <- err
+				s.bloomDone <- err
 			} else {
-				close(done)
+				close(s.bloomDone)
 			}
 			return
 		}

@@ -90,7 +90,7 @@ func newSUT(t *testing.T, numAccounts uint, existingTxs ...*types.Transaction) S
 	bc := NewBlockChain(exec, chain.GetBlock)
 	pool := newTxPool(t, bc)
 	require.NoErrorf(t, errors.Join(pool.Add(existingTxs, false, true)...), "%T.Add([existing txs in setup], local=false, sync=true)", pool)
-	set := NewSet(logger, pool, bloom, 1)
+	set := NewSet(logger, pool, bloom)
 	t.Cleanup(func() {
 		assert.NoErrorf(t, set.Close(), "%T.Close()", set)
 		assert.NoErrorf(t, pool.Close(), "%T.Close()", pool)
