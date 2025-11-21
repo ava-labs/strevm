@@ -69,7 +69,9 @@ func newSUT(t *testing.T, numAccounts uint) sut {
 
 	exec, err := saexec.New(genesis, chain.GetBlock, config, db, nil, &hookstest.Stub{Target: 1e6}, logger)
 	require.NoError(t, err, "saexec.New()")
-	t.Cleanup(exec.Close)
+	t.Cleanup(func() {
+		require.NoErrorf(t, exec.Close(), "%T.Close()", exec)
+	})
 
 	bloom, err := gossip.NewBloomFilter(prometheus.NewRegistry(), "", 1, 1e-9, 1e-9)
 	require.NoError(t, err, "gossip.NewBloomFilter([1 in a billion FP])")

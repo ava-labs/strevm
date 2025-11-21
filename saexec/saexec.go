@@ -8,6 +8,7 @@
 package saexec
 
 import (
+	"fmt"
 	"sync/atomic"
 
 	"github.com/ava-labs/avalanchego/utils/logging"
@@ -19,7 +20,6 @@ import (
 	"github.com/ava-labs/libevm/event"
 	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/triedb"
-	"go.uber.org/zap"
 
 	"github.com/ava-labs/strevm/blocks"
 	"github.com/ava-labs/strevm/hook"
@@ -94,7 +94,7 @@ func New(
 
 // Close shuts down the [Executor], waits for the currently executing block
 // to complete, and then releases all resources.
-func (e *Executor) Close() {
+func (e *Executor) Close() error {
 	close(e.quit)
 	<-e.done
 
@@ -104,15 +104,12 @@ func (e *Executor) Close() {
 	// no-op, so we ignore it.
 	if root := e.LastExecuted().PostExecutionStateRoot(); root != e.snaps.DiskRoot() {
 		if err := e.snaps.Cap(root, 0); err != nil {
-			e.log.Warn(
-				"snapshot.Tree.Cap([last post-execution state root], 0)",
-				zap.Stringer("root", root),
-				zap.Error(err),
-			)
+			return fmt.Errorf("snapshot.Tree.Cap([last post-execution state root], 0): %v", err)
 		}
 	}
 
 	e.snaps.Release()
+	return nil
 }
 
 // ChainConfig returns the config originally passed to [New].
