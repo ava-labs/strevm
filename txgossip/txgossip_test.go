@@ -349,7 +349,6 @@ func TestP2PIntegration(t *testing.T) {
 					t.Errorf("slices.Collect(%T.Iterate) diff (-want +got):\n%s", send.Set, diff)
 				}
 			})
-
 		})
 	}
 }
@@ -404,7 +403,7 @@ func TestAPIBackendSendTxSignatureMatch(_ *testing.T) {
 	// It's surprisingly difficult to get a concise compile-time guarantee that
 	// a single method in an interface is implemented!
 	var b ethapi.Backend = (*eth.EthAPIBackend)(nil)
-	fn := b.SendTx
+	fn := b.SendTx //nolint:ineffassign,staticcheck
 	fn = (*Set)(nil).SendTx
 	_ = fn
 }
