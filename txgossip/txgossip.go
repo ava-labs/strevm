@@ -8,18 +8,13 @@
 package txgossip
 
 import (
-	"errors"
-
 	"github.com/ava-labs/avalanchego/ids"
 	"github.com/ava-labs/avalanchego/network/p2p/gossip"
 	"github.com/ava-labs/avalanchego/utils/logging"
 	"github.com/ava-labs/libevm/common"
-	"github.com/ava-labs/libevm/core"
 	"github.com/ava-labs/libevm/core/txpool"
 	"github.com/ava-labs/libevm/core/types"
-	"github.com/ava-labs/libevm/event"
 	"github.com/ava-labs/libevm/rlp"
-	"go.uber.org/zap"
 )
 
 var (
@@ -57,30 +52,21 @@ func (Marshaller) UnmarshalGossip(buf []byte) (Transaction, error) {
 	return tx, nil
 }
 
-// A Set is a [gossip.Set] wrapping a [txpool.TxPool]. Transactions MAY be added
-// to the pool directly, or via [Set.Add].
+// A Set is a [gossip.Set] wrapping a [txpool.TxPool].
 type Set struct {
-	Pool  *txpool.TxPool
-	bloom *gossip.BloomFilter
-
-	txSub     event.Subscription
-	bloomDone chan error
+	Pool   *txpool.TxPool
+	bloom  *gossip.BloomFilter
+	pushTo []func(...Transaction)
 }
 
-// NewSet returns a new [gossip.Set]. [Set.Close] MUST be called to release
-// resources.
+// NewSet returns a new [gossip.Set]. See [Set.Add] and [Set.SendTx] for ways to
+// add transactions to the pool, which SHOULD NOT be populated directly.
 func NewSet(logger logging.Logger, pool *txpool.TxPool, bloom *gossip.BloomFilter) *Set {
-	txs := make(chan core.NewTxsEvent)
 	s := &Set{
-		Pool:      pool,
-		bloom:     bloom,
-		txSub:     pool.SubscribeTransactions(txs, false),
-		bloomDone: make(chan error, 1),
+		Pool:  pool,
+		bloom: bloom,
 	}
-
 	s.fillBloomFilter()
-	go s.maintainBloomFilter(logger, txs)
-
 	return s
 }
 
@@ -93,52 +79,6 @@ func (s *Set) fillBloomFilter() {
 			}
 		}
 	}
-}
-
-func (s *Set) maintainBloomFilter(logger logging.Logger, txs <-chan core.NewTxsEvent) {
-	for {
-		select {
-		case ev := <-txs:
-			pending, queued := s.Pool.Stats()
-			reset, err := gossip.ResetBloomFilterIfNeeded(s.bloom, 2*(pending+queued))
-			if err != nil {
-				logger.Error("Resetting mempool bloom filter", zap.Error(err))
-			}
-			if reset {
-				s.fillBloomFilter()
-			}
-
-			for _, tx := range ev.Txs {
-				s.bloom.Add(Transaction{tx})
-			}
-
-		case err, ok := <-s.txSub.Err():
-			// [event.Subscription] documents semantics of its error channel,
-			// stating that at most one error will ever be sent, and that it
-			// will be closed when unsubscribing.
-			if ok {
-				logger.Error("TxPool subscription", zap.Error(err))
-				s.bloomDone <- err
-			} else {
-				close(s.bloomDone)
-			}
-			return
-		}
-	}
-}
-
-// Close stops background work being performed by the [Set], and returns the
-// last error encountered by said processes.
-func (s *Set) Close() error {
-	s.txSub.Unsubscribe()
-	return <-s.bloomDone
-}
-
-// Add is a wrapper around [txpool.TxPool.Add], exposed to accept transactions
-// over [gossip]. It MAY be bypassed, and the pool's method accessed directly.
-func (s *Set) Add(tx Transaction) error {
-	errs := s.Pool.Add([]*types.Transaction{tx.Transaction}, false, false)
-	return errors.Join(errs...)
 }
 
 // Has returns [txpool.TxPool.Has].
