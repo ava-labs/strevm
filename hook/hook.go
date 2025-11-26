@@ -25,29 +25,47 @@ import (
 type Points interface {
 	GasTarget(parent *types.Block) gas.Gas
 	SubSecondBlockTime(*types.Block) gas.Gas
-	BeforeBlock(params.Rules, *state.StateDB, *types.Block) error
-	AfterBlock(*state.StateDB, *types.Block, types.Receipts)
+	BeforeExecutingBlock(params.Rules, *state.StateDB, *types.Block) error
+	AfterExecutingBlock(*state.StateDB, *types.Block, types.Receipts)
 }
 
-// BeforeBlock is intended to be called before processing a block, with the gas
-// target sourced from [Points].
-func BeforeBlock(pts Points, rules params.Rules, sdb *state.StateDB, b *blocks.Block, clock *gastime.Time) error {
-	clock.FastForwardTo(
-		b.BuildTime(),
-		pts.SubSecondBlockTime(b.EthBlock()),
-	)
-	target := pts.GasTarget(b.ParentBlock().EthBlock())
-	if err := clock.SetTarget(target); err != nil {
+// BeforeBuildingBlock MUST be called before building a block.
+
+// BeforeExecutingBlock MUST be called before executing a block.
+func BeforeExecutingBlock(pts Points, rules params.Rules, sdb *state.StateDB, b *blocks.Block, clock *gastime.Time) error {
+	frac := pts.SubSecondBlockTime(b.EthBlock())
+	if err := beforeBlock(pts, b, b.BuildTime(), frac, clock); err != nil {
+		return err
+	}
+	return pts.BeforeExecutingBlock(rules, sdb, b.EthBlock())
+}
+
+func beforeBlock(pts Points, b *blocks.Block, timeStamp uint64, subSecond gas.Gas, clock *gastime.Time) error {
+	clock.FastForwardTo(timeStamp, subSecond)
+	if err := clock.SetTarget(b.GasTarget()); err != nil {
 		return fmt.Errorf("%T.SetTarget() before block: %w", clock, err)
 	}
-	return pts.BeforeBlock(rules, sdb, b.EthBlock())
+	return nil
 }
 
-// AfterBlock is intended to be called after processing a block, with the gas
-// sourced from [types.Block.GasUsed] or equivalent.
-func AfterBlock(pts Points, sdb *state.StateDB, b *types.Block, clock *gastime.Time, used gas.Gas, rs types.Receipts) {
-	clock.Tick(used)
-	pts.AfterBlock(sdb, b, rs)
+// AfterBuildingBlock MUST be called after building a block.
+func AfterBuildingBlock(clock *gastime.Time, included types.Transactions) {
+	var consumed gas.Gas
+	for _, tx := range included {
+		consumed += gas.Gas(tx.Gas())
+	}
+	afterBlock(clock, consumed)
+}
+
+// AfterExecutingBlock MUST be called after executing a block, with the consumed
+// gas sourced from [types.Block.GasUsed] or equivalent.
+func AfterExecutingBlock(pts Points, sdb *state.StateDB, b *types.Block, clock *gastime.Time, consumed gas.Gas, rs types.Receipts) {
+	afterBlock(clock, consumed)
+	pts.AfterExecutingBlock(sdb, b, rs)
+}
+
+func afterBlock(clock *gastime.Time, consumed gas.Gas) {
+	clock.Tick(consumed)
 }
 
 // MinimumGasConsumption MUST be used as the implementation for the respective

@@ -31,9 +31,9 @@ func (*Stub) SubSecondBlockTime(*types.Block) gas.Gas {
 }
 
 // BeforeBlock is a no-op that always returns nil.
-func (*Stub) BeforeBlock(params.Rules, *state.StateDB, *types.Block) error {
+func (*Stub) BeforeExecutingBlock(params.Rules, *state.StateDB, *types.Block) error {
 	return nil
 }
 
 // AfterBlock is a no-op.
-func (*Stub) AfterBlock(*state.StateDB, *types.Block, types.Receipts) {}
+func (*Stub) AfterExecutingBlock(*state.StateDB, *types.Block, types.Receipts) {}

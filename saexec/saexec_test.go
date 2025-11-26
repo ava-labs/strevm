@@ -85,6 +85,7 @@ func newSUT(tb testing.TB, hooks hook.Points) (context.Context, SUT) {
 	chain := blockstest.NewChainBuilder(genesis)
 	chain.SetDefaultOptions(blockstest.WithBlockOptions(
 		blockstest.WithLogger(logger),
+		blockstest.WithGasTargeter(hooks.GasTarget),
 	))
 
 	e, err := New(genesis, chain.GetBlock, config, db, tdbConfig, hooks, logger)

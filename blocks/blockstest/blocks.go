@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/ava-labs/avalanchego/utils/logging"
+	"github.com/ava-labs/avalanchego/vms/components/gas"
 	"github.com/ava-labs/libevm/core"
 	"github.com/ava-labs/libevm/core/state"
 	"github.com/ava-labs/libevm/core/types"
@@ -74,24 +75,43 @@ type BlockOption = options.Option[blockProperties]
 func NewBlock(tb testing.TB, eth *types.Block, parent, lastSettled *blocks.Block, opts ...BlockOption) *blocks.Block {
 	tb.Helper()
 
-	props := options.ApplyTo(&blockProperties{}, opts...)
+	props := options.ApplyTo(&blockProperties{
+		gasTarget: func(*types.Block) gas.Gas { return 100e6 },
+	}, opts...)
 	if props.logger == nil {
 		props.logger = saetest.NewTBLogger(tb, logging.Warn)
 	}
 
-	b, err := blocks.New(eth, parent, lastSettled, props.logger)
+	b, err := blocks.New(eth, parent, lastSettled, props.GasTarget, props.logger)
 	require.NoError(tb, err, "blocks.New()")
 	return b
 }
 
 type blockProperties struct {
-	logger logging.Logger
+	gasTarget blocks.GasTargeter
+	logger    logging.Logger
+}
+
+func (p *blockProperties) GasTarget(parent *types.Block) gas.Gas {
+	return p.gasTarget(parent)
 }
 
 // WithLogger overrides the logger passed to [blocks.New] by [NewBlock].
 func WithLogger(l logging.Logger) BlockOption {
 	return options.Func[blockProperties](func(p *blockProperties) {
 		p.logger = l
+	})
+}
+
+func WithGasTargeter(gt blocks.GasTargeter) BlockOption {
+	return options.Func[blockProperties](func(p *blockProperties) {
+		p.gasTarget = gt
+	})
+}
+
+func WithGasTarget(target gas.Gas) BlockOption {
+	return options.Func[blockProperties](func(p *blockProperties) {
+		p.gasTarget = func(*types.Block) gas.Gas { return target }
 	})
 }
 
