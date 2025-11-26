@@ -14,13 +14,13 @@ import (
 	"github.com/ava-labs/strevm/blocks"
 )
 
+var _ adaptor.ChainVM[*blocks.Block] = (*SinceGenesis)(nil)
+
 // SinceGenesis is a harness around a [VM], providing an `Initialize` method
 // that treats the chain as being asynchronous since genesis.
 type SinceGenesis struct {
 	*VM
 }
-
-var _ adaptor.ChainVM[*blocks.Block] = (*SinceGenesis)(nil)
 
 // Initialize initializes the VM.
 func (vm *SinceGenesis) Initialize(
