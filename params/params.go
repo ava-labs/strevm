@@ -6,7 +6,14 @@
 // [Streaming Asynchronous Execution]: https://github.com/avalanche-foundation/ACPs/tree/main/ACPs/194-streaming-asynchronous-execution
 package params
 
+import "time"
+
 // Lambda is the denominator for computing the minimum gas consumed per
 // transaction. For a transaction with gas limit `g`, the minimum consumption is
 // ceil(g/Lambda).
 const Lambda = 2
+
+const (
+	TauSeconds = 5
+	Tau        = TauSeconds * time.Second
+)
