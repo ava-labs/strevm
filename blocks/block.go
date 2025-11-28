@@ -65,7 +65,7 @@ func InMemoryBlockCount() int64 {
 	return inMemoryBlockCount.Load()
 }
 
-// A GasTarger returns the [ACP-176] gas target for the next block in a chain.
+// A GasTargeter returns the [ACP-176] gas target for the next block in a chain.
 //
 // [ACP-176]: https://github.com/avalanche-foundation/ACPs/tree/main/ACPs/176-dynamic-evm-gas-limit-and-price-discovery-updates
 type GasTargeter func(parent *types.Block) gas.Gas
@@ -142,4 +142,3 @@ func (b *Block) GasTarget() gas.Gas {
 	}
 	return t
 }
-

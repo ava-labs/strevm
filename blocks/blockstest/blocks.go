@@ -110,7 +110,7 @@ func WithGasTargeter(gt blocks.GasTargeter) BlockOption {
 	})
 }
 
-// WithGasTargeter overrides the default [blocks.GasTargeter] passed to
+// WithGasTarget overrides the default [blocks.GasTargeter] passed to
 // [blocks.New] with a constant targeter that ignores the parent.
 func WithGasTarget(target gas.Gas) BlockOption {
 	return options.Func[blockProperties](func(p *blockProperties) {
