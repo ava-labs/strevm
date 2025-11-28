@@ -242,7 +242,7 @@ func testEvents[T any](ctx context.Context, tb testing.TB, got *saetest.EventCol
 	// There is an invariant that stipulates [blocks.Block.MarkExecuted] MUST
 	// occur before sending external events, which means that we can't rely on
 	// [blocks.Block.WaitUntilExecuted] to avoid races.
-	got.WaitForAtLeast(ctx, len(want))
+	require.NoErrorf(tb, got.WaitForAtLeast(ctx, len(want)), "%T.WaitForAtLeast()", got)
 
 	require.NoError(tb, got.Unsubscribe())
 	if diff := cmp.Diff(want, got.All(), opts...); diff != "" {

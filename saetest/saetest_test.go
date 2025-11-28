@@ -28,7 +28,7 @@ func TestWaitForAtLeastContextAwareness(t *testing.T) {
 	}()
 
 	feed.Send(struct{}{})
-	require.NoErrorf(t, sut.WaitForAtLeast(ctx, 1), "%T.WaitForAtLeast(1)")
+	require.NoErrorf(t, sut.WaitForAtLeast(ctx, 1), "%T.WaitForAtLeast(1)", sut)
 
 	ctx, cancel := context.WithCancelCause(t.Context())
 	want := errors.New("error passed to context.CancelCauseFunc")
