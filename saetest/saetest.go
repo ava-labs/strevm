@@ -86,23 +86,17 @@ func (c *EventCollector[T]) Unsubscribe() error {
 }
 
 // WaitForAtLeast blocks until at least `n` events have been received.
-func (c *EventCollector[T]) WaitForAtLeast(ctx context.Context, n int) (retErr error) {
-	// All this because [sync.Cond.Wait] isn't context-aware!
+func (c *EventCollector[T]) WaitForAtLeast(ctx context.Context, n int) error {
 	quit := make(chan struct{})
-	defer func() {
-		close(quit)
-		switch r := recover().(type) {
-		case nil:
-		case error:
-			retErr = r
-		default:
-			panic(r)
-		}
-	}()
+	defer close(quit)
 	go func() {
 		select {
 		case <-ctx.Done():
-			panic(ctx.Err())
+			// If there is another waiter then we might not wake our own loop,
+			// so Signal() is inappropriate. For that matter, so too is
+			// Broadcast(). If context awareness without spurious wakeups is
+			// important, see https://www.youtube.com/watch?v=5zXAHh5tJqQ.
+			c.cond.Broadcast()
 		case <-quit:
 		}
 	}()
@@ -111,6 +105,9 @@ func (c *EventCollector[T]) WaitForAtLeast(ctx context.Context, n int) (retErr e
 	defer c.cond.L.Unlock()
 	for len(c.all) < n {
 		c.cond.Wait()
+		if ctx.Err() != nil {
+			return context.Cause(ctx)
+		}
 	}
 	return nil
 }
