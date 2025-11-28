@@ -36,8 +36,10 @@ func BeforeBlock(pts Points, rules params.Rules, sdb *state.StateDB, b *blocks.B
 		b.BuildTime(),
 		pts.SubSecondBlockTime(b.EthBlock()),
 	)
-	target := pts.GasTarget(b.ParentBlock().EthBlock())
-	if err := clock.SetTarget(target); err != nil {
+	// [Points] MUST NOT be used here for the gas target as the parent won't be
+	// available if `b` has already been settled. [blocks.Block.GasTarget]
+	// returns a cached value, which was originally derived from the [Points].
+	if err := clock.SetTarget(b.GasTarget()); err != nil {
 		return fmt.Errorf("%T.SetTarget() before block: %w", clock, err)
 	}
 	return pts.BeforeBlock(rules, sdb, b.EthBlock())
