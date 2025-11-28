@@ -55,6 +55,7 @@ func TestSettlementInvariants(t *testing.T) {
 	}
 
 	t.Run("before_MarkSettled", func(t *testing.T) {
+		require.False(t, b.Settled(), "Settled()")
 		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 		defer cancel()
 		assert.ErrorIs(t, b.WaitUntilSettled(ctx), context.DeadlineExceeded, "WaitUntilSettled()")
@@ -70,6 +71,7 @@ func TestSettlementInvariants(t *testing.T) {
 	require.NoError(t, b.MarkSettled(), "first call to MarkSettled()")
 
 	t.Run("after_MarkSettled", func(t *testing.T) {
+		require.True(t, b.Settled(), "Settled()")
 		assert.NoError(t, b.WaitUntilSettled(context.Background()), "WaitUntilSettled()")
 		assert.NoError(t, b.CheckInvariants(Settled), "CheckInvariants(Settled)")
 
