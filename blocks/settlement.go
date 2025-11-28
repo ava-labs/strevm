@@ -174,11 +174,13 @@ var errIncompleteBlockHistory = errors.New("incomplete block history when determ
 // LastToSettleAt returns (a) the last block to be settled at time `settleAt` if
 // building on the specified parent block, and (b) a boolean to indicate if
 // settlement is currently possible. If the returned boolean is false, the
-// execution stream is lagging and LastToSettleAt can be called again after some
-// indeterminate delay. It is not valid to call LastToSettleAt with a parent on
-// which [Block.MarkSettled] was called directly (i.e. [Block.MarkSynchronous]
-// does not preclude the parent from usage here). Any returned error is
-// indicative of a broken invariant.
+// execution stream is lagging and LastToSettleAt MAY be called again after some
+// indeterminate delay. Any returned error is, however, irrecoverable and
+// indicative of invalid arguments.
+//
+// It is not valid to call LastToSettleAt with a parent on which
+// [Block.MarkSettled] was called directly (i.e. [Block.MarkSynchronous] does
+// not preclude the parent from usage here).
 //
 // See the Example for [Block.WhenChildSettles] for one usage of the returned
 // block.
