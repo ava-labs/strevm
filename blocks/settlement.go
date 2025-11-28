@@ -211,12 +211,12 @@ func LastToSettleAt(settleAt uint64, parent *Block) (b *Block, ok bool, _ error)
 	// `block==nil` during block building. Verification, however, MUST protect
 	// against malformed input so performs a check.
 	for block := parent; ; block = block.ParentBlock() {
-		if block == nil {
-			return nil, false, fmt.Errorf("%w: settling at %d with parent %#x (%v)", errIncompleteBlockHistory, settleAt, parent.Hash(), parent.Number())
-		}
 		// Guarantees that the loop will always exit as the last pre-SAE block
 		// (perhaps the genesis) is always settled, by definition.
 		if settled := block.ancestry.Load() == nil; settled {
+			if !block.synchronous {
+				return nil, false, fmt.Errorf("%w: settling at %d with parent %#x (%v)", errIncompleteBlockHistory, settleAt, parent.Hash(), parent.Number())
+			}
 			return block, known, nil
 		}
 

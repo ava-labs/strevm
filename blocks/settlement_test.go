@@ -368,3 +368,39 @@ func TestLastToSettleAt(t *testing.T) {
 		})
 	}
 }
+
+func TestIncompleteBlockHistory(t *testing.T) {
+	db := rawdb.NewMemoryDatabase()
+
+	blocks := newChain(t, 0, 10, nil)
+	for i, b := range blocks {
+		// Note that we set the block execution time to be the slice index so if
+		// we are settling at time `x` then we expect `blocks[x]`.
+		b.markExecutedForTests(t, db, gastime.New(uint64(i), 1, 0))
+	}
+
+	const (
+		settleAt     = 2
+		parentHeight = 5
+	)
+	parent := blocks[parentHeight]
+	t.Logf("All tests are of LastToSettleAt(%d, [parent height %d]) with execution time == height", settleAt, parentHeight)
+
+	t.Run("virtuous", func(t *testing.T) {
+		got, gotOK, err := LastToSettleAt(settleAt, parent)
+		assert.True(t, gotOK)
+		assert.NoError(t, err)
+		if gotOK {
+			require.Equalf(t, uint64(settleAt), got.Height(), "block height")
+		}
+	})
+
+	for _, b := range blocks[:parentHeight+1] {
+		b.MarkSettled()
+	}
+
+	t.Run("malicious", func(t *testing.T) {
+		_, _, err := LastToSettleAt(settleAt, parent)
+		require.ErrorIs(t, err, errIncompleteBlockHistory)
+	})
+}
