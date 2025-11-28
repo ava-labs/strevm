@@ -86,6 +86,7 @@ func newSUT(tb testing.TB, hooks hook.Points) (context.Context, SUT) {
 	chain := blockstest.NewChainBuilder(genesis)
 	chain.SetDefaultOptions(blockstest.WithBlockOptions(
 		blockstest.WithLogger(logger),
+		blockstest.WithGasTargeter(hooks.GasTarget),
 	))
 	src := BlockSource(func(h common.Hash, n uint64) *blocks.Block {
 		b, ok := chain.GetBlock(h, n)
