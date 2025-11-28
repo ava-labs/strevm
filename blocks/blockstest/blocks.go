@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/ava-labs/avalanchego/utils/logging"
+	"github.com/ava-labs/avalanchego/vms/components/gas"
 	"github.com/ava-labs/libevm/core"
 	"github.com/ava-labs/libevm/core/state"
 	"github.com/ava-labs/libevm/core/types"
@@ -70,28 +71,50 @@ func WithReceipts(rs types.Receipts) EthBlockOption {
 // A BlockOption configures the default block properties created by [NewBlock].
 type BlockOption = options.Option[blockProperties]
 
+// DefaultGasTarget is the default gas target used by [NewBlock], equivalent to
+// passing an option created by [WithGasTarget] and this value.
+const DefaultGasTarget = 100e6
+
 // NewBlock constructs an SAE block, wrapping the raw Ethereum block.
 func NewBlock(tb testing.TB, eth *types.Block, parent, lastSettled *blocks.Block, opts ...BlockOption) *blocks.Block {
 	tb.Helper()
 
-	props := options.ApplyTo(&blockProperties{}, opts...)
+	props := options.ApplyTo(&blockProperties{}, WithGasTarget(DefaultGasTarget))
+	options.ApplyTo(props, opts...)
 	if props.logger == nil {
 		props.logger = saetest.NewTBLogger(tb, logging.Warn)
 	}
 
-	b, err := blocks.New(eth, parent, lastSettled, props.logger)
+	b, err := blocks.New(eth, parent, lastSettled, props.gasTarget, props.logger)
 	require.NoError(tb, err, "blocks.New()")
 	return b
 }
 
 type blockProperties struct {
-	logger logging.Logger
+	gasTarget blocks.GasTargeter
+	logger    logging.Logger
 }
 
 // WithLogger overrides the logger passed to [blocks.New] by [NewBlock].
 func WithLogger(l logging.Logger) BlockOption {
 	return options.Func[blockProperties](func(p *blockProperties) {
 		p.logger = l
+	})
+}
+
+// WithGasTargeter overrides the default [blocks.GasTargeter] passed to
+// [blocks.New].
+func WithGasTargeter(gt blocks.GasTargeter) BlockOption {
+	return options.Func[blockProperties](func(p *blockProperties) {
+		p.gasTarget = gt
+	})
+}
+
+// WithGasTargeter overrides the default [blocks.GasTargeter] passed to
+// [blocks.New] with a constant targeter that ignores the parent.
+func WithGasTarget(target gas.Gas) BlockOption {
+	return options.Func[blockProperties](func(p *blockProperties) {
+		p.gasTarget = func(*types.Block) gas.Gas { return target }
 	})
 }
 

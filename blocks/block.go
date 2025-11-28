@@ -9,10 +9,12 @@ package blocks
 import (
 	"errors"
 	"fmt"
+	"math/big"
 	"runtime"
 	"sync/atomic"
 
 	"github.com/ava-labs/avalanchego/utils/logging"
+	"github.com/ava-labs/avalanchego/vms/components/gas"
 	"github.com/ava-labs/libevm/core/types"
 	"go.uber.org/zap"
 )
@@ -31,6 +33,10 @@ type Block struct {
 	// Overlord as a sign of our unwavering fealty. See [InMemoryBlockCount] for
 	// observability.
 	ancestry atomic.Pointer[ancestry]
+	gas      struct {
+		targeter GasTargeter
+		target   gas.Gas
+	}
 	// Only the genesis block or the last pre-SAE block is synchronous. These
 	// are self-settling by definition so their `ancestry` MUST be nil.
 	synchronous bool
@@ -59,13 +65,19 @@ func InMemoryBlockCount() int64 {
 	return inMemoryBlockCount.Load()
 }
 
+// A GasTarger returns the [ACP-176] gas target for the next block in a chain.
+//
+// [ACP-176]: https://github.com/avalanche-foundation/ACPs/tree/main/ACPs/176-dynamic-evm-gas-limit-and-price-discovery-updates
+type GasTargeter func(parent *types.Block) gas.Gas
+
 // New constructs a new Block.
-func New(eth *types.Block, parent, lastSettled *Block, log logging.Logger) (*Block, error) {
+func New(eth *types.Block, parent, lastSettled *Block, gt GasTargeter, log logging.Logger) (*Block, error) {
 	b := &Block{
 		b:        eth,
 		executed: make(chan struct{}),
 		settled:  make(chan struct{}),
 	}
+	b.gas.targeter = gt
 
 	inMemoryBlockCount.Add(1)
 	runtime.AddCleanup(b, func(struct{}) {
@@ -83,8 +95,9 @@ func New(eth *types.Block, parent, lastSettled *Block, log logging.Logger) (*Blo
 }
 
 var (
-	errParentHashMismatch = errors.New("block-parent hash mismatch")
-	errHashMismatch       = errors.New("block hash mismatch")
+	errParentHashMismatch         = errors.New("block-parent hash mismatch")
+	errBlockHeightNotIncrementing = errors.New("block height not incrementing")
+	errHashMismatch               = errors.New("block hash mismatch")
 )
 
 func (b *Block) setAncestors(parent, lastSettled *Block) error {
@@ -92,6 +105,10 @@ func (b *Block) setAncestors(parent, lastSettled *Block) error {
 		if got, want := parent.Hash(), b.ParentHash(); got != want {
 			return fmt.Errorf("%w: constructing Block with parent hash %v; expecting %v", errParentHashMismatch, got, want)
 		}
+		if got, want := parent.Number(), new(big.Int).Sub(b.Number(), big.NewInt(1)); got.Cmp(want) != 0 {
+			return fmt.Errorf("%w: constructing Block with parent height %v and own height %v", errBlockHeightNotIncrementing, parent.Number(), b.Number())
+		}
+		b.gas.target = b.gas.targeter(parent.EthBlock())
 	}
 	b.ancestry.Store(&ancestry{
 		parent:      parent,
@@ -101,8 +118,8 @@ func (b *Block) setAncestors(parent, lastSettled *Block) error {
 }
 
 // CopyAncestorsFrom populates the [Block.ParentBlock] and [Block.LastSettled]
-// values, typically only required during database recovery. The source block
-// MUST have the same hash as b.
+// values, typically only required during database recovery or block
+// verification. The source block MUST have the same hash as b.
 //
 // Although the individual ancestral blocks are shallow copied, calling
 // [Block.MarkSettled] on either the source or destination will NOT clear the
@@ -114,3 +131,15 @@ func (b *Block) CopyAncestorsFrom(c *Block) error {
 	a := c.ancestry.Load()
 	return b.setAncestors(a.parent, a.lastSettled)
 }
+
+// GasTarget returns the gas target derived from the [Block.ParentBlock] and the
+// [GasTargeter] used to construct b. If [Block.CopyAncestorsFrom] was called,
+// the new parent (if non-nil) is used to update the target returned here.
+func (b *Block) GasTarget() gas.Gas {
+	t := b.gas.target
+	if t == 0 {
+		b.log.Error("Calling Block.GasTarget() with nil parent block")
+	}
+	return t
+}
+
