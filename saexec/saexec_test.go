@@ -83,11 +83,11 @@ func newSUT(tb testing.TB, hooks hook.Points) (context.Context, SUT) {
 	alloc := saetest.MaxAllocFor(wallet.Addresses()...)
 	genesis := blockstest.NewGenesis(tb, db, config, alloc, blockstest.WithTrieDBConfig(tdbConfig))
 
-	chain := blockstest.NewChainBuilder(genesis)
-	chain.SetDefaultOptions(blockstest.WithBlockOptions(
+	opts := blockstest.WithBlockOptions(
 		blockstest.WithLogger(logger),
 		blockstest.WithGasTargeter(hooks.GasTarget),
-	))
+	)
+	chain := blockstest.NewChainBuilder(genesis, opts)
 	src := BlockSource(func(h common.Hash, n uint64) *blocks.Block {
 		b, ok := chain.GetBlock(h, n)
 		if !ok {
