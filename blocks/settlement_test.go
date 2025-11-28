@@ -376,7 +376,7 @@ func TestIncompleteBlockHistory(t *testing.T) {
 	for i, b := range blocks {
 		// Note that we set the block execution time to be the slice index so if
 		// we are settling at time `x` then we expect `blocks[x]`.
-		b.markExecutedForTests(t, db, gastime.New(uint64(i), 1, 0))
+		b.markExecutedForTests(t, db, gastime.New(uint64(i), 1, 0)) //nolint:gosec // Known to not overflow
 	}
 
 	const (
@@ -396,7 +396,7 @@ func TestIncompleteBlockHistory(t *testing.T) {
 	})
 
 	for _, b := range blocks[:parentHeight+1] {
-		b.MarkSettled()
+		require.NoError(t, b.MarkSettled(), "MarkSettled()")
 	}
 
 	t.Run("malicious", func(t *testing.T) {
