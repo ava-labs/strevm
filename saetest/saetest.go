@@ -8,6 +8,7 @@
 package saetest
 
 import (
+	"context"
 	"slices"
 	"sync"
 
@@ -85,10 +86,31 @@ func (c *EventCollector[T]) Unsubscribe() error {
 }
 
 // WaitForAtLeast blocks until at least `n` events have been received.
-func (c *EventCollector[T]) WaitForAtLeast(n int) {
+func (c *EventCollector[T]) WaitForAtLeast(ctx context.Context, n int) (retErr error) {
+	// All this because [sync.Cond.Wait] isn't context-aware!
+	quit := make(chan struct{})
+	defer func() {
+		close(quit)
+		switch r := recover().(type) {
+		case nil:
+		case error:
+			retErr = r
+		default:
+			panic(r)
+		}
+	}()
+	go func() {
+		select {
+		case <-ctx.Done():
+			panic(ctx.Err())
+		case <-quit:
+		}
+	}()
+
 	c.cond.L.Lock()
 	defer c.cond.L.Unlock()
 	for len(c.all) < n {
 		c.cond.Wait()
 	}
+	return nil
 }
