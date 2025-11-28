@@ -8,6 +8,7 @@
 package blockstest
 
 import (
+	"math"
 	"math/big"
 	"slices"
 	"testing"
@@ -73,7 +74,11 @@ type BlockOption = options.Option[blockProperties]
 
 // DefaultGasTarget is the default gas target used by [NewBlock], equivalent to
 // passing an option created by [WithGasTarget] and this value.
-const DefaultGasTarget = 100e6
+//
+// It is chosen as the largest target with a non-overflowing rate, such that the
+// gas price is all but guaranteed to be the minimum possible. Tests that aren't
+// exercising gas prices are therefore less likely to fail spuriously.
+const DefaultGasTarget = gas.Gas(math.MaxUint64 / gastime.TargetToRate)
 
 // NewBlock constructs an SAE block, wrapping the raw Ethereum block.
 func NewBlock(tb testing.TB, eth *types.Block, parent, lastSettled *blocks.Block, opts ...BlockOption) *blocks.Block {
