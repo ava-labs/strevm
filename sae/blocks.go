@@ -8,6 +8,7 @@ import (
 
 	"github.com/ava-labs/avalanchego/database"
 	"github.com/ava-labs/avalanchego/ids"
+	"github.com/ava-labs/avalanchego/snow/engine/snowman/block"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/rlp"
 
@@ -27,9 +28,25 @@ func (vm *VM) BuildBlock(context.Context) (*blocks.Block, error) {
 	return nil, errUnimplemented
 }
 
+// BuildBlockWithContext builds a new block with the given ProposerVM context, using the last block passed to
+// [VM.SetPreference] as the parent.
+func (vm *VM) BuildBlockWithContext(context.Context, *block.Context) (*blocks.Block, error) {
+	return nil, errUnimplemented
+}
+
 // VerifyBlock validates the block.
 func (vm *VM) VerifyBlock(context.Context, *blocks.Block) error {
 	return errUnimplemented
+}
+
+// VerifyBlockWithContext validates the block with the given ProposerVM context.
+func (vm *VM) VerifyWithContext(context.Context, *block.Context, *blocks.Block) error {
+	return errUnimplemented
+}
+
+// ShouldVerifyWithContext checks if the block should be verified with the ProposerVM context.
+func (vm *VM) ShouldVerifyWithContext(context.Context, *blocks.Block) (bool, error) {
+	return false, errUnimplemented
 }
 
 // GetBlock returns the block with the given ID, or [database.ErrNotFound].

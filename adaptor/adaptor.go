@@ -16,6 +16,11 @@ import (
 	"github.com/ava-labs/avalanchego/snow/engine/snowman/block"
 )
 
+var (
+	_ block.WithVerifyContext            = (*Block[BlockProperties])(nil)
+	_ block.BuildBlockWithContextChainVM = (*adaptor[BlockProperties])(nil)
+)
+
 // ChainVM defines the functionality required in order to be converted into a
 // Snowman VM. See the respective methods on [block.ChainVM] and [snowman.Block]
 // for detailed documentation.
@@ -34,6 +39,11 @@ type ChainVM[BP BlockProperties] interface {
 	SetPreference(context.Context, ids.ID) error
 	LastAccepted(context.Context) (ids.ID, error)
 	GetBlockIDAtHeight(context.Context, uint64) (ids.ID, error)
+
+	BuildBlockWithContext(context.Context, *block.Context) (BP, error)
+
+	ShouldVerifyWithContext(context.Context, BP) (bool, error)
+	VerifyWithContext(context.Context, *block.Context, BP) error
 }
 
 // BlockProperties is a read-only subset of [snowman.Block]. The state-modifying
@@ -86,6 +96,11 @@ func (vm adaptor[BP]) BuildBlock(ctx context.Context) (snowman.Block, error) {
 	return vm.newBlock(vm.ChainVM.BuildBlock(ctx))
 }
 
+// BuildBlockWithContext calls BuildBlockWithContext(ctx, blockCtx) on the [ChainVM] that created b.
+func (vm adaptor[BP]) BuildBlockWithContext(ctx context.Context, blockCtx *block.Context) (snowman.Block, error) {
+	return vm.newBlock(vm.ChainVM.BuildBlockWithContext(ctx, blockCtx))
+}
+
 // Verify calls VerifyBlock(b) on the [ChainVM] that created b.
 func (b Block[BP]) Verify(ctx context.Context) error { return b.vm.VerifyBlock(ctx, b.b) }
 
@@ -109,3 +124,13 @@ func (b Block[BP]) Height() uint64 { return b.b.Height() }
 
 // Timestamp propagates the respective method from the [BlockProperties] carried by b.
 func (b Block[BP]) Timestamp() time.Time { return b.b.Timestamp() }
+
+// ShouldVerifyWithContext calls ShouldVerifyWithContext(ctx, b.b) on the [ChainVM] that created b.
+func (b Block[BP]) ShouldVerifyWithContext(ctx context.Context) (bool, error) {
+	return b.vm.ShouldVerifyWithContext(ctx, b.b)
+}
+
+// VerifyWithContext calls VerifyWithContext(ctx, b.b) on the [ChainVM] that created b.
+func (b Block[BP]) VerifyWithContext(ctx context.Context, blockCtx *block.Context) error {
+	return b.vm.VerifyWithContext(ctx, blockCtx, b.b)
+}
