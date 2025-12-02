@@ -31,19 +31,19 @@ type ChainVM[BP BlockProperties] interface {
 	ParseBlock(context.Context, []byte) (BP, error)
 	BuildBlock(context.Context) (BP, error)
 
+	BuildBlockWithContext(context.Context, *block.Context) (BP, error)
+
 	// Transferred from [snowman.Block].
 	VerifyBlock(context.Context, BP) error
 	AcceptBlock(context.Context, BP) error
 	RejectBlock(context.Context, BP) error
 
+	ShouldVerifyWithContext(context.Context, BP) (bool, error)
+	VerifyWithContext(context.Context, *block.Context, BP) error
+
 	SetPreference(context.Context, ids.ID) error
 	LastAccepted(context.Context) (ids.ID, error)
 	GetBlockIDAtHeight(context.Context, uint64) (ids.ID, error)
-
-	BuildBlockWithContext(context.Context, *block.Context) (BP, error)
-
-	ShouldVerifyWithContext(context.Context, BP) (bool, error)
-	VerifyWithContext(context.Context, *block.Context, BP) error
 }
 
 // BlockProperties is a read-only subset of [snowman.Block]. The state-modifying
@@ -110,6 +110,16 @@ func (b Block[BP]) Accept(ctx context.Context) error { return b.vm.AcceptBlock(c
 // Reject calls RejectBlock(b) on the [ChainVM] that created b.
 func (b Block[BP]) Reject(ctx context.Context) error { return b.vm.RejectBlock(ctx, b.b) }
 
+// ShouldVerifyWithContext calls ShouldVerifyWithContext(ctx, b.b) on the [ChainVM] that created b.
+func (b Block[BP]) ShouldVerifyWithContext(ctx context.Context) (bool, error) {
+	return b.vm.ShouldVerifyWithContext(ctx, b.b)
+}
+
+// VerifyWithContext calls VerifyWithContext(ctx, b.b) on the [ChainVM] that created b.
+func (b Block[BP]) VerifyWithContext(ctx context.Context, blockCtx *block.Context) error {
+	return b.vm.VerifyWithContext(ctx, blockCtx, b.b)
+}
+
 // ID propagates the respective method from the [BlockProperties] carried by b.
 func (b Block[BP]) ID() ids.ID { return b.b.ID() }
 
@@ -124,13 +134,3 @@ func (b Block[BP]) Height() uint64 { return b.b.Height() }
 
 // Timestamp propagates the respective method from the [BlockProperties] carried by b.
 func (b Block[BP]) Timestamp() time.Time { return b.b.Timestamp() }
-
-// ShouldVerifyWithContext calls ShouldVerifyWithContext(ctx, b.b) on the [ChainVM] that created b.
-func (b Block[BP]) ShouldVerifyWithContext(ctx context.Context) (bool, error) {
-	return b.vm.ShouldVerifyWithContext(ctx, b.b)
-}
-
-// VerifyWithContext calls VerifyWithContext(ctx, b.b) on the [ChainVM] that created b.
-func (b Block[BP]) VerifyWithContext(ctx context.Context, blockCtx *block.Context) error {
-	return b.vm.VerifyWithContext(ctx, blockCtx, b.b)
-}

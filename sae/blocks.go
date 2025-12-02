@@ -39,14 +39,14 @@ func (vm *VM) VerifyBlock(context.Context, *blocks.Block) error {
 	return errUnimplemented
 }
 
-// VerifyBlockWithContext validates the block with the given ProposerVM context.
-func (vm *VM) VerifyWithContext(context.Context, *block.Context, *blocks.Block) error {
-	return errUnimplemented
-}
-
 // ShouldVerifyWithContext checks if the block should be verified with the ProposerVM context.
 func (vm *VM) ShouldVerifyWithContext(context.Context, *blocks.Block) (bool, error) {
 	return false, errUnimplemented
+}
+
+// VerifyBlockWithContext validates the block with the given ProposerVM context.
+func (vm *VM) VerifyWithContext(context.Context, *block.Context, *blocks.Block) error {
+	return errUnimplemented
 }
 
 // GetBlock returns the block with the given ID, or [database.ErrNotFound].
