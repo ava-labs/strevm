@@ -44,7 +44,7 @@ func (vm *VM) ShouldVerifyWithContext(context.Context, *blocks.Block) (bool, err
 	return false, errUnimplemented
 }
 
-// VerifyBlockWithContext validates the block with the given ProposerVM context.
+// VerifyWithContext validates the block with the given ProposerVM context.
 func (vm *VM) VerifyWithContext(context.Context, *block.Context, *blocks.Block) error {
 	return errUnimplemented
 }
