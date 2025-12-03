@@ -60,8 +60,7 @@ type BlockWithContext interface {
 	snowman.Block
 }
 
-// Convert transforms a generic [ChainVM] into a standard [block.ChainVM]
-// that also implements [block.BuildBlockWithContextChainVM] and [block.WithVerifyContext]. All
+// Convert transforms a generic [ChainVM] into a [ChainVMWithContext]. All
 // [snowman.Block] values returned by methods of the returned chain will be of
 // the concrete type [Block] with type parameter `BP`.
 func Convert[BP BlockProperties](vm ChainVM[BP]) ChainVMWithContext {
@@ -114,8 +113,8 @@ func (b Block[BP]) Accept(ctx context.Context) error { return b.vm.AcceptBlock(c
 // Reject calls RejectBlock(b) on the [ChainVM] that created b.
 func (b Block[BP]) Reject(ctx context.Context) error { return b.vm.RejectBlock(ctx, b.b) }
 
-// ShouldVerifyWithContext returns true, indicating that the block should be verified with the given block context
-// in [VM.Verify].
+// ShouldVerifyWithContext returns true, indicating that the block
+// should be verified with the given block context in [Verify].
 func (b Block[BP]) ShouldVerifyWithContext(ctx context.Context) (bool, error) {
 	return true, nil
 }
