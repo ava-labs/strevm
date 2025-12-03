@@ -4,7 +4,7 @@ go 1.24.8
 
 require (
 	github.com/ava-labs/avalanchego v1.13.2
-	github.com/ava-labs/libevm v1.13.15-0.20251114115652-6c5ab8acd8f6
+	github.com/ava-labs/libevm v1.13.15-0.20251203160206-04136ba09b25
 	github.com/google/go-cmp v0.7.0
 	github.com/holiman/uint256 v1.2.4
 	github.com/stretchr/testify v1.10.0

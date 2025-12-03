@@ -1,7 +1,6 @@
 package paralleltest
 
 import (
-	"iter"
 	"math/big"
 	"slices"
 	"testing"
@@ -10,6 +9,7 @@ import (
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core/rawdb"
 	"github.com/ava-labs/libevm/core/types"
+	"github.com/ava-labs/libevm/core/vm"
 	"github.com/ava-labs/libevm/libevm"
 	"github.com/ava-labs/libevm/libevm/precompiles/parallel"
 	"github.com/ava-labs/libevm/params"
@@ -29,9 +29,7 @@ type handler struct {
 	gas  uint64
 }
 
-var _ parallel.Handler[common.Hash, *txHashEchoer, map[int]common.Hash] = (*handler)(nil)
-
-func (*handler) BeforeBlock(libevm.StateReader, *types.Block) {}
+var _ parallel.Handler[struct{}, common.Hash, *txHashEchoer, map[int]common.Hash] = (*handler)(nil)
 
 func (h *handler) Gas(tx *types.Transaction) (uint64, bool) {
 	if to := tx.To(); to == nil || *to != h.addr {
@@ -40,23 +38,31 @@ func (h *handler) Gas(tx *types.Transaction) (uint64, bool) {
 	return h.gas, true
 }
 
-func (*handler) Prefetch(_ libevm.StateReader, _ int, tx *types.Transaction) common.Hash {
+func (*handler) BeforeBlock(libevm.StateReader, *types.Header) struct{} {
+	return struct{}{}
+}
+
+func (*handler) Prefetch(_ libevm.StateReader, tx parallel.IndexedTx, _ struct{}) common.Hash {
 	return tx.Hash()
 }
 
-func (*handler) Process(_ libevm.StateReader, _ int, _ *types.Transaction, tx common.Hash) *txHashEchoer {
-	return &txHashEchoer{hash: tx}
+func (*handler) Process(_ libevm.StateReader, _ parallel.IndexedTx, _ struct{}, txHash common.Hash) *txHashEchoer {
+	return &txHashEchoer{hash: txHash}
 }
 
-func (*handler) PostProcess(it iter.Seq2[int, *txHashEchoer]) map[int]common.Hash {
+func (*handler) PostProcess(_ struct{}, res parallel.Results[*txHashEchoer]) map[int]common.Hash {
 	out := make(map[int]common.Hash)
-	for txIdx, echo := range it {
-		out[txIdx] = echo.hash
+	for r := range res.ProcessOrder {
+		// Although the hash is available in the [parallel.TxResult], we use the
+		// value in the [txHashEchoer] to test the pipeline.
+		out[r.Tx.Index] = r.Result.hash
 	}
 	return out
 }
 
 func (*handler) AfterBlock(parallel.StateDB, map[int]common.Hash, *types.Block, types.Receipts) {}
+
+var _ parallel.PrecompileResult = (*txHashEchoer)(nil)
 
 type txHashEchoer struct {
 	hash common.Hash
@@ -66,22 +72,23 @@ func shouldRevert(h common.Hash) bool {
 	return h[0]%2 == 0
 }
 
-func (e *txHashEchoer) Revert() bool {
-	return shouldRevert(e.hash)
+func (e *txHashEchoer) PrecompileOutput(env vm.PrecompileEnvironment, _ []byte) ([]byte, error) {
+	ret := slices.Clone(e.hash.Bytes())
+	if shouldRevert(e.hash) {
+		return ret, vm.ErrExecutionReverted
+	}
+
+	for _, l := range logs(env.Addresses().EVMSemantic.Self, e.hash) {
+		env.StateDB().AddLog(l)
+	}
+	return ret, nil
 }
 
-func logs(h common.Hash) []*types.Log {
+func logs(a common.Address, h common.Hash) []*types.Log {
 	return []*types.Log{{
-		Topics: []common.Hash{h},
+		Address: a,
+		Topics:  []common.Hash{h},
 	}}
-}
-
-func (e *txHashEchoer) Logs() []*types.Log {
-	return logs(e.hash)
-}
-
-func (e *txHashEchoer) ReturnData() []byte {
-	return slices.Clone(e.hash.Bytes())
 }
 
 func TestNewExecutor(t *testing.T) {
@@ -141,7 +148,7 @@ func TestNewExecutor(t *testing.T) {
 			want.Status = types.ReceiptStatusFailed
 		} else {
 			want.Status = types.ReceiptStatusSuccessful
-			want.Logs = logs(txs[i])
+			want.Logs = logs(precompileAddr, txs[i])
 		}
 
 		if diff := cmp.Diff(want, b.Receipts()[0], ignore); diff != "" {

@@ -23,6 +23,8 @@ github.com/ava-labs/avalanchego v1.13.2 h1:Kx/T2a8vqLlgHde3DWT5zMF5yBIh1rqEd6nJQ
 github.com/ava-labs/avalanchego v1.13.2/go.mod h1:s7W/kim5L6hiD2PB1v/Ozy1ZZyoLQ4H6mxVO0aMnxng=
 github.com/ava-labs/libevm v1.13.15-0.20251114115652-6c5ab8acd8f6 h1:PvmWq6rGejUAXGYonmXshFkRF+lni5BsiMt98ATC/mw=
 github.com/ava-labs/libevm v1.13.15-0.20251114115652-6c5ab8acd8f6/go.mod h1:oyJdZfpQTc9fVzAbDry+QRYeiCbw8s/kGaDUsEMpb4I=
+github.com/ava-labs/libevm v1.13.15-0.20251203160206-04136ba09b25 h1:ZmW+noQWL97JPV//eepZajI5gzFnwPwKFyWSqyZ2ZSg=
+github.com/ava-labs/libevm v1.13.15-0.20251203160206-04136ba09b25/go.mod h1:oyJdZfpQTc9fVzAbDry+QRYeiCbw8s/kGaDUsEMpb4I=
 github.com/aymerick/raymond v2.0.3-0.20180322193309-b565731e1464+incompatible/go.mod h1:osfaiScAUVup+UC9Nfq76eWqDhXlp+4UYaA8uhTBO6g=
 github.com/beorn7/perks v1.0.1 h1:VlbKKnNfV8bJzeqoa4cOKqO6bYr3WgKZxO8Z16+hsOM=
 github.com/beorn7/perks v1.0.1/go.mod h1:G2ZrVWU2WbWT9wwq4/hrbKbnv/1ERSJQ0ibhJ6rlkpw=
