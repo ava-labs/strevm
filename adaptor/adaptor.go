@@ -53,6 +53,8 @@ type ChainVMWithContext interface {
 	block.BuildBlockWithContextChainVM
 }
 
+// BlockWithContext is the union of [block.WithVerifyContext]
+// and [snowman.Block].
 type BlockWithContext interface {
 	block.WithVerifyContext
 	snowman.Block
