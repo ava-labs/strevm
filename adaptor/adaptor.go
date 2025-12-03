@@ -16,6 +16,9 @@ import (
 	"github.com/ava-labs/avalanchego/snow/engine/snowman/block"
 )
 
+// ChainVM defines the functionality required in order to be converted into a
+// Snowman VM. See the respective methods on [block.ChainVM] and [snowman.Block]
+// for detailed documentation.
 type ChainVM[BP BlockProperties] interface {
 	common.VM
 
