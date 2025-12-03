@@ -24,13 +24,11 @@ type ChainVM[BP BlockProperties] interface {
 
 	GetBlock(context.Context, ids.ID) (BP, error)
 	ParseBlock(context.Context, []byte) (BP, error)
-	BuildBlock(context.Context) (BP, error)
-	BuildBlockWithContext(context.Context, *block.Context) (BP, error)
+	BuildBlock(context.Context, *block.Context) (BP, error)
 
 	// Transferred from [snowman.Block].
 	ShouldVerifyWithContext(context.Context, BP) (bool, error)
-	VerifyWithContext(context.Context, *block.Context, BP) error
-	VerifyBlock(context.Context, BP) error
+	VerifyBlock(context.Context, *block.Context, BP) error
 	AcceptBlock(context.Context, BP) error
 	RejectBlock(context.Context, BP) error
 
@@ -92,15 +90,15 @@ func (vm adaptor[BP]) ParseBlock(ctx context.Context, blockBytes []byte) (snowma
 }
 
 func (vm adaptor[BP]) BuildBlock(ctx context.Context) (snowman.Block, error) {
-	return vm.newBlock(vm.ChainVM.BuildBlock(ctx))
+	return vm.newBlock(vm.ChainVM.BuildBlock(ctx, nil))
 }
 
 func (vm adaptor[BP]) BuildBlockWithContext(ctx context.Context, blockCtx *block.Context) (snowman.Block, error) {
-	return vm.newBlock(vm.ChainVM.BuildBlockWithContext(ctx, blockCtx))
+	return vm.newBlock(vm.ChainVM.BuildBlock(ctx, blockCtx))
 }
 
 // Verify calls VerifyBlock(b) on the [ChainVM] that created b.
-func (b Block[BP]) Verify(ctx context.Context) error { return b.vm.VerifyBlock(ctx, b.b) }
+func (b Block[BP]) Verify(ctx context.Context) error { return b.vm.VerifyBlock(ctx, nil, b.b) }
 
 // Accept calls AcceptBlock(b) on the [ChainVM] that created b.
 func (b Block[BP]) Accept(ctx context.Context) error { return b.vm.AcceptBlock(ctx, b.b) }
@@ -115,7 +113,7 @@ func (b Block[BP]) ShouldVerifyWithContext(ctx context.Context) (bool, error) {
 
 // VerifyWithContext calls VerifyWithContext(ctx, b) on the [ChainVM] that created b.
 func (b Block[BP]) VerifyWithContext(ctx context.Context, blockCtx *block.Context) error {
-	return b.vm.VerifyWithContext(ctx, blockCtx, b.b)
+	return b.vm.VerifyBlock(ctx, blockCtx, b.b)
 }
 
 // ID propagates the respective method from the [BlockProperties] carried by b.

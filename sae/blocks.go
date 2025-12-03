@@ -23,31 +23,20 @@ func (vm *VM) ParseBlock(context.Context, []byte) (*blocks.Block, error) {
 }
 
 // BuildBlock builds a new block, using the last block passed to
-// [VM.SetPreference] as the parent.
-func (vm *VM) BuildBlock(context.Context) (*blocks.Block, error) {
+// [VM.SetPreference] as the parent and the given block context.
+func (vm *VM) BuildBlock(context.Context, *block.Context) (*blocks.Block, error) {
 	return nil, errUnimplemented
 }
 
-// BuildBlockWithContext builds a new block with the given ProposerVM context, using the last block passed to
-// [VM.SetPreference] as the parent.
-func (vm *VM) BuildBlockWithContext(context.Context, *block.Context) (*blocks.Block, error) {
-	return nil, errUnimplemented
-}
-
-// VerifyBlock validates the block.
-func (vm *VM) VerifyBlock(context.Context, *blocks.Block) error {
+// VerifyBlock validates the block with the given block context.
+func (vm *VM) VerifyBlock(context.Context, *block.Context, *blocks.Block) error {
 	return errUnimplemented
 }
 
-// ShouldVerifyWithContext returns whether the block should be verified with
-// [VM.VerifyWithContext] instead of [VM.Verify].
+// ShouldVerifyWithContext returns whether the block should be verified with the given block context
+// in [VM.Verify].
 func (vm *VM) ShouldVerifyWithContext(context.Context, *blocks.Block) (bool, error) {
 	return false, errUnimplemented
-}
-
-// VerifyWithContext validates the block with the given ProposerVM context.
-func (vm *VM) VerifyWithContext(context.Context, *block.Context, *blocks.Block) error {
-	return errUnimplemented
 }
 
 // GetBlock returns the block with the given ID, or [database.ErrNotFound].
