@@ -39,7 +39,8 @@ func (vm *VM) VerifyBlock(context.Context, *blocks.Block) error {
 	return errUnimplemented
 }
 
-// ShouldVerifyWithContext checks if the block should be verified with the ProposerVM context.
+// ShouldVerifyWithContext returns whether the block should be verified with
+// [VM.VerifyWithContext] instead of [VM.Verify].
 func (vm *VM) ShouldVerifyWithContext(context.Context, *blocks.Block) (bool, error) {
 	return false, errUnimplemented
 }
