@@ -26,8 +26,7 @@ type ChainVM[BP BlockProperties] interface {
 	ParseBlock(context.Context, []byte) (BP, error)
 	BuildBlock(context.Context, *block.Context) (BP, error)
 
-	// Transferred from [snowman.Block].
-	ShouldVerifyWithContext(context.Context, BP) (bool, error)
+	// Transferred from [snowman.Block] and [block.WithVerifyContext].
 	VerifyBlock(context.Context, *block.Context, BP) error
 	AcceptBlock(context.Context, BP) error
 	RejectBlock(context.Context, BP) error
@@ -47,22 +46,29 @@ type BlockProperties interface {
 	Timestamp() time.Time
 }
 
+// ChainVMWithContext is the union of [block.ChainVM] and
+// [block.ChainVMWithContext].
+type ChainVMWithContext interface {
+	block.ChainVM
+	block.BuildBlockWithContextChainVM
+}
+
+type BlockWithContext interface {
+	block.WithVerifyContext
+	snowman.Block
+}
+
 // Convert transforms a generic [ChainVM] into a standard [block.ChainVM]
 // that also implements [block.BuildBlockWithContextChainVM] and [block.WithVerifyContext]. All
 // [snowman.Block] values returned by methods of the returned chain will be of
 // the concrete type [Block] with type parameter `BP`.
-func Convert[BP BlockProperties](vm ChainVM[BP]) block.ChainVM {
+func Convert[BP BlockProperties](vm ChainVM[BP]) ChainVMWithContext {
 	return &adaptor[BP]{vm}
 }
 
 type adaptor[BP BlockProperties] struct {
 	ChainVM[BP]
 }
-
-var (
-	_ block.WithVerifyContext            = (*Block[BlockProperties])(nil)
-	_ block.BuildBlockWithContextChainVM = (*adaptor[BlockProperties])(nil)
-)
 
 // Block is an implementation of [snowman.Block], used by chains returned by
 // [Convert]. The [BlockProperties] can be accessed with [Block.Unwrap].
@@ -74,7 +80,7 @@ type Block[BP BlockProperties] struct {
 // Unwrap returns the [BlockProperties] carried by b.
 func (b Block[BP]) Unwrap() BP { return b.b }
 
-func (vm adaptor[BP]) newBlock(b BP, err error) (snowman.Block, error) {
+func (vm adaptor[BP]) newBlock(b BP, err error) (BlockWithContext, error) {
 	if err != nil {
 		return nil, err
 	}
@@ -106,12 +112,13 @@ func (b Block[BP]) Accept(ctx context.Context) error { return b.vm.AcceptBlock(c
 // Reject calls RejectBlock(b) on the [ChainVM] that created b.
 func (b Block[BP]) Reject(ctx context.Context) error { return b.vm.RejectBlock(ctx, b.b) }
 
-// ShouldVerifyWithContext calls ShouldVerifyWithContext(ctx, b) on the [ChainVM] that created b.
+// ShouldVerifyWithContext returns true, indicating that the block should be verified with the given block context
+// in [VM.Verify].
 func (b Block[BP]) ShouldVerifyWithContext(ctx context.Context) (bool, error) {
-	return b.vm.ShouldVerifyWithContext(ctx, b.b)
+	return true, nil
 }
 
-// VerifyWithContext calls VerifyWithContext(ctx, b) on the [ChainVM] that created b.
+// VerifyWithContext calls VerifyBlock(ctx, blockCtx, b) on the [ChainVM] that created b.
 func (b Block[BP]) VerifyWithContext(ctx context.Context, blockCtx *block.Context) error {
 	return b.vm.VerifyBlock(ctx, blockCtx, b.b)
 }

@@ -33,12 +33,6 @@ func (vm *VM) VerifyBlock(context.Context, *block.Context, *blocks.Block) error 
 	return errUnimplemented
 }
 
-// ShouldVerifyWithContext returns whether the block should be verified with the given block context
-// in [VM.Verify].
-func (vm *VM) ShouldVerifyWithContext(context.Context, *blocks.Block) (bool, error) {
-	return false, errUnimplemented
-}
-
 // GetBlock returns the block with the given ID, or [database.ErrNotFound].
 func (vm *VM) GetBlock(context.Context, ids.ID) (*blocks.Block, error) {
 	_ = database.ErrNotFound
