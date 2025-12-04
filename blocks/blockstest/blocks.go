@@ -8,14 +8,12 @@
 package blockstest
 
 import (
-	"math"
 	"math/big"
 	"slices"
 	"testing"
 	"time"
 
 	"github.com/ava-labs/avalanchego/utils/logging"
-	"github.com/ava-labs/avalanchego/vms/components/gas"
 	"github.com/ava-labs/libevm/core"
 	"github.com/ava-labs/libevm/core/state"
 	"github.com/ava-labs/libevm/core/types"
@@ -72,54 +70,28 @@ func WithReceipts(rs types.Receipts) EthBlockOption {
 // A BlockOption configures the default block properties created by [NewBlock].
 type BlockOption = options.Option[blockProperties]
 
-// DefaultGasTarget is the default gas target used by [NewBlock], equivalent to
-// passing an option created by [WithGasTarget] and this value.
-//
-// It is chosen as the largest target with a non-overflowing rate, such that the
-// gas price is all but guaranteed to be the minimum possible. Tests that aren't
-// exercising gas prices are therefore less likely to fail spuriously.
-const DefaultGasTarget = gas.Gas(math.MaxUint64 / gastime.TargetToRate)
-
 // NewBlock constructs an SAE block, wrapping the raw Ethereum block.
 func NewBlock(tb testing.TB, eth *types.Block, parent, lastSettled *blocks.Block, opts ...BlockOption) *blocks.Block {
 	tb.Helper()
 
-	props := options.ApplyTo(&blockProperties{}, WithGasTarget(DefaultGasTarget))
-	options.ApplyTo(props, opts...)
+	props := options.ApplyTo(&blockProperties{}, opts...)
 	if props.logger == nil {
 		props.logger = saetest.NewTBLogger(tb, logging.Warn)
 	}
 
-	b, err := blocks.New(eth, parent, lastSettled, props.gasTarget, props.logger)
+	b, err := blocks.New(eth, parent, lastSettled, props.logger)
 	require.NoError(tb, err, "blocks.New()")
 	return b
 }
 
 type blockProperties struct {
-	gasTarget blocks.GasTargeter
-	logger    logging.Logger
+	logger logging.Logger
 }
 
 // WithLogger overrides the logger passed to [blocks.New] by [NewBlock].
 func WithLogger(l logging.Logger) BlockOption {
 	return options.Func[blockProperties](func(p *blockProperties) {
 		p.logger = l
-	})
-}
-
-// WithGasTargeter overrides the default [blocks.GasTargeter] passed to
-// [blocks.New].
-func WithGasTargeter(gt blocks.GasTargeter) BlockOption {
-	return options.Func[blockProperties](func(p *blockProperties) {
-		p.gasTarget = gt
-	})
-}
-
-// WithGasTarget overrides the default [blocks.GasTargeter] passed to
-// [blocks.New] with a constant targeter that ignores the parent.
-func WithGasTarget(target gas.Gas) BlockOption {
-	return WithGasTargeter(func(*types.Block) gas.Gas {
-		return target
 	})
 }
 

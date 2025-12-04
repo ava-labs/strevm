@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/ava-labs/avalanchego/utils/logging"
-	"github.com/ava-labs/avalanchego/vms/components/gas"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/google/go-cmp/cmp"
 	"github.com/stretchr/testify/assert"
@@ -28,13 +27,9 @@ func newEthBlock(num, time uint64, parent *types.Block) *types.Block {
 	return types.NewBlockWithHeader(hdr)
 }
 
-func stubGasTargeter(g gas.Gas) GasTargeter {
-	return func(*types.Block) gas.Gas { return g }
-}
-
 func newBlock(tb testing.TB, eth *types.Block, parent, lastSettled *Block) *Block {
 	tb.Helper()
-	b, err := New(eth, parent, lastSettled, stubGasTargeter(0), saetest.NewTBLogger(tb, logging.Warn))
+	b, err := New(eth, parent, lastSettled, saetest.NewTBLogger(tb, logging.Warn))
 	require.NoError(tb, err, "New()")
 	return b
 }
@@ -87,7 +82,7 @@ func TestSetAncestors(t *testing.T) {
 
 	t.Run("incorrect_parent", func(t *testing.T) {
 		// Note that the arguments to [New] are inverted.
-		_, err := New(child, lastSettled, parent, stubGasTargeter(0), logging.NoLog{})
+		_, err := New(child, lastSettled, parent, logging.NoLog{})
 		require.ErrorIs(t, err, errParentHashMismatch, "New() with inverted parent and last-settled blocks")
 	})
 
@@ -115,7 +110,7 @@ func TestSetAncestors(t *testing.T) {
 
 	t.Run("not_incrementing_height", func(t *testing.T) {
 		ethB := newEthBlock(parent.Height() /*not incrementing*/, parent.BuildTime(), parent.EthBlock())
-		_, err := New(ethB, parent, nil, stubGasTargeter(0), nil)
+		_, err := New(ethB, parent, nil, nil)
 		require.ErrorIs(t, err, errBlockHeightNotIncrementing)
 	})
 }
