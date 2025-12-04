@@ -29,10 +29,12 @@ type ChainBuilder struct {
 
 // NewChainBuilder returns a new ChainBuilder starting from the provided block,
 // which MUST NOT be nil.
-func NewChainBuilder(genesis *blocks.Block) *ChainBuilder {
-	return &ChainBuilder{
+func NewChainBuilder(genesis *blocks.Block, defaultOpts ...ChainOption) *ChainBuilder {
+	c := &ChainBuilder{
 		chain: []*blocks.Block{genesis},
 	}
+	c.SetDefaultOptions(defaultOpts...)
+	return c
 }
 
 // A ChainOption configures [ChainBuilder.NewBlock].
