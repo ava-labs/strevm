@@ -25,12 +25,7 @@ import (
 //nolint:testableexamples // Output is meaningless
 func ExampleBlock_WhenChildSettles() {
 	parent := blockBuildingPreference()
-	settle, ok, err := LastToSettleAt(uint64(time.Now().Unix()), parent) //nolint:gosec // Time won't overflow for quite a while
-	if err != nil {
-		// The arguments fail to meet invariants and [LastToSettleAt] will
-		// always return an error.
-		return // err
-	}
+	settle, ok := LastToSettleAt(uint64(time.Now().Unix()), parent) //nolint:gosec // Time won't overflow for quite a while
 	if !ok {
 		return // execution is lagging; please come back soon
 	}
@@ -358,49 +353,11 @@ func TestLastToSettleAt(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, gotOK, err := LastToSettleAt(tt.settleAt, tt.parent)
-			if err != nil || gotOK != tt.wantOK {
-				t.Fatalf("LastToSettleAt(%d, [parent height %d]) got (_, %t, %v); want (_, %t, nil)", tt.settleAt, tt.parent.Height(), gotOK, err, tt.wantOK)
-			}
+			got, gotOK := LastToSettleAt(tt.settleAt, tt.parent)
+			require.Equalf(t, tt.wantOK, gotOK, "LastToSettleAt(%d, [parent height %d])", tt.settleAt, tt.parent.Height())
 			if tt.wantOK {
 				require.Equal(t, tt.want.Height(), got.Height(), "LastToSettleAt(%d, [parent height %d])", tt.settleAt, tt.parent.Height())
 			}
 		})
 	}
-}
-
-func TestIncompleteBlockHistory(t *testing.T) {
-	db := rawdb.NewMemoryDatabase()
-
-	blocks := newChain(t, 0, 10, nil)
-	for i, b := range blocks {
-		// Note that we set the block execution time to be the slice index so if
-		// we are settling at time `x` then we expect `blocks[x]`.
-		b.markExecutedForTests(t, db, gastime.New(uint64(i), 1, 0)) //nolint:gosec // Known to not overflow
-	}
-
-	const (
-		settleAt     = 2
-		parentHeight = 5
-	)
-	parent := blocks[parentHeight]
-	t.Logf("All tests are of LastToSettleAt(%d, [parent height %d]) with execution time == height", settleAt, parentHeight)
-
-	t.Run("virtuous", func(t *testing.T) {
-		got, gotOK, err := LastToSettleAt(settleAt, parent)
-		assert.True(t, gotOK)
-		assert.NoError(t, err)
-		if gotOK {
-			require.Equalf(t, uint64(settleAt), got.Height(), "block height")
-		}
-	})
-
-	for _, b := range blocks[:parentHeight+1] {
-		require.NoError(t, b.MarkSettled(), "MarkSettled()")
-	}
-
-	t.Run("malicious", func(t *testing.T) {
-		_, _, err := LastToSettleAt(settleAt, parent)
-		require.ErrorIs(t, err, errIncompleteBlockHistory)
-	})
 }

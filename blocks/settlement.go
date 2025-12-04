@@ -169,14 +169,11 @@ func settling(lastOfParent, lastOfCurr *Block) []*Block {
 	return settling
 }
 
-var errIncompleteBlockHistory = errors.New("incomplete block history when determining last-settled block")
-
 // LastToSettleAt returns (a) the last block to be settled at time `settleAt` if
 // building on the specified parent block, and (b) a boolean to indicate if
 // settlement is currently possible. If the returned boolean is false, the
 // execution stream is lagging and LastToSettleAt MAY be called again after some
-// indeterminate delay. Any returned error is, however, irrecoverable and
-// indicative of invalid arguments.
+// indeterminate delay.
 //
 // It is not valid to call LastToSettleAt with a parent on which
 // [Block.MarkSettled] was called directly (i.e. [Block.MarkSynchronous] does
@@ -184,7 +181,7 @@ var errIncompleteBlockHistory = errors.New("incomplete block history when determ
 //
 // See the Example for [Block.WhenChildSettles] for one usage of the returned
 // block.
-func LastToSettleAt(settleAt uint64, parent *Block) (b *Block, ok bool, _ error) {
+func LastToSettleAt(settleAt uint64, parent *Block) (b *Block, ok bool) {
 	defer func() {
 		// Avoids having to perform this check at every return.
 		if !ok {
@@ -208,16 +205,12 @@ func LastToSettleAt(settleAt uint64, parent *Block) (b *Block, ok bool, _ error)
 	// settled (see invariant in [Block]). If a block was already settled then
 	// only it or a later (i.e. unsettled) block can be returned by this loop,
 	// therefore we have a guarantee that the loop update will never result in
-	// `block==nil` during block building. Verification, however, MUST protect
-	// against malformed input so performs a check.
+	// `block==nil` during block building.
 	for block := parent; ; block = block.ParentBlock() {
 		// Guarantees that the loop will always exit as the last pre-SAE block
 		// (perhaps the genesis) is always settled, by definition.
 		if settled := block.ancestry.Load() == nil; settled {
-			if !block.synchronous {
-				return nil, false, fmt.Errorf("%w: settling at %d with parent %#x (%v)", errIncompleteBlockHistory, settleAt, parent.Hash(), parent.Number())
-			}
-			return block, known, nil
+			return block, known
 		}
 
 		if startsNoEarlierThan := block.BuildTime(); startsNoEarlierThan > settleAt {
@@ -240,7 +233,7 @@ func LastToSettleAt(settleAt uint64, parent *Block) (b *Block, ok bool, _ error)
 				known = true
 				continue
 			}
-			return block, known, nil
+			return block, known
 		}
 
 		// Note that a grandchild block having unknown execution completion time
