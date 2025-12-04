@@ -8,6 +8,8 @@
 package txgossip
 
 import (
+	"errors"
+
 	"github.com/ava-labs/avalanchego/ids"
 	"github.com/ava-labs/avalanchego/network/p2p/gossip"
 	"github.com/ava-labs/avalanchego/utils/logging"
@@ -17,11 +19,7 @@ import (
 	"github.com/ava-labs/libevm/rlp"
 )
 
-var (
-	_ gossip.Gossipable              = Transaction{}
-	_ gossip.Marshaller[Transaction] = Marshaller{}
-	_ gossip.Set[Transaction]        = (*Set)(nil)
-)
+var _ gossip.Gossipable = Transaction{}
 
 // A Transaction is a [gossip.Gossipable] wrapper for a [types.Transaction].
 type Transaction struct {
@@ -32,6 +30,8 @@ type Transaction struct {
 func (tx Transaction) GossipID() ids.ID {
 	return ids.ID(tx.Hash())
 }
+
+var _ gossip.Marshaller[Transaction] = Marshaller{}
 
 // A Marshaller implements [gossip.Marshaller] for [Transaction], based on RLP
 // encoding.
@@ -52,44 +52,55 @@ func (Marshaller) UnmarshalGossip(buf []byte) (Transaction, error) {
 	return tx, nil
 }
 
-// A Set is a [gossip.Set] wrapping a [txpool.TxPool].
+// Set couples a [gossip.BloomSet] with a [txpool.TxPool] that acts as the
+// backing for the set.
 type Set struct {
-	Pool   *txpool.TxPool
-	bloom  *gossip.BloomFilter
+	*gossip.BloomSet[Transaction]
+	Pool *txpool.TxPool
+
+	set    *txSet
 	pushTo []func(...Transaction)
 }
 
-// NewSet returns a new [gossip.Set]. See [Set.Add] and [Set.SendTx] for ways to
-// add transactions to the pool, which SHOULD NOT be populated directly.
-func NewSet(logger logging.Logger, pool *txpool.TxPool, bloom *gossip.BloomFilter) *Set {
-	s := &Set{
-		Pool:  pool,
-		bloom: bloom,
+// NewSet returns a new Set. Use [gossip.BloomSet.Add] or [Set.SendTx] to add
+// transactions to the pool, which SHOULD NOT be populated directly.
+func NewSet(logger logging.Logger, pool *txpool.TxPool, config gossip.BloomSetConfig) (*Set, error) {
+	s := &txSet{pool}
+	bs, err := gossip.NewBloomSet(s, config)
+	if err != nil {
+		return nil, err
 	}
-	s.fillBloomFilter()
-	return s
+	return &Set{
+		BloomSet: bs,
+		Pool:     pool,
+		set:      s,
+	}, nil
 }
 
-func (s *Set) fillBloomFilter() {
-	pending, queued := s.Pool.Content()
-	for _, txSet := range []map[common.Address][]*types.Transaction{pending, queued} {
-		for _, txs := range txSet {
-			for _, tx := range txs {
-				s.bloom.Add(Transaction{tx})
-			}
+var _ gossip.Set[Transaction] = (*txSet)(nil)
+
+type txSet struct {
+	pool *txpool.TxPool
+}
+
+func (s *txSet) Add(tx Transaction) error {
+	errs := s.pool.Add([]*types.Transaction{tx.Transaction}, false, false)
+	for i, err := range errs {
+		if errors.Is(err, txpool.ErrAlreadyKnown) {
+			errs[i] = nil
 		}
 	}
+	return errors.Join(errs...)
 }
 
-// Has returns [txpool.TxPool.Has].
-func (s *Set) Has(id ids.ID) bool {
-	return s.Pool.Has(common.Hash(id))
+func (s *txSet) Has(id ids.ID) bool {
+	return s.pool.Has(common.Hash(id))
 }
 
-// Iterate calls `fn` for every pending and queued transaction returned by
-// [txpool.TxPool.Content]
-func (s *Set) Iterate(fn func(Transaction) bool) {
-	pending, queued := s.Pool.Content()
+func (s *txSet) Iterate(fn func(Transaction) bool) {
+	// TODO(arr4n) implement a method on libevm's [txpool.TxPool] that returns
+	// a more efficient iterator.
+	pending, queued := s.pool.Content()
 	for _, group := range []map[common.Address][]*types.Transaction{pending, queued} {
 		for _, txs := range group {
 			for _, tx := range txs {
@@ -101,8 +112,7 @@ func (s *Set) Iterate(fn func(Transaction) bool) {
 	}
 }
 
-// GetFilter returns [gossip.BloomFilter.Marshal] for a Bloom filter of the
-// transactions in the pool.
-func (s *Set) GetFilter() ([]byte, []byte) {
-	return s.bloom.Marshal()
+func (s *txSet) Len() int {
+	pending, queued := s.pool.Stats()
+	return pending + queued
 }

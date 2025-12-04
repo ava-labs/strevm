@@ -5,7 +5,6 @@ package txgossip
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"math"
 	"math/big"
@@ -58,7 +57,6 @@ type SUT struct {
 	chain  *blockstest.ChainBuilder
 	wallet *saetest.Wallet
 	exec   *saexec.Executor
-	bloom  *gossip.BloomFilter
 }
 
 func chainConfig() *params.ChainConfig {
@@ -71,7 +69,7 @@ func newWallet(tb testing.TB, numAccounts uint) *saetest.Wallet {
 	return saetest.NewUNSAFEWallet(tb, numAccounts, signer)
 }
 
-func newSUT(t *testing.T, numAccounts uint, existingTxs ...*types.Transaction) SUT {
+func newSUT(t *testing.T, numAccounts uint) SUT {
 	t.Helper()
 	logger := saetest.NewTBLogger(t, logging.Warn)
 
@@ -88,13 +86,10 @@ func newSUT(t *testing.T, numAccounts uint, existingTxs ...*types.Transaction) S
 		require.NoErrorf(t, exec.Close(), "%T.Close()", exec)
 	})
 
-	bloom, err := gossip.NewBloomFilter(prometheus.NewRegistry(), "", 1, 1e-9, 1e-9)
-	require.NoError(t, err, "gossip.NewBloomFilter([1 in a billion FP])")
-
 	bc := NewBlockChain(exec, chain.GetBlock)
 	pool := newTxPool(t, bc)
-	require.NoErrorf(t, errors.Join(pool.Add(existingTxs, false, true)...), "%T.Add([existing txs in setup], local=false, sync=true)", pool)
-	set := NewSet(logger, pool, bloom)
+	set, err := NewSet(logger, pool, gossip.BloomSetConfig{})
+	require.NoError(t, err, "NewSet()")
 	t.Cleanup(func() {
 		assert.NoErrorf(t, pool.Close(), "%T.Close()", pool)
 	})
@@ -104,7 +99,6 @@ func newSUT(t *testing.T, numAccounts uint, existingTxs ...*types.Transaction) S
 		chain:  chain,
 		wallet: wallet,
 		exec:   exec,
-		bloom:  bloom,
 	}
 }
 
@@ -174,6 +168,7 @@ func TestExecutorIntegration(t *testing.T) {
 		})
 	}
 	require.Lenf(t, txs, numTxs, "%T.TransactionsByPriority()", s.Set)
+	require.Equalf(t, numTxs, s.Len(), "%T.Len()", s.Set)
 
 	b := s.chain.NewBlock(t, txs)
 	require.NoErrorf(t, s.exec.Enqueue(ctx, b), "%T.Enqueue([txs from %T.TransactionsByPriority()])", s.exec, s.Set)
@@ -181,6 +176,7 @@ func TestExecutorIntegration(t *testing.T) {
 	assert.EventuallyWithTf(
 		t, func(c *assert.CollectT) {
 			require.NoErrorf(c, s.Pool.Sync(), "%T.Sync()", s.Pool)
+			assert.Zerof(c, s.Len(), "%T.Len()", s.Set)
 			assert.Emptyf(c, slices.Collect(s.Iterate), "slices.Collect(%T.Iterate)", s.Set)
 			for _, tx := range txs {
 				assert.Falsef(c, s.Has(ids.ID(tx.Hash())), "%T.Has(%#x)", s.Set, tx.Hash())
@@ -276,8 +272,8 @@ func TestP2PIntegration(t *testing.T) {
 
 			client := p2ptest.NewClient(
 				t, ctx,
-				sendID, gossip.NewHandler(logger, Marshaller{}, send, metrics, math.MaxInt),
-				recvID, gossip.NewHandler(logger, Marshaller{}, recv, metrics, math.MaxInt),
+				recvID, gossip.NewHandler(logger, Marshaller{}, recv.Set, metrics, math.MaxInt),
+				sendID, gossip.NewHandler(logger, Marshaller{}, send.Set, metrics, math.MaxInt),
 			)
 
 			var gossiper gossip.Gossiper
@@ -312,8 +308,6 @@ func TestP2PIntegration(t *testing.T) {
 				for _, tx := range bothTxs {
 					lbl := txLabel(tx)
 					assert.Truef(t, send.Has(tx.GossipID()), "sending %T.Has(%s)", send.Set, lbl)
-					assert.Truef(t, send.bloom.Has(tx), "sending %T.bloom.Has(%s)", send.Set, lbl)
-					assert.Falsef(t, recv.bloom.Has(tx), "receiving %T.bloom.Has(%s)", recv.Set, lbl)
 				}
 				assert.Emptyf(t, slices.Collect(recv.Iterate), "receiving %T.Iterate()", recv.Set)
 			})
@@ -321,21 +315,19 @@ func TestP2PIntegration(t *testing.T) {
 				t.FailNow()
 			}
 
-			require.NoErrorf(t, gossiper.Gossip(ctx), "%T.Gossip()", gossiper)
-
-			// The Bloom filter is the last in the stack of recipients, going
-			// [Set.Add] -> {[txpool.TxPool] then [gossip.BloomFilter]}. If it
-			// has it then everything else does too.
-			//
 			// This uses assert instead of require because even if it fails,
 			// knowing if any gossip has been successful (and which) was useful
 			// for debugging.
-			assert.Eventuallyf(
-				t, func() bool {
-					return recv.bloom.Has(txViaRPC)
+			assert.EventuallyWithTf(
+				t, func(c *assert.CollectT) {
+					require.NoError(t, gossiper.Gossip(ctx))
+					require.NoError(c, recv.Pool.Sync())
+					// Check for the tx from RPC as this is received regardless
+					// of push or pull semantics.
+					require.True(c, recv.Has(txViaRPC.GossipID()))
 				},
-				3*time.Second, 20*time.Millisecond,
-				"Receiving %T.bloom.Has([tx via RPC])", recv.Set,
+				3*time.Second, 10*time.Millisecond,
+				"Receiving %T.Has([tx via RPC])", recv.Set,
 			)
 
 			t.Run("Has", func(t *testing.T) {
@@ -368,35 +360,6 @@ func (p *stubPeers) Sample(context.Context, int) []ids.NodeID {
 
 func (p *stubPeers) Top(context.Context, float64) []ids.NodeID {
 	return p.ids
-}
-
-func TestExistingTxsAddedToBloomFilter(t *testing.T) {
-	// Note that the wallet addresses are deterministic, so this single address
-	// will have sufficient funds when the SUT is created below.
-	wallet := newWallet(t, 1)
-
-	var (
-		inPool types.Transactions
-		want   []Transaction
-	)
-	for range 10 {
-		tx := wallet.SetNonceAndSign(t, 0, &types.LegacyTx{
-			To:       &common.Address{},
-			Gas:      params.TxGas,
-			GasPrice: big.NewInt(1),
-		})
-		inPool = append(inPool, tx)
-		want = append(want, Transaction{tx})
-	}
-
-	sut := newSUT(t, 1, inPool...)
-	got := slices.Collect(sut.Iterate)
-	opt := cmp.Comparer(func(a, b Transaction) bool {
-		return a.Hash() == b.Hash()
-	})
-	if diff := cmp.Diff(want, got, opt); diff != "" {
-		t.Errorf("slices.Collect(%T.Iterate) immediately after construction; diff(-want +got):\n%s", sut.Set, diff)
-	}
 }
 
 func TestAPIBackendSendTxSignatureMatch(_ *testing.T) {

@@ -5,50 +5,28 @@ package txgossip
 
 import (
 	"context"
-	"errors"
 
 	"github.com/ava-labs/avalanchego/network/p2p/gossip"
 	"github.com/ava-labs/libevm/core/txpool"
 	"github.com/ava-labs/libevm/core/types"
+	"github.com/ava-labs/libevm/libevm/ethapi"
 )
-
-// Add is a wrapper around [txpool.TxPool.Add], exposed to accept transactions
-// over [gossip]. Populating the [Set] via this method does *not* result in new
-// transactions being push-gossiped, but they will be included in pull-gossip
-// responses.
-func (s *Set) Add(tx Transaction) error {
-	errs := s.Pool.Add([]*types.Transaction{tx.Transaction}, false, false)
-	for i, err := range errs {
-		if errors.Is(err, txpool.ErrAlreadyKnown) {
-			errs[i] = nil
-		}
-	}
-	if err := errors.Join(errs...); err != nil {
-		return err
-	}
-
-	// DO NOT MERGE without updating to the avalanchego version that makes
-	// resetting thread-safe. Also change to s.bloom.ResetIfNeeded() at the same
-	// time.
-	pending, queued := s.Pool.Stats()
-	reset, err := gossip.ResetBloomFilterIfNeeded(s.bloom, 2*(pending+queued))
-	if err != nil {
-		return err
-	}
-	if reset {
-		s.fillBloomFilter()
-	}
-	s.bloom.Add(tx)
-	return nil
-}
 
 // SendTx implements the respective method of [ethapi.Backend], accepting
 // transactions submitted via the `eth_sendTransaction` RPC method. Unlike
-// [Set.Add], transactions added via this method will be push-gossiped; see
-// [RegisterPushGossiper].
+// [gossip.BloomSet.Add], transactions added via this method will be
+// push-gossiped; see [Set.RegisterPushGossiper].
 func (s *Set) SendTx(ctx context.Context, ethTx *types.Transaction) error {
+	var _ ethapi.Backend // protect the import for [comment] rendering
+
+	// We filter out [txpool.ErrAlreadyKnown] in [txSet.Add] but want to keep it
+	// for RPCs.
+	if s.set.pool.Has(ethTx.Hash()) {
+		return txpool.ErrAlreadyKnown
+	}
+
 	tx := Transaction{ethTx}
-	if err := s.Add(tx); err != nil {
+	if err := s.BloomSet.Add(tx); err != nil {
 		return err
 	}
 	for _, add := range s.pushTo {
