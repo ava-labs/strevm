@@ -29,9 +29,41 @@ type Points interface {
 	AfterBlock(*state.StateDB, *types.Block, types.Receipts)
 }
 
-// BeforeBlock is intended to be called before processing a block, with the gas
-// target sourced from [Points].
-func BeforeBlock(pts Points, rules params.Rules, sdb *state.StateDB, b *blocks.Block, clock *gastime.Time) error {
+// BeforeBuildBlock is intended to be called before building a block.
+func BeforeBuildBlock(
+	pts Points,
+	h *types.Header,
+	parent *blocks.Block,
+	clock *gastime.Time,
+) error {
+	clock.FastForwardTo(
+		h.Time,
+		pts.SubSecondBlockTime(h),
+	)
+	target := pts.GasTarget(parent.EthBlock())
+	if err := clock.SetTarget(target); err != nil {
+		return fmt.Errorf("%T.SetTarget() before block: %w", clock, err)
+	}
+	return nil
+}
+
+// AfterBlock is intended to be called after building a block, with the gas
+// sourced from [types.Block.GasUsed] or equivalent.
+func AfterBuildBlock(
+	clock *gastime.Time,
+	used gas.Gas,
+) {
+	clock.Tick(used)
+}
+
+// BeforeExecuteBlock is intended to be called before executing a block.
+func BeforeExecuteBlock(
+	pts Points,
+	rules params.Rules,
+	sdb *state.StateDB,
+	b *blocks.Block,
+	clock *gastime.Time,
+) error {
 	clock.FastForwardTo(
 		b.BuildTime(),
 		pts.SubSecondBlockTime(b.Header()),
@@ -43,9 +75,15 @@ func BeforeBlock(pts Points, rules params.Rules, sdb *state.StateDB, b *blocks.B
 	return pts.BeforeBlock(rules, sdb, b.EthBlock())
 }
 
-// AfterBlock is intended to be called after processing a block, with the gas
-// sourced from [types.Block.GasUsed] or equivalent.
-func AfterBlock(pts Points, sdb *state.StateDB, b *types.Block, clock *gastime.Time, used gas.Gas, rs types.Receipts) {
+// AfterExecuteBlock is intended to be called after executing a block.
+func AfterExecuteBlock(
+	pts Points,
+	sdb *state.StateDB,
+	b *types.Block,
+	clock *gastime.Time,
+	used gas.Gas,
+	rs types.Receipts,
+) {
 	clock.Tick(used)
 	pts.AfterBlock(sdb, b, rs)
 }

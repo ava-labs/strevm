@@ -15,56 +15,41 @@ import (
 	"github.com/ava-labs/libevm/core/state"
 	"github.com/ava-labs/libevm/core/txpool"
 	"github.com/ava-labs/libevm/core/types"
-	"github.com/ava-labs/libevm/params"
+	libparams "github.com/ava-labs/libevm/params"
+	"github.com/ava-labs/strevm/blocks"
 	"github.com/ava-labs/strevm/gastime"
 	"github.com/ava-labs/strevm/hook"
+	"github.com/ava-labs/strevm/params"
 	"github.com/holiman/uint256"
 )
 
-/*
-// Points define user-injected hook points.
-type Points interface {
-	GasTarget(parent *types.Block) gas.Gas
-	SubSecondBlockTime(*types.Block) gas.Gas
-	BeforeBlock(params.Rules, *state.StateDB, *types.Block) error
-	AfterBlock(*state.StateDB, *types.Block, types.Receipts)
-}
-
-// BeforeBlock is intended to be called before processing a block, with the gas
-// target sourced from [Points].
-func BeforeBlock(pts Points, rules params.Rules, sdb *state.StateDB, b *blocks.Block, clock *gastime.Time) error {
-	clock.FastForwardTo(
-		b.BuildTime(),
-		pts.SubSecondBlockTime(b.EthBlock()),
-	)
-	target := pts.GasTarget(b.ParentBlock().EthBlock())
-	if err := clock.SetTarget(target); err != nil {
-		return fmt.Errorf("%T.SetTarget() before block: %w", clock, err)
-	}
-	return pts.BeforeBlock(rules, sdb, b.EthBlock())
-}
-
-// AfterBlock is intended to be called after processing a block, with the gas
-// sourced from [types.Block.GasUsed] or equivalent.
-func AfterBlock(pts Points, sdb *state.StateDB, b *types.Block, clock *gastime.Time, used gas.Gas, rs types.Receipts) {
-	clock.Tick(used)
-	pts.AfterBlock(sdb, b, rs)
-}
-*/
+const (
+	maxQSizeMultiplier = 2
+	// In order to avoid overflow when calculating the queue size, we cap the
+	// maximum gas rate to a safe value.
+	//
+	// This follows from:
+	//   maxBlockSize = maxRate * Tau * Lambda
+	//   maxQSizeInStart = maxQSizeMultiplier * maxBlockSize
+	//   maxQSizeInFinish = maxQSizeInStart + maxBlockSize
+	maxRate gas.Gas = math.MaxUint64 / params.Tau / params.Lambda / (maxQSizeMultiplier + 1)
+)
 
 // A State assumes that every transaction will consume its stated
 // gas limit, tracking worst-case gas costs under this assumption.
 type State struct {
-	db *state.StateDB
+	pts    hook.Points
+	config *libparams.ChainConfig
 
-	curr   *types.Header
-	config *params.ChainConfig
-	rules  params.Rules
-	signer types.Signer
-
+	db    *state.StateDB
 	clock *gastime.Time
 
 	qSize, blockSize, maxBlockSize gas.Gas
+
+	baseFee *uint256.Int
+	curr    *types.Header
+	rules   libparams.Rules
+	signer  types.Signer
 }
 
 // NewState constructs a new includer.
@@ -77,47 +62,57 @@ type State struct {
 //
 // [State.StartBlock] MUST be called before the first call to [State.Include].
 func NewState(
+	pts hook.Points,
+	config *libparams.ChainConfig,
 	db *state.StateDB,
-	config *params.ChainConfig,
 	fromExecTime *gastime.Time,
-	maxQueueSeconds, maxBlockSeconds uint64,
 ) *State {
-	s := &State{
-		db:              db,
-		config:          config,
-		clock:           fromExecTime,
-		maxQSeconds:     maxQueueSeconds,
-		maxBlockSeconds: maxBlockSeconds,
+	return &State{
+		pts:    pts,
+		config: config,
+		db:     db,
+		clock:  fromExecTime,
 	}
-	s.setMaxSizes()
-	return s
 }
 
-func (s *State) setMaxSizes() {
-	s.maxQLength = s.clock.Rate() * gas.Gas(s.maxQSeconds)
-	s.maxBlockSize = s.clock.Rate() * gas.Gas(s.maxBlockSeconds)
-}
+var (
+	errNonConsecutiveBlocks = errors.New("non-consecutive block numbers")
+	ErrQueueFull            = errors.New("queue full")
+)
 
-var errNonConsecutiveBlocks = errors.New("non-consecutive block numbers")
-
-// StartBlock calls [State.FinishBlock] and then fast-forwards the
-// includer's [gastime.Time] to the new block's timestamp before updating the
-// gas target. Only the block number and timestamp are required to be set in the
-// header.
-func (s *State) StartBlock(hdr *types.Header, target gas.Gas) error {
+// StartBlock fast-forwards the [gastime.Time] to the header's timestamp
+// before updating the gas target.
+//
+// If the queue is too full to accept another block, [ErrQueueFull] is returned.
+//
+// This function populates the header's GasLimit and BaseFee fields.
+func (s *State) StartBlock(
+	hdr *types.Header,
+	parent *blocks.Block,
+) error {
 	if c := s.curr; c != nil {
 		if num, next := c.Number.Uint64(), hdr.Number.Uint64(); next != num+1 {
 			return fmt.Errorf("%w: %d then %d", errNonConsecutiveBlocks, num, next)
 		}
 	}
 
-	s.FinishBlock()
-	if err := hook.BeforeBlock(s.clock, hdr, target); err != nil {
+	if err := hook.BeforeBuildBlock(s.pts, hdr, parent, s.clock); err != nil {
 		return err
 	}
-	s.setMaxSizes()
-	s.curr = types.CopyHeader(hdr)
-	s.curr.GasLimit = uint64(min(s.maxQLength, s.maxBlockSize))
+
+	s.blockSize = 0
+
+	r := min(s.clock.Rate(), maxRate)
+	s.maxBlockSize = r * params.Tau * params.Lambda
+	if maxQSize := maxQSizeMultiplier * s.maxBlockSize; s.qSize > maxQSize {
+		return fmt.Errorf("%w: current size %d exceeds maximum size %d", ErrQueueFull, s.qSize, maxQSize)
+	}
+
+	s.baseFee = s.clock.BaseFee()
+
+	s.curr = hdr
+	s.curr.GasLimit = uint64(s.maxBlockSize)
+	s.curr.BaseFee = s.baseFee.ToBig()
 
 	// For both rules and signer, we MUST use the block's timestamp, not the
 	// execution clock's, otherwise we might enable an upgrade too early.
@@ -127,25 +122,15 @@ func (s *State) StartBlock(hdr *types.Header, target gas.Gas) error {
 }
 
 // FinishBlock advances the includer's [gastime.Time] to account for all
-// included transactions since the last call to FinishBlock. In the absence of
-// intervening calls to [State.Include], calls to FinishBlock are
-// idempotent.
-//
-// There is no need to call FinishBlock before a call to
-// [State.StartBlock].
+// included operations in the current block.
 func (s *State) FinishBlock() {
-	hook.AfterBlock(s.clock, s.blockSize)
-	s.blockSize = 0
+	hook.AfterBuildBlock(s.clock, s.blockSize)
+	s.qSize += s.blockSize
 }
 
-// ErrQueueTooFull and ErrBlockTooFull are returned by
-// [State.Include] if inclusion of the transaction would have
-// caused the queue or block, respectively, to exceed their maximum allowed gas
-// length.
-var (
-	ErrQueueTooFull = errors.New("queue too full")
-	ErrBlockTooFull = errors.New("block too full")
-)
+// ErrBlockTooFull is returned by [State.ApplyTx] and [State.Apply] if inclusion
+// would cause the block to exceed the gas limit.
+var ErrBlockTooFull = errors.New("block too full")
 
 // ApplyTx validates the transaction both intrinsically and in the context of
 // worst-case gas assumptions of all previous operations. This provides an upper
@@ -194,21 +179,18 @@ func (s *State) ApplyTx(tx *types.Transaction) error {
 // not modified.
 //
 // Operations are invalid if:
-// - The operation consumes more gas than currently allowed.
+// - The operation consumes more gas than the block has available.
 // - The operation specifies too low of a gas price.
 // - The operation specifies a From account with an incorrect or invalid nonce.
 // - The operation specifies a From account with an insufficient balance.
 func (s *State) Apply(o hook.Op) error {
 	// ----- Gas -----
-	switch {
-	case o.Gas > s.maxQLength-s.qLength:
-		return ErrQueueTooFull
-	case o.Gas > s.maxBlockSize-s.blockSize:
+	if o.Gas > s.maxBlockSize-s.blockSize {
 		return ErrBlockTooFull
 	}
 
 	// ----- GasPrice -----
-	if min := s.clock.BaseFee(); o.GasPrice.Cmp(min) < 0 {
+	if o.GasPrice.Cmp(s.baseFee) < 0 {
 		return core.ErrFeeCapTooLow
 	}
 
@@ -223,13 +205,12 @@ func (s *State) Apply(o hook.Op) error {
 			return core.ErrNonceMax
 		}
 
-		if bal := s.db.GetBalance(from); bal.Cmp(&ad.Amount) < 0 {
+		if bal := s.db.GetBalance(from); ad.Amount.Cmp(bal) > 0 {
 			return core.ErrInsufficientFunds
 		}
 	}
 
 	// ----- Inclusion -----
-	s.qLength += o.Gas
 	s.blockSize += o.Gas
 
 	for from, ad := range o.From {
