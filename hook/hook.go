@@ -24,7 +24,7 @@ import (
 // Points define user-injected hook points.
 type Points interface {
 	GasTarget(parent *types.Block) gas.Gas
-	SubSecondBlockTime(*types.Block) gas.Gas
+	SubSecondBlockTime(*types.Header) gas.Gas
 	BeforeBlock(params.Rules, *state.StateDB, *types.Block) error
 	AfterBlock(*state.StateDB, *types.Block, types.Receipts)
 }
@@ -34,7 +34,7 @@ type Points interface {
 func BeforeBlock(pts Points, rules params.Rules, sdb *state.StateDB, b *blocks.Block, clock *gastime.Time) error {
 	clock.FastForwardTo(
 		b.BuildTime(),
-		pts.SubSecondBlockTime(b.EthBlock()),
+		pts.SubSecondBlockTime(b.Header()),
 	)
 	target := pts.GasTarget(b.ParentBlock().EthBlock())
 	if err := clock.SetTarget(target); err != nil {
