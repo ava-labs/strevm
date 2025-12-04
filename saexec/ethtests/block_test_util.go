@@ -30,29 +30,32 @@ package ethtests
 
 import (
 	"bytes"
+	"context"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"math/big"
 	"os"
 	"reflect"
+	"testing"
 
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/common/hexutil"
 	"github.com/ava-labs/libevm/common/math"
-	"github.com/ava-labs/libevm/consensus/beacon"
-	"github.com/ava-labs/libevm/consensus/ethash"
 	"github.com/ava-labs/libevm/core"
 	"github.com/ava-labs/libevm/core/rawdb"
 	"github.com/ava-labs/libevm/core/state"
+	"github.com/ava-labs/libevm/core/state/snapshot"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/core/vm"
-	"github.com/ava-labs/libevm/log"
 	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/rlp"
 	"github.com/ava-labs/libevm/triedb"
 	"github.com/ava-labs/libevm/triedb/hashdb"
 	"github.com/ava-labs/libevm/triedb/pathdb"
+	"github.com/ava-labs/strevm/blocks/blockstest"
+	"github.com/ava-labs/strevm/saexec/saexectest"
+	"github.com/stretchr/testify/require"
 )
 
 // A BlockTest checks handling of entire blocks.
@@ -120,18 +123,17 @@ type btHeaderMarshaling struct {
 	ExcessBlobGas *math.HexOrDecimal64
 }
 
-func (t *BlockTest) Run(snapshotter bool, scheme string, tracer vm.EVMLogger, postCheck func(error, *core.BlockChain)) (result error) {
+func (t *BlockTest) Run(tb testing.TB, snapshotter bool, scheme string, tracer vm.EVMLogger, postCheck func(error, *saexectest.SUT)) (result error) {
 	config, ok := Forks[t.json.Network]
 	if !ok {
 		return UnsupportedForkError{t.json.Network}
 	}
 	// import pre accounts & construct test genesis block & state root
-	var (
-		db    = rawdb.NewMemoryDatabase()
-		tconf = &triedb.Config{
-			Preimages: true,
-		}
-	)
+
+	tconf := &triedb.Config{
+		Preimages: true,
+	}
+
 	if scheme == rawdb.PathScheme {
 		tconf.PathDB = pathdb.Defaults
 	} else {
@@ -139,62 +141,45 @@ func (t *BlockTest) Run(snapshotter bool, scheme string, tracer vm.EVMLogger, po
 	}
 	// Commit genesis state
 	gspec := t.genesis(config)
-	triedb := triedb.NewDatabase(db, tconf)
-	gblock, err := gspec.Commit(db, triedb)
-	if err != nil {
-		return err
-	}
-	triedb.Close() // close the db to prevent memory leak
+	ctx, sut := saexectest.NewSUT(tb, saexectest.DefaultHooks(), saexectest.WithGenesisSpec(gspec), saexectest.WithTrieDBConfig(tconf))
+	gblock := sut.LastExecuted()
+	require.Equal(tb, gblock.Hash(), t.json.Genesis.Hash)
+	require.Equal(tb, gblock.PostExecutionStateRoot(), t.json.Genesis.StateRoot)
+	require.Equal(tb, gblock.Header().Root, t.json.Genesis.StateRoot)
 
-	if gblock.Hash() != t.json.Genesis.Hash {
-		return fmt.Errorf("genesis block hash doesn't match test: computed=%x, test=%x", gblock.Hash().Bytes()[:6], t.json.Genesis.Hash[:6])
-	}
-	if gblock.Root() != t.json.Genesis.StateRoot {
-		return fmt.Errorf("genesis block state root does not match test: computed=%x, test=%x", gblock.Root().Bytes()[:6], t.json.Genesis.StateRoot[:6])
-	}
-	// Wrap the original engine within the beacon-engine
-	engine := beacon.New(ethash.NewFaker())
-
-	cache := &core.CacheConfig{TrieCleanLimit: 0, StateScheme: scheme, Preimages: true}
-	if snapshotter {
-		cache.SnapshotLimit = 1
-		cache.SnapshotWait = true
-	}
-	chain, err := core.NewBlockChain(db, cache, gspec, nil, engine, vm.Config{
-		Tracer: tracer,
-	}, nil, nil)
-	if err != nil {
-		return err
-	}
-	defer chain.Stop()
-
-	validBlocks, err := t.insertBlocks(chain)
+	validBlocks, err := t.insertBlocks(ctx, tb, &sut)
 	if err != nil {
 		return err
 	}
 	// Import succeeded: regardless of whether the _test_ succeeds or not, schedule
 	// the post-check to run
 	if postCheck != nil {
-		defer postCheck(result, chain)
+		defer postCheck(result, &sut)
 	}
-	cmlast := chain.CurrentBlock().Hash()
-	if common.Hash(t.json.BestBlock) != cmlast {
-		return fmt.Errorf("last block hash validation mismatch: want: %x, have: %x", t.json.BestBlock, cmlast)
+	last := sut.Chain.Last()
+	lastHash := last.Hash()
+	if common.Hash(t.json.BestBlock) != lastHash {
+		return fmt.Errorf("last block hash validation mismatch: want: %x, have: %x", t.json.BestBlock, lastHash)
 	}
-	newDB, err := chain.State()
-	if err != nil {
-		return err
-	}
-	if err = t.validatePostState(newDB); err != nil {
+
+	sdb, err := state.New(last.PostExecutionStateRoot(), sut.StateCache(), nil)
+	require.NoErrorf(tb, err, "state.New(%T.PostExecutionStateRoot(), %T.StateCache(), nil)", last, sut)
+	if err = t.validatePostState(sdb); err != nil {
 		return fmt.Errorf("post state validation failed: %v", err)
 	}
 	// Cross-check the snapshot-to-hash against the trie hash
 	if snapshotter {
-		if err := chain.Snapshots().Verify(chain.CurrentBlock().Root); err != nil {
+		conf := snapshot.Config{
+			CacheSize:  1,
+			AsyncBuild: false,
+		}
+		snaps, err := snapshot.New(conf, sut.DB, sut.StateCache().TrieDB(), last.PostExecutionStateRoot())
+		require.NoErrorf(tb, err, "snapshot.New(..., %T.PostExecutionStateRoot())", sut)
+		if err := snaps.Verify(last.PostExecutionStateRoot()); err != nil {
 			return err
 		}
 	}
-	return t.validateImportedHeaders(chain, validBlocks)
+	return t.validateImportedHeaders(sut.Chain, validBlocks)
 }
 
 func (t *BlockTest) genesis(config *params.ChainConfig) *core.Genesis {
@@ -229,14 +214,14 @@ See https://github.com/ethereum/tests/wiki/Blockchain-Tests-II
 	expected we are expected to ignore it and continue processing and then validate the
 	post state.
 */
-func (t *BlockTest) insertBlocks(blockchain *core.BlockChain) ([]btBlock, error) {
+func (t *BlockTest) insertBlocks(ctx context.Context, tb testing.TB, sut *saexectest.SUT) ([]btBlock, error) {
 	validBlocks := make([]btBlock, 0)
 	// insert the test blocks, which will execute all transactions
 	for bi, b := range t.json.Blocks {
 		cb, err := b.decode()
 		if err != nil {
 			if b.BlockHeader == nil {
-				log.Info("Block decoding failed", "index", bi, "err", err)
+				tb.Log("Block decoding failed", "index", bi, "err", err)
 				continue // OK - block is supposed to be invalid, continue with next block
 			} else {
 				return nil, fmt.Errorf("block RLP decoding failed when expected to succeed: %v", err)
@@ -244,7 +229,7 @@ func (t *BlockTest) insertBlocks(blockchain *core.BlockChain) ([]btBlock, error)
 		}
 		// RLP decoding worked, try to insert into chain:
 		blocks := types.Blocks{cb}
-		i, err := blockchain.InsertChain(blocks)
+		i, err := sut.InsertChain(ctx, tb, blocks)
 		if err != nil {
 			if b.BlockHeader == nil {
 				continue // OK - block is supposed to be invalid, continue with next block
@@ -360,7 +345,7 @@ func (t *BlockTest) validatePostState(statedb *state.StateDB) error {
 	return nil
 }
 
-func (t *BlockTest) validateImportedHeaders(cm *core.BlockChain, validBlocks []btBlock) error {
+func (t *BlockTest) validateImportedHeaders(cb *blockstest.ChainBuilder, validBlocks []btBlock) error {
 	// to get constant lookup when verifying block headers by hash (some tests have many blocks)
 	bmap := make(map[common.Hash]btBlock, len(t.json.Blocks))
 	for _, b := range validBlocks {
@@ -371,8 +356,13 @@ func (t *BlockTest) validateImportedHeaders(cm *core.BlockChain, validBlocks []b
 	// block-by-block, so we can only validate imported headers after
 	// all blocks have been processed by BlockChain, as they may not
 	// be part of the longest chain until last block is imported.
-	for b := cm.CurrentBlock(); b != nil && b.Number.Uint64() != 0; b = cm.GetBlockByHash(b.ParentHash).Header() {
-		if err := validateHeader(bmap[b.Hash()].BlockHeader, b); err != nil {
+	for b := cb.Last(); b != nil && b.NumberU64() != 0; {
+		// ASK: Why we use parent hash here? Is it a bug in upstream?
+		pb, ok := cb.GetBlock(b.ParentHash(), b.NumberU64()-1)
+		if !ok {
+			return fmt.Errorf("block %x not found", b.ParentHash())
+		}
+		if err := validateHeader(bmap[pb.Hash()].BlockHeader, pb.Header()); err != nil {
 			return fmt.Errorf("imported block header validation failed: %v", err)
 		}
 	}
