@@ -46,24 +46,15 @@ type BlockProperties interface {
 	Timestamp() time.Time
 }
 
-// ChainVMWithContext is the union of [block.ChainVM] and
-// [block.ChainVMWithContext].
-type ChainVMWithContext interface {
+type chainVMWithContext interface {
 	block.ChainVM
 	block.BuildBlockWithContextChainVM
 }
 
-// BlockWithContext is the union of [block.WithVerifyContext]
-// and [snowman.Block].
-type BlockWithContext interface {
-	block.WithVerifyContext
-	snowman.Block
-}
-
-// Convert transforms a generic [ChainVM] into a [ChainVMWithContext]. All
+// Convert transforms a generic [ChainVM] into a [chainVMWithContext]. All
 // [snowman.Block] values returned by methods of the returned chain will be of
 // the concrete type [Block] with type parameter `BP`.
-func Convert[BP BlockProperties](vm ChainVM[BP]) ChainVMWithContext {
+func Convert[BP BlockProperties](vm ChainVM[BP]) chainVMWithContext {
 	return &adaptor[BP]{vm}
 }
 
@@ -81,7 +72,12 @@ type Block[BP BlockProperties] struct {
 // Unwrap returns the [BlockProperties] carried by b.
 func (b Block[BP]) Unwrap() BP { return b.b }
 
-func (vm adaptor[BP]) newBlock(b BP, err error) (BlockWithContext, error) {
+type blockWithContext interface {
+	block.WithVerifyContext
+	snowman.Block
+}
+
+func (vm adaptor[BP]) newBlock(b BP, err error) (blockWithContext, error) {
 	if err != nil {
 		return nil, err
 	}
