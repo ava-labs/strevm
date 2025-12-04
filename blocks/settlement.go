@@ -205,7 +205,7 @@ func LastToSettleAt(settleAt uint64, parent *Block) (b *Block, ok bool) {
 	// settled (see invariant in [Block]). If a block was already settled then
 	// only it or a later (i.e. unsettled) block can be returned by this loop,
 	// therefore we have a guarantee that the loop update will never result in
-	// `block==nil` during block building.
+	// `block==nil`.
 	for block := parent; ; block = block.ParentBlock() {
 		// Guarantees that the loop will always exit as the last pre-SAE block
 		// (perhaps the genesis) is always settled, by definition.
