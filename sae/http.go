@@ -20,8 +20,3 @@ func (vm *VM) CreateHandlers(context.Context) (map[string]http.Handler, error) {
 func (vm *VM) NewHTTPHandler(context.Context) (http.Handler, error) {
 	return nil, errUnimplemented
 }
-
-// CreateHTTP2Handler returns `(nil, nil)`.
-func (vm *VM) CreateHTTP2Handler(ctx context.Context) (http.Handler, error) {
-	return nil, nil
-}
