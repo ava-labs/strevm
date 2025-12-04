@@ -12,6 +12,7 @@ import (
 	"slices"
 	"sync"
 
+	"github.com/ava-labs/avalanchego/utils/lock"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/event"
 	"github.com/ava-labs/libevm/trie"
@@ -41,7 +42,7 @@ type EventCollector[T any] struct {
 	sub  event.Subscription
 
 	all  []T
-	cond *sync.Cond
+	cond *lock.Cond
 }
 
 // NewEventCollector returns a new [EventCollector], subscribing via the
@@ -51,7 +52,7 @@ func NewEventCollector[T any](subscribe func(chan<- T) event.Subscription) *Even
 	c := &EventCollector[T]{
 		ch:   make(chan T),
 		done: make(chan struct{}),
-		cond: sync.NewCond(&sync.Mutex{}),
+		cond: lock.NewCond(&sync.Mutex{}),
 	}
 	c.sub = subscribe(c.ch)
 	go c.collect()
@@ -87,25 +88,10 @@ func (c *EventCollector[T]) Unsubscribe() error {
 
 // WaitForAtLeast blocks until at least `n` events have been received.
 func (c *EventCollector[T]) WaitForAtLeast(ctx context.Context, n int) error {
-	quit := make(chan struct{})
-	defer close(quit)
-	go func() {
-		select {
-		case <-ctx.Done():
-			// If there is another waiter then we might not wake our own loop,
-			// so Signal() is inappropriate. For that matter, so too is
-			// Broadcast(). If context awareness without spurious wakeups is
-			// important, see https://www.youtube.com/watch?v=5zXAHh5tJqQ.
-			c.cond.Broadcast()
-		case <-quit:
-		}
-	}()
-
 	c.cond.L.Lock()
 	defer c.cond.L.Unlock()
 	for len(c.all) < n {
-		c.cond.Wait()
-		if ctx.Err() != nil {
+		if c.cond.Wait(ctx) != nil {
 			return context.Cause(ctx)
 		}
 	}

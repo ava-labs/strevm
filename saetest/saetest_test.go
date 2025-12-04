@@ -30,7 +30,7 @@ func TestWaitForAtLeastContextAwareness(t *testing.T) {
 	feed.Send(struct{}{})
 	require.NoErrorf(t, sut.WaitForAtLeast(ctx, 1), "%T.WaitForAtLeast(1)", sut)
 
-	ctx, cancel := context.WithCancelCause(t.Context())
+	ctx, cancel := context.WithCancelCause(ctx)
 	want := errors.New("error passed to context.CancelCauseFunc")
 	cancel(want)
 	require.ErrorIsf(t, sut.WaitForAtLeast(ctx, math.MaxInt), want, "%T.WaitForAtLeast([cancelled context], [math.MaxInt])", sut)
