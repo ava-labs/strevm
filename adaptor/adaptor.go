@@ -114,7 +114,7 @@ func (b Block[BP]) Accept(ctx context.Context) error { return b.vm.AcceptBlock(c
 func (b Block[BP]) Reject(ctx context.Context) error { return b.vm.RejectBlock(ctx, b.b) }
 
 // ShouldVerifyWithContext returns true, indicating that the block
-// should be verified with the given block context in [Verify].
+// MUST be verified with by [VerifyWithContext].
 func (b Block[BP]) ShouldVerifyWithContext(ctx context.Context) (bool, error) {
 	return true, nil
 }
