@@ -30,7 +30,6 @@ func (vm *SinceGenesis) Initialize(
 	genesisBytes []byte,
 	upgradeBytes []byte,
 	configBytes []byte,
-	toEngine chan<- snowcommon.Message,
 	fxs []*snowcommon.Fx,
 	appSender snowcommon.AppSender,
 ) error {

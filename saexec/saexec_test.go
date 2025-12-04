@@ -82,10 +82,10 @@ func newSUT(tb testing.TB, hooks hook.Points) (context.Context, SUT) {
 	alloc := saetest.MaxAllocFor(wallet.Addresses()...)
 	genesis := blockstest.NewGenesis(tb, db, config, alloc, blockstest.WithTrieDBConfig(tdbConfig))
 
-	chain := blockstest.NewChainBuilder(genesis)
-	chain.SetDefaultOptions(blockstest.WithBlockOptions(
+	opts := blockstest.WithBlockOptions(
 		blockstest.WithLogger(logger),
-	))
+	)
+	chain := blockstest.NewChainBuilder(genesis, opts)
 
 	e, err := New(genesis, chain.GetBlock, config, db, tdbConfig, hooks, logger)
 	require.NoError(tb, err, "New()")
@@ -218,22 +218,22 @@ func TestSubscriptions(t *testing.T) {
 
 	opt := cmputils.BlocksByHash()
 	t.Run("ChainHeadEvents", func(t *testing.T) {
-		testEvents(t, gotChainHeadEvents, wantChainHeadEvents, opt)
+		testEvents(ctx, t, gotChainHeadEvents, wantChainHeadEvents, opt)
 	})
 	t.Run("ChainEvents", func(t *testing.T) {
-		testEvents(t, gotChainEvents, wantChainEvents, opt)
+		testEvents(ctx, t, gotChainEvents, wantChainEvents, opt)
 	})
 	t.Run("LogsEvents", func(t *testing.T) {
-		testEvents(t, gotLogsEvents, wantLogsEvents)
+		testEvents(ctx, t, gotLogsEvents, wantLogsEvents)
 	})
 }
 
-func testEvents[T any](tb testing.TB, got *saetest.EventCollector[T], want []T, opts ...cmp.Option) {
+func testEvents[T any](ctx context.Context, tb testing.TB, got *saetest.EventCollector[T], want []T, opts ...cmp.Option) {
 	tb.Helper()
 	// There is an invariant that stipulates [blocks.Block.MarkExecuted] MUST
 	// occur before sending external events, which means that we can't rely on
 	// [blocks.Block.WaitUntilExecuted] to avoid races.
-	got.WaitForAtLeast(len(want))
+	require.NoErrorf(tb, got.WaitForAtLeast(ctx, len(want)), "%T.WaitForAtLeast()", got)
 
 	require.NoError(tb, got.Unsubscribe())
 	if diff := cmp.Diff(want, got.All(), opts...); diff != "" {
