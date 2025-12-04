@@ -73,6 +73,13 @@ type BlockOption = options.Option[blockProperties]
 // NewBlock constructs an SAE block, wrapping the raw Ethereum block.
 func NewBlock(tb testing.TB, eth *types.Block, parent, lastSettled *blocks.Block, opts ...BlockOption) *blocks.Block {
 	tb.Helper()
+	b, err := TryNewBlock(tb, eth, parent, lastSettled, opts...)
+	require.NoError(tb, err, "blocks.New()")
+	return b
+}
+
+func TryNewBlock(tb testing.TB, eth *types.Block, parent, lastSettled *blocks.Block, opts ...BlockOption) (*blocks.Block, error) {
+	tb.Helper()
 
 	props := options.ApplyTo(&blockProperties{}, opts...)
 	if props.logger == nil {
@@ -80,8 +87,7 @@ func NewBlock(tb testing.TB, eth *types.Block, parent, lastSettled *blocks.Block
 	}
 
 	b, err := blocks.New(eth, parent, lastSettled, props.logger)
-	require.NoError(tb, err, "blocks.New()")
-	return b
+	return b, err
 }
 
 type blockProperties struct {
@@ -95,6 +101,12 @@ func WithLogger(l logging.Logger) BlockOption {
 	})
 }
 
+func WithGenesisSpec(spec *core.Genesis) GenesisOption {
+	return options.Func[genesisConfig](func(gc *genesisConfig) {
+		gc.genesisSpec = spec
+	})
+}
+
 // NewGenesis constructs a new [core.Genesis], writes it to the database, and
 // returns wraps [core.Genesis.ToBlock] with [NewBlock]. It assumes a nil
 // [triedb.Config] unless overridden by a [WithTrieDBConfig]. The block is
@@ -103,9 +115,12 @@ func NewGenesis(tb testing.TB, db ethdb.Database, config *params.ChainConfig, al
 	tb.Helper()
 	conf := options.ApplyTo(&genesisConfig{}, opts...)
 
-	gen := &core.Genesis{
-		Config: config,
-		Alloc:  alloc,
+	gen := conf.genesisSpec
+	if gen == nil {
+		gen = &core.Genesis{
+			Config: config,
+			Alloc:  alloc,
+		}
 	}
 
 	tdb := state.NewDatabaseWithConfig(db, conf.tdbConfig).TrieDB()
@@ -120,7 +135,8 @@ func NewGenesis(tb testing.TB, db ethdb.Database, config *params.ChainConfig, al
 }
 
 type genesisConfig struct {
-	tdbConfig *triedb.Config
+	tdbConfig   *triedb.Config
+	genesisSpec *core.Genesis
 }
 
 // A GenesisOption configures [NewGenesis].

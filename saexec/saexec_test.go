@@ -1,10 +1,9 @@
 // Copyright (C) 2025, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
-package saexec
+package saexec_test
 
 import (
-	"context"
 	"encoding/binary"
 	"math"
 	"math/big"
@@ -12,21 +11,17 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/ava-labs/avalanchego/utils/logging"
 	"github.com/ava-labs/avalanchego/vms/components/gas"
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core"
-	"github.com/ava-labs/libevm/core/rawdb"
 	"github.com/ava-labs/libevm/core/state"
 	"github.com/ava-labs/libevm/core/state/snapshot"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/core/vm"
 	"github.com/ava-labs/libevm/crypto"
-	"github.com/ava-labs/libevm/ethdb"
 	"github.com/ava-labs/libevm/libevm"
 	libevmhookstest "github.com/ava-labs/libevm/libevm/hookstest"
 	"github.com/ava-labs/libevm/params"
-	"github.com/ava-labs/libevm/triedb"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/holiman/uint256"
@@ -34,15 +29,14 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
 
-	"github.com/ava-labs/strevm/blocks"
 	"github.com/ava-labs/strevm/blocks/blockstest"
 	"github.com/ava-labs/strevm/cmputils"
 	"github.com/ava-labs/strevm/gastime"
-	"github.com/ava-labs/strevm/hook"
 	saehookstest "github.com/ava-labs/strevm/hook/hookstest"
 	"github.com/ava-labs/strevm/proxytime"
 	"github.com/ava-labs/strevm/saetest"
 	"github.com/ava-labs/strevm/saetest/escrow"
+	"github.com/ava-labs/strevm/saexec/saexectest"
 )
 
 func TestMain(m *testing.M) {
@@ -57,70 +51,13 @@ func TestMain(m *testing.M) {
 	)
 }
 
-// SUT is the system under test, primarily the [Executor].
-type SUT struct {
-	*Executor
-	chain  *blockstest.ChainBuilder
-	wallet *saetest.Wallet
-	logger logging.Logger
-	db     ethdb.Database
-}
-
-// newSUT returns a new SUT. Any >= [logging.Error] on the logger will also
-// cancel the returned context, which is useful when waiting for blocks that
-// can never finish execution because of an error.
-func newSUT(tb testing.TB, hooks hook.Points) (context.Context, SUT) {
-	tb.Helper()
-
-	logger := saetest.NewTBLogger(tb, logging.Warn)
-	ctx := logger.CancelOnError(tb.Context())
-
-	config := params.AllDevChainProtocolChanges
-	db := rawdb.NewMemoryDatabase()
-	tdbConfig := &triedb.Config{}
-
-	wallet := saetest.NewUNSAFEWallet(tb, 1, types.LatestSigner(config))
-	alloc := saetest.MaxAllocFor(wallet.Addresses()...)
-	genesis := blockstest.NewGenesis(tb, db, config, alloc, blockstest.WithTrieDBConfig(tdbConfig))
-
-	chain := blockstest.NewChainBuilder(genesis)
-	chain.SetDefaultOptions(blockstest.WithBlockOptions(
-		blockstest.WithLogger(logger),
-	))
-	src := BlockSource(func(h common.Hash, n uint64) *blocks.Block {
-		b, ok := chain.GetBlock(h, n)
-		if !ok {
-			return nil
-		}
-		return b
-	})
-
-	e, err := New(genesis, src, config, db, tdbConfig, hooks, logger)
-	require.NoError(tb, err, "New()")
-	tb.Cleanup(func() {
-		require.NoErrorf(tb, e.Close(), "%T.Close()", e)
-	})
-
-	return ctx, SUT{
-		Executor: e,
-		chain:    chain,
-		wallet:   wallet,
-		logger:   logger,
-		db:       db,
-	}
-}
-
-func defaultHooks() *saehookstest.Stub {
-	return &saehookstest.Stub{Target: 1e6}
-}
-
 func TestImmediateShutdownNonBlocking(t *testing.T) {
-	newSUT(t, defaultHooks()) // calls [Executor.Close] in test cleanup
+	saexectest.NewSUT(t, saexectest.DefaultHooks()) // calls [Executor.Close] in test cleanup
 }
 
 func TestExecutionSynchronisation(t *testing.T) {
-	ctx, sut := newSUT(t, defaultHooks())
-	e, chain := sut.Executor, sut.chain
+	ctx, sut := saexectest.NewSUT(t, saexectest.DefaultHooks())
+	e, chain := sut.Executor, sut.Chain
 
 	for range 10 {
 		b := chain.NewBlock(t, nil)
@@ -137,8 +74,8 @@ func TestExecutionSynchronisation(t *testing.T) {
 }
 
 func TestReceiptPropagation(t *testing.T) {
-	ctx, sut := newSUT(t, defaultHooks())
-	e, chain, wallet := sut.Executor, sut.chain, sut.wallet
+	ctx, sut := saexectest.NewSUT(t, saexectest.DefaultHooks())
+	e, chain, wallet := sut.Executor, sut.Chain, sut.Wallet
 
 	var want [][]*types.Receipt
 	for range 10 {
@@ -172,8 +109,8 @@ func TestReceiptPropagation(t *testing.T) {
 }
 
 func TestSubscriptions(t *testing.T) {
-	ctx, sut := newSUT(t, defaultHooks())
-	e, chain, wallet := sut.Executor, sut.chain, sut.wallet
+	ctx, sut := saexectest.NewSUT(t, saexectest.DefaultHooks())
+	e, chain, wallet := sut.Executor, sut.Chain, sut.Wallet
 
 	precompile := common.Address{'p', 'r', 'e'}
 	stub := &libevmhookstest.Stub{
@@ -250,8 +187,8 @@ func testEvents[T any](tb testing.TB, got *saetest.EventCollector[T], want []T, 
 }
 
 func TestExecution(t *testing.T) {
-	ctx, sut := newSUT(t, defaultHooks())
-	wallet := sut.wallet
+	ctx, sut := saexectest.NewSUT(t, saexectest.DefaultHooks())
+	wallet := sut.Wallet
 	eoa := wallet.Addresses()[0]
 
 	var (
@@ -294,7 +231,7 @@ func TestExecution(t *testing.T) {
 		})
 	}
 
-	b := sut.chain.NewBlock(t, txs)
+	b := sut.Chain.NewBlock(t, txs)
 
 	var logIndex uint
 	for i, r := range want {
@@ -355,7 +292,7 @@ func TestExecution(t *testing.T) {
 
 func TestGasAccounting(t *testing.T) {
 	hooks := &saehookstest.Stub{}
-	ctx, sut := newSUT(t, hooks)
+	ctx, sut := saexectest.NewSUT(t, hooks)
 
 	const gasPerTx = gas.Gas(params.TxGas)
 	at := func(blockTime, txs uint64, rate gas.Gas) *proxytime.Time[gas.Gas] {
@@ -456,7 +393,7 @@ func TestGasAccounting(t *testing.T) {
 		},
 	}
 
-	e, chain, wallet := sut.Executor, sut.chain, sut.wallet
+	e, chain, wallet := sut.Executor, sut.Chain, sut.Wallet
 
 	for i, step := range steps {
 		hooks.Target = step.target
@@ -551,9 +488,9 @@ func asBytes(ops ...vm.OpCode) []byte {
 }
 
 func TestContextualOpCodes(t *testing.T) {
-	ctx, sut := newSUT(t, defaultHooks())
+	ctx, sut := saexectest.NewSUT(t, saexectest.DefaultHooks())
 
-	chain := sut.chain
+	chain := sut.Chain
 	for range 5 {
 		// Historical blocks, required to already be in `chain`, for testing
 		// BLOCKHASH.
@@ -595,14 +532,14 @@ func TestContextualOpCodes(t *testing.T) {
 			name: "ORIGIN",
 			code: logTopOfStackAfter(vm.ORIGIN),
 			wantTopic: common.BytesToHash(
-				sut.wallet.Addresses()[0].Bytes(),
+				sut.Wallet.Addresses()[0].Bytes(),
 			),
 		},
 		{
 			name: "CALLER",
 			code: logTopOfStackAfter(vm.CALLER),
 			wantTopic: common.BytesToHash(
-				sut.wallet.Addresses()[0].Bytes(),
+				sut.Wallet.Addresses()[0].Bytes(),
 			),
 		},
 		{
@@ -666,7 +603,7 @@ func TestContextualOpCodes(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tx := sut.wallet.SetNonceAndSign(t, 0, &types.LegacyTx{
+			tx := sut.Wallet.SetNonceAndSign(t, 0, &types.LegacyTx{
 				To:       nil, // contract creation runs the call data (one sneaky trick blockchain developers don't want you to know)
 				GasPrice: big.NewInt(1),
 				Gas:      100e6,
@@ -681,7 +618,7 @@ func TestContextualOpCodes(t *testing.T) {
 				))
 			}
 
-			b := sut.chain.NewBlock(t, types.Transactions{tx}, opts...)
+			b := sut.Chain.NewBlock(t, types.Transactions{tx}, opts...)
 			require.NoError(t, sut.Enqueue(ctx, b), "Enqueue()")
 			require.NoErrorf(t, b.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", b)
 			require.Lenf(t, b.Receipts(), 1, "%T.Receipts()", b)
@@ -732,9 +669,9 @@ func (e *blockNumSaver) store(h *types.Header) {
 }
 
 func TestSnapshotPersistence(t *testing.T) {
-	ctx, sut := newSUT(t, defaultHooks())
+	ctx, sut := saexectest.NewSUT(t, saexectest.DefaultHooks())
 
-	e, chain, wallet := sut.Executor, sut.chain, sut.wallet
+	e, chain, wallet := sut.Executor, sut.Chain, sut.Wallet
 
 	const n = 10
 	for range n {
@@ -751,10 +688,9 @@ func TestSnapshotPersistence(t *testing.T) {
 	require.NoErrorf(t, last.WaitUntilExecuted(ctx), "%T.Last().WaitUntilExecuted()", chain)
 
 	require.NoErrorf(t, e.Close(), "%T.Close()", e)
-	// [newSUT] creates a cleanup that also calls [Executor.Close], which isn't
-	// valid usage. The simplest workaround is to just replace the quit channel
-	// so it can be closed again.
-	e.quit = make(chan struct{})
+	// [NewSUT] creates a cleanup that also calls [Executor.Close], which isn't
+	// valid usage.
+	e.RefreshQuit()
 
 	// The crux of the test is whether we can recover the EOA nonce using only a
 	// new set of snapshots, recovered from the databases.
@@ -762,7 +698,7 @@ func TestSnapshotPersistence(t *testing.T) {
 		CacheSize: 128,
 		NoBuild:   true, // i.e. MUST be loaded from disk
 	}
-	snaps, err := snapshot.New(conf, sut.db, e.StateCache().TrieDB(), last.PostExecutionStateRoot())
+	snaps, err := snapshot.New(conf, sut.DB, e.StateCache().TrieDB(), last.PostExecutionStateRoot())
 	require.NoError(t, err, "snapshot.New(..., [post-execution state root of last-executed block])")
 	snap := snaps.Snapshot(last.PostExecutionStateRoot())
 	require.NotNilf(t, snap, "%T.Snapshot([post-execution state root of last-executed block])", snaps)

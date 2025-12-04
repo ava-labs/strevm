@@ -124,3 +124,9 @@ func (e *Executor) StateCache() state.Database {
 func (e *Executor) LastExecuted() *blocks.Block {
 	return e.lastExecuted.Load()
 }
+
+// RefreshQuit replaces the quit channel with a new one. This is used to
+// refresh the quit channel after a test has completed. Should only be used in tests.
+func (e *Executor) RefreshQuit() {
+	e.quit = make(chan struct{})
+}
