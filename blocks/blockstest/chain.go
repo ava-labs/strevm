@@ -101,6 +101,8 @@ func (cb *ChainBuilder) AllExceptGenesis() []*blocks.Block {
 	return slices.Clone(cb.chain[1:])
 }
 
+var _ blocks.Source = (*ChainBuilder)(nil).GetBlock
+
 // GetBlock returns the block with specified hash and height, and a flag
 // indicating if it was found. If either argument does not match, it returns
 // `nil, false`.

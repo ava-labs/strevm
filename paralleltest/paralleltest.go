@@ -18,7 +18,6 @@ import (
 	"github.com/ava-labs/libevm/params"
 	"github.com/stretchr/testify/require"
 
-	"github.com/ava-labs/strevm/blocks"
 	"github.com/ava-labs/strevm/blocks/blockstest"
 	"github.com/ava-labs/strevm/hook"
 	"github.com/ava-labs/strevm/saexec"
@@ -52,15 +51,7 @@ func NewExecutor[CommonData, Prefetch any, R parallel.PrecompileResult, Aggregat
 	}
 	stub.Register(tb)
 
-	src := func(h common.Hash, n uint64) *blocks.Block {
-		b, ok := chain.GetBlock(h, n)
-		if !ok {
-			return nil
-		}
-		return b
-	}
-
-	exec, err := saexec.New(gen, src, config, db, nil, &hooks{par}, logger)
+	exec, err := saexec.New(gen, chain.GetBlock, config, db, nil, &hooks{par}, logger)
 	require.NoError(tb, err)
 	tb.Cleanup(func() {
 		exec.Close()
