@@ -15,19 +15,21 @@ import (
 
 // Stub implements [hook.Points].
 type Stub struct {
-	Target gas.Gas
+	Target        gas.Gas
+	SubSecondTime gas.Gas
 }
 
 var _ hook.Points = (*Stub)(nil)
 
 // GasTarget ignores its argument and always returns [Stub.Target].
-func (s *Stub) GasTarget(parent *types.Block) gas.Gas {
+func (s *Stub) GasTarget(*types.Header) gas.Gas {
 	return s.Target
 }
 
-// SubSecondBlockTime time ignores its argument and always returns 0.
-func (*Stub) SubSecondBlockTime(*types.Block) gas.Gas {
-	return 0
+// SubSecondBlockTime time ignores its arguments and always returns
+// [Stub.SubSecondTime].
+func (s *Stub) SubSecondBlockTime(gas.Gas, *types.Header) gas.Gas {
+	return s.SubSecondTime
 }
 
 // BeforeBlock is a no-op that always returns nil.
