@@ -7,15 +7,17 @@ import (
 	"context"
 
 	"github.com/ava-labs/avalanchego/ids"
+	"github.com/ava-labs/avalanchego/snow/engine/snowman/block"
 
 	"github.com/ava-labs/strevm/blocks"
 	"github.com/ava-labs/strevm/saexec"
 )
 
-// SetPreference updates the VM's currently [preferred block].
+// SetPreference updates the VM's currently [preferred block] with the given block context,
+// which MAY be nil.
 //
 // [preferred block]: https://github.com/ava-labs/avalanchego/tree/master/vms#set-preference
-func (vm *VM) SetPreference(context.Context, ids.ID) error {
+func (vm *VM) SetPreference(context.Context, ids.ID, *block.Context) error {
 	return errUnimplemented
 }
 
