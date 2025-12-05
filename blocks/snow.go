@@ -33,7 +33,7 @@ func (b *Block) Parent() ids.ID {
 // returns an error, it is logged at the ERROR level and a nil slice is
 // returned.
 func (b *Block) Bytes() []byte {
-	buf, err := rlp.EncodeToBytes(b)
+	buf, err := rlp.EncodeToBytes(b.EthBlock())
 	if err != nil {
 		b.log.Error("RLP encoding error", zap.Error(err))
 		return nil

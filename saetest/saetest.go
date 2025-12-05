@@ -8,10 +8,12 @@
 package saetest
 
 import (
+	"context"
 	"slices"
 	"sync"
 	"testing"
 
+	"github.com/ava-labs/avalanchego/utils/lock"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/event"
 	"github.com/ava-labs/libevm/trie"
@@ -59,7 +61,7 @@ type EventCollector[T any] struct {
 	sub  event.Subscription
 
 	all  []T
-	cond *sync.Cond
+	cond *lock.Cond
 }
 
 // NewEventCollector returns a new [EventCollector], subscribing via the
@@ -69,7 +71,7 @@ func NewEventCollector[T any](subscribe func(chan<- T) event.Subscription) *Even
 	c := &EventCollector[T]{
 		ch:   make(chan T),
 		done: make(chan struct{}),
-		cond: sync.NewCond(&sync.Mutex{}),
+		cond: lock.NewCond(&sync.Mutex{}),
 	}
 	c.sub = subscribe(c.ch)
 	go c.collect()
@@ -104,10 +106,13 @@ func (c *EventCollector[T]) Unsubscribe() error {
 }
 
 // WaitForAtLeast blocks until at least `n` events have been received.
-func (c *EventCollector[T]) WaitForAtLeast(n int) {
+func (c *EventCollector[T]) WaitForAtLeast(ctx context.Context, n int) error {
 	c.cond.L.Lock()
 	defer c.cond.L.Unlock()
 	for len(c.all) < n {
-		c.cond.Wait()
+		if c.cond.Wait(ctx) != nil {
+			return context.Cause(ctx)
+		}
 	}
+	return nil
 }

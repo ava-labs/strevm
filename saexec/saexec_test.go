@@ -18,9 +18,11 @@ import (
 	"github.com/ava-labs/libevm/core"
 	"github.com/ava-labs/libevm/core/rawdb"
 	"github.com/ava-labs/libevm/core/state"
+	"github.com/ava-labs/libevm/core/state/snapshot"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/core/vm"
 	"github.com/ava-labs/libevm/crypto"
+	"github.com/ava-labs/libevm/ethdb"
 	"github.com/ava-labs/libevm/libevm"
 	libevmhookstest "github.com/ava-labs/libevm/libevm/hookstest"
 	"github.com/ava-labs/libevm/params"
@@ -52,6 +54,7 @@ type SUT struct {
 	chain  *blockstest.ChainBuilder
 	wallet *saetest.Wallet
 	logger logging.Logger
+	db     ethdb.Database
 }
 
 // newSUT returns a new SUT. Any >= [logging.Error] on the logger will also
@@ -71,10 +74,10 @@ func newSUT(tb testing.TB, hooks hook.Points) (context.Context, SUT) {
 	alloc := saetest.MaxAllocFor(wallet.Addresses()...)
 	genesis := blockstest.NewGenesis(tb, db, config, alloc, blockstest.WithTrieDBConfig(tdbConfig))
 
-	chain := blockstest.NewChainBuilder(genesis)
-	chain.SetDefaultOptions(blockstest.WithBlockOptions(
+	opts := blockstest.WithBlockOptions(
 		blockstest.WithLogger(logger),
-	))
+	)
+	chain := blockstest.NewChainBuilder(genesis, opts)
 	src := BlockSource(func(h common.Hash, n uint64) *blocks.Block {
 		b, ok := chain.GetBlock(h, n)
 		if !ok {
@@ -85,13 +88,16 @@ func newSUT(tb testing.TB, hooks hook.Points) (context.Context, SUT) {
 
 	e, err := New(genesis, src, config, db, tdbConfig, hooks, logger)
 	require.NoError(tb, err, "New()")
-	tb.Cleanup(e.Close)
+	tb.Cleanup(func() {
+		require.NoErrorf(tb, e.Close(), "%T.Close()", e)
+	})
 
 	return ctx, SUT{
 		Executor: e,
 		chain:    chain,
 		wallet:   wallet,
 		logger:   logger,
+		db:       db,
 	}
 }
 
@@ -211,22 +217,22 @@ func TestSubscriptions(t *testing.T) {
 
 	opt := cmputils.BlocksByHash()
 	t.Run("ChainHeadEvents", func(t *testing.T) {
-		testEvents(t, gotChainHeadEvents, wantChainHeadEvents, opt)
+		testEvents(ctx, t, gotChainHeadEvents, wantChainHeadEvents, opt)
 	})
 	t.Run("ChainEvents", func(t *testing.T) {
-		testEvents(t, gotChainEvents, wantChainEvents, opt)
+		testEvents(ctx, t, gotChainEvents, wantChainEvents, opt)
 	})
 	t.Run("LogsEvents", func(t *testing.T) {
-		testEvents(t, gotLogsEvents, wantLogsEvents)
+		testEvents(ctx, t, gotLogsEvents, wantLogsEvents)
 	})
 }
 
-func testEvents[T any](tb testing.TB, got *saetest.EventCollector[T], want []T, opts ...cmp.Option) {
+func testEvents[T any](ctx context.Context, tb testing.TB, got *saetest.EventCollector[T], want []T, opts ...cmp.Option) {
 	tb.Helper()
 	// There is an invariant that stipulates [blocks.Block.MarkExecuted] MUST
 	// occur before sending external events, which means that we can't rely on
 	// [blocks.Block.WaitUntilExecuted] to avoid races.
-	got.WaitForAtLeast(len(want))
+	require.NoErrorf(tb, got.WaitForAtLeast(ctx, len(want)), "%T.WaitForAtLeast()", got)
 
 	require.NoError(tb, got.Unsubscribe())
 	if diff := cmp.Diff(want, got.All(), opts...); diff != "" {
@@ -714,4 +720,49 @@ var _ = blockstest.ModifyHeader((*blockNumSaver)(nil).store)
 
 func (e *blockNumSaver) store(h *types.Header) {
 	e.num = new(big.Int).Set(h.Number)
+}
+
+func TestSnapshotPersistence(t *testing.T) {
+	ctx, sut := newSUT(t, defaultHooks())
+
+	e, chain, wallet := sut.Executor, sut.chain, sut.wallet
+
+	const n = 10
+	for range n {
+		b := chain.NewBlock(t, types.Transactions{
+			wallet.SetNonceAndSign(t, 0, &types.LegacyTx{
+				To:       &common.Address{},
+				Gas:      params.TxGas,
+				GasPrice: big.NewInt(1),
+			}),
+		})
+		require.NoError(t, e.Enqueue(ctx, b), "Enqueue()")
+	}
+	last := chain.Last()
+	require.NoErrorf(t, last.WaitUntilExecuted(ctx), "%T.Last().WaitUntilExecuted()", chain)
+
+	require.NoErrorf(t, e.Close(), "%T.Close()", e)
+	// [newSUT] creates a cleanup that also calls [Executor.Close], which isn't
+	// valid usage. The simplest workaround is to just replace the quit channel
+	// so it can be closed again.
+	e.quit = make(chan struct{})
+
+	// The crux of the test is whether we can recover the EOA nonce using only a
+	// new set of snapshots, recovered from the databases.
+	conf := snapshot.Config{
+		CacheSize: 128,
+		NoBuild:   true, // i.e. MUST be loaded from disk
+	}
+	snaps, err := snapshot.New(conf, sut.db, e.StateCache().TrieDB(), last.PostExecutionStateRoot())
+	require.NoError(t, err, "snapshot.New(..., [post-execution state root of last-executed block])")
+	snap := snaps.Snapshot(last.PostExecutionStateRoot())
+	require.NotNilf(t, snap, "%T.Snapshot([post-execution state root of last-executed block])", snaps)
+
+	t.Run("snap.Account(EOA)", func(t *testing.T) {
+		eoa := wallet.Addresses()[0]
+		got, err := snap.Account(crypto.Keccak256Hash(eoa.Bytes()))
+		require.NoError(t, err)
+		require.NotNil(t, got) // yes, this is still possible with nil error
+		require.Equalf(t, uint64(n), got.Nonce, "%T.Nonce", got)
+	})
 }
