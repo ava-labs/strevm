@@ -27,7 +27,7 @@ type ChainVM[BP BlockProperties] interface {
 	BuildBlock(context.Context, *block.Context) (BP, error) // block.Context MAY be nil
 
 	// Transferred from [snowman.Block] and [block.WithVerifyContext].
-	VerifyBlock(context.Context, *block.Context, BP) error
+	VerifyBlock(context.Context, *block.Context, BP) error // block.Context MAY be nil
 	AcceptBlock(context.Context, BP) error
 	RejectBlock(context.Context, BP) error
 
@@ -110,7 +110,7 @@ func (b Block[BP]) Accept(ctx context.Context) error { return b.vm.AcceptBlock(c
 func (b Block[BP]) Reject(ctx context.Context) error { return b.vm.RejectBlock(ctx, b.b) }
 
 // ShouldVerifyWithContext returns true, indicating that the block
-// MUST be verified with by [VerifyWithContext].
+// SHOULD be verified with [VerifyWithContext].
 func (b Block[BP]) ShouldVerifyWithContext(ctx context.Context) (bool, error) {
 	return true, nil
 }
