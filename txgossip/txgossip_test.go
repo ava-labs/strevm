@@ -137,8 +137,8 @@ func TestExecutorIntegration(t *testing.T) {
 	}
 
 	t.Run("Iterate_after_Add", func(t *testing.T) {
-		// Note that calls to [txpool.TxPool] are only necessary in tests, and MUST
-		// NOT be replicated in production.
+		// Note that calls to [txpool.TxPool.Sync] are only necessary in tests,
+		// and MUST NOT be replicated in production.
 		require.NoErrorf(t, s.Pool.Sync(), "%T.Sync()", s.Pool)
 		require.Lenf(t, slices.Collect(s.Iterate), numTxs, "slices.Collect(%T.Iterate)", s.Set)
 	})
