@@ -78,8 +78,8 @@ func (ltx *LazyTransaction) effectiveGasTip(baseFee *uint256.Int) *uint256.Int {
 		return new(uint256.Int)
 	}
 
-	switch diff := new(uint256.Int).Sub(ltx.GasFeeCap, baseFee); {
-	case diff.Cmp(ltx.GasTipCap) == -1:
+	switch diff := new(uint256.Int).Sub(fee, baseFee); {
+	case diff.Cmp(tip) == -1:
 		return diff
 	default:
 		return tip
