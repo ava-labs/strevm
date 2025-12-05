@@ -37,8 +37,7 @@ type Points interface {
 	AfterBlock(*state.StateDB, *types.Block, types.Receipts)
 }
 
-// BeforeBlock is intended to be called before processing a block, with the gas
-// target sourced from [Points].
+// BeforeBlock is intended to be called before processing a block.
 func BeforeBlock(pts Points, rules params.Rules, sdb *state.StateDB, b *types.Block, clock *gastime.Time) error {
 	clock.FastForwardTo(
 		b.Time(),
@@ -47,8 +46,7 @@ func BeforeBlock(pts Points, rules params.Rules, sdb *state.StateDB, b *types.Bl
 	return pts.BeforeBlock(rules, sdb, b)
 }
 
-// AfterBlock is intended to be called after processing a block, with the gas
-// sourced from [types.Block.GasUsed] or equivalent.
+// AfterBlock is intended to be called after processing a block.
 func AfterBlock(pts Points, sdb *state.StateDB, b *types.Block, clock *gastime.Time, used gas.Gas, rs types.Receipts) error {
 	clock.Tick(used)
 	target := pts.GasTarget(b.Header())
