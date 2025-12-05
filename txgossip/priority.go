@@ -23,6 +23,9 @@ type LazyTransaction struct {
 // tip then chronologically. Transactions from the same sender are merely sorted
 // by increasing nonce.
 func (s *Set) TransactionsByPriority(filter txpool.PendingFilter) []*LazyTransaction {
+	// TODO(arr4n) investigate optimisations; e.g. skipping entire accounts once
+	// the block builder has found that a lower-nonced tx is invalid.
+
 	pending := s.Pool.Pending(filter)
 	var n int
 	for _, txs := range pending {
