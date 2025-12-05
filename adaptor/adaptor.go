@@ -46,7 +46,9 @@ type BlockProperties interface {
 	Timestamp() time.Time
 }
 
-type chainVMWithContext interface {
+// ChainVMWithContext is the union of [block.ChainVM] and
+// [block.ChainVMWithContext].
+type ChainVMWithContext interface {
 	block.ChainVM
 	block.BuildBlockWithContextChainVM
 	block.SetPreferenceWithContextChainVM
@@ -55,7 +57,7 @@ type chainVMWithContext interface {
 // Convert transforms a generic [ChainVM] into a [chainVMWithContext]. All
 // [snowman.Block] values returned by methods of the returned chain will be of
 // the concrete type [Block] with type parameter `BP`.
-func Convert[BP BlockProperties](vm ChainVM[BP]) chainVMWithContext {
+func Convert[BP BlockProperties](vm ChainVM[BP]) ChainVMWithContext {
 	return &adaptor[BP]{vm}
 }
 
