@@ -15,7 +15,6 @@ import (
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/params"
 
-	"github.com/ava-labs/strevm/blocks"
 	"github.com/ava-labs/strevm/gastime"
 	"github.com/ava-labs/strevm/intmath"
 	saeparams "github.com/ava-labs/strevm/params"
@@ -23,7 +22,9 @@ import (
 
 // Points define user-injected hook points.
 type Points interface {
-	GasTarget(parent *types.Header) gas.Gas
+	// GasTarget returns the amount of gas per second that the chain should
+	// target to consume after executing the provided block.
+	GasTarget(*types.Header) gas.Gas
 	// SubSecondBlockTime returns the sub-second portion of the block time based
 	// on the provided gas rate.
 	//
@@ -38,23 +39,24 @@ type Points interface {
 
 // BeforeBlock is intended to be called before processing a block, with the gas
 // target sourced from [Points].
-func BeforeBlock(pts Points, rules params.Rules, sdb *state.StateDB, b *blocks.Block, clock *gastime.Time) error {
+func BeforeBlock(pts Points, rules params.Rules, sdb *state.StateDB, b *types.Block, clock *gastime.Time) error {
 	clock.FastForwardTo(
-		b.BuildTime(),
+		b.Time(),
 		pts.SubSecondBlockTime(b.Header()),
 	)
-	target := pts.GasTarget(b.ParentBlock().Header())
-	if err := clock.SetTarget(target); err != nil {
-		return fmt.Errorf("%T.SetTarget() before block: %w", clock, err)
-	}
-	return pts.BeforeBlock(rules, sdb, b.EthBlock())
+	return pts.BeforeBlock(rules, sdb, b)
 }
 
 // AfterBlock is intended to be called after processing a block, with the gas
 // sourced from [types.Block.GasUsed] or equivalent.
-func AfterBlock(pts Points, sdb *state.StateDB, b *types.Block, clock *gastime.Time, used gas.Gas, rs types.Receipts) {
+func AfterBlock(pts Points, sdb *state.StateDB, b *types.Block, clock *gastime.Time, used gas.Gas, rs types.Receipts) error {
 	clock.Tick(used)
+	target := pts.GasTarget(b.Header())
+	if err := clock.SetTarget(target); err != nil {
+		return fmt.Errorf("%T.SetTarget() after block: %w", clock, err)
+	}
 	pts.AfterBlock(sdb, b, rs)
+	return nil
 }
 
 // MinimumGasConsumption MUST be used as the implementation for the respective

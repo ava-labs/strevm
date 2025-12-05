@@ -105,7 +105,7 @@ func (e *Executor) execute(b *blocks.Block, logger logging.Logger) error {
 
 	rules := e.chainConfig.Rules(b.Number(), true /*isMerge*/, b.BuildTime())
 	gasClock := parent.ExecutedByGasTime().Clone()
-	if err := hook.BeforeBlock(e.hooks, rules, stateDB, b, gasClock); err != nil {
+	if err := hook.BeforeBlock(e.hooks, rules, stateDB, b.EthBlock(), gasClock); err != nil {
 		return fmt.Errorf("before-block hook: %v", err)
 	}
 	perTxClock := gasClock.Time.Clone()
@@ -162,9 +162,8 @@ func (e *Executor) execute(b *blocks.Block, logger logging.Logger) error {
 		receipts[ti] = receipt
 	}
 	endTime := time.Now()
-	hook.AfterBlock(e.hooks, stateDB, b.EthBlock(), gasClock, blockGasConsumed, receipts)
-	if gasClock.Time.Compare(perTxClock) != 0 {
-		return fmt.Errorf("broken invariant: block-resolution clock @ %s does not match tx-resolution clock @ %s", gasClock.String(), perTxClock.String())
+	if err := hook.AfterBlock(e.hooks, stateDB, b.EthBlock(), gasClock, blockGasConsumed, receipts); err != nil {
+		return fmt.Errorf("after-block hook: %v", err)
 	}
 
 	logger.Debug(
