@@ -376,14 +376,18 @@ func TestAPIBackendSendTxSignatureMatch(_ *testing.T) {
 }
 
 func FuzzEffectiveGasTip(f *testing.F) {
-	rng := rand.New(rand.NewPCG(0, 0)) //nolint:gosec // CSPRNG is unnecessary for fuzzing
-	for range 100 {
-		var u [12]uint64
-		for i := range u {
-			u[i] = rng.Uint64()
+	// The goal of these seeds is to exercise all possible orderings of fee cap,
+	// tip cap and base fee, also including a nil base fee.
+	ints := []uint64{0, 1, 2}
+	for _, feeCap := range ints {
+		for _, tipCap := range ints {
+			for _, baseFee := range ints {
+				for _, nilBase := range []bool{true, false} {
+					const z = uint64(0)
+					f.Add(nilBase, feeCap, z, z, z, tipCap, z, z, z, baseFee, z, z, z)
+				}
+			}
 		}
-		nilBaseFee := rng.IntN(2) == 0
-		f.Add(nilBaseFee, u[0], u[1], u[2], u[3], u[4], u[5], u[6], u[7], u[8], u[9], u[10], u[11])
 	}
 
 	f.Fuzz(func(t *testing.T, nilB bool, f0, f1, f2, f3, t0, t1, t2, t3, b0, b1, b2, b3 uint64) {
