@@ -9,6 +9,7 @@ package blocks
 import (
 	"errors"
 	"fmt"
+	"math/big"
 	"runtime"
 	"sync/atomic"
 
@@ -83,14 +84,18 @@ func New(eth *types.Block, parent, lastSettled *Block, log logging.Logger) (*Blo
 }
 
 var (
-	errParentHashMismatch = errors.New("block-parent hash mismatch")
-	errHashMismatch       = errors.New("block hash mismatch")
+	errParentHashMismatch         = errors.New("block-parent hash mismatch")
+	errBlockHeightNotIncrementing = errors.New("block height not incrementing")
+	errHashMismatch               = errors.New("block hash mismatch")
 )
 
 func (b *Block) setAncestors(parent, lastSettled *Block) error {
 	if parent != nil {
 		if got, want := parent.Hash(), b.ParentHash(); got != want {
 			return fmt.Errorf("%w: constructing Block with parent hash %v; expecting %v", errParentHashMismatch, got, want)
+		}
+		if got, want := parent.Number(), new(big.Int).Sub(b.Number(), big.NewInt(1)); got.Cmp(want) != 0 {
+			return fmt.Errorf("%w: constructing Block with parent height %v and own height %v", errBlockHeightNotIncrementing, parent.Number(), b.Number())
 		}
 	}
 	b.ancestry.Store(&ancestry{
@@ -101,8 +106,8 @@ func (b *Block) setAncestors(parent, lastSettled *Block) error {
 }
 
 // CopyAncestorsFrom populates the [Block.ParentBlock] and [Block.LastSettled]
-// values, typically only required during database recovery. The source block
-// MUST have the same hash as b.
+// values, typically only required during database recovery or block
+// verification. The source block MUST have the same hash as b.
 //
 // Although the individual ancestral blocks are shallow copied, calling
 // [Block.MarkSettled] on either the source or destination will NOT clear the

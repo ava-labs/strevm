@@ -11,12 +11,19 @@ import (
 	"context"
 
 	"github.com/ava-labs/avalanchego/snow"
+	"github.com/ava-labs/avalanchego/snow/engine/common"
 )
 
 // VM implements all of [adaptor.ChainVM] except for the `Initialize` method,
 // which needs to be provided by a harness. In all cases, the harness MUST
 // provide a last-synchronous block, which MAY be the genesis.
 type VM struct{}
+
+// WaitForEvent blocks until the VM needs to signal the consensus engine, and
+// then returns the message to send.
+func (vm *VM) WaitForEvent(ctx context.Context) (common.Message, error) {
+	return 0, errUnimplemented
+}
 
 // SetState notifies the VM of a transition in the state lifecycle.
 func (vm *VM) SetState(ctx context.Context, state snow.State) error {

@@ -45,6 +45,9 @@ func (b *Block) MarkSettled() error {
 // self-settling so require special treatment as such behaviour is impossible
 // under SAE rules.
 //
+// MarkSynchronous and [Block.Synchronous] are not safe for concurrent use. This
+// method MUST therefore be called *before* instantiating the SAE VM.
+//
 // Wherever MarkSynchronous results in different behaviour to
 // [Block.MarkSettled], the respective methods are documented as such. They can
 // otherwise be considered identical.
@@ -62,6 +65,18 @@ func (b *Block) WaitUntilSettled(ctx context.Context) error {
 	case <-b.settled:
 		return nil
 	}
+}
+
+// Settled reports whether either of [Block.MarkSettled] or
+// [Block.MarkSynchronous] have been called without resulting in an error.
+func (b *Block) Settled() bool {
+	return b.ancestry.Load() == nil
+}
+
+// Synchronous reports whether [Block.MarkSynchronous] has been called without
+// resulting in an error.
+func (b *Block) Synchronous() bool {
+	return b.synchronous
 }
 
 func (b *Block) ancestor(ifSettledErrMsg string, get func(*ancestry) *Block) *Block {
@@ -127,7 +142,7 @@ func (b *Block) Settles() []*Block {
 // WhenChildSettles MUST only be called before the call to [Block.MarkSettled]
 // on `b`. The intention is that this method is called on the VM's preferred
 // block, which always meets this criterion. This is by definition of
-// settlement, which requires that at least one descendant block has already
+// settlement, which requires that at least one descendent block has already
 // been accepted, which the preference never has.
 //
 // WhenChildSettles is similar to [Block.Settles] but with different definitions
@@ -157,8 +172,12 @@ func settling(lastOfParent, lastOfCurr *Block) []*Block {
 // LastToSettleAt returns (a) the last block to be settled at time `settleAt` if
 // building on the specified parent block, and (b) a boolean to indicate if
 // settlement is currently possible. If the returned boolean is false, the
-// execution stream is lagging and LastToSettleAt can be called again after some
+// execution stream is lagging and LastToSettleAt MAY be called again after some
 // indeterminate delay.
+//
+// It is not valid to call LastToSettleAt with a parent on which
+// [Block.MarkSettled] was called directly (i.e. [Block.MarkSynchronous] does
+// not preclude the parent from usage here).
 //
 // See the Example for [Block.WhenChildSettles] for one usage of the returned
 // block.
@@ -184,7 +203,7 @@ func LastToSettleAt(settleAt uint64, parent *Block) (b *Block, ok bool) {
 
 	// The only way [Block.ParentBlock] can be nil is if `block` was already
 	// settled (see invariant in [Block]). If a block was already settled then
-	// only that or a later (i.e. unsettled) block can be returned by this loop,
+	// only it or a later (i.e. unsettled) block can be returned by this loop,
 	// therefore we have a guarantee that the loop update will never result in
 	// `block==nil`.
 	for block := parent; ; block = block.ParentBlock() {

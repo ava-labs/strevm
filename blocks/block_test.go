@@ -103,8 +103,14 @@ func TestSetAncestors(t *testing.T) {
 	}
 
 	t.Run("incompatible_destination_block", func(t *testing.T) {
-		ethB := newEthBlock(dest.Height()+1 /*mismatch*/, dest.BuildTime(), parent.EthBlock())
+		ethB := newEthBlock(source.Height(), source.BuildTime()+1 /*hash mismatch*/, parent.EthBlock())
 		dest := newBlock(t, ethB, nil, nil)
 		require.ErrorIs(t, dest.CopyAncestorsFrom(source), errHashMismatch)
+	})
+
+	t.Run("not_incrementing_height", func(t *testing.T) {
+		ethB := newEthBlock(parent.Height() /*not incrementing*/, parent.BuildTime(), parent.EthBlock())
+		_, err := New(ethB, parent, nil, nil)
+		require.ErrorIs(t, err, errBlockHeightNotIncrementing)
 	})
 }
