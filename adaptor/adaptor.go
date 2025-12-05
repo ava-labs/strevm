@@ -24,7 +24,7 @@ type ChainVM[BP BlockProperties] interface {
 
 	GetBlock(context.Context, ids.ID) (BP, error)
 	ParseBlock(context.Context, []byte) (BP, error)
-	BuildBlock(context.Context, *block.Context) (BP, error)
+	BuildBlock(context.Context, *block.Context) (BP, error) // block.Context MAY be nil
 
 	// Transferred from [snowman.Block] and [block.WithVerifyContext].
 	VerifyBlock(context.Context, *block.Context, BP) error
