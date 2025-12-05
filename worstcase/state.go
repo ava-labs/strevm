@@ -22,20 +22,6 @@ import (
 	"github.com/holiman/uint256"
 )
 
-const (
-	maxQSizeMultiplier = 2
-	// In order to avoid overflow when calculating the queue size, we cap the
-	// maximum gas rate to a safe value.
-	//
-	// This follows from:
-	//   maxBlockSize = maxRate * Tau * Lambda
-	//   maxQSizeInStart = maxQSizeMultiplier * maxBlockSize
-	//   maxQSizeInFinish = maxQSizeInStart + maxBlockSize
-	maxRate gas.Gas = math.MaxUint64 / saeparams.Tau / saeparams.Lambda / (maxQSizeMultiplier + 1)
-)
-
-type Op = hook.Op
-
 // A State assumes that every transaction will consume its stated
 // gas limit, tracking worst-case gas costs under this assumption.
 type State struct {
@@ -100,6 +86,17 @@ func (s *State) StartBlock(hdr *types.Header) error {
 	gastime.BeforeBlock(s.clock, s.pts, hdr)
 	s.blockSize = 0
 
+	const (
+		maxQSizeMultiplier = 2
+		// In order to avoid overflow when calculating the queue size, we cap
+		// the maximum gas rate to a safe value.
+		//
+		// This follows from:
+		//   maxBlockSize = maxRate * Tau * Lambda
+		//   maxQSizeInStart = maxQSizeMultiplier * maxBlockSize
+		//   maxQSizeInFinish = maxQSizeInStart + maxBlockSize
+		maxRate gas.Gas = math.MaxUint64 / saeparams.Tau / saeparams.Lambda / (maxQSizeMultiplier + 1)
+	)
 	r := min(s.clock.Rate(), maxRate)
 	s.maxBlockSize = r * saeparams.Tau * saeparams.Lambda
 	if maxQSize := maxQSizeMultiplier * s.maxBlockSize; s.qSize > maxQSize {
@@ -128,6 +125,8 @@ func (s *State) GasLimit() uint64 {
 func (s *State) BaseFee() *uint256.Int {
 	return s.baseFee
 }
+
+type Op = hook.Op
 
 var (
 	errGasFeeCapOverflow = errors.New("GasFeeCap() overflows uint256")
