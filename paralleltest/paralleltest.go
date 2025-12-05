@@ -1,3 +1,6 @@
+// Copyright (C) 2025, Ava Labs, Inc. All rights reserved.
+// See the file LICENSE for licensing terms.
+
 // Package paralleltest provides a test harness for [parallel] precompiles
 // executing under SAE.
 package paralleltest
@@ -16,6 +19,7 @@ import (
 	"github.com/ava-labs/libevm/libevm/hookstest"
 	"github.com/ava-labs/libevm/libevm/precompiles/parallel"
 	"github.com/ava-labs/libevm/params"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/ava-labs/strevm/blocks/blockstest"
@@ -25,7 +29,7 @@ import (
 
 // NewExecutor returns a new SAE block-execution queue with a precompile,
 // registered, at the provided address, that sources results from the handler.
-// The executor will have a single, genesis block, derived from the provded
+// The executor will have a single, genesis block, derived from the provided
 // alloc.
 func NewExecutor[CommonData, Prefetch any, R parallel.PrecompileResult, Aggregated any](
 	tb testing.TB,
@@ -54,7 +58,7 @@ func NewExecutor[CommonData, Prefetch any, R parallel.PrecompileResult, Aggregat
 	exec, err := saexec.New(gen, chain.GetBlock, config, db, nil, &hooks{par}, logger)
 	require.NoError(tb, err)
 	tb.Cleanup(func() {
-		exec.Close()
+		assert.NoError(tb, exec.Close())
 		par.Close()
 	})
 
