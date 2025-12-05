@@ -27,7 +27,7 @@ type ChainVM[BP BlockProperties] interface {
 	BuildBlock(context.Context, *block.Context) (BP, error) // block.Context MAY be nil
 
 	// Transferred from [snowman.Block] and [block.WithVerifyContext].
-	VerifyBlock(context.Context, *block.Context, BP) error
+	VerifyBlock(context.Context, *block.Context, BP) error // block.Context MAY be nil
 	AcceptBlock(context.Context, BP) error
 	RejectBlock(context.Context, BP) error
 
