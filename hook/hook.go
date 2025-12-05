@@ -30,7 +30,7 @@ type Points interface {
 	//
 	// For example, if the block timestamp is 10.75 seconds and the gas rate is
 	// 100 gas/second, then this method should return 75 gas.
-	SubSecondBlockTime(*types.Header) gas.Gas
+	SubSecondBlockTime(gasRate gas.Gas, h *types.Header) gas.Gas
 	// BeforeBlock is called immediately prior to executing the block.
 	BeforeBlock(params.Rules, *state.StateDB, *types.Block) error
 	// AfterBlock is called immediately after executing the block.
@@ -39,9 +39,10 @@ type Points interface {
 
 // BeforeBlock is intended to be called before processing a block.
 func BeforeBlock(pts Points, rules params.Rules, sdb *state.StateDB, b *types.Block, clock *gastime.Time) error {
+	r := clock.Rate()
 	clock.FastForwardTo(
 		b.Time(),
-		pts.SubSecondBlockTime(b.Header()),
+		pts.SubSecondBlockTime(r, b.Header()),
 	)
 	return pts.BeforeBlock(rules, sdb, b)
 }
