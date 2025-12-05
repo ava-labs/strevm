@@ -23,9 +23,16 @@ import (
 
 // Points define user-injected hook points.
 type Points interface {
-	GasTarget(parent *types.Block) gas.Gas
-	SubSecondBlockTime(*types.Block) gas.Gas
+	GasTarget(parent *types.Header) gas.Gas
+	// SubSecondBlockTime returns the sub-second portion of the block time based
+	// on the provided gas rate.
+	//
+	// For example, if the block timestamp is 10.75 seconds and the gas rate is
+	// 100 gas/second, then this method should return 75 gas.
+	SubSecondBlockTime(*types.Header) gas.Gas
+	// BeforeBlock is called immediately prior to executing the block.
 	BeforeBlock(params.Rules, *state.StateDB, *types.Block) error
+	// AfterBlock is called immediately after executing the block.
 	AfterBlock(*state.StateDB, *types.Block, types.Receipts)
 }
 
@@ -34,9 +41,9 @@ type Points interface {
 func BeforeBlock(pts Points, rules params.Rules, sdb *state.StateDB, b *blocks.Block, clock *gastime.Time) error {
 	clock.FastForwardTo(
 		b.BuildTime(),
-		pts.SubSecondBlockTime(b.EthBlock()),
+		pts.SubSecondBlockTime(b.Header()),
 	)
-	target := pts.GasTarget(b.ParentBlock().EthBlock())
+	target := pts.GasTarget(b.ParentBlock().Header())
 	if err := clock.SetTarget(target); err != nil {
 		return fmt.Errorf("%T.SetTarget() before block: %w", clock, err)
 	}
