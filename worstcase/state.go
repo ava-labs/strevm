@@ -16,7 +16,6 @@ import (
 	"github.com/ava-labs/libevm/core/txpool"
 	"github.com/ava-labs/libevm/core/types"
 	libparams "github.com/ava-labs/libevm/params"
-	"github.com/ava-labs/strevm/blocks"
 	"github.com/ava-labs/strevm/gastime"
 	"github.com/ava-labs/strevm/hook"
 	"github.com/ava-labs/strevm/params"
@@ -80,26 +79,23 @@ var (
 	ErrQueueFull            = errors.New("queue full")
 )
 
-// StartBlock fast-forwards the [gastime.Time] to the header's timestamp
-// before updating the gas target.
+// StartBlock updates the worst-case state to the beginning of the provided
+// block.
+//
+// It is not necessary for [types.Header.GasLimit] or [types.Header.BaseFee] to
+// be set.
 //
 // If the queue is too full to accept another block, [ErrQueueFull] is returned.
 //
 // This function populates the header's GasLimit and BaseFee fields.
-func (s *State) StartBlock(
-	hdr *types.Header,
-	parent *blocks.Block,
-) error {
+func (s *State) StartBlock(hdr *types.Header) error {
 	if c := s.curr; c != nil {
 		if num, next := c.Number.Uint64(), hdr.Number.Uint64(); next != num+1 {
 			return fmt.Errorf("%w: %d then %d", errNonConsecutiveBlocks, num, next)
 		}
 	}
 
-	if err := hook.BeforeBuildBlock(s.pts, hdr, parent, s.clock); err != nil {
-		return err
-	}
-
+	gastime.BeforeBlock(s.clock, s.pts, hdr)
 	s.blockSize = 0
 
 	r := min(s.clock.Rate(), maxRate)
@@ -110,7 +106,7 @@ func (s *State) StartBlock(
 
 	s.baseFee = s.clock.BaseFee()
 
-	s.curr = hdr
+	s.curr = types.CopyHeader(hdr)
 	s.curr.GasLimit = uint64(s.maxBlockSize)
 	s.curr.BaseFee = s.baseFee.ToBig()
 
@@ -121,16 +117,15 @@ func (s *State) StartBlock(
 	return nil
 }
 
-// FinishBlock advances the includer's [gastime.Time] to account for all
-// included operations in the current block.
-func (s *State) FinishBlock() {
-	hook.AfterBuildBlock(s.clock, s.blockSize)
-	s.qSize += s.blockSize
+// GasLimit returns the available gas limit for the current block.
+func (s *State) GasLimit() uint64 {
+	return uint64(s.maxBlockSize)
 }
 
-// ErrBlockTooFull is returned by [State.ApplyTx] and [State.Apply] if inclusion
-// would cause the block to exceed the gas limit.
-var ErrBlockTooFull = errors.New("block too full")
+// BaseFee returns the worst-case base fee for the current block.
+func (s *State) BaseFee() *uint256.Int {
+	return s.baseFee
+}
 
 // ApplyTx validates the transaction both intrinsically and in the context of
 // worst-case gas assumptions of all previous operations. This provides an upper
@@ -172,6 +167,10 @@ func (s *State) ApplyTx(tx *types.Transaction) error {
 		// To is not populated here because this transaction may revert.
 	})
 }
+
+// ErrBlockTooFull is returned by [State.ApplyTx] and [State.Apply] if inclusion
+// would cause the block to exceed the gas limit.
+var ErrBlockTooFull = errors.New("block too full")
 
 // Apply attempts to apply the operation to this state.
 //
@@ -221,5 +220,15 @@ func (s *State) Apply(o hook.Op) error {
 	for to, amount := range o.To {
 		s.db.AddBalance(to, &amount)
 	}
+	return nil
+}
+
+// FinishBlock advances the includer's [gastime.Time] to account for all
+// included operations in the current block.
+func (s *State) FinishBlock() error {
+	if err := gastime.AfterBlock(s.clock, s.blockSize, s.pts, s.curr); err != nil {
+		return fmt.Errorf("finishing block gas time update: %w", err)
+	}
+	s.qSize += s.blockSize
 	return nil
 }

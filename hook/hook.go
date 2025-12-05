@@ -8,84 +8,30 @@
 package hook
 
 import (
-	"fmt"
-
 	"github.com/ava-labs/avalanchego/vms/components/gas"
 	"github.com/ava-labs/libevm/core/state"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/params"
 
-	"github.com/ava-labs/strevm/blocks"
-	"github.com/ava-labs/strevm/gastime"
 	"github.com/ava-labs/strevm/intmath"
 	saeparams "github.com/ava-labs/strevm/params"
 )
 
 // Points define user-injected hook points.
 type Points interface {
-	GasTarget(parent *types.Block) gas.Gas
-	SubSecondBlockTime(*types.Header) gas.Gas
+	// GasTarget returns the amount of gas per second that the chain should
+	// target to consume after executing the provided block.
+	GasTarget(*types.Header) gas.Gas
+	// SubSecondBlockTime returns the sub-second portion of the block time based
+	// on the provided gas rate.
+	//
+	// For example, if the block timestamp is 10.75 seconds and the gas rate is
+	// 100 gas/second, then this method should return 75 gas.
+	SubSecondBlockTime(gasRate gas.Gas, h *types.Header) gas.Gas
+	// BeforeBlock is called immediately prior to executing the block.
 	BeforeBlock(params.Rules, *state.StateDB, *types.Block) error
+	// AfterBlock is called immediately after executing the block.
 	AfterBlock(*state.StateDB, *types.Block, types.Receipts)
-}
-
-// BeforeBuildBlock is intended to be called before building a block.
-func BeforeBuildBlock(
-	pts Points,
-	h *types.Header,
-	parent *blocks.Block,
-	clock *gastime.Time,
-) error {
-	clock.FastForwardTo(
-		h.Time,
-		pts.SubSecondBlockTime(h),
-	)
-	target := pts.GasTarget(parent.EthBlock())
-	if err := clock.SetTarget(target); err != nil {
-		return fmt.Errorf("%T.SetTarget() before block: %w", clock, err)
-	}
-	return nil
-}
-
-// AfterBlock is intended to be called after building a block, with the gas
-// sourced from [types.Block.GasUsed] or equivalent.
-func AfterBuildBlock(
-	clock *gastime.Time,
-	used gas.Gas,
-) {
-	clock.Tick(used)
-}
-
-// BeforeExecuteBlock is intended to be called before executing a block.
-func BeforeExecuteBlock(
-	pts Points,
-	rules params.Rules,
-	sdb *state.StateDB,
-	b *blocks.Block,
-	clock *gastime.Time,
-) error {
-	clock.FastForwardTo(
-		b.BuildTime(),
-		pts.SubSecondBlockTime(b.Header()),
-	)
-	target := pts.GasTarget(b.ParentBlock().EthBlock())
-	if err := clock.SetTarget(target); err != nil {
-		return fmt.Errorf("%T.SetTarget() before block: %w", clock, err)
-	}
-	return pts.BeforeBlock(rules, sdb, b.EthBlock())
-}
-
-// AfterExecuteBlock is intended to be called after executing a block.
-func AfterExecuteBlock(
-	pts Points,
-	sdb *state.StateDB,
-	b *types.Block,
-	clock *gastime.Time,
-	used gas.Gas,
-	rs types.Receipts,
-) {
-	clock.Tick(used)
-	pts.AfterBlock(sdb, b, rs)
 }
 
 // MinimumGasConsumption MUST be used as the implementation for the respective

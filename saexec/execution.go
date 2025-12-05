@@ -19,7 +19,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/ava-labs/strevm/blocks"
-	"github.com/ava-labs/strevm/hook"
+	"github.com/ava-labs/strevm/gastime"
 )
 
 var errExecutorClosed = errors.New("saexec.Executor closed")
@@ -32,6 +32,8 @@ func (e *Executor) Enqueue(ctx context.Context, block *blocks.Block) error {
 	for {
 		select {
 		case e.queue <- block:
+			e.lastEnqueued.Store(block)
+			e.enqueueEvents.Send(block.EthBlock())
 			return nil
 
 		case <-ctx.Done():
@@ -101,12 +103,14 @@ func (e *Executor) execute(b *blocks.Block, logger logging.Logger) error {
 		return fmt.Errorf("state.New(%#x, ...): %v", parent.PostExecutionStateRoot(), err)
 	}
 
-	rules := e.chainConfig.Rules(b.Number(), true /*isMerge*/, b.BuildTime())
 	gasClock := parent.ExecutedByGasTime().Clone()
-	if err := hook.BeforeExecuteBlock(e.hooks, rules, stateDB, b, gasClock); err != nil {
+	gastime.BeforeBlock(gasClock, e.hooks, b.Header())
+	perTxClock := gasClock.Time.Clone()
+
+	rules := e.chainConfig.Rules(b.Number(), true /*isMerge*/, b.BuildTime())
+	if err := e.hooks.BeforeBlock(rules, stateDB, b.EthBlock()); err != nil {
 		return fmt.Errorf("before-block hook: %v", err)
 	}
-	perTxClock := gasClock.Time.Clone()
 
 	header := types.CopyHeader(b.Header())
 	header.BaseFee = gasClock.BaseFee().ToBig()
@@ -159,10 +163,10 @@ func (e *Executor) execute(b *blocks.Block, logger logging.Logger) error {
 		// to access them before the end of the block.
 		receipts[ti] = receipt
 	}
+	e.hooks.AfterBlock(stateDB, b.EthBlock(), receipts)
 	endTime := time.Now()
-	hook.AfterExecuteBlock(e.hooks, stateDB, b.EthBlock(), gasClock, blockGasConsumed, receipts)
-	if gasClock.Time.Compare(perTxClock) != 0 {
-		return fmt.Errorf("broken invariant: block-resolution clock @ %s does not match tx-resolution clock @ %s", gasClock.String(), perTxClock.String())
+	if err := gastime.AfterBlock(gasClock, blockGasConsumed, e.hooks, b.Header()); err != nil {
+		return fmt.Errorf("after-block gas time update: %w", err)
 	}
 
 	logger.Debug(

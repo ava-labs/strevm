@@ -8,6 +8,7 @@ import (
 
 	"github.com/ava-labs/avalanchego/database"
 	"github.com/ava-labs/avalanchego/ids"
+	"github.com/ava-labs/avalanchego/snow/engine/snowman/block"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/rlp"
 
@@ -22,13 +23,13 @@ func (vm *VM) ParseBlock(context.Context, []byte) (*blocks.Block, error) {
 }
 
 // BuildBlock builds a new block, using the last block passed to
-// [VM.SetPreference] as the parent.
-func (vm *VM) BuildBlock(context.Context) (*blocks.Block, error) {
+// [VM.SetPreference] as the parent and the given block context, which MAY be nil.
+func (vm *VM) BuildBlock(context.Context, *block.Context) (*blocks.Block, error) {
 	return nil, errUnimplemented
 }
 
-// VerifyBlock validates the block.
-func (vm *VM) VerifyBlock(context.Context, *blocks.Block) error {
+// VerifyBlock validates the block with the given block context, which MAY be nil.
+func (vm *VM) VerifyBlock(context.Context, *block.Context, *blocks.Block) error {
 	return errUnimplemented
 }
 
