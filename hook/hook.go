@@ -9,13 +9,34 @@ package hook
 
 import (
 	"github.com/ava-labs/avalanchego/vms/components/gas"
+	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core/state"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/params"
+	"github.com/holiman/uint256"
 
 	"github.com/ava-labs/strevm/intmath"
 	saeparams "github.com/ava-labs/strevm/params"
 )
+
+type Account struct {
+	Nonce  uint64
+	Amount uint256.Int
+}
+
+type Op struct {
+	// Gas consumed by this operation
+	Gas gas.Gas
+	// GasPrice this operation is willing to spend
+	GasPrice uint256.Int
+	// From specifies the set of accounts and the authorization of funds to be
+	// removed from the accounts.
+	From map[common.Address]Account
+	// To specifies the amount to increase account balances by. These funds are
+	// not necessarily tied to the funds consumed in the From field. The sum of
+	// the To amounts may even exceed the sum of the From amounts.
+	To map[common.Address]uint256.Int
+}
 
 // Points define user-injected hook points.
 type Points interface {
@@ -30,6 +51,10 @@ type Points interface {
 	SubSecondBlockTime(gasRate gas.Gas, h *types.Header) gas.Gas
 	// BeforeBlock is called immediately prior to executing the block.
 	BeforeBlock(params.Rules, *state.StateDB, *types.Block) error
+	// ExtraBlockOps returns operations outside of the normal EVM state changes
+	// to perform while executing the block. These operations should be
+	// performed after executing the normal ethereum transactions in the block.
+	ExtraBlockOps(*types.Block) ([]Op, error)
 	// AfterBlock is called immediately after executing the block.
 	AfterBlock(*state.StateDB, *types.Block, types.Receipts)
 }

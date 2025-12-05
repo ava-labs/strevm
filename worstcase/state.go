@@ -15,10 +15,10 @@ import (
 	"github.com/ava-labs/libevm/core/state"
 	"github.com/ava-labs/libevm/core/txpool"
 	"github.com/ava-labs/libevm/core/types"
-	libparams "github.com/ava-labs/libevm/params"
+	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/strevm/gastime"
 	"github.com/ava-labs/strevm/hook"
-	"github.com/ava-labs/strevm/params"
+	saeparams "github.com/ava-labs/strevm/params"
 	"github.com/holiman/uint256"
 )
 
@@ -31,14 +31,16 @@ const (
 	//   maxBlockSize = maxRate * Tau * Lambda
 	//   maxQSizeInStart = maxQSizeMultiplier * maxBlockSize
 	//   maxQSizeInFinish = maxQSizeInStart + maxBlockSize
-	maxRate gas.Gas = math.MaxUint64 / params.Tau / params.Lambda / (maxQSizeMultiplier + 1)
+	maxRate gas.Gas = math.MaxUint64 / saeparams.Tau / saeparams.Lambda / (maxQSizeMultiplier + 1)
 )
+
+type Op = hook.Op
 
 // A State assumes that every transaction will consume its stated
 // gas limit, tracking worst-case gas costs under this assumption.
 type State struct {
 	pts    hook.Points
-	config *libparams.ChainConfig
+	config *params.ChainConfig
 
 	db    *state.StateDB
 	clock *gastime.Time
@@ -47,7 +49,7 @@ type State struct {
 
 	baseFee *uint256.Int
 	curr    *types.Header
-	rules   libparams.Rules
+	rules   params.Rules
 	signer  types.Signer
 }
 
@@ -62,7 +64,7 @@ type State struct {
 // [State.StartBlock] MUST be called before the first call to [State.Include].
 func NewState(
 	pts hook.Points,
-	config *libparams.ChainConfig,
+	config *params.ChainConfig,
 	db *state.StateDB,
 	fromExecTime *gastime.Time,
 ) *State {
@@ -76,7 +78,7 @@ func NewState(
 
 var (
 	errNonConsecutiveBlocks = errors.New("non-consecutive block numbers")
-	ErrQueueFull            = errors.New("queue full")
+	errQueueFull            = errors.New("queue full")
 )
 
 // StartBlock updates the worst-case state to the beginning of the provided
@@ -99,9 +101,9 @@ func (s *State) StartBlock(hdr *types.Header) error {
 	s.blockSize = 0
 
 	r := min(s.clock.Rate(), maxRate)
-	s.maxBlockSize = r * params.Tau * params.Lambda
+	s.maxBlockSize = r * saeparams.Tau * saeparams.Lambda
 	if maxQSize := maxQSizeMultiplier * s.maxBlockSize; s.qSize > maxQSize {
-		return fmt.Errorf("%w: current size %d exceeds maximum size %d", ErrQueueFull, s.qSize, maxQSize)
+		return fmt.Errorf("%w: current size %d exceeds maximum size %d", errQueueFull, s.qSize, maxQSize)
 	}
 
 	s.baseFee = s.clock.BaseFee()
@@ -127,6 +129,11 @@ func (s *State) BaseFee() *uint256.Int {
 	return s.baseFee
 }
 
+var (
+	errGasFeeCapOverflow = errors.New("GasFeeCap() overflows uint256")
+	errCostOverflow      = errors.New("Cost() overflows uint256")
+)
+
 // ApplyTx validates the transaction both intrinsically and in the context of
 // worst-case gas assumptions of all previous operations. This provides an upper
 // bound on the total cost of the transaction such that a nil error returned by
@@ -147,7 +154,7 @@ func (s *State) ApplyTx(tx *types.Transaction) error {
 		MinTip:  big.NewInt(0),
 	}
 	if err := txpool.ValidateTransaction(tx, s.curr, s.signer, opts); err != nil {
-		return err
+		return fmt.Errorf("validating transaction: %w", err)
 	}
 
 	from, err := types.Sender(s.signer, tx)
@@ -155,13 +162,23 @@ func (s *State) ApplyTx(tx *types.Transaction) error {
 		return fmt.Errorf("determining sender: %w", err)
 	}
 
-	return s.Apply(hook.Op{
+	gasPrice, overflow := uint256.FromBig(tx.GasFeeCap())
+	if overflow {
+		return errGasFeeCapOverflow
+	}
+
+	amount, overflow := uint256.FromBig(tx.Cost())
+	if overflow {
+		return errCostOverflow
+	}
+
+	return s.Apply(Op{
 		Gas:      gas.Gas(tx.Gas()),
-		GasPrice: *uint256.MustFromBig(tx.GasFeeCap()),
+		GasPrice: *gasPrice,
 		From: map[common.Address]hook.Account{
 			from: {
 				Nonce:  tx.Nonce(),
-				Amount: *uint256.MustFromBig(tx.Cost()),
+				Amount: *amount,
 			},
 		},
 		// To is not populated here because this transaction may revert.
@@ -180,9 +197,9 @@ var ErrBlockTooFull = errors.New("block too full")
 // Operations are invalid if:
 // - The operation consumes more gas than the block has available.
 // - The operation specifies too low of a gas price.
-// - The operation specifies a From account with an incorrect or invalid nonce.
-// - The operation specifies a From account with an insufficient balance.
-func (s *State) Apply(o hook.Op) error {
+// - The operation is from an account with an incorrect or invalid nonce.
+// - The operation is from an account with an insufficient balance.
+func (s *State) Apply(o Op) error {
 	// ----- Gas -----
 	if o.Gas > s.maxBlockSize-s.blockSize {
 		return ErrBlockTooFull

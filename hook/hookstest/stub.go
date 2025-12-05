@@ -37,5 +37,10 @@ func (*Stub) BeforeBlock(params.Rules, *state.StateDB, *types.Block) error {
 	return nil
 }
 
+// ExtraBlockOps always returns no operations and nil.
+func (*Stub) ExtraBlockOps(*types.Block) ([]hook.Op, error) {
+	return nil, nil
+}
+
 // AfterBlock is a no-op.
 func (*Stub) AfterBlock(*state.StateDB, *types.Block, types.Receipts) {}
