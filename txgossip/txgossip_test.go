@@ -376,7 +376,7 @@ func TestAPIBackendSendTxSignatureMatch(_ *testing.T) {
 }
 
 func FuzzEffectiveGasTip(f *testing.F) {
-	rng := rand.New(rand.NewPCG(0, 0))
+	rng := rand.New(rand.NewPCG(0, 0)) //nolint:gosec // CSPRNG is unnecessary for fuzzing
 	for range 100 {
 		var u [12]uint64
 		for i := range u {
