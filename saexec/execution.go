@@ -32,6 +32,8 @@ func (e *Executor) Enqueue(ctx context.Context, block *blocks.Block) error {
 	for {
 		select {
 		case e.queue <- block:
+			e.lastEnqueued.Store(block)
+			e.enqueueEvents.Send(block.EthBlock())
 			return nil
 
 		case <-ctx.Done():
