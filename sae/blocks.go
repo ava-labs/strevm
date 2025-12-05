@@ -23,12 +23,12 @@ func (vm *VM) ParseBlock(context.Context, []byte) (*blocks.Block, error) {
 }
 
 // BuildBlock builds a new block, using the last block passed to
-// [VM.SetPreference] as the parent and the given block context.
+// [VM.SetPreference] as the parent and the given block context, which MAY be nil.
 func (vm *VM) BuildBlock(context.Context, *block.Context) (*blocks.Block, error) {
 	return nil, errUnimplemented
 }
 
-// VerifyBlock validates the block with the given block context.
+// VerifyBlock validates the block with the given block context, which MAY be nil.
 func (vm *VM) VerifyBlock(context.Context, *block.Context, *blocks.Block) error {
 	return errUnimplemented
 }

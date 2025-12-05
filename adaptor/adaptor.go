@@ -31,7 +31,7 @@ type ChainVM[BP BlockProperties] interface {
 	AcceptBlock(context.Context, BP) error
 	RejectBlock(context.Context, BP) error
 
-	SetPreference(context.Context, ids.ID) error
+	SetPreference(context.Context, ids.ID, *block.Context) error // block.Context MAY be nil
 	LastAccepted(context.Context) (ids.ID, error)
 	GetBlockIDAtHeight(context.Context, uint64) (ids.ID, error)
 }
@@ -49,6 +49,7 @@ type BlockProperties interface {
 type chainVMWithContext interface {
 	block.ChainVM
 	block.BuildBlockWithContextChainVM
+	block.SetPreferenceWithContextChainVM
 }
 
 // Convert transforms a generic [ChainVM] into a [chainVMWithContext]. All
@@ -98,6 +99,14 @@ func (vm adaptor[BP]) BuildBlock(ctx context.Context) (snowman.Block, error) {
 
 func (vm adaptor[BP]) BuildBlockWithContext(ctx context.Context, blockCtx *block.Context) (snowman.Block, error) {
 	return vm.newBlock(vm.ChainVM.BuildBlock(ctx, blockCtx))
+}
+
+func (vm adaptor[BP]) SetPreference(ctx context.Context, blkID ids.ID) error {
+	return vm.ChainVM.SetPreference(ctx, blkID, nil)
+}
+
+func (vm adaptor[BP]) SetPreferenceWithContext(ctx context.Context, blkID ids.ID, blockCtx *block.Context) error {
+	return vm.ChainVM.SetPreference(ctx, blkID, blockCtx)
 }
 
 // Verify calls VerifyBlock(b) on the [ChainVM] that created b.
