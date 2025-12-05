@@ -8,6 +8,8 @@ import (
 
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core/txpool"
+	"github.com/ava-labs/libevm/core/types"
+	"github.com/holiman/uint256"
 )
 
 // A LazyTransaction couples a [txpool.LazyTransaction] with its sender.
@@ -42,13 +44,41 @@ func (s *Set) TransactionsByPriority(filter txpool.PendingFilter) []*LazyTransac
 	slices.SortStableFunc(all, func(a, b *LazyTransaction) int {
 		if a.Sender == b.Sender {
 			// [txpool.TxPool.Pending] already returns each slice in nonce order
-			// and we're performing a stable sort.
+			// and we're performing a stable sort. A direct comparison of nonces
+			// would require resolving the lazy transaction.
 			return 0
 		}
-		if tip := a.GasTipCap.Cmp(b.GasTipCap); tip != 0 {
+
+		aTip := a.effectiveGasTip(filter.BaseFee)
+		bTip := b.effectiveGasTip(filter.BaseFee)
+		if tip := aTip.Cmp(bTip); tip != 0 {
 			return -tip // Higher tips first
 		}
+
 		return a.Time.Compare(b.Time)
 	})
 	return all
+}
+
+// effectiveGasTip is equivalent to [types.Transaction.EffectiveGasTip] but
+// assumes that `baseFee` is either nil or <= the transaction's fee cap. This
+// assumption avoids the need for [types.ErrGasFeeCapTooLow]. If this invariant
+// is broken, effectiveGasTip returns zero.
+func (ltx *LazyTransaction) effectiveGasTip(baseFee *uint256.Int) *uint256.Int {
+	fee := ltx.GasFeeCap
+	tip := ltx.GasTipCap
+
+	if baseFee == nil {
+		return tip
+	}
+	if fee.Cmp(baseFee) <= 0 {
+		return new(uint256.Int)
+	}
+
+	switch diff := new(uint256.Int).Sub(ltx.GasFeeCap, baseFee); {
+	case diff.Cmp(ltx.GasTipCap) == -1:
+		return diff
+	default:
+		return tip
+	}
 }

@@ -5,6 +5,7 @@ package txgossip
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"math/big"
@@ -28,6 +29,7 @@ import (
 	"github.com/ava-labs/libevm/libevm/ethapi"
 	"github.com/ava-labs/libevm/params"
 	"github.com/google/go-cmp/cmp"
+	"github.com/holiman/uint256"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -369,4 +371,55 @@ func TestAPIBackendSendTxSignatureMatch(_ *testing.T) {
 	fn := b.SendTx //nolint:ineffassign,staticcheck
 	fn = (*Set)(nil).SendTx
 	_ = fn
+}
+
+func FuzzEffectiveGasTip(f *testing.F) {
+	rng := rand.New(rand.NewPCG(0, 0))
+	for range 100 {
+		var u [12]uint64
+		for i := range u {
+			u[i] = rng.Uint64()
+		}
+		nilBaseFee := rng.IntN(2) == 0
+		f.Add(nilBaseFee, u[0], u[1], u[2], u[3], u[4], u[5], u[6], u[7], u[8], u[9], u[10], u[11])
+	}
+
+	f.Fuzz(func(t *testing.T, nilB bool, f0, f1, f2, f3, t0, t1, t2, t3, b0, b1, b2, b3 uint64) {
+		feeCap := (*uint256.Int)(&[4]uint64{f0, f1, f2, f3})
+		tipCap := (*uint256.Int)(&[4]uint64{t0, t1, t2, t3})
+		var (
+			baseFee    *uint256.Int
+			bigBaseFee *big.Int
+		)
+		if !nilB {
+			baseFee = (*uint256.Int)(&[4]uint64{b0, b1, b2, b3})
+			bigBaseFee = baseFee.ToBig()
+		}
+
+		tx := types.NewTx(&types.DynamicFeeTx{
+			GasFeeCap: feeCap.ToBig(),
+			GasTipCap: tipCap.ToBig(),
+		})
+		want, err := tx.EffectiveGasTip(bigBaseFee)
+		if errors.Is(err, types.ErrGasFeeCapTooLow) {
+			want = big.NewInt(0)
+		} else {
+			require.NoErrorf(t, err, "%T.EffectiveGasTip(...)", tx)
+		}
+
+		ltx := &LazyTransaction{
+			LazyTransaction: &txpool.LazyTransaction{
+				GasFeeCap: feeCap,
+				GasTipCap: tipCap,
+			},
+		}
+		got := ltx.effectiveGasTip(baseFee)
+
+		if got.ToBig().Cmp(want) != 0 {
+			t.Logf("Fee cap: %v", feeCap)
+			t.Logf("Tip cap: %v", tipCap)
+			t.Logf("Base fee: %v", baseFee)
+			t.Errorf("%T.effectiveGasTip(...) got %v; want %v", ltx, got, want)
+		}
+	})
 }
