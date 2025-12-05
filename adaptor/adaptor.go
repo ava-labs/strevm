@@ -46,8 +46,9 @@ type BlockProperties interface {
 	Timestamp() time.Time
 }
 
-// ChainVMWithContext is the union of [block.ChainVM] and
-// [block.ChainVMWithContext].
+// ChainVMWithContext is the union of [block.ChainVM],
+// [block.BuildBlockWithContextChainVM], and
+// [block.SetPreferenceWithContextChainVM].
 type ChainVMWithContext interface {
 	block.ChainVM
 	block.BuildBlockWithContextChainVM
