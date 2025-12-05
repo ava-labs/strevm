@@ -82,3 +82,12 @@ func (ltx *LazyTransaction) effectiveGasTip(baseFee *uint256.Int) *uint256.Int {
 		return tip
 	}
 }
+
+// Resolve shadows the equivalent method on the [txpool.LazyTransaction],
+// extending its return signature to include a boolean that is true i.f.f. the
+// transaction is non-nil. This avoids the foot-gun of not knowing that a nil
+// check needs to be performed.
+func (ltx *LazyTransaction) Resolve() (*types.Transaction, bool) {
+	tx := ltx.LazyTransaction.Resolve()
+	return tx, tx != nil
+}

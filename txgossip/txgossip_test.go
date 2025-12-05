@@ -152,20 +152,22 @@ func TestExecutorIntegration(t *testing.T) {
 		txs  types.Transactions
 		last *LazyTransaction
 	)
-	for _, tx := range s.TransactionsByPriority(txpool.PendingFilter{}) {
-		txs = append(txs, tx.Resolve())
+	for _, ltx := range s.TransactionsByPriority(txpool.PendingFilter{}) {
+		tx, ok := ltx.Resolve()
+		require.True(t, ok, "%T.Resolve() `ok` on tx returned by %T.TransactionsByPriority()", ltx, s)
+		txs = append(txs, tx)
 
 		t.Run("priority_ordering", func(t *testing.T) {
-			defer func() { last = tx }()
+			defer func() { last = ltx }()
 
 			switch {
 			case last == nil:
-			case tx.Sender == last.Sender:
-				require.Equal(t, last.Tx.Nonce()+1, tx.Tx.Nonce(), "incrementing nonce for same sender")
-			case tx.GasTipCap.Eq(last.GasTipCap):
-				require.True(t, last.Time.Before(tx.Time), "equal gas tips ordered by first seen")
+			case ltx.Sender == last.Sender:
+				require.Equal(t, last.Tx.Nonce()+1, ltx.Tx.Nonce(), "incrementing nonce for same sender")
+			case ltx.GasTipCap.Eq(last.GasTipCap):
+				require.True(t, last.Time.Before(ltx.Time), "equal gas tips ordered by first seen")
 			default:
-				require.Greater(t, last.GasTipCap.Uint64(), tx.GasTipCap.Uint64(), "larger gas tips first")
+				require.Greater(t, last.GasTipCap.Uint64(), ltx.GasTipCap.Uint64(), "larger gas tips first")
 			}
 		})
 	}
