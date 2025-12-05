@@ -5,32 +5,32 @@ package txgossip
 
 import (
 	"context"
+	"errors"
 
 	"github.com/ava-labs/avalanchego/network/p2p/gossip"
-	"github.com/ava-labs/libevm/core/txpool"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/libevm/ethapi"
 )
 
 // SendTx implements the respective method of [ethapi.Backend], accepting
 // transactions submitted via the `eth_sendTransaction` RPC method. Unlike
-// [gossip.BloomSet.Add], transactions added via this method will be
-// push-gossiped; see [Set.RegisterPushGossiper].
+// [gossip.BloomSet.Add], transactions added via this method will not be added
+// to the Bloom filter, but will be push-gossiped; see
+// [Set.RegisterPushGossiper].
 func (s *Set) SendTx(ctx context.Context, ethTx *types.Transaction) error {
 	var _ ethapi.Backend // protect the import for [comment] rendering
 
-	// We filter out [txpool.ErrAlreadyKnown] in [txSet.Add] but want to keep it
-	// for RPCs.
-	if s.set.pool.Has(ethTx.Hash()) {
-		return txpool.ErrAlreadyKnown
-	}
+	// Note: the Bloom filter is only necessary for pull gossip, which is only
+	// done between validator nodes. Validators are encouraged to NOT expose RPC
+	// APIs (i.e. this method) and SHOULD therefore only add transactions via
+	// [gossip.BloomSet.Add]. Hence there is a MECE separation between
+	// pull+Bloom vs API+push under recommended usage patterns.
 
-	tx := Transaction{ethTx}
-	if err := s.BloomSet.Add(tx); err != nil {
+	if err := errors.Join(s.set.addToPool(true /*local*/, ethTx)...); err != nil {
 		return err
 	}
 	for _, add := range s.pushTo {
-		add(tx)
+		add(Transaction{ethTx})
 	}
 	return nil
 }

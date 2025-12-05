@@ -84,13 +84,17 @@ type txSet struct {
 }
 
 func (s *txSet) Add(tx Transaction) error {
-	errs := s.pool.Add([]*types.Transaction{tx.Transaction}, false, false)
+	errs := s.addToPool(false, tx.Transaction)
 	for i, err := range errs {
 		if errors.Is(err, txpool.ErrAlreadyKnown) {
 			errs[i] = nil
 		}
 	}
 	return errors.Join(errs...)
+}
+
+func (s *txSet) addToPool(local bool, txs ...*types.Transaction) []error {
+	return s.pool.Add(txs, local, false /*sync*/)
 }
 
 func (s *txSet) Has(id ids.ID) bool {
