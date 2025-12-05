@@ -12,6 +12,7 @@ import (
 	"github.com/ava-labs/libevm/core/state"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/params"
+
 	"github.com/ava-labs/strevm/intmath"
 	saeparams "github.com/ava-labs/strevm/params"
 )
@@ -19,7 +20,7 @@ import (
 // Points define user-injected hook points.
 type Points interface {
 	// GasTarget returns the amount of gas per second that the chain should
-	// target to consume after executing the given block.
+	// target to consume after executing the provided block.
 	GasTarget(*types.Header) gas.Gas
 	// SubSecondBlockTime returns the sub-second portion of the block time based
 	// on the provided gas rate.

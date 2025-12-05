@@ -9,8 +9,53 @@ import (
 	"github.com/ava-labs/avalanchego/vms/components/gas"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/strevm/hook/hookstest"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// TestTargetUpdateTiming verifies that the gas target is modified in AfterBlock
+// rather than BeforeBlock.
+func TestTargetUpdateTiming(t *testing.T) {
+	const (
+		initialTime           = 42
+		initialTarget gas.Gas = 1_600_000
+		initialExcess         = 1_234_567_890
+	)
+	tm := New(initialTime, initialTarget, initialExcess)
+
+	const (
+		newTime   uint64 = initialTime + 1
+		newTarget        = initialTarget + 100_000
+	)
+	hook := &hookstest.Stub{
+		Target: newTarget,
+	}
+	header := &types.Header{
+		Time: newTime,
+	}
+
+	initialPrice := tm.Price()
+	BeforeBlock(tm, hook, header)
+	assert.Equal(t, newTime, tm.Unix(), "Unix time advanced by BeforeBlock()")
+	assert.Equal(t, initialTarget, tm.Target(), "Target not changed by BeforeBlock()")
+
+	enforcedPrice := tm.Price()
+	assert.LessOrEqual(t, enforcedPrice, initialPrice, "Price should not increase in BeforeBlock()")
+	if t.Failed() {
+		t.FailNow()
+	}
+
+	const (
+		secondsOfGasUsed         = 3
+		initialRate              = initialTarget * TargetToRate
+		used             gas.Gas = initialRate * secondsOfGasUsed
+		expectedEndTime          = newTime + secondsOfGasUsed
+	)
+	require.NoError(t, AfterBlock(tm, used, hook, header), "AfterBlock()")
+	assert.Equal(t, expectedEndTime, tm.Unix(), "Unix time advanced by AfterBlock()")
+	assert.Equal(t, newTarget, tm.Target(), "Target updated by AfterBlock()")
+	assert.GreaterOrEqual(t, tm.Price(), enforcedPrice, "Price should not decrease in AfterBlock()")
+}
 
 func FuzzWorstCasePrice(f *testing.F) {
 	f.Fuzz(func(
