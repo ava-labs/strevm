@@ -27,6 +27,7 @@ func TestTargetUpdateTiming(t *testing.T) {
 		initialExcess         = 1_234_567_890
 	)
 	tm := gastime.New(initialTime, initialTarget, initialExcess)
+	initialRate := tm.Rate()
 
 	const (
 		newTime   uint64 = initialTime + 1
@@ -52,11 +53,10 @@ func TestTargetUpdateTiming(t *testing.T) {
 	}
 
 	const (
-		secondsOfGasUsed         = 3
-		initialRate              = initialTarget * gastime.TargetToRate
-		used             gas.Gas = initialRate * secondsOfGasUsed
-		expectedEndTime          = newTime + secondsOfGasUsed
+		secondsOfGasUsed = 3
+		expectedEndTime  = newTime + secondsOfGasUsed
 	)
+	used := initialRate * secondsOfGasUsed
 	require.NoError(t, AfterBlock(hook, nil, block, tm, used, nil), "AfterBlock()")
 	assert.Equal(t, expectedEndTime, tm.Unix(), "Unix time advanced by AfterBlock()")
 	assert.Equal(t, newTarget, tm.Target(), "Target updated by AfterBlock()")
