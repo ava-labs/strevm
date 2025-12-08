@@ -47,7 +47,7 @@ func TestTargetUpdateTiming(t *testing.T) {
 	assert.Equal(t, initialTarget, tm.Target(), "Target not changed by BeforeBlock()")
 
 	enforcedPrice := tm.Price()
-	assert.LessOrEqual(t, enforcedPrice, initialPrice, "Price should not increase in BeforeBlock()")
+	assert.Less(t, enforcedPrice, initialPrice, "Price should not increase in BeforeBlock()")
 	if t.Failed() {
 		t.FailNow()
 	}
@@ -60,5 +60,5 @@ func TestTargetUpdateTiming(t *testing.T) {
 	require.NoError(t, AfterBlock(hook, nil, block, tm, used, nil), "AfterBlock()")
 	assert.Equal(t, expectedEndTime, tm.Unix(), "Unix time advanced by AfterBlock()")
 	assert.Equal(t, newTarget, tm.Target(), "Target updated by AfterBlock()")
-	assert.GreaterOrEqual(t, tm.Price(), enforcedPrice, "Price should not decrease in AfterBlock()")
+	assert.Greater(t, tm.Price(), enforcedPrice, "Price should not decrease in AfterBlock()")
 }
