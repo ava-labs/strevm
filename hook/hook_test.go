@@ -9,12 +9,13 @@ import (
 	"github.com/ava-labs/avalanchego/vms/components/gas"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/params"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/ava-labs/strevm/gastime"
 	. "github.com/ava-labs/strevm/hook"
 	"github.com/ava-labs/strevm/hook/hookstest"
 	"github.com/ava-labs/strevm/saetest"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 // TestTargetUpdateTiming verifies that the gas target is modified in AfterBlock
