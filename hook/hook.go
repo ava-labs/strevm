@@ -25,15 +25,15 @@ import (
 type Points interface {
 	GasTarget(parent *types.Header) gas.Gas
 	// SubSecondBlockTime returns the sub-second portion of the block time based
-	// on the provided gas rate.
+	// on the gas rate.
 	//
 	// For example, if the block timestamp is 10.75 seconds and the gas rate is
 	// 100 gas/second, then this method should return 75 gas.
 	SubSecondBlockTime(*types.Header) gas.Gas
-	// BeforeBlock is called immediately prior to executing the block.
-	BeforeBlock(params.Rules, *state.StateDB, *types.Block) error
-	// AfterBlock is called immediately after executing the block.
-	AfterBlock(*state.StateDB, *types.Block, types.Receipts)
+	// BeforeExecutingBlock is called immediately prior to executing the block.
+	BeforeExecutingBlock(params.Rules, *state.StateDB, *types.Block) error
+	// AfterExecutingBlock is called immediately after executing the block.
+	AfterExecutingBlock(*state.StateDB, *types.Block, types.Receipts)
 }
 
 // BeforeBlock is intended to be called before processing a block, with the gas
@@ -47,14 +47,14 @@ func BeforeBlock(pts Points, rules params.Rules, sdb *state.StateDB, b *blocks.B
 	if err := clock.SetTarget(target); err != nil {
 		return fmt.Errorf("%T.SetTarget() before block: %w", clock, err)
 	}
-	return pts.BeforeBlock(rules, sdb, b.EthBlock())
+	return pts.BeforeExecutingBlock(rules, sdb, b.EthBlock())
 }
 
 // AfterBlock is intended to be called after processing a block, with the gas
 // sourced from [types.Block.GasUsed] or equivalent.
 func AfterBlock(pts Points, sdb *state.StateDB, b *types.Block, clock *gastime.Time, used gas.Gas, rs types.Receipts) {
 	clock.Tick(used)
-	pts.AfterBlock(sdb, b, rs)
+	pts.AfterExecutingBlock(sdb, b, rs)
 }
 
 // MinimumGasConsumption MUST be used as the implementation for the respective
