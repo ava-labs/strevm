@@ -21,19 +21,19 @@ type Stub struct {
 var _ hook.Points = (*Stub)(nil)
 
 // GasTarget ignores its argument and always returns [Stub.Target].
-func (s *Stub) GasTarget(parent *types.Block) gas.Gas {
+func (s *Stub) GasTarget(*types.Header) gas.Gas {
 	return s.Target
 }
 
 // SubSecondBlockTime time ignores its argument and always returns 0.
-func (*Stub) SubSecondBlockTime(*types.Block) gas.Gas {
+func (*Stub) SubSecondBlockTime(*types.Header) gas.Gas {
 	return 0
 }
 
-// BeforeBlock is a no-op that always returns nil.
-func (*Stub) BeforeBlock(params.Rules, *state.StateDB, *types.Block) error {
+// BeforeExecutingBlock is a no-op that always returns nil.
+func (*Stub) BeforeExecutingBlock(params.Rules, *state.StateDB, *types.Block) error {
 	return nil
 }
 
-// AfterBlock is a no-op.
-func (*Stub) AfterBlock(*state.StateDB, *types.Block, types.Receipts) {}
+// AfterExecutingBlock is a no-op.
+func (*Stub) AfterExecutingBlock(*state.StateDB, *types.Block, types.Receipts) {}
