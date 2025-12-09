@@ -72,7 +72,7 @@ jobs:
           echo "targets=$(grep --recursive --include '**_test.go' -oP "^func \KFuzz[^(]+" | xargs jq -c -n '$ARGS.positional' --args)" >> $GITHUB_OUTPUT
 
   go_fuzz:
-    needs: [ find_fuzz_targets ]
+    needs: [find_fuzz_targets]
     runs-on: ubuntu-latest
     strategy:
       matrix:
