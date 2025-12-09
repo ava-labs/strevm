@@ -19,19 +19,19 @@ import (
 
 // Points define user-injected hook points.
 type Points interface {
-	// GasTarget returns the amount of gas per second that the chain should
-	// target to consume after executing the provided block.
-	GasTarget(*types.Header) gas.Gas
+	// GasTargetAfter returns the gas target that should go into effect
+	// immediately after the provided block.
+	GasTargetAfter(*types.Header) gas.Gas
 	// SubSecondBlockTime returns the sub-second portion of the block time based
 	// on the provided gas rate.
 	//
 	// For example, if the block timestamp is 10.75 seconds and the gas rate is
 	// 100 gas/second, then this method should return 75 gas.
 	SubSecondBlockTime(gasRate gas.Gas, h *types.Header) gas.Gas
-	// BeforeBlock is called immediately prior to executing the block.
-	BeforeBlock(params.Rules, *state.StateDB, *types.Block) error
-	// AfterBlock is called immediately after executing the block.
-	AfterBlock(*state.StateDB, *types.Block, types.Receipts)
+	// BeforeExecutingBlock is called immediately prior to executing the block.
+	BeforeExecutingBlock(params.Rules, *state.StateDB, *types.Block) error
+	// AfterExecutingBlock is called immediately after executing the block.
+	AfterExecutingBlock(*state.StateDB, *types.Block, types.Receipts)
 }
 
 // MinimumGasConsumption MUST be used as the implementation for the respective

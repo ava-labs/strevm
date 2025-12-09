@@ -15,16 +15,17 @@ import (
 // BeforeBlock is intended to be called before processing a block, with the
 // timestamp sourced from [hook.Points] and [types.Header].
 func BeforeBlock(clock *Time, pts hook.Points, h *types.Header) {
-	r := clock.Rate()
-	toFrac := pts.SubSecondBlockTime(r, h)
-	clock.FastForwardTo(h.Time, toFrac)
+	clock.FastForwardTo(
+		h.Time,
+		pts.SubSecondBlockTime(clock.Rate(), h),
+	)
 }
 
 // AfterBlock is intended to be called after processing a block, with the target
 // sourced from [hook.Points] and [types.Header].
 func AfterBlock(clock *Time, used gas.Gas, pts hook.Points, h *types.Header) error {
 	clock.Tick(used)
-	target := pts.GasTarget(h)
+	target := pts.GasTargetAfter(h)
 	if err := clock.SetTarget(target); err != nil {
 		return fmt.Errorf("%T.SetTarget() after block: %w", clock, err)
 	}

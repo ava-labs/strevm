@@ -22,6 +22,7 @@ func TestTargetUpdateTiming(t *testing.T) {
 		initialExcess         = 1_234_567_890
 	)
 	tm := New(initialTime, initialTarget, initialExcess)
+	initialRate := tm.Rate()
 
 	const (
 		newTime   uint64 = initialTime + 1
@@ -38,23 +39,25 @@ func TestTargetUpdateTiming(t *testing.T) {
 	BeforeBlock(tm, hook, header)
 	assert.Equal(t, newTime, tm.Unix(), "Unix time advanced by BeforeBlock()")
 	assert.Equal(t, initialTarget, tm.Target(), "Target not changed by BeforeBlock()")
-
+	// While the price technically could remain the same, being more strict
+	// ensures the test is meaningful.
 	enforcedPrice := tm.Price()
-	assert.LessOrEqual(t, enforcedPrice, initialPrice, "Price should not increase in BeforeBlock()")
+	assert.Less(t, enforcedPrice, initialPrice, "Price should not increase in BeforeBlock()")
 	if t.Failed() {
 		t.FailNow()
 	}
 
 	const (
-		secondsOfGasUsed         = 3
-		initialRate              = initialTarget * TargetToRate
-		used             gas.Gas = initialRate * secondsOfGasUsed
-		expectedEndTime          = newTime + secondsOfGasUsed
+		secondsOfGasUsed = 3
+		expectedEndTime  = newTime + secondsOfGasUsed
 	)
+	used := initialRate * secondsOfGasUsed
 	require.NoError(t, AfterBlock(tm, used, hook, header), "AfterBlock()")
 	assert.Equal(t, expectedEndTime, tm.Unix(), "Unix time advanced by AfterBlock()")
 	assert.Equal(t, newTarget, tm.Target(), "Target updated by AfterBlock()")
-	assert.GreaterOrEqual(t, tm.Price(), enforcedPrice, "Price should not decrease in AfterBlock()")
+	// While the price technically could remain the same, being more strict
+	// ensures the test is meaningful.
+	assert.Greater(t, tm.Price(), enforcedPrice, "Price should not decrease in AfterBlock()")
 }
 
 func FuzzWorstCasePrice(f *testing.F) {
