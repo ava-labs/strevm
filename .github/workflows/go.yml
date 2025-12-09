@@ -11,6 +11,9 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
+permissions:
+  contents: read
+
 jobs:
   # If adding a new job, add it to the `needs` list of the `go` job as this is
   # what gates PRs.
