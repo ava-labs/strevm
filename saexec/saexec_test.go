@@ -559,11 +559,12 @@ func FuzzOpCodes(f *testing.F) {
 		}
 		b := sut.chain.NewBlock(t, txs)
 
-		// Ensure that >=WARN logs become failures.
-		var _ *saetest.TBLogger = sut.logger
+		// Ensure that the SUT [logging.Logger] remains of this type so >=WARN
+		// logs become failures.
+		var logger *saetest.TBLogger = sut.logger
 		// Errors in execution (i.e. reverts) are fine, but we don't want them
 		// bubbling up any further.
-		require.NoErrorf(t, sut.execute(b, sut.log), "%T.execute()", sut.Executor)
+		require.NoErrorf(t, sut.execute(b, logger), "%T.execute()", sut.Executor)
 	})
 }
 
