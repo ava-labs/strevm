@@ -36,9 +36,10 @@ type EthBlockOption = options.Option[ethBlockProperties]
 func NewEthBlock(parent *types.Block, txs types.Transactions, opts ...EthBlockOption) *types.Block {
 	props := &ethBlockProperties{
 		header: &types.Header{
-			Number:     new(big.Int).Add(parent.Number(), big.NewInt(1)),
-			ParentHash: parent.Hash(),
-			BaseFee:    big.NewInt(0),
+			Number:        new(big.Int).Add(parent.Number(), big.NewInt(1)),
+			ParentHash:    parent.Hash(),
+			BaseFee:       big.NewInt(0),
+			ExcessBlobGas: new(uint64),
 		},
 	}
 	props = options.ApplyTo(props, opts...)
