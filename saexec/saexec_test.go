@@ -80,7 +80,7 @@ func newSUT(tb testing.TB, hooks hook.Points) (context.Context, SUT) {
 
 	wallet := saetest.NewUNSAFEWallet(tb, 1, types.LatestSigner(config))
 	alloc := saetest.MaxAllocFor(wallet.Addresses()...)
-	genesis := blockstest.NewGenesis(tb, db, config, alloc, blockstest.WithTrieDBConfig(tdbConfig))
+	genesis := blockstest.NewGenesis(tb, db, config, alloc, blockstest.WithTrieDBConfig(tdbConfig), blockstest.WithGasTarget(1e6))
 
 	opts := blockstest.WithBlockOptions(
 		blockstest.WithLogger(logger),
