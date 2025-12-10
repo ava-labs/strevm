@@ -1,5 +1,8 @@
-// Copyright (C) ((20\d\d\-2025)|(2025)), Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2025, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
+
+// Package worstcase provides the worst-case balance and nonce tracking needed
+// to safely include transactions that are guaranteed to be valid.
 
 package worstcase
 
@@ -23,8 +26,15 @@ import (
 	saeparams "github.com/ava-labs/strevm/params"
 )
 
-// A State assumes that every transaction will consume its stated
-// gas limit, tracking worst-case gas costs under this assumption.
+// State tracks the worst-case gas price and account state as operations are
+// executed.
+//
+// Usage of the [State] should follow the pattern:
+//  1. [State.StartBlock] for each block to be included.
+//  2. [State.GasLimit] and [State.BaseFee] to query the block's parameters.
+//  3. [State.ApplyTx] or [State.Apply] for each transaction or operation to
+//     include in the block.
+//  4. [State.FinishBlock] to finalize the block's gas time.
 type State struct {
 	hooks  hook.Points
 	config *params.ChainConfig
@@ -40,15 +50,13 @@ type State struct {
 	signer  types.Signer
 }
 
-// NewState constructs a new includer.
+// NewState constructs a new worst-case state.
 //
 // The [state.StateDB] MUST be opened at the state immediately following the
-// last-executed block upon which the includer is building. Similarly, the
+// last-executed block upon which the worst-case state is built. Similarly, the
 // [gastime.Time] MUST be a clone of the gas clock at the same point. The
 // StateDB will only be used as a scratchpad for tracking accounts, and will NOT
 // be committed.
-//
-// [State.StartBlock] MUST be called before the first call to [State.Include].
 func NewState(
 	hooks hook.Points,
 	config *params.ChainConfig,
@@ -77,8 +85,6 @@ var (
 // be set.
 //
 // If the queue is too full to accept another block, [ErrQueueFull] is returned.
-//
-// This function populates the header's GasLimit and BaseFee fields.
 func (s *State) StartBlock(hdr *types.Header) error {
 	if c := s.curr; c != nil {
 		if num, next := c.Number.Uint64(), hdr.Number.Uint64(); next != num+1 {
@@ -247,8 +253,7 @@ func (s *State) Apply(o Op) error {
 	return nil
 }
 
-// FinishBlock advances the includer's [gastime.Time] to account for all
-// included operations in the current block.
+// FinishBlock advances the [gastime.Time] in preparation for the next block.
 func (s *State) FinishBlock() error {
 	if err := s.clock.AfterBlock(s.blockSize, s.hooks, s.curr); err != nil {
 		return fmt.Errorf("finishing block gas time update: %w", err)
