@@ -104,7 +104,7 @@ func (e *Executor) execute(b *blocks.Block, logger logging.Logger) error {
 	}
 
 	gasClock := parent.ExecutedByGasTime().Clone()
-	gastime.BeforeBlock(gasClock, e.hooks, b.Header())
+	gasClock.BeforeBlock(gasClock, e.hooks, b.Header())
 	perTxClock := gasClock.Time.Clone()
 
 	rules := e.chainConfig.Rules(b.Number(), true /*isMerge*/, b.BuildTime())
