@@ -8,6 +8,7 @@
 package blockstest
 
 import (
+	"math"
 	"math/big"
 	"slices"
 	"testing"
@@ -122,14 +123,14 @@ func NewGenesis(tb testing.TB, db ethdb.Database, config *params.ChainConfig, al
 
 type genesisConfig struct {
 	tdbConfig *triedb.Config
-	target    gas.Gas
+	target    *gas.Gas
 }
 
 func (gc *genesisConfig) gasTarget() gas.Gas {
-	if gc.target == 0 {
-		return 1
+	if gc.target == nil {
+		return math.MaxUint64
 	}
-	return gc.target
+	return *gc.target
 }
 
 // A GenesisOption configures [NewGenesis].
@@ -145,6 +146,6 @@ func WithTrieDBConfig(tc *triedb.Config) GenesisOption {
 // WithGasTarget overrides the gas target used by [NewGenesis].
 func WithGasTarget(target gas.Gas) GenesisOption {
 	return options.Func[genesisConfig](func(gc *genesisConfig) {
-		gc.target = target
+		gc.target = &target
 	})
 }
