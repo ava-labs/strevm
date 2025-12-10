@@ -8,9 +8,10 @@ import (
 
 	"github.com/ava-labs/avalanchego/vms/components/gas"
 	"github.com/ava-labs/libevm/core/types"
-	"github.com/ava-labs/strevm/hook/hookstest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/ava-labs/strevm/hook/hookstest"
 )
 
 // TestTargetUpdateTiming verifies that the gas target is modified in AfterBlock
@@ -130,8 +131,8 @@ func FuzzWorstCasePrice(f *testing.F) {
 
 			// The crux of this test lies in the maintaining of this inequality
 			// through the use of `limit` instead of `used`
-			worstcase.AfterBlock(block.limit, hook, header)
-			actual.AfterBlock(block.used, hook, header)
+			require.NoError(t, worstcase.AfterBlock(block.limit, hook, header), "worstcase.AfterBlock()")
+			require.NoError(t, actual.AfterBlock(block.used, hook, header), "actual.AfterBlock()")
 		}
 	})
 }
