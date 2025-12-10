@@ -8,6 +8,7 @@
 package blockstest
 
 import (
+	"math"
 	"math/big"
 	"slices"
 	"testing"
@@ -37,9 +38,10 @@ type EthBlockOption = options.Option[ethBlockProperties]
 func NewEthBlock(parent *types.Block, txs types.Transactions, opts ...EthBlockOption) *types.Block {
 	props := &ethBlockProperties{
 		header: &types.Header{
-			Number:     new(big.Int).Add(parent.Number(), big.NewInt(1)),
-			ParentHash: parent.Hash(),
-			BaseFee:    big.NewInt(0),
+			Number:        new(big.Int).Add(parent.Number(), big.NewInt(1)),
+			ParentHash:    parent.Hash(),
+			BaseFee:       big.NewInt(0),
+			ExcessBlobGas: new(uint64),
 		},
 	}
 	props = options.ApplyTo(props, opts...)
@@ -122,14 +124,14 @@ func NewGenesis(tb testing.TB, db ethdb.Database, config *params.ChainConfig, al
 
 type genesisConfig struct {
 	tdbConfig *triedb.Config
-	target    gas.Gas
+	target    *gas.Gas
 }
 
 func (gc *genesisConfig) gasTarget() gas.Gas {
-	if gc.target == 0 {
-		return 1
+	if gc.target == nil {
+		return math.MaxUint64
 	}
-	return gc.target
+	return *gc.target
 }
 
 // A GenesisOption configures [NewGenesis].
@@ -145,6 +147,6 @@ func WithTrieDBConfig(tc *triedb.Config) GenesisOption {
 // WithGasTarget overrides the gas target used by [NewGenesis].
 func WithGasTarget(target gas.Gas) GenesisOption {
 	return options.Func[genesisConfig](func(gc *genesisConfig) {
-		gc.target = target
+		gc.target = &target
 	})
 }
