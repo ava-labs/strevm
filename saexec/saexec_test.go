@@ -61,7 +61,7 @@ type SUT struct {
 	*Executor
 	chain  *blockstest.ChainBuilder
 	wallet *saetest.Wallet
-	logger logging.Logger
+	logger *saetest.TBLogger
 	db     ethdb.Database
 }
 
@@ -74,7 +74,7 @@ func newSUT(tb testing.TB, hooks hook.Points) (context.Context, SUT) {
 	logger := saetest.NewTBLogger(tb, logging.Warn)
 	ctx := logger.CancelOnError(tb.Context())
 
-	config := params.AllDevChainProtocolChanges
+	config := params.MergedTestChainConfig
 	db := rawdb.NewMemoryDatabase()
 	tdbConfig := &triedb.Config{}
 
@@ -551,6 +551,32 @@ func asBytes(ops ...vm.OpCode) []byte {
 	return buf
 }
 
+func FuzzOpCodes(f *testing.F) {
+	// SUT setup is too expensive to only fuzz a single transaction, but the
+	// total number is arbitrary.
+	f.Fuzz(func(t *testing.T, c0, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13, c14, c15 []byte) {
+		_, sut := newSUT(t, defaultHooks())
+
+		var txs types.Transactions
+		for _, code := range [][]byte{c0, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13, c14, c15} {
+			txs = append(txs, sut.wallet.SetNonceAndSign(t, 0, &types.LegacyTx{
+				To:       nil, // i.e. contract creation, resulting in `code` being executed
+				GasPrice: big.NewInt(1),
+				Gas:      30e6,
+				Data:     code,
+			}))
+		}
+		b := sut.chain.NewBlock(t, txs)
+
+		// Ensure that the SUT [logging.Logger] remains of this type so >=WARN
+		// logs become failures.
+		var logger *saetest.TBLogger = sut.logger
+		// Errors in execution (i.e. reverts) are fine, but we don't want them
+		// bubbling up any further.
+		require.NoErrorf(t, sut.execute(b, logger), "%T.execute()", sut.Executor)
+	})
+}
+
 func TestContextualOpCodes(t *testing.T) {
 	ctx, sut := newSUT(t, defaultHooks())
 
@@ -660,6 +686,14 @@ func TestContextualOpCodes(t *testing.T) {
 			name:      "CHAINID",
 			code:      logTopOfStackAfter(vm.CHAINID),
 			wantTopic: bigToHash(sut.ChainConfig().ChainID),
+		},
+		{
+			name: "BLOBBASEFEE",
+			code: logTopOfStackAfter(vm.BLOBBASEFEE),
+			header: func(h *types.Header) {
+				h.ExcessBlobGas = new(uint64)
+			},
+			wantTopic: common.Hash{31: 1},
 		},
 		// BASEFEE is tested in [TestGasAccounting] because getting the clock
 		// excess to a specific value is complicated.
