@@ -2,8 +2,8 @@
 // See the file LICENSE for licensing terms.
 
 // Package worstcase provides the worst-case balance and nonce tracking needed
-// to safely include transactions that are guaranteed to be valid.
-
+// to safely include transactions that are guaranteed to be valid during
+// execution.
 package worstcase
 
 import (
