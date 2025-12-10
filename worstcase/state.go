@@ -62,6 +62,8 @@ func NewState(
 	}
 }
 
+const rateToMaxBlockSize = saeparams.Tau * saeparams.Lambda
+
 var (
 	errNonConsecutiveBlocks = errors.New("non-consecutive block numbers")
 	errQueueFull            = errors.New("queue full")
@@ -95,10 +97,10 @@ func (s *State) StartBlock(hdr *types.Header) error {
 		//   maxBlockSize = maxRate * Tau * Lambda
 		//   maxQSizeInStart = maxQSizeMultiplier * maxBlockSize
 		//   maxQSizeInFinish = maxQSizeInStart + maxBlockSize
-		maxRate gas.Gas = math.MaxUint64 / saeparams.Tau / saeparams.Lambda / (maxQSizeMultiplier + 1)
+		maxRate gas.Gas = math.MaxUint64 / rateToMaxBlockSize / (maxQSizeMultiplier + 1)
 	)
 	r := min(s.clock.Rate(), maxRate)
-	s.maxBlockSize = r * saeparams.Tau * saeparams.Lambda
+	s.maxBlockSize = r * rateToMaxBlockSize
 	if maxQSize := maxQSizeMultiplier * s.maxBlockSize; s.qSize > maxQSize {
 		return fmt.Errorf("%w: current size %d exceeds maximum size %d", errQueueFull, s.qSize, maxQSize)
 	}
