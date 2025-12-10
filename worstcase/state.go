@@ -25,7 +25,7 @@ import (
 // A State assumes that every transaction will consume its stated
 // gas limit, tracking worst-case gas costs under this assumption.
 type State struct {
-	pts    hook.Points
+	hooks  hook.Points
 	config *params.ChainConfig
 
 	db    *state.StateDB
@@ -49,13 +49,13 @@ type State struct {
 //
 // [State.StartBlock] MUST be called before the first call to [State.Include].
 func NewState(
-	pts hook.Points,
+	hooks hook.Points,
 	config *params.ChainConfig,
 	db *state.StateDB,
 	fromExecTime *gastime.Time,
 ) *State {
 	return &State{
-		pts:    pts,
+		hooks:  hooks,
 		config: config,
 		db:     db,
 		clock:  fromExecTime,
@@ -83,7 +83,7 @@ func (s *State) StartBlock(hdr *types.Header) error {
 		}
 	}
 
-	s.clock.BeforeBlock(s.pts, hdr)
+	s.clock.BeforeBlock(s.hooks, hdr)
 	s.blockSize = 0
 
 	const (
@@ -126,7 +126,10 @@ func (s *State) BaseFee() *uint256.Int {
 	return s.baseFee
 }
 
-type Op = hook.Op
+type (
+	Account = hook.Account
+	Op      = hook.Op
+)
 
 var (
 	errGasFeeCapOverflow = errors.New("GasFeeCap() overflows uint256")
@@ -161,23 +164,21 @@ func (s *State) ApplyTx(tx *types.Transaction) error {
 		return fmt.Errorf("determining sender: %w", err)
 	}
 
-	gasPrice, overflow := uint256.FromBig(tx.GasFeeCap())
-	if overflow {
+	var gasPrice uint256.Int
+	if overflow := gasPrice.SetFromBig(tx.GasFeeCap()); overflow {
 		return errGasFeeCapOverflow
 	}
-
-	amount, overflow := uint256.FromBig(tx.Cost())
-	if overflow {
+	var amount uint256.Int
+	if overflow := amount.SetFromBig(tx.Cost()); overflow {
 		return errCostOverflow
 	}
-
 	return s.Apply(Op{
 		Gas:      gas.Gas(tx.Gas()),
-		GasPrice: *gasPrice,
+		GasPrice: gasPrice,
 		From: map[common.Address]hook.Account{
 			from: {
 				Nonce:  tx.Nonce(),
-				Amount: *amount,
+				Amount: amount,
 			},
 		},
 		// To is not populated here because this transaction may revert.
@@ -242,7 +243,7 @@ func (s *State) Apply(o Op) error {
 // FinishBlock advances the includer's [gastime.Time] to account for all
 // included operations in the current block.
 func (s *State) FinishBlock() error {
-	if err := s.clock.AfterBlock(s.blockSize, s.pts, s.curr); err != nil {
+	if err := s.clock.AfterBlock(s.blockSize, s.hooks, s.curr); err != nil {
 		return fmt.Errorf("finishing block gas time update: %w", err)
 	}
 	s.qSize += s.blockSize
