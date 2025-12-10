@@ -19,7 +19,6 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/ava-labs/strevm/blocks"
-	"github.com/ava-labs/strevm/gastime"
 )
 
 var errExecutorClosed = errors.New("saexec.Executor closed")
@@ -104,11 +103,11 @@ func (e *Executor) execute(b *blocks.Block, logger logging.Logger) error {
 	}
 
 	gasClock := parent.ExecutedByGasTime().Clone()
-	gastime.BeforeBlock(gasClock, e.hooks, b.Header())
+	gasClock.BeforeBlock(e.hooks, b.Header())
 	perTxClock := gasClock.Time.Clone()
 
 	rules := e.chainConfig.Rules(b.Number(), true /*isMerge*/, b.BuildTime())
-	if err := e.hooks.BeforeBlock(rules, stateDB, b.EthBlock()); err != nil {
+	if err := e.hooks.BeforeExecutingBlock(rules, stateDB, b.EthBlock()); err != nil {
 		return fmt.Errorf("before-block hook: %v", err)
 	}
 
@@ -163,9 +162,9 @@ func (e *Executor) execute(b *blocks.Block, logger logging.Logger) error {
 		// to access them before the end of the block.
 		receipts[ti] = receipt
 	}
-	e.hooks.AfterBlock(stateDB, b.EthBlock(), receipts)
+	e.hooks.AfterExecutingBlock(stateDB, b.EthBlock(), receipts)
 	endTime := time.Now()
-	if err := gastime.AfterBlock(gasClock, blockGasConsumed, e.hooks, b.Header()); err != nil {
+	if err := gasClock.AfterBlock(blockGasConsumed, e.hooks, b.Header()); err != nil {
 		return fmt.Errorf("after-block gas time update: %w", err)
 	}
 
