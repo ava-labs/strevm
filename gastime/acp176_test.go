@@ -22,6 +22,7 @@ func TestTargetUpdateTiming(t *testing.T) {
 		initialExcess         = 1_234_567_890
 	)
 	tm := New(initialTime, initialTarget, initialExcess)
+	initialRate := tm.Rate()
 
 	const (
 		newTime   uint64 = initialTime + 1
@@ -35,26 +36,28 @@ func TestTargetUpdateTiming(t *testing.T) {
 	}
 
 	initialPrice := tm.Price()
-	BeforeBlock(tm, hook, header)
+	tm.BeforeBlock(hook, header)
 	assert.Equal(t, newTime, tm.Unix(), "Unix time advanced by BeforeBlock()")
 	assert.Equal(t, initialTarget, tm.Target(), "Target not changed by BeforeBlock()")
-
+	// While the price technically could remain the same, being more strict
+	// ensures the test is meaningful.
 	enforcedPrice := tm.Price()
-	assert.LessOrEqual(t, enforcedPrice, initialPrice, "Price should not increase in BeforeBlock()")
+	assert.Less(t, enforcedPrice, initialPrice, "Price should not increase in BeforeBlock()")
 	if t.Failed() {
 		t.FailNow()
 	}
 
 	const (
-		secondsOfGasUsed         = 3
-		initialRate              = initialTarget * TargetToRate
-		used             gas.Gas = initialRate * secondsOfGasUsed
-		expectedEndTime          = newTime + secondsOfGasUsed
+		secondsOfGasUsed = 3
+		expectedEndTime  = newTime + secondsOfGasUsed
 	)
-	require.NoError(t, AfterBlock(tm, used, hook, header), "AfterBlock()")
+	used := initialRate * secondsOfGasUsed
+	require.NoError(t, tm.AfterBlock(used, hook, header), "AfterBlock()")
 	assert.Equal(t, expectedEndTime, tm.Unix(), "Unix time advanced by AfterBlock()")
 	assert.Equal(t, newTarget, tm.Target(), "Target updated by AfterBlock()")
-	assert.GreaterOrEqual(t, tm.Price(), enforcedPrice, "Price should not decrease in AfterBlock()")
+	// While the price technically could remain the same, being more strict
+	// ensures the test is meaningful.
+	assert.Greater(t, tm.Price(), enforcedPrice, "Price should not decrease in AfterBlock()")
 }
 
 func FuzzWorstCasePrice(f *testing.F) {
@@ -70,7 +73,6 @@ func FuzzWorstCasePrice(f *testing.F) {
 
 		worstcase := New(initTimestamp, gas.Gas(initTarget), gas.Gas(initExcess))
 		actual := New(initTimestamp, gas.Gas(initTarget), gas.Gas(initExcess))
-		require.LessOrEqual(t, actual.Price(), worstcase.Price())
 
 		blocks := []struct {
 			time     uint64
@@ -121,13 +123,15 @@ func FuzzWorstCasePrice(f *testing.F) {
 				SubSecondTime: block.timeFrac,
 			}
 
-			BeforeBlock(worstcase, hook, header)
-			BeforeBlock(actual, hook, header)
+			worstcase.BeforeBlock(hook, header)
+			actual.BeforeBlock(hook, header)
 
-			require.LessOrEqual(t, actual.Price(), worstcase.Price())
+			require.LessOrEqualf(t, actual.Price(), worstcase.Price(), "actual <= worst-case %T.Price()", actual)
 
-			AfterBlock(worstcase, block.limit, hook, header)
-			AfterBlock(actual, block.used, hook, header)
+			// The crux of this test lies in the maintaining of this inequality
+			// through the use of `limit` instead of `used`
+			worstcase.AfterBlock(block.limit, hook, header)
+			actual.AfterBlock(block.used, hook, header)
 		}
 	})
 }

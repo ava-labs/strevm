@@ -1,7 +1,6 @@
 // Copyright (C) 2025, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
-// Package gastime measures time based on the consumption of gas.
 package gastime
 
 import (
@@ -14,19 +13,20 @@ import (
 
 // BeforeBlock is intended to be called before processing a block, with the
 // timestamp sourced from [hook.Points] and [types.Header].
-func BeforeBlock(clock *Time, pts hook.Points, h *types.Header) {
-	r := clock.Rate()
-	toFrac := pts.SubSecondBlockTime(r, h)
-	clock.FastForwardTo(h.Time, toFrac)
+func (tm *Time) BeforeBlock(hooks hook.Points, h *types.Header) {
+	tm.FastForwardTo(
+		h.Time,
+		hooks.SubSecondBlockTime(tm.Rate(), h),
+	)
 }
 
 // AfterBlock is intended to be called after processing a block, with the target
 // sourced from [hook.Points] and [types.Header].
-func AfterBlock(clock *Time, used gas.Gas, pts hook.Points, h *types.Header) error {
-	clock.Tick(used)
-	target := pts.GasTarget(h)
-	if err := clock.SetTarget(target); err != nil {
-		return fmt.Errorf("%T.SetTarget() after block: %w", clock, err)
+func (tm *Time) AfterBlock(used gas.Gas, hooks hook.Points, h *types.Header) error {
+	tm.Tick(used)
+	target := hooks.GasTargetAfter(h)
+	if err := tm.SetTarget(target); err != nil {
+		return fmt.Errorf("%T.SetTarget() after block: %w", tm, err)
 	}
 	return nil
 }

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/ava-labs/avalanchego/utils/logging"
+	"github.com/ava-labs/avalanchego/vms/components/gas"
 	"github.com/ava-labs/libevm/core"
 	"github.com/ava-labs/libevm/core/state"
 	"github.com/ava-labs/libevm/core/types"
@@ -114,13 +115,21 @@ func NewGenesis(tb testing.TB, db ethdb.Database, config *params.ChainConfig, al
 	require.NoErrorf(tb, tdb.Commit(hash, true), "%T.Commit(core.SetupGenesisBlock(...))", tdb)
 
 	b := NewBlock(tb, gen.ToBlock(), nil, nil)
-	require.NoErrorf(tb, b.MarkExecuted(db, gastime.New(gen.Timestamp, 1, 0), time.Time{}, new(big.Int), nil, b.SettledStateRoot()), "%T.MarkExecuted()", b)
+	require.NoErrorf(tb, b.MarkExecuted(db, gastime.New(gen.Timestamp, conf.gasTarget(), 0), time.Time{}, new(big.Int), nil, b.SettledStateRoot()), "%T.MarkExecuted()", b)
 	require.NoErrorf(tb, b.MarkSynchronous(), "%T.MarkSynchronous()", b)
 	return b
 }
 
 type genesisConfig struct {
 	tdbConfig *triedb.Config
+	target    gas.Gas
+}
+
+func (gc *genesisConfig) gasTarget() gas.Gas {
+	if gc.target == 0 {
+		return 1
+	}
+	return gc.target
 }
 
 // A GenesisOption configures [NewGenesis].
@@ -130,5 +139,12 @@ type GenesisOption = options.Option[genesisConfig]
 func WithTrieDBConfig(tc *triedb.Config) GenesisOption {
 	return options.Func[genesisConfig](func(gc *genesisConfig) {
 		gc.tdbConfig = tc
+	})
+}
+
+// WithGasTarget overrides the gas target used by [NewGenesis].
+func WithGasTarget(target gas.Gas) GenesisOption {
+	return options.Func[genesisConfig](func(gc *genesisConfig) {
+		gc.target = target
 	})
 }
