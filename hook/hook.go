@@ -19,11 +19,15 @@ import (
 	saeparams "github.com/ava-labs/strevm/params"
 )
 
+// AccountDebit includes an amount that an account should have debited,
+// along with the nonce used to debit the account.
 type AccountDebit struct {
 	Nonce  uint64
 	Amount uint256.Int
 }
 
+// Op is an operation that can be applied to state during the execution of a
+// block.
 type Op struct {
 	// Gas consumed by this operation
 	Gas gas.Gas
