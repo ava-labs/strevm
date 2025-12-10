@@ -8,6 +8,7 @@ import (
 
 	"github.com/ava-labs/avalanchego/vms/components/gas"
 	"github.com/ava-labs/libevm/core/types"
+
 	"github.com/ava-labs/strevm/hook"
 )
 
