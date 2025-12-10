@@ -1,6 +1,6 @@
-// Package worstcase is a pessimist, always seeing the glass as half empty. But
-// where others see full glasses and opportunities, package worstcase sees DoS
-// vulnerabilities.
+// Copyright (C) ((20\d\d\-2025)|(2025)), Ava Labs, Inc. All rights reserved.
+// See the file LICENSE for licensing terms.
+
 package worstcase
 
 import (
@@ -16,10 +16,11 @@ import (
 	"github.com/ava-labs/libevm/core/txpool"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/params"
+	"github.com/holiman/uint256"
+
 	"github.com/ava-labs/strevm/gastime"
 	"github.com/ava-labs/strevm/hook"
 	saeparams "github.com/ava-labs/strevm/params"
-	"github.com/holiman/uint256"
 )
 
 // A State assumes that every transaction will consume its stated
@@ -147,6 +148,9 @@ var (
 //
 // If the transaction can not be applied, an error is returned and the state is
 // not modified.
+//
+// TODO: Consider refactoring into a standalone function to convert transactions
+// into Ops, rather than Applying internally.
 func (s *State) ApplyTx(tx *types.Transaction) error {
 	opts := &txpool.ValidationOptions{
 		Config: s.config,
@@ -168,6 +172,7 @@ func (s *State) ApplyTx(tx *types.Transaction) error {
 
 	var gasPrice uint256.Int
 	if overflow := gasPrice.SetFromBig(tx.GasFeeCap()); overflow {
+		// This should be unreachable due to the txpool validation.
 		return errGasFeeCapOverflow
 	}
 	var amount uint256.Int

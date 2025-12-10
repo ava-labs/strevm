@@ -36,7 +36,9 @@ type SUT struct {
 func newSUT(tb testing.TB) SUT {
 	tb.Helper()
 	db := newDB(tb)
-	hooks := &hookstest.Stub{}
+	hooks := &hookstest.Stub{
+		Target: initialGasTarget,
+	}
 	return SUT{
 		State: NewState(
 			hooks,
@@ -59,6 +61,11 @@ func TestState(t *testing.T) {
 	state := newSUT(t)
 	state.DB.SetBalance(eoa, uint256.NewInt(math.MaxUint64))
 
+	eoaMaxNonce := common.Address{0x00}
+	state.DB.SetNonce(eoaMaxNonce, math.MaxUint64)
+	state.DB.SetBalance(eoaMaxNonce, uint256.NewInt(math.MaxUint64))
+
+	eoaNoBalance := common.Address{0x01}
 	type op struct {
 		name    string
 		tx      types.TxData
@@ -130,6 +137,26 @@ func TestState(t *testing.T) {
 					wantErr: core.ErrNonceTooHigh,
 				},
 				{
+					name: "insufficient_funds_for_gas",
+					tx: &types.LegacyTx{
+						Gas:      params.TxGas,
+						GasPrice: new(big.Int).SetUint64(math.MaxUint64),
+						To:       &common.Address{},
+						Value:    big.NewInt(0),
+					},
+					wantErr: core.ErrInsufficientFunds,
+				},
+				{
+					name: "insufficient_funds_for_value",
+					tx: &types.LegacyTx{
+						Gas:      params.TxGas,
+						GasPrice: big.NewInt(1),
+						To:       &common.Address{},
+						Value:    new(big.Int).SetUint64(math.MaxUint64),
+					},
+					wantErr: core.ErrInsufficientFunds,
+				},
+				{
 					name: "include_transfer",
 					tx: &types.LegacyTx{
 						Nonce:    0,
@@ -140,10 +167,120 @@ func TestState(t *testing.T) {
 					},
 					wantErr: nil,
 				},
+				{
+					name: "nonce_too_low",
+					tx: &types.LegacyTx{
+						Nonce:    0,
+						GasPrice: big.NewInt(1),
+						Gas:      params.TxGas,
+						To:       &common.Address{},
+					},
+					wantErr: core.ErrNonceTooLow,
+				},
+				{
+					name: "block_too_full",
+					tx: &types.LegacyTx{
+						Nonce:    1,
+						GasPrice: big.NewInt(1),
+						Gas:      initialGasTarget*targetToMaxBlockSize - params.TxGas + 1,
+						To:       &common.Address{},
+					},
+					wantErr: ErrBlockTooFull,
+				},
+				{
+					name: "full_block",
+					tx: &types.LegacyTx{
+						Nonce:    1,
+						GasPrice: big.NewInt(1),
+						Gas:      initialGasTarget*targetToMaxBlockSize - params.TxGas,
+						To:       &common.Address{},
+					},
+					wantErr: nil,
+				},
+			},
+		},
+		{
+			wantGasLimit: initialGasTarget * targetToMaxBlockSize,
+			wantBaseFee:  uint256.NewInt(1),
+			ops: []op{
+				{
+					name: "max_nonce",
+					op: &Op{
+						Gas:      1,
+						GasPrice: *uint256.NewInt(1),
+						From: map[common.Address]Account{
+							eoaMaxNonce: {
+								Nonce:  math.MaxUint64,
+								Amount: *uint256.NewInt(1),
+							},
+						},
+					},
+					wantErr: core.ErrNonceMax,
+				},
+				{
+					name: "import",
+					op: &Op{
+						Gas:      1,
+						GasPrice: *uint256.NewInt(1),
+						From: map[common.Address]Account{
+							eoa: {
+								Nonce:  2,
+								Amount: *uint256.NewInt(1),
+							},
+						},
+						To: map[common.Address]uint256.Int{
+							eoaNoBalance: *uint256.NewInt(10),
+						},
+					},
+					wantErr: nil,
+				},
+				{
+					name: "imported_insufficient_funds",
+					op: &Op{
+						Gas:      initialGasTarget*targetToMaxBlockSize - 1,
+						GasPrice: *uint256.NewInt(1),
+						From: map[common.Address]Account{
+							eoaNoBalance: {
+								Nonce:  0,
+								Amount: *uint256.NewInt(11),
+							},
+						},
+					},
+					wantErr: core.ErrInsufficientFunds,
+				},
+				{
+					name: "spend_imported_funds",
+					op: &Op{
+						Gas:      initialGasTarget*targetToMaxBlockSize - 1,
+						GasPrice: *uint256.NewInt(1),
+						From: map[common.Address]Account{
+							eoaNoBalance: {
+								Nonce:  0,
+								Amount: *uint256.NewInt(10),
+							},
+						},
+					},
+					wantErr: nil,
+				},
+			},
+		},
+		{
+			wantGasLimit: initialGasTarget * targetToMaxBlockSize,
+			wantBaseFee:  uint256.NewInt(1),
+			ops: []op{
+				{
+					name: "full_block",
+					tx: &types.LegacyTx{
+						Nonce:    3,
+						GasPrice: big.NewInt(1),
+						Gas:      initialGasTarget * targetToMaxBlockSize,
+						To:       &common.Address{},
+					},
+					wantErr: nil,
+				},
 			},
 		},
 	}
-
 	for i, block := range blocks {
 		if block.hooks != nil {
 			*state.Hooks = *block.hooks
@@ -169,87 +306,22 @@ func TestState(t *testing.T) {
 
 		require.NoError(t, state.FinishBlock(), "FinishBlock()")
 	}
-}
 
-// func TestNonContextualTransactionRejection(t *testing.T) {
-// 	key, err := crypto.GenerateKey()
-// 	require.NoError(t, err, "libevm/crypto.GenerateKey()")
-// 	eoa := crypto.PubkeyToAddress(key.PublicKey)
+	// Test that nonconsecutive blocks are disallowed.
+	{
+		header := &types.Header{
+			Number: big.NewInt(int64(len(blocks) + 1)),
+		}
+		err := state.StartBlock(header)
+		require.ErrorIs(t, err, errNonConsecutiveBlocks, "nonconsecutive StartBlock()")
+	}
 
-// 	tests := []struct {
-// 		name       string
-// 		stateSetup func(*state.StateDB)
-// 		tx         types.TxData
-// 		wantErrIs  error
-// 	}{
-// 		{
-// 			name: "nil_err",
-// 			stateSetup: func(db *state.StateDB) {
-// 				db.SetBalance(eoa, uint256.NewInt(params.TxGas))
-// 			},
-// 			tx: &types.LegacyTx{
-// 				Nonce:    0,
-// 				Gas:      params.TxGas,
-// 				GasPrice: big.NewInt(1),
-// 				To:       &common.Address{},
-// 			},
-// 			wantErrIs: nil,
-// 		},
-// 		{
-// 			name: "nonce_too_low",
-// 			stateSetup: func(db *state.StateDB) {
-// 				db.SetNonce(eoa, 1)
-// 			},
-// 			tx: &types.LegacyTx{
-// 				Nonce: 0,
-// 				Gas:   params.TxGas,
-// 				To:    &common.Address{},
-// 			},
-// 			wantErrIs: core.ErrNonceTooLow,
-// 		},
-// 		{
-// 			name: "insufficient_funds_for_gas",
-// 			stateSetup: func(db *state.StateDB) {
-// 				db.SetBalance(eoa, uint256.NewInt(params.TxGas-1))
-// 			},
-// 			tx: &types.LegacyTx{
-// 				Gas:      params.TxGas,
-// 				GasPrice: big.NewInt(1),
-// 				To:       &common.Address{},
-// 			},
-// 			wantErrIs: core.ErrInsufficientFunds,
-// 		},
-// 		{
-// 			name: "insufficient_funds_for_gas_and_value",
-// 			stateSetup: func(db *state.StateDB) {
-// 				db.SetBalance(eoa, uint256.NewInt(params.TxGas))
-// 			},
-// 			tx: &types.LegacyTx{
-// 				Gas:      params.TxGas,
-// 				GasPrice: big.NewInt(1),
-// 				Value:    big.NewInt(1),
-// 				To:       &common.Address{},
-// 			},
-// 			wantErrIs: core.ErrInsufficientFunds,
-// 		},
-// 	}
-
-// 	for _, tt := range tests {
-// 		t.Run(tt.name, func(t *testing.T) {
-// 			inc, db := newTxIncluder(t)
-// 			require.NoError(t, inc.StartBlock(&types.Header{
-// 				Number: big.NewInt(0),
-// 			}, 1e6), "StartBlock(0, t=0)")
-// 			if tt.stateSetup != nil {
-// 				tt.stateSetup(db)
-// 			}
-// 			tx := types.MustSignNewTx(key, types.NewCancunSigner(inc.config.ChainID), tt.tx)
-// 			require.ErrorIs(t, inc.ApplyTx(tx), tt.wantErrIs)
-// 		})
-// 	}
-// }
-
-func TestContextualTransactionRejection(t *testing.T) {
-	// TODO(arr4n) test rejection of transactions in the context of other
-	// transactions, e.g. exhausting balance, gas price increasing, etc.
+	// Test that starting a new block fails if the queue is full.
+	{
+		header := &types.Header{
+			Number: big.NewInt(int64(len(blocks))),
+		}
+		err := state.StartBlock(header)
+		require.ErrorIsf(t, err, errQueueFull, "StartBlock(%d)", len(blocks))
+	}
 }
