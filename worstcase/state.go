@@ -83,7 +83,7 @@ func (s *State) StartBlock(hdr *types.Header) error {
 		}
 	}
 
-	gastime.BeforeBlock(s.clock, s.pts, hdr)
+	s.clock.BeforeBlock(s.pts, hdr)
 	s.blockSize = 0
 
 	const (
@@ -242,7 +242,7 @@ func (s *State) Apply(o Op) error {
 // FinishBlock advances the includer's [gastime.Time] to account for all
 // included operations in the current block.
 func (s *State) FinishBlock() error {
-	if err := gastime.AfterBlock(s.clock, s.blockSize, s.pts, s.curr); err != nil {
+	if err := s.clock.AfterBlock(s.blockSize, s.pts, s.curr); err != nil {
 		return fmt.Errorf("finishing block gas time update: %w", err)
 	}
 	s.qSize += s.blockSize

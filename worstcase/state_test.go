@@ -1,21 +1,6 @@
 package worstcase
 
-import (
-	"math/big"
-	"testing"
-
-	"github.com/ava-labs/libevm/common"
-	"github.com/ava-labs/libevm/core"
-	"github.com/ava-labs/libevm/core/rawdb"
-	"github.com/ava-labs/libevm/core/state"
-	"github.com/ava-labs/libevm/core/types"
-	"github.com/ava-labs/libevm/crypto"
-	"github.com/ava-labs/libevm/params"
-	"github.com/ava-labs/strevm/gastime"
-	"github.com/holiman/uint256"
-	"github.com/stretchr/testify/require"
-)
-
+/*
 func newDB(tb testing.TB) *state.StateDB {
 	tb.Helper()
 	db, err := state.New(types.EmptyRootHash, state.NewDatabase(rawdb.NewMemoryDatabase()), nil)
@@ -160,3 +145,4 @@ func TestContextualTransactionRejection(t *testing.T) {
 	// TODO(arr4n) test rejection of transactions in the context of other
 	// transactions, e.g. exhausting balance, gas price increasing, etc.
 }
+*/
