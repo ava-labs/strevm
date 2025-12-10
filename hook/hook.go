@@ -19,7 +19,7 @@ import (
 	saeparams "github.com/ava-labs/strevm/params"
 )
 
-type Account struct {
+type AccountDebit struct {
 	Nonce  uint64
 	Amount uint256.Int
 }
@@ -31,7 +31,7 @@ type Op struct {
 	GasPrice uint256.Int
 	// From specifies the set of accounts and the authorization of funds to be
 	// removed from the accounts.
-	From map[common.Address]Account
+	From map[common.Address]AccountDebit
 	// To specifies the amount to increase account balances by. These funds are
 	// not necessarily tied to the funds consumed in the From field. The sum of
 	// the To amounts may even exceed the sum of the From amounts.

@@ -35,6 +35,7 @@ import (
 //  3. [State.ApplyTx] or [State.Apply] for each transaction or operation to
 //     include in the block.
 //  4. [State.FinishBlock] to finalize the block's gas time.
+//  5. Repeat from step 1 for the next block.
 type State struct {
 	hooks  hook.Points
 	config *params.ChainConfig
@@ -84,7 +85,7 @@ var (
 // It is not necessary for [types.Header.GasLimit] or [types.Header.BaseFee] to
 // be set.
 //
-// If the queue is too full to accept another block, [ErrQueueFull] is returned.
+// If the queue is too full to accept another block, an error is returned.
 func (s *State) StartBlock(hdr *types.Header) error {
 	if c := s.curr; c != nil {
 		if num, next := c.Number.Uint64(), hdr.Number.Uint64(); next != num+1 {
@@ -136,8 +137,11 @@ func (s *State) BaseFee() *uint256.Int {
 }
 
 type (
-	Account = hook.Account
-	Op      = hook.Op
+	// AccountDebit includes an amount that an account should have debited,
+	// along with the nonce used to debit the account.
+	AccountDebit = hook.AccountDebit
+	// Op is an operation that can be applied to a [State].
+	Op = hook.Op
 )
 
 var (
@@ -188,7 +192,7 @@ func (s *State) ApplyTx(tx *types.Transaction) error {
 	return s.Apply(Op{
 		Gas:      gas.Gas(tx.Gas()),
 		GasPrice: gasPrice,
-		From: map[common.Address]hook.Account{
+		From: map[common.Address]hook.AccountDebit{
 			from: {
 				Nonce:  tx.Nonce(),
 				Amount: amount,
@@ -208,10 +212,11 @@ var ErrBlockTooFull = errors.New("block too full")
 // not modified.
 //
 // Operations are invalid if:
-// - The operation consumes more gas than the block has available.
-// - The operation specifies too low of a gas price.
-// - The operation is from an account with an incorrect or invalid nonce.
-// - The operation is from an account with an insufficient balance.
+//
+//   - The operation consumes more gas than the block has available.
+//   - The operation specifies too low of a gas price.
+//   - The operation is from an account with an incorrect or invalid nonce.
+//   - The operation is from an account with an insufficient balance.
 func (s *State) Apply(o Op) error {
 	// ----- Gas -----
 	if o.Gas > s.maxBlockSize-s.blockSize {

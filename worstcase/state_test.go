@@ -211,7 +211,7 @@ func TestState(t *testing.T) {
 					op: &Op{
 						Gas:      1,
 						GasPrice: *uint256.NewInt(1),
-						From: map[common.Address]Account{
+						From: map[common.Address]AccountDebit{
 							eoaMaxNonce: {
 								Nonce:  math.MaxUint64,
 								Amount: *uint256.NewInt(1),
@@ -225,7 +225,7 @@ func TestState(t *testing.T) {
 					op: &Op{
 						Gas:      1,
 						GasPrice: *uint256.NewInt(1),
-						From: map[common.Address]Account{
+						From: map[common.Address]AccountDebit{
 							eoa: {
 								Nonce:  2,
 								Amount: *uint256.NewInt(1),
@@ -242,7 +242,7 @@ func TestState(t *testing.T) {
 					op: &Op{
 						Gas:      initialGasTarget*targetToMaxBlockSize - 1,
 						GasPrice: *uint256.NewInt(1),
-						From: map[common.Address]Account{
+						From: map[common.Address]AccountDebit{
 							eoaNoBalance: {
 								Nonce:  0,
 								Amount: *uint256.NewInt(11),
@@ -256,7 +256,7 @@ func TestState(t *testing.T) {
 					op: &Op{
 						Gas:      initialGasTarget*targetToMaxBlockSize - 1,
 						GasPrice: *uint256.NewInt(1),
-						From: map[common.Address]Account{
+						From: map[common.Address]AccountDebit{
 							eoaNoBalance: {
 								Nonce:  0,
 								Amount: *uint256.NewInt(10),
