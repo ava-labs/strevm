@@ -418,7 +418,8 @@ func TestGasAccounting(t *testing.T) {
 			blockTime:       8, // no fast-forward
 			numTxs:          4,
 			targetAfter:     5 * gasPerTx,                // back to original
-			wantExecutedBy:  at(8, 6+(4/2), 10*gasPerTx), // ending point scales
+			// Halving the target inverts the scaling seen in the last block.
+			wantExecutedBy:  at(8, 6+(4/2), 10*gasPerTx),
 			wantExcessAfter: ((12 + 20 - 8 + 16) + 4/2) * gasPerTx / 2,
 			wantPriceAfter:  1,
 		},
