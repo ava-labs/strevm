@@ -410,7 +410,8 @@ func TestGasAccounting(t *testing.T) {
 			blockTime:       7, // fast-forward equivalent of 8 txs
 			numTxs:          16,
 			targetAfter:     10 * gasPerTx,           // double gas/block --> halve ticking rate
-			wantExecutedBy:  at(8, 6*2, 20*gasPerTx), // ending point scales
+			// Doubling the target scales both the ending time and excess to compensate.
+			wantExecutedBy:  at(8, 2*6, 2*10*gasPerTx),
 			wantExcessAfter: 2 * (12 + 20 - 8 + 16) * gasPerTx / 2,
 			wantPriceAfter:  1,
 		},
