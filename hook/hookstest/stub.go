@@ -32,6 +32,11 @@ func (s *Stub) SubSecondBlockTime(gas.Gas, *types.Header) gas.Gas {
 	return s.SubSecondTime
 }
 
+// ExtraBlockOps always returns no operations and nil.
+func (*Stub) ExtraBlockOps(*types.Block) ([]hook.Op, error) {
+	return nil, nil
+}
+
 // BeforeExecutingBlock is a no-op that always returns nil.
 func (*Stub) BeforeExecutingBlock(params.Rules, *state.StateDB, *types.Block) error {
 	return nil
