@@ -15,10 +15,11 @@ import (
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/crypto"
 	"github.com/ava-labs/libevm/params"
-	"github.com/ava-labs/strevm/gastime"
-	"github.com/ava-labs/strevm/hook/hookstest"
 	"github.com/holiman/uint256"
 	"github.com/stretchr/testify/require"
+
+	"github.com/ava-labs/strevm/gastime"
+	"github.com/ava-labs/strevm/hook/hookstest"
 )
 
 const initialGasTarget = 1_000_000
