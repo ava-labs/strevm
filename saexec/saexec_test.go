@@ -363,9 +363,9 @@ func TestGasAccounting(t *testing.T) {
 	// Steps are _not_ independent, so the execution time of one is the starting
 	// time of the next.
 	steps := []struct {
-		target         gas.Gas
 		blockTime      uint64
 		numTxs         int
+		targetAfter    gas.Gas
 		wantExecutedBy *proxytime.Time[gas.Gas]
 		// Because of the 2:1 ratio between Rate and Target, gas consumption
 		// increases excess by half of the amount consumed, while
@@ -374,74 +374,85 @@ func TestGasAccounting(t *testing.T) {
 		wantPriceAfter  gas.Price
 	}{
 		{
-			target:          5 * gasPerTx,
+			// Initially set the gasTarget for the next block.
+			blockTime:       0,
+			numTxs:          0,
+			targetAfter:     5 * gasPerTx,
+			wantExecutedBy:  at(0, 0, 10*gasPerTx),
+			wantExcessAfter: 0,
+			wantPriceAfter:  1,
+		},
+		{
 			blockTime:       2,
 			numTxs:          3,
+			targetAfter:     5 * gasPerTx,
 			wantExecutedBy:  at(2, 3, 10*gasPerTx),
 			wantExcessAfter: 3 * gasPerTx / 2,
 			wantPriceAfter:  1, // Excess isn't high enough so price is effectively e^0
 		},
 		{
-			target:          5 * gasPerTx,
 			blockTime:       3, // fast-forward
 			numTxs:          12,
+			targetAfter:     5 * gasPerTx,
 			wantExecutedBy:  at(4, 2, 10*gasPerTx),
 			wantExcessAfter: 12 * gasPerTx / 2,
 			wantPriceAfter:  1,
 		},
 		{
-			target:          5 * gasPerTx,
 			blockTime:       4, // no fast-forward so starts at last execution time
 			numTxs:          20,
+			targetAfter:     5 * gasPerTx,
 			wantExecutedBy:  at(6, 2, 10*gasPerTx),
 			wantExcessAfter: (12 + 20) * gasPerTx / 2,
 			wantPriceAfter:  1,
 		},
 		{
-			target:          5 * gasPerTx,
-			blockTime:       7, // fast-forward equivalent of 8 txs
-			numTxs:          16,
-			wantExecutedBy:  at(8, 6, 10*gasPerTx),
-			wantExcessAfter: (12 + 20 - 8 + 16) * gasPerTx / 2,
+			blockTime:   7, // fast-forward equivalent of 8 txs
+			numTxs:      16,
+			targetAfter: 10 * gasPerTx, // double gas/block --> halve ticking rate
+			// Doubling the target scales both the ending time and excess to compensate.
+			wantExecutedBy:  at(8, 2*6, 2*10*gasPerTx),
+			wantExcessAfter: 2 * (12 + 20 - 8 + 16) * gasPerTx / 2,
 			wantPriceAfter:  1,
 		},
 		{
-			target:          10 * gasPerTx, // double gas/block --> halve ticking rate
-			blockTime:       8,             // no fast-forward
-			numTxs:          4,
-			wantExecutedBy:  at(8, (6*2)+4, 20*gasPerTx), // starting point scales
-			wantExcessAfter: (2*(12+20-8+16) + 4) * gasPerTx / 2,
+			blockTime:   8, // no fast-forward
+			numTxs:      4,
+			targetAfter: 5 * gasPerTx, // back to original
+			// Halving the target inverts the scaling seen in the last block.
+			wantExecutedBy:  at(8, 6+(4/2), 10*gasPerTx),
+			wantExcessAfter: ((12 + 20 - 8 + 16) + 4/2) * gasPerTx / 2,
 			wantPriceAfter:  1,
 		},
 		{
-			target:          5 * gasPerTx, // back to original
 			blockTime:       8,
 			numTxs:          5,
+			targetAfter:     5 * gasPerTx,
 			wantExecutedBy:  at(8, 6+(4/2)+5, 10*gasPerTx),
 			wantExcessAfter: ((12 + 20 - 8 + 16) + 4/2 + 5) * gasPerTx / 2,
 			wantPriceAfter:  1,
 		},
 		{
-			target:          5 * gasPerTx,
 			blockTime:       20, // more than double the last executed-by time, reduces excess to 0
 			numTxs:          1,
+			targetAfter:     5 * gasPerTx,
 			wantExecutedBy:  at(20, 1, 10*gasPerTx),
 			wantExcessAfter: gasPerTx / 2,
 			wantPriceAfter:  1,
 		},
 		{
-			target:          5 * gasPerTx,
 			blockTime:       21,                                 // fast-forward so excess is 0
 			numTxs:          30 * gastime.TargetToExcessScaling, // deliberate, see below
+			targetAfter:     5 * gasPerTx,
 			wantExecutedBy:  at(21, 30*gastime.TargetToExcessScaling, 10*gasPerTx),
 			wantExcessAfter: 3 * ((5 * gasPerTx /*T*/) * gastime.TargetToExcessScaling /* == K */),
 			// Excess is now 3·K so the price is e^3
 			wantPriceAfter: gas.Price(math.Floor(math.Pow(math.E, 3 /* <----- NB */))),
 		},
 		{
-			target:          5 * gasPerTx,
 			blockTime:       22, // no fast-forward
 			numTxs:          10 * gastime.TargetToExcessScaling,
+			targetAfter:     5 * gasPerTx,
 			wantExecutedBy:  at(21, 40*gastime.TargetToExcessScaling, 10*gasPerTx),
 			wantExcessAfter: 4 * ((5 * gasPerTx /*T*/) * gastime.TargetToExcessScaling /* == K */),
 			wantPriceAfter:  gas.Price(math.Floor(math.Pow(math.E, 4 /* <----- NB */))),
@@ -451,7 +462,7 @@ func TestGasAccounting(t *testing.T) {
 	e, chain, wallet := sut.Executor, sut.chain, sut.wallet
 
 	for i, step := range steps {
-		hooks.Target = step.target
+		hooks.Target = step.targetAfter
 
 		txs := make(types.Transactions, step.numTxs)
 		for i := range txs {
