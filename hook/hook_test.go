@@ -13,9 +13,10 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/ava-labs/strevm/gastime"
-	. "github.com/ava-labs/strevm/hook"
 	"github.com/ava-labs/strevm/hook/hookstest"
 	"github.com/ava-labs/strevm/saetest"
+
+	. "github.com/ava-labs/strevm/hook"
 )
 
 // TestTargetUpdateTiming verifies that the gas target is modified in AfterBlock
