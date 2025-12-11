@@ -20,13 +20,13 @@ type Stub struct {
 
 var _ hook.Points = (*Stub)(nil)
 
-// GasTarget ignores its argument and always returns [Stub.Target].
-func (s *Stub) GasTarget(*types.Header) gas.Gas {
+// GasTargetAfter ignores its argument and always returns [Stub.Target].
+func (s *Stub) GasTargetAfter(*types.Header) gas.Gas {
 	return s.Target
 }
 
-// SubSecondBlockTime time ignores its argument and always returns 0.
-func (*Stub) SubSecondBlockTime(*types.Header) gas.Gas {
+// SubSecondBlockTime time ignores its arguments and always returns 0.
+func (*Stub) SubSecondBlockTime(gas.Gas, *types.Header) gas.Gas {
 	return 0
 }
 
