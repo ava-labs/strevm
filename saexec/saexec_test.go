@@ -74,7 +74,7 @@ func newSUT(tb testing.TB, hooks hook.Points) (context.Context, SUT) {
 	logger := saetest.NewTBLogger(tb, logging.Warn)
 	ctx := logger.CancelOnError(tb.Context())
 
-	config := params.MergedTestChainConfig
+	config := saetest.ChainConfig()
 	db := rawdb.NewMemoryDatabase()
 	tdbConfig := &triedb.Config{}
 
