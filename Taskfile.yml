@@ -1,6 +1,5 @@
 # https://taskfile.dev
-# To run on a system without task installed, `./scripts/run_task.sh` will execute it with `go run`.
-# If in the nix dev shell, `task` is available.
+# To run on a system without task installed: `go tool github.com/go-task/task/v3/cmd/task`
 
 version: '3'
 
