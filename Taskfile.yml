@@ -4,29 +4,17 @@
 
 version: '3'
 
-env:
-
 tasks:
   extend_fuzz_corpus:
-    cmds:
-      - task: fuzz
-      - task: copy_fuzz_corpus
-
-  fuzz:
-    requires:
-      vars: [PACKAGE, TARGET]
-    vars:
-      CORPUS_DIR: './{{.PACKAGE}}/testdata/fuzz/{{.TARGET}}'
-    cmds:
-      - cmd: go test -fuzz '{{.TARGET}}' -fuzztime '{{default "5m" .FUZZTIME}}' ./'{{.PACKAGE}}'
-
-  copy_fuzz_corpus:
     requires:
       vars: [PACKAGE, TARGET]
     vars:
       CORPUS_DIR: './{{.PACKAGE}}/testdata/fuzz/{{.TARGET}}'
       CACHE_DIR:
         sh: go env GOCACHE
+      GO_MODULE:
+        sh: go list -m
     cmds:
-      - cmd: "[ -d '{{.CORPUS_DIR}}' ] || mkdir -p '{{.CORPUS_DIR}}'"
-      - cmd: cp '{{.CACHE_DIR}}'/fuzz/github.com/ava-labs/strevm/'{{.PACKAGE}}'/'{{.TARGET}}'/* '{{.CORPUS_DIR}}'
+      - cmd: go test -fuzz "^{{.TARGET}}$" -fuzztime "{{default "5m" .FUZZTIME}}" "./{{.PACKAGE}}"
+      - cmd: '[ -d "{{.CORPUS_DIR}}" ] || mkdir -p "{{.CORPUS_DIR}}"'
+      - cmd: cp -r "{{.CACHE_DIR}}/fuzz/{{.GO_MODULE}}/{{.PACKAGE}}/{{.TARGET}}/" "{{.CORPUS_DIR}}/"
