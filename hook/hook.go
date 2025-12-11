@@ -54,8 +54,8 @@ type Points interface {
 	// 100 gas/second, then this method should return 75 gas.
 	SubSecondBlockTime(gasRate gas.Gas, h *types.Header) gas.Gas
 	// ExtraBlockOps returns operations outside of the normal EVM state changes
-	// to perform while executing the block. These operations should be
-	// performed after executing the normal ethereum transactions in the block.
+	// to perform while executing the block. These operations will be performed
+	// during both worst-case and actual execution.
 	ExtraBlockOps(*types.Block) ([]Op, error)
 	// BeforeExecutingBlock is called immediately prior to executing the block.
 	BeforeExecutingBlock(params.Rules, *state.StateDB, *types.Block) error

@@ -189,7 +189,7 @@ func TestState(t *testing.T) {
 						Gas:      initialGasTarget*targetToMaxBlockSize - params.TxGas + 1,
 						To:       &common.Address{},
 					},
-					wantErr: ErrBlockTooFull,
+					wantErr: core.ErrGasLimitReached,
 				},
 				{
 					name: "full_block",

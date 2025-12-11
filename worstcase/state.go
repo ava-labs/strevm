@@ -208,10 +208,6 @@ func txToOp(signer types.Signer, tx *types.Transaction) (Op, error) {
 	}, nil
 }
 
-// ErrBlockTooFull is returned by [State.ApplyTx] and [State.Apply] if inclusion
-// would cause the block to exceed the gas limit.
-var ErrBlockTooFull = errors.New("block too full")
-
 // Apply attempts to apply the operation to this state.
 //
 // If the operation can not be applied, an error is returned and the state is
@@ -226,7 +222,7 @@ var ErrBlockTooFull = errors.New("block too full")
 func (s *State) Apply(o Op) error {
 	// ----- Gas -----
 	if o.Gas > s.maxBlockSize-s.blockSize {
-		return ErrBlockTooFull
+		return core.ErrGasLimitReached
 	}
 
 	// ----- GasPrice -----
