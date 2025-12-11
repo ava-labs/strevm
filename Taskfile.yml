@@ -1,0 +1,32 @@
+# https://taskfile.dev
+# To run on a system without task installed, `./scripts/run_task.sh` will execute it with `go run`.
+# If in the nix dev shell, `task` is available.
+
+version: '3'
+
+env:
+
+tasks:
+  extend_fuzz_corpus:
+    cmds:
+      - task: fuzz
+      - task: copy_fuzz_corpus
+
+  fuzz:
+    requires:
+      vars: [PACKAGE, TARGET]
+    vars:
+      CORPUS_DIR: './{{.PACKAGE}}/testdata/fuzz/{{.TARGET}}'
+    cmds:
+      - cmd: go test -fuzz '{{.TARGET}}' -fuzztime '{{default "5m" .FUZZTIME}}' ./'{{.PACKAGE}}'
+
+  copy_fuzz_corpus:
+    requires:
+      vars: [PACKAGE, TARGET]
+    vars:
+      CORPUS_DIR: './{{.PACKAGE}}/testdata/fuzz/{{.TARGET}}'
+      CACHE_DIR:
+        sh: go env GOCACHE
+    cmds:
+      - cmd: "[ -d '{{.CORPUS_DIR}}' ] || mkdir -p '{{.CORPUS_DIR}}'"
+      - cmd: cp '{{.CACHE_DIR}}'/fuzz/github.com/ava-labs/strevm/'{{.PACKAGE}}'/'{{.TARGET}}'/* '{{.CORPUS_DIR}}'
