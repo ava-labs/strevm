@@ -54,7 +54,7 @@ func TestTargetUpdateTiming(t *testing.T) {
 	)
 	used := initialRate * secondsOfGasUsed
 	require.NoError(t, tm.AfterBlock(used, hook, header), "AfterBlock()")
-	assert.Equal(t, expectedEndTime, tm.Unix(), "Unix time advanced by AfterBlock()")
+	assert.Equal(t, expectedEndTime, tm.Unix(), "Unix time advanced by AfterBlock() due to gas consumption")
 	assert.Equal(t, newTarget, tm.Target(), "Target updated by AfterBlock()")
 	// While the price technically could remain the same, being more strict
 	// ensures the test is meaningful.
