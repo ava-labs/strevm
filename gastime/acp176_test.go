@@ -127,10 +127,9 @@ func FuzzWorstCasePrice(f *testing.F) {
 			worstcase.BeforeBlock(hook, header)
 			actual.BeforeBlock(hook, header)
 
-			require.LessOrEqualf(t, actual.Price(), worstcase.Price(), "actual <= worst-case %T.Price()", actual)
-
 			// The crux of this test lies in the maintaining of this inequality
-			// through the use of `limit` instead of `used`
+			// through the use of `limit` instead of `used` in `AfterBlock()`
+			require.LessOrEqualf(t, actual.Price(), worstcase.Price(), "actual <= worst-case %T.Price()", actual)
 			require.NoError(t, worstcase.AfterBlock(block.limit, hook, header), "worstcase.AfterBlock()")
 			require.NoError(t, actual.AfterBlock(block.used, hook, header), "actual.AfterBlock()")
 		}
