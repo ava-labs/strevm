@@ -144,10 +144,7 @@ type (
 	Op = hook.Op
 )
 
-var (
-	errGasFeeCapOverflow = errors.New("GasFeeCap() overflows uint256")
-	errCostOverflow      = errors.New("Cost() overflows uint256")
-)
+var errCostOverflow = errors.New("Cost() overflows uint256")
 
 // ApplyTx validates the transaction both intrinsically and in the context of
 // worst-case gas assumptions of all previous operations. This provides an upper
@@ -189,7 +186,7 @@ func txToOp(signer types.Signer, tx *types.Transaction) (Op, error) {
 
 	var gasPrice uint256.Int
 	if overflow := gasPrice.SetFromBig(tx.GasFeeCap()); overflow {
-		return Op{}, errGasFeeCapOverflow
+		return Op{}, core.ErrFeeCapVeryHigh
 	}
 	var amount uint256.Int
 	if overflow := amount.SetFromBig(tx.Cost()); overflow {
@@ -248,16 +245,19 @@ func (s *State) Apply(o Op) error {
 
 	// ----- Inclusion -----
 	s.blockSize += o.Gas
+	executeOp(s.db, o)
+	return nil
+}
 
+func executeOp(db *state.StateDB, o Op) {
 	for from, ad := range o.From {
-		s.db.SetNonce(from, ad.Nonce+1)
-		s.db.SubBalance(from, &ad.Amount)
+		db.SetNonce(from, ad.Nonce+1)
+		db.SubBalance(from, &ad.Amount)
 	}
 
 	for to, amount := range o.To {
-		s.db.AddBalance(to, &amount)
+		db.AddBalance(to, &amount)
 	}
-	return nil
 }
 
 // FinishBlock advances the [gastime.Time] in preparation for the next block.
