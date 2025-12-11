@@ -48,7 +48,7 @@ linters-settings:
     sections:
       - standard
       - default
-      - localmodule
+      - prefix(github.com/ava-labs/strevm)
       # The rest of these break developer expections, in increasing order of
       # divergence, so are at the end to increase the chance of being seen.
       - dot
