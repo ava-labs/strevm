@@ -54,7 +54,7 @@ func TestTargetUpdateTiming(t *testing.T) {
 	)
 	used := initialRate * secondsOfGasUsed
 	require.NoError(t, tm.AfterBlock(used, hook, header), "AfterBlock()")
-	assert.Equal(t, expectedEndTime, tm.Unix(), "Unix time advanced by AfterBlock()")
+	assert.Equal(t, expectedEndTime, tm.Unix(), "Unix time advanced by AfterBlock() due to gas consumption")
 	assert.Equal(t, newTarget, tm.Target(), "Target updated by AfterBlock()")
 	// While the price technically could remain the same, being more strict
 	// ensures the test is meaningful.
@@ -127,10 +127,9 @@ func FuzzWorstCasePrice(f *testing.F) {
 			worstcase.BeforeBlock(hook, header)
 			actual.BeforeBlock(hook, header)
 
-			require.LessOrEqualf(t, actual.Price(), worstcase.Price(), "actual <= worst-case %T.Price()", actual)
-
 			// The crux of this test lies in the maintaining of this inequality
-			// through the use of `limit` instead of `used`
+			// through the use of `limit` instead of `used` in `AfterBlock()`
+			require.LessOrEqualf(t, actual.Price(), worstcase.Price(), "actual <= worst-case %T.Price()", actual)
 			require.NoError(t, worstcase.AfterBlock(block.limit, hook, header), "worstcase.AfterBlock()")
 			require.NoError(t, actual.AfterBlock(block.used, hook, header), "actual.AfterBlock()")
 		}

@@ -104,7 +104,10 @@ func WithLogger(l logging.Logger) BlockOption {
 // marked as both executed and synchronous.
 func NewGenesis(tb testing.TB, db ethdb.Database, config *params.ChainConfig, alloc types.GenesisAlloc, opts ...GenesisOption) *blocks.Block {
 	tb.Helper()
-	conf := options.ApplyTo(&genesisConfig{}, opts...)
+	conf := &genesisConfig{
+		target: math.MaxUint64,
+	}
+	options.ApplyTo(conf, opts...)
 
 	gen := &core.Genesis{
 		Config: config,
@@ -124,14 +127,11 @@ func NewGenesis(tb testing.TB, db ethdb.Database, config *params.ChainConfig, al
 
 type genesisConfig struct {
 	tdbConfig *triedb.Config
-	target    *gas.Gas
+	target    gas.Gas
 }
 
 func (gc *genesisConfig) gasTarget() gas.Gas {
-	if gc.target == nil {
-		return math.MaxUint64
-	}
-	return *gc.target
+	return gc.target
 }
 
 // A GenesisOption configures [NewGenesis].
@@ -147,6 +147,6 @@ func WithTrieDBConfig(tc *triedb.Config) GenesisOption {
 // WithGasTarget overrides the gas target used by [NewGenesis].
 func WithGasTarget(target gas.Gas) GenesisOption {
 	return options.Func[genesisConfig](func(gc *genesisConfig) {
-		gc.target = &target
+		gc.target = target
 	})
 }
