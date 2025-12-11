@@ -15,7 +15,8 @@ import (
 
 // Stub implements [hook.Points].
 type Stub struct {
-	Target gas.Gas
+	Target        gas.Gas
+	SubSecondTime gas.Gas
 }
 
 var _ hook.Points = (*Stub)(nil)
@@ -25,9 +26,10 @@ func (s *Stub) GasTargetAfter(*types.Header) gas.Gas {
 	return s.Target
 }
 
-// SubSecondBlockTime time ignores its arguments and always returns 0.
-func (*Stub) SubSecondBlockTime(gas.Gas, *types.Header) gas.Gas {
-	return 0
+// SubSecondBlockTime time ignores its arguments and always returns
+// [Stub.SubSecondTime].
+func (s *Stub) SubSecondBlockTime(gas.Gas, *types.Header) gas.Gas {
+	return s.SubSecondTime
 }
 
 // BeforeExecutingBlock is a no-op that always returns nil.

@@ -8,14 +8,11 @@
 package hook
 
 import (
-	"fmt"
-
 	"github.com/ava-labs/avalanchego/vms/components/gas"
 	"github.com/ava-labs/libevm/core/state"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/params"
 
-	"github.com/ava-labs/strevm/gastime"
 	"github.com/ava-labs/strevm/intmath"
 	saeparams "github.com/ava-labs/strevm/params"
 )
@@ -35,26 +32,6 @@ type Points interface {
 	BeforeExecutingBlock(params.Rules, *state.StateDB, *types.Block) error
 	// AfterExecutingBlock is called immediately after executing the block.
 	AfterExecutingBlock(*state.StateDB, *types.Block, types.Receipts)
-}
-
-// BeforeBlock is intended to be called before processing a block.
-func BeforeBlock(pts Points, rules params.Rules, sdb *state.StateDB, b *types.Block, clock *gastime.Time) error {
-	clock.FastForwardTo(
-		b.Time(),
-		pts.SubSecondBlockTime(clock.Rate(), b.Header()),
-	)
-	return pts.BeforeExecutingBlock(rules, sdb, b)
-}
-
-// AfterBlock is intended to be called after processing a block.
-func AfterBlock(pts Points, sdb *state.StateDB, b *types.Block, clock *gastime.Time, used gas.Gas, rs types.Receipts) error {
-	clock.Tick(used)
-	target := pts.GasTargetAfter(b.Header())
-	if err := clock.SetTarget(target); err != nil {
-		return fmt.Errorf("%T.SetTarget() after block: %w", clock, err)
-	}
-	pts.AfterExecutingBlock(sdb, b, rs)
-	return nil
 }
 
 // MinimumGasConsumption MUST be used as the implementation for the respective
