@@ -159,8 +159,7 @@ var (
 // If the transaction can not be applied, an error is returned and the state is
 // not modified.
 //
-// TODO: Consider refactoring into a standalone function to convert transactions
-// into Ops, rather than Applying internally.
+// TODO: Consider exporting txToOp and expecting users to call Apply directly.
 func (s *State) ApplyTx(tx *types.Transaction) error {
 	opts := &txpool.ValidationOptions{
 		Config: s.config,
@@ -175,21 +174,28 @@ func (s *State) ApplyTx(tx *types.Transaction) error {
 		return fmt.Errorf("validating transaction: %w", err)
 	}
 
-	from, err := types.Sender(s.signer, tx)
+	op, err := txToOp(s.signer, tx)
 	if err != nil {
-		return fmt.Errorf("determining sender: %w", err)
+		return fmt.Errorf("converting transaction to operation: %w", err)
+	}
+	return s.Apply(op)
+}
+
+func txToOp(signer types.Signer, tx *types.Transaction) (Op, error) {
+	from, err := types.Sender(signer, tx)
+	if err != nil {
+		return Op{}, fmt.Errorf("determining sender: %w", err)
 	}
 
 	var gasPrice uint256.Int
 	if overflow := gasPrice.SetFromBig(tx.GasFeeCap()); overflow {
-		// This should be unreachable due to the txpool validation.
-		return errGasFeeCapOverflow
+		return Op{}, errGasFeeCapOverflow
 	}
 	var amount uint256.Int
 	if overflow := amount.SetFromBig(tx.Cost()); overflow {
-		return errCostOverflow
+		return Op{}, errCostOverflow
 	}
-	return s.Apply(Op{
+	return Op{
 		Gas:      gas.Gas(tx.Gas()),
 		GasPrice: gasPrice,
 		From: map[common.Address]hook.AccountDebit{
@@ -199,7 +205,7 @@ func (s *State) ApplyTx(tx *types.Transaction) error {
 			},
 		},
 		// To is not populated here because this transaction may revert.
-	})
+	}, nil
 }
 
 // ErrBlockTooFull is returned by [State.ApplyTx] and [State.Apply] if inclusion
