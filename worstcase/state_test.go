@@ -24,16 +24,16 @@ import (
 	"github.com/ava-labs/strevm/hook/hookstest"
 )
 
-const (
-	initialGasTarget = 1_000_000
-	initialExcess    = 60_303_807 // Maximum excess that results in gas price of 1
-)
-
 type SUT struct {
 	*State
 	DB    *state.StateDB
 	Hooks *hookstest.Stub
 }
+
+const (
+	initialGasTarget = 1_000_000
+	initialExcess    = 60_303_807 // Maximum excess that results in gas price of 1
+)
 
 func newSUT(tb testing.TB) SUT {
 	tb.Helper()
