@@ -546,6 +546,8 @@ func FuzzOpCodes(f *testing.F) {
 	// SUT setup is too expensive to only fuzz a single transaction, but the
 	// total number is arbitrary.
 	f.Fuzz(func(t *testing.T, c0, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13, c14, c15 []byte) {
+		t.Parallel() // for corpus in ./testdata/
+
 		_, sut := newSUT(t, defaultHooks())
 
 		var txs types.Transactions
