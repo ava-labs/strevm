@@ -6,8 +6,10 @@ package sae
 import (
 	"context"
 
+	"github.com/ava-labs/avalanchego/database"
 	"github.com/ava-labs/avalanchego/ids"
 	"github.com/ava-labs/avalanchego/snow/engine/snowman/block"
+	"github.com/ava-labs/libevm/common"
 
 	"github.com/ava-labs/strevm/blocks"
 	"github.com/ava-labs/strevm/saexec"
@@ -17,8 +19,13 @@ import (
 // which MAY be nil.
 //
 // [preferred block]: https://github.com/ava-labs/avalanchego/tree/master/vms#set-preference
-func (vm *VM) SetPreference(context.Context, ids.ID, *block.Context) error {
-	return errUnimplemented
+func (vm *VM) SetPreference(ctx context.Context, id ids.ID, bCtx *block.Context) error {
+	b, ok := vm.blocks.Load(common.Hash(id))
+	if !ok {
+		return database.ErrNotFound
+	}
+	vm.preference.Store(b)
+	return nil
 }
 
 // AcceptBlock marks the block as [accepted], resulting in:
@@ -27,7 +34,7 @@ func (vm *VM) SetPreference(context.Context, ids.ID, *block.Context) error {
 //   - The block being propagated to [saexec.Executor.Enqueue].
 //
 // [accepted]: https://github.com/ava-labs/avalanchego/tree/master/vms#block-statuses
-func (vm *VM) AcceptBlock(context.Context, *blocks.Block) error {
+func (vm *VM) AcceptBlock(ctx context.Context, b *blocks.Block) error {
 	_ = (*saexec.Executor)(nil)
 	return errUnimplemented
 }
@@ -38,6 +45,7 @@ func (vm *VM) LastAccepted(context.Context) (ids.ID, error) {
 }
 
 // RejectBlock is a no-op in SAE because execution only occurs after acceptance.
-func (vm *VM) RejectBlock(context.Context, *blocks.Block) error {
+func (vm *VM) RejectBlock(ctx context.Context, b *blocks.Block) error {
+	vm.blocks.Delete(b.Hash())
 	return nil
 }
