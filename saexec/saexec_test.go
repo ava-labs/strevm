@@ -68,7 +68,7 @@ type SUT struct {
 // newSUT returns a new SUT. Any >= [logging.Error] on the logger will also
 // cancel the returned context, which is useful when waiting for blocks that
 // can never finish execution because of an error.
-func newSUT(tb testing.TB, hooks hook.Points) (context.Context, SUT) {
+func newSUT(tb testing.TB, hooks hook.Points, genesisOpts ...blockstest.GenesisOption) (context.Context, SUT) {
 	tb.Helper()
 
 	logger := saetest.NewTBLogger(tb, logging.Warn)
@@ -80,7 +80,13 @@ func newSUT(tb testing.TB, hooks hook.Points) (context.Context, SUT) {
 
 	wallet := saetest.NewUNSAFEWallet(tb, 1, types.LatestSigner(config))
 	alloc := saetest.MaxAllocFor(wallet.Addresses()...)
-	genesis := blockstest.NewGenesis(tb, db, config, alloc, blockstest.WithTrieDBConfig(tdbConfig))
+	genesisOpts = slices.Concat(
+		[]blockstest.GenesisOption{
+			blockstest.WithTrieDBConfig(tdbConfig),
+		},
+		genesisOpts,
+	)
+	genesis := blockstest.NewGenesis(tb, db, config, alloc, genesisOpts...)
 
 	opts := blockstest.WithBlockOptions(
 		blockstest.WithLogger(logger),
@@ -347,10 +353,12 @@ func TestExecution(t *testing.T) {
 
 func TestExtraBlockOps(t *testing.T) {
 	hooks := defaultHooks()
-	ctx, sut := newSUT(t, hooks)
+	ctx, sut := newSUT(t, hooks, blockstest.WithGasTarget(hooks.Target))
 	wallet := sut.wallet
 	exportEOA := wallet.Addresses()[0]
 	importEOA := common.Address{'i', 'm', 'p', 'o', 'r', 't'}
+
+	initialTime := sut.lastExecuted.Load().ExecutedByGasTime()
 
 	hooks.Ops = []hook.Op{
 		{
@@ -374,37 +382,18 @@ func TestExtraBlockOps(t *testing.T) {
 	require.NoError(t, e.Enqueue(ctx, b), "Enqueue()")
 	require.NoErrorf(t, b.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", b)
 
-	opts := cmp.Options{
-		cmpopts.IgnoreFields(
-			types.Receipt{},
-			"GasUsed", "CumulativeGasUsed",
-			"Bloom",
-		),
-		cmputils.BigInts(),
-	}
-	if diff := cmp.Diff(want, b.Receipts(), opts); diff != "" {
-		t.Errorf("%T.Receipts() diff (-want +got):\n%s", b, diff)
-	}
-
 	t.Run("committed_state", func(t *testing.T) {
 		sdb, err := state.New(b.PostExecutionStateRoot(), e.StateCache(), nil)
 		require.NoErrorf(t, err, "state.New(%T.PostExecutionStateRoot(), %T.StateCache(), nil)", b, e)
+		require.Equal(t, uint64(1), sdb.GetNonce(exportEOA), "unexpected nonce after op")
+		require.Equal(t, uint256.NewInt(100), sdb.GetBalance(importEOA), "unexpected balance after op")
 
-		if got, want := sdb.GetBalance(contract).ToBig(), new(big.Int).SetUint64(wantEscrowBalance); got.Cmp(want) != 0 {
-			t.Errorf("After Escrow deposits, got contract balance %v; want %v", got, want)
-		}
+		expectedTime := initialTime.Clone()
+		expectedTime.Tick(100_000 + 150_000)
 
-		enablePUSH0 := vm.BlockContext{
-			BlockNumber: big.NewInt(1),
-			Time:        1,
-			Random:      &common.Hash{},
-		}
-		evm := vm.NewEVM(enablePUSH0, vm.TxContext{}, sdb, e.ChainConfig(), vm.Config{})
-
-		got, _, err := evm.StaticCall(vm.AccountRef(eoa), contract, escrow.CallDataForBalance(eoa), 1e6)
-		require.NoErrorf(t, err, "%T.Call([Escrow contract], [balance(eoa)])", evm)
-		if got, want := new(uint256.Int).SetBytes(got), uint256.NewInt(wantEscrowBalance); !got.Eq(want) {
-			t.Errorf("Escrow.balance([eoa]) got %v; want %v", got, want)
+		opt := proxytime.CmpOpt[gas.Gas](proxytime.IgnoreRateInvariants)
+		if diff := cmp.Diff(expectedTime.Time, b.ExecutedByGasTime().Time, opt); diff != "" {
+			t.Errorf("%T.ExecutedByGasTime().Time diff (-want +got):\n%s", b, diff)
 		}
 	})
 }
