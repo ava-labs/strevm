@@ -30,6 +30,7 @@ func TestOp_ApplyTo(t *testing.T) {
 		name         string
 		op           *Op
 		wantAccounts []account
+		wantErr      error
 	}{
 		{
 			name: "mint_to_eoa",
@@ -104,13 +105,25 @@ func TestOp_ApplyTo(t *testing.T) {
 				},
 			},
 		},
+		{
+			name: "invalid_mint",
+			op: &Op{
+				From: map[common.Address]AccountDebit{
+					eoa: {
+						Nonce:  2,
+						Amount: *uint256.NewInt(100_000),
+					},
+				},
+			},
+			wantErr: errInsufficientFunds,
+		},
 	}
 
 	db, err := state.New(types.EmptyRootHash, state.NewDatabase(rawdb.NewMemoryDatabase()), nil)
 	require.NoError(t, err, "state.New([empty root], [fresh memory db])")
 	db.SetNonce(eoaMaxNonce, math.MaxUint64)
 	for _, tt := range tests {
-		tt.op.ApplyTo(db)
+		require.ErrorIs(t, tt.op.ApplyTo(db), tt.wantErr, "ApplyTo %s", tt.name)
 		for _, acct := range tt.wantAccounts {
 			assert.Equalf(t, acct.nonce, db.GetNonce(acct.address), "nonce of account %s after %s", acct.address, tt.name)
 			assert.Equalf(t, acct.balance, db.GetBalance(acct.address), "balance of account %s after %s", acct.address, tt.name)
