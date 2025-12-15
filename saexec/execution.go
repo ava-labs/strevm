@@ -163,11 +163,20 @@ func (e *Executor) execute(b *blocks.Block, logger logging.Logger) error {
 		receipts[ti] = receipt
 	}
 
-	for _, o := range e.hooks.ExtraBlockOps(b.EthBlock()) {
-		o.ApplyTo(stateDB)
+	for i, o := range e.hooks.ExtraBlockOps(b.EthBlock()) {
 		blockGasConsumed += o.Gas
 		perTxClock.Tick(o.Gas)
 		b.SetInterimExecutionTime(perTxClock)
+
+		if err := o.ApplyTo(stateDB); err != nil {
+			logger.Fatal(
+				"Extra block operation errored; see emergency playbook",
+				zap.Int("op_index", i),
+				zap.String("playbook", "https://github.com/ava-labs/strevm/issues/28"),
+				zap.Error(err),
+			)
+			return err
+		}
 	}
 
 	e.hooks.AfterExecutingBlock(stateDB, b.EthBlock(), receipts)
