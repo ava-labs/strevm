@@ -345,6 +345,70 @@ func TestExecution(t *testing.T) {
 	})
 }
 
+func TestExtraBlockOps(t *testing.T) {
+	hooks := defaultHooks()
+	ctx, sut := newSUT(t, hooks)
+	wallet := sut.wallet
+	exportEOA := wallet.Addresses()[0]
+	importEOA := common.Address{'i', 'm', 'p', 'o', 'r', 't'}
+
+	hooks.Ops = []hook.Op{
+		{
+			Gas: 100_000,
+			From: map[common.Address]hook.AccountDebit{
+				exportEOA: {
+					Amount: *uint256.NewInt(10),
+				},
+			},
+		},
+		{
+			Gas: 150_000,
+			To: map[common.Address]uint256.Int{
+				importEOA: *uint256.NewInt(100),
+			},
+		},
+	}
+	b := sut.chain.NewBlock(t, nil)
+
+	e := sut.Executor
+	require.NoError(t, e.Enqueue(ctx, b), "Enqueue()")
+	require.NoErrorf(t, b.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", b)
+
+	opts := cmp.Options{
+		cmpopts.IgnoreFields(
+			types.Receipt{},
+			"GasUsed", "CumulativeGasUsed",
+			"Bloom",
+		),
+		cmputils.BigInts(),
+	}
+	if diff := cmp.Diff(want, b.Receipts(), opts); diff != "" {
+		t.Errorf("%T.Receipts() diff (-want +got):\n%s", b, diff)
+	}
+
+	t.Run("committed_state", func(t *testing.T) {
+		sdb, err := state.New(b.PostExecutionStateRoot(), e.StateCache(), nil)
+		require.NoErrorf(t, err, "state.New(%T.PostExecutionStateRoot(), %T.StateCache(), nil)", b, e)
+
+		if got, want := sdb.GetBalance(contract).ToBig(), new(big.Int).SetUint64(wantEscrowBalance); got.Cmp(want) != 0 {
+			t.Errorf("After Escrow deposits, got contract balance %v; want %v", got, want)
+		}
+
+		enablePUSH0 := vm.BlockContext{
+			BlockNumber: big.NewInt(1),
+			Time:        1,
+			Random:      &common.Hash{},
+		}
+		evm := vm.NewEVM(enablePUSH0, vm.TxContext{}, sdb, e.ChainConfig(), vm.Config{})
+
+		got, _, err := evm.StaticCall(vm.AccountRef(eoa), contract, escrow.CallDataForBalance(eoa), 1e6)
+		require.NoErrorf(t, err, "%T.Call([Escrow contract], [balance(eoa)])", evm)
+		if got, want := new(uint256.Int).SetBytes(got), uint256.NewInt(wantEscrowBalance); !got.Eq(want) {
+			t.Errorf("Escrow.balance([eoa]) got %v; want %v", got, want)
+		}
+	})
+}
+
 func TestGasAccounting(t *testing.T) {
 	hooks := &saehookstest.Stub{}
 	ctx, sut := newSUT(t, hooks)

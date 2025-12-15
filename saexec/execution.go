@@ -162,6 +162,14 @@ func (e *Executor) execute(b *blocks.Block, logger logging.Logger) error {
 		// to access them before the end of the block.
 		receipts[ti] = receipt
 	}
+
+	for _, o := range e.hooks.ExtraBlockOps(b.EthBlock()) {
+		o.ApplyTo(stateDB)
+		blockGasConsumed += o.Gas
+		perTxClock.Tick(o.Gas)
+		b.SetInterimExecutionTime(perTxClock)
+	}
+
 	e.hooks.AfterExecutingBlock(stateDB, b.EthBlock(), receipts)
 	endTime := time.Now()
 	if err := gasClock.AfterBlock(blockGasConsumed, e.hooks, b.Header()); err != nil {
