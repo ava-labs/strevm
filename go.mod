@@ -2,6 +2,8 @@ module github.com/ava-labs/strevm
 
 go 1.24.9
 
+tool github.com/fjl/gencodec
+
 require (
 	github.com/ava-labs/avalanchego v1.14.1-0.20251203215505-70148edc6eca
 	github.com/ava-labs/libevm v1.13.15-0.20251112182915-1ec8741af98f
