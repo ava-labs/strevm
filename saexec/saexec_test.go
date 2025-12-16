@@ -385,8 +385,9 @@ func TestExtraBlockOps(t *testing.T) {
 	t.Run("committed_state", func(t *testing.T) {
 		sdb, err := state.New(b.PostExecutionStateRoot(), e.StateCache(), nil)
 		require.NoErrorf(t, err, "state.New(%T.PostExecutionStateRoot(), %T.StateCache(), nil)", b, e)
-		require.Equal(t, uint64(1), sdb.GetNonce(exportEOA), "unexpected nonce after op")
-		require.Equal(t, uint256.NewInt(100), sdb.GetBalance(importEOA), "unexpected balance after op")
+		require.Equal(t, uint64(1), sdb.GetNonce(exportEOA), "unexpected export nonce")
+		require.Zero(t, sdb.GetNonce(importEOA), "unexpected import nonce")
+		require.Equal(t, uint256.NewInt(100), sdb.GetBalance(importEOA), "unexpected imported balance")
 
 		expectedTime := initialTime.Clone()
 		expectedTime.Tick(100_000 + 150_000)
