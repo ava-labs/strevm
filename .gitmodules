@@ -1,0 +1,3 @@
+[submodule "saexec/ethtests/testdata"]
+	path = saexec/ethtests/testdata
+	url = https://github.com/ethereum/tests
