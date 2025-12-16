@@ -19,6 +19,8 @@ jobs:
   go:
     runs-on: ubuntu-latest
     needs: [go_test, go_generate, go_tidy, require_fuzz_corpus]
+    # TODO(arr4n) investigate why setup-go wasn't properly caching fuzz corpora
+    # and then reinstate a go_fuzz job that extends them.
     steps:
       - run: echo "Dependencies successful"
 
