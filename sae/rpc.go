@@ -1,4 +1,4 @@
-// Copyright (C) ((20\d\d\-2025)|(2025)), Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2025, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package sae
