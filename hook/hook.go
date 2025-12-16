@@ -8,12 +8,11 @@
 package hook
 
 import (
-	"errors"
-	"fmt"
 	"math"
 
 	"github.com/ava-labs/avalanchego/vms/components/gas"
 	"github.com/ava-labs/libevm/common"
+	"github.com/ava-labs/libevm/core"
 	"github.com/ava-labs/libevm/core/state"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/params"
@@ -46,10 +45,16 @@ type Op struct {
 	To map[common.Address]uint256.Int
 }
 
-var errInsufficientFunds = errors.New("insufficient funds")
-
 // ApplyTo applies the operation to the statedb.
+//
+// If an account has insufficient funds, [core.ErrInsufficientFunds] is returned
+// and the statedb is unchanged.
 func (o *Op) ApplyTo(stateDB *state.StateDB) error {
+	for from, acc := range o.From {
+		if balance := stateDB.GetBalance(from); balance.Lt(&acc.Amount) {
+			return core.ErrInsufficientFunds
+		}
+	}
 	for from, acc := range o.From {
 		// We use the state as the source of truth for the current nonce rather
 		// than the value provided by the hook. This prevents any situations,
@@ -62,12 +67,8 @@ func (o *Op) ApplyTo(stateDB *state.StateDB) error {
 		if nonce := stateDB.GetNonce(from); nonce < math.MaxUint64 {
 			stateDB.SetNonce(from, nonce+1)
 		}
-		if balance := stateDB.GetBalance(from); balance.Lt(&acc.Amount) {
-			return fmt.Errorf("%w: %s has %d, tried to transfer %d", errInsufficientFunds, from, balance, &acc.Amount)
-		}
 		stateDB.SubBalance(from, &acc.Amount)
 	}
-
 	for to, amount := range o.To {
 		stateDB.AddBalance(to, &amount)
 	}

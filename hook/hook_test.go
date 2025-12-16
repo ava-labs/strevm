@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/ava-labs/libevm/common"
+	"github.com/ava-labs/libevm/core"
 	"github.com/ava-labs/libevm/core/rawdb"
 	"github.com/ava-labs/libevm/core/state"
 	"github.com/ava-labs/libevm/core/types"
@@ -115,7 +116,7 @@ func TestOp_ApplyTo(t *testing.T) {
 					},
 				},
 			},
-			wantErr: errInsufficientFunds,
+			wantErr: core.ErrInsufficientFunds,
 		},
 	}
 
