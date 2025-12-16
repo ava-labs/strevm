@@ -7,7 +7,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math/big"
 	"sync/atomic"
 	"time"
 
@@ -205,14 +204,6 @@ func (vm *VM) Version(context.Context) (string, error) {
 
 func (vm *VM) log() logging.Logger {
 	return vm.snowCtx.Log
-}
-
-func (vm *VM) rulesForBlock(b *types.Block) params.Rules {
-	return vm.rulesAt(b.Number(), b.Time())
-}
-
-func (vm *VM) rulesAt(height *big.Int, time uint64) params.Rules {
-	return vm.exec.ChainConfig().Rules(height, true /*isMerge*/, time)
 }
 
 func (vm *VM) signerForBlock(b *types.Block) types.Signer {
