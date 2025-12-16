@@ -21,7 +21,6 @@ import (
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/ethdb"
 	"github.com/ava-labs/libevm/libevm/options"
-	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/triedb"
 	"github.com/stretchr/testify/require"
 
@@ -76,6 +75,13 @@ type BlockOption = options.Option[blockProperties]
 // NewBlock constructs an SAE block, wrapping the raw Ethereum block.
 func NewBlock(tb testing.TB, eth *types.Block, parent, lastSettled *blocks.Block, opts ...BlockOption) *blocks.Block {
 	tb.Helper()
+	b, err := TryNewBlock(tb, eth, parent, lastSettled, opts...)
+	require.NoError(tb, err, "blocks.New()")
+	return b
+}
+
+func TryNewBlock(tb testing.TB, eth *types.Block, parent, lastSettled *blocks.Block, opts ...BlockOption) (*blocks.Block, error) {
+	tb.Helper()
 
 	props := options.ApplyTo(&blockProperties{}, opts...)
 	if props.logger == nil {
@@ -83,8 +89,7 @@ func NewBlock(tb testing.TB, eth *types.Block, parent, lastSettled *blocks.Block
 	}
 
 	b, err := blocks.New(eth, parent, lastSettled, props.logger)
-	require.NoError(tb, err, "blocks.New()")
-	return b
+	return b, err
 }
 
 type blockProperties struct {
@@ -102,22 +107,18 @@ func WithLogger(l logging.Logger) BlockOption {
 // returns wraps [core.Genesis.ToBlock] with [NewBlock]. It assumes a nil
 // [triedb.Config] unless overridden by a [WithTrieDBConfig]. The block is
 // marked as both executed and synchronous.
-func NewGenesis(tb testing.TB, db ethdb.Database, config *params.ChainConfig, alloc types.GenesisAlloc, opts ...GenesisOption) *blocks.Block {
+func NewGenesis(tb testing.TB, db ethdb.Database, gen *core.Genesis, opts ...GenesisOption) *blocks.Block {
 	tb.Helper()
 	conf := &genesisConfig{
 		target: math.MaxUint64,
 	}
 	options.ApplyTo(conf, opts...)
 
-	gen := &core.Genesis{
-		Config: config,
-		Alloc:  alloc,
-	}
-
 	tdb := state.NewDatabaseWithConfig(db, conf.tdbConfig).TrieDB()
-	_, hash, err := core.SetupGenesisBlock(db, tdb, gen)
+	_, _, err := core.SetupGenesisBlock(db, tdb, gen)
 	require.NoError(tb, err, "core.SetupGenesisBlock()")
-	require.NoErrorf(tb, tdb.Commit(hash, true), "%T.Commit(core.SetupGenesisBlock(...))", tdb)
+	// TODO(cey): This seems wrong, why are we committing the block hash rather than the root? We should already be committing that when we called SetupGenesisBlock.
+	// require.NoErrorf(tb, tdb.Commit(hash, true), "%T.Commit(core.SetupGenesisBlock(...))", tdb)
 
 	b := NewBlock(tb, gen.ToBlock(), nil, nil)
 	require.NoErrorf(tb, b.MarkExecuted(db, gastime.New(gen.Timestamp, conf.gasTarget(), 0), time.Time{}, new(big.Int), nil, b.SettledStateRoot()), "%T.MarkExecuted()", b)

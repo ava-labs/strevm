@@ -34,6 +34,7 @@ func NewChainBuilder(genesis *blocks.Block, defaultOpts ...ChainOption) *ChainBu
 		chain: []*blocks.Block{genesis},
 	}
 	c.SetDefaultOptions(defaultOpts...)
+	c.blocksByHash.Store(genesis.Hash(), genesis)
 	return c
 }
 
@@ -84,6 +85,25 @@ func (cb *ChainBuilder) NewBlock(tb testing.TB, txs []*types.Transaction, opts .
 	return b
 }
 
+func (cb *ChainBuilder) InsertBlock(tb testing.TB, block *types.Block, opts ...ChainOption) (*blocks.Block, error) {
+	tb.Helper()
+
+	allOpts := new(chainOptions)
+	options.ApplyTo(allOpts, cb.defaultOpts...)
+	options.ApplyTo(allOpts, opts...)
+
+	parent := cb.Last()
+	// ASK(cey): last settled should be nil?
+	wb, err := TryNewBlock(tb, block, parent, nil, allOpts.sae...)
+	if err != nil {
+		return nil, err
+	}
+	cb.chain = append(cb.chain, wb)
+	cb.blocksByHash.Store(wb.Hash(), wb)
+
+	return wb, nil
+}
+
 // Last returns the last block to be built by the builder, which MAY be the
 // genesis block passed to the constructor.
 func (cb *ChainBuilder) Last() *blocks.Block {
@@ -113,4 +133,21 @@ func (cb *ChainBuilder) GetBlock(h common.Hash, num uint64) (*blocks.Block, bool
 		return nil, false
 	}
 	return b, true
+}
+
+func (cb *ChainBuilder) GetHashAtHeight(num uint64) (common.Hash, bool) {
+	if num >= uint64(len(cb.chain)) {
+		return common.Hash{}, false
+	}
+	block := cb.chain[num]
+	return block.Hash(), block != nil && block.NumberU64() == num
+}
+
+func (cb *ChainBuilder) GetNumberByHash(h common.Hash) (uint64, bool) {
+	ifc, _ := cb.blocksByHash.Load(h)
+	b, ok := ifc.(*blocks.Block)
+	if !ok {
+		return 0, false
+	}
+	return b.NumberU64(), true
 }

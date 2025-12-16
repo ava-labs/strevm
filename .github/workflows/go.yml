@@ -22,6 +22,7 @@ jobs:
     steps:
       - run: echo "Dependencies successful"
 
+  # TODO(cey): we should only run -short tests in PRs and then run the full tests in main.
   go_test:
     runs-on: ubuntu-latest
     steps:

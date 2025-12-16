@@ -21,7 +21,9 @@ import (
 	"github.com/ava-labs/avalanchego/network/p2p/p2ptest"
 	"github.com/ava-labs/avalanchego/utils/logging"
 	"github.com/ava-labs/libevm/common"
+	"github.com/ava-labs/libevm/core"
 	"github.com/ava-labs/libevm/core/rawdb"
+	"github.com/ava-labs/libevm/core/state/snapshot"
 	"github.com/ava-labs/libevm/core/txpool"
 	"github.com/ava-labs/libevm/core/txpool/legacypool"
 	"github.com/ava-labs/libevm/core/types"
@@ -67,18 +69,23 @@ func newWallet(tb testing.TB, numAccounts uint) *saetest.Wallet {
 	return saetest.NewUNSAFEWallet(tb, numAccounts, signer)
 }
 
+// TODO(cey): This should be merged with saexectest.NewSUT
 func newSUT(t *testing.T, numAccounts uint) SUT {
 	t.Helper()
 	logger := saetest.NewTBLogger(t, logging.Warn)
 
 	wallet := newWallet(t, numAccounts)
 	config := saetest.ChainConfig()
+	genesisSpec := &core.Genesis{
+		Config: config,
+		Alloc:  saetest.MaxAllocFor(wallet.Addresses()...),
+	}
 
 	db := rawdb.NewMemoryDatabase()
-	genesis := blockstest.NewGenesis(t, db, config, saetest.MaxAllocFor(wallet.Addresses()...))
+	genesis := blockstest.NewGenesis(t, db, genesisSpec)
 	chain := blockstest.NewChainBuilder(genesis)
 
-	exec, err := saexec.New(genesis, chain.GetBlock, config, db, nil, &hookstest.Stub{Target: 1e6}, logger)
+	exec, err := saexec.New(genesis, chain.GetBlock, config, db, nil, snapshot.Config{CacheSize: 128, AsyncBuild: true}, &hookstest.Stub{Target: 1e6}, logger)
 	require.NoError(t, err, "saexec.New()")
 	t.Cleanup(func() {
 		require.NoErrorf(t, exec.Close(), "%T.Close()", exec)

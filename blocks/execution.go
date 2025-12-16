@@ -65,10 +65,12 @@ func (b *Block) MarkExecuted(db ethdb.Database, byGas *gastime.Time, byWall time
 	e := &executionResults{
 		byGas:         *byGas.Clone(),
 		byWall:        byWall,
-		baseFee:       new(big.Int).Set(baseFee),
 		receipts:      slices.Clone(receipts),
 		receiptRoot:   types.DeriveSha(receipts, trie.NewStackTrie(nil)),
 		stateRootPost: stateRootPost,
+	}
+	if baseFee != nil {
+		e.baseFee = new(big.Int).Set(baseFee)
 	}
 
 	batch := db.NewBatch()
@@ -147,7 +149,10 @@ func (b *Block) ExecutedByWallTime() time.Time {
 // no such successful call has been made.
 func (b *Block) BaseFee() *big.Int {
 	return executionArtefact(b, "receipts", func(e *executionResults) *big.Int {
-		return new(big.Int).Set(e.baseFee)
+		if e.baseFee != nil {
+			return new(big.Int).Set(e.baseFee)
+		}
+		return nil
 	})
 }
 
