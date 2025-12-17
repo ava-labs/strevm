@@ -68,7 +68,7 @@ type SUT struct {
 // newSUT returns a new SUT. Any >= [logging.Error] on the logger will also
 // cancel the returned context, which is useful when waiting for blocks that
 // can never finish execution because of an error.
-func newSUT(tb testing.TB, hooks hook.Points, genesisOpts ...blockstest.GenesisOption) (context.Context, SUT) {
+func newSUT(tb testing.TB, hooks *saehookstest.Stub) (context.Context, SUT) {
 	tb.Helper()
 
 	logger := saetest.NewTBLogger(tb, logging.Warn)
@@ -80,13 +80,7 @@ func newSUT(tb testing.TB, hooks hook.Points, genesisOpts ...blockstest.GenesisO
 
 	wallet := saetest.NewUNSAFEWallet(tb, 1, types.LatestSigner(config))
 	alloc := saetest.MaxAllocFor(wallet.Addresses()...)
-	genesisOpts = slices.Concat(
-		[]blockstest.GenesisOption{
-			blockstest.WithTrieDBConfig(tdbConfig),
-		},
-		genesisOpts,
-	)
-	genesis := blockstest.NewGenesis(tb, db, config, alloc, genesisOpts...)
+	genesis := blockstest.NewGenesis(tb, db, config, alloc, blockstest.WithTrieDBConfig(tdbConfig), blockstest.WithGasTarget(hooks.Target))
 
 	opts := blockstest.WithBlockOptions(
 		blockstest.WithLogger(logger),
@@ -353,9 +347,11 @@ func TestExecution(t *testing.T) {
 
 func TestExtraBlockOps(t *testing.T) {
 	hooks := defaultHooks()
-	ctx, sut := newSUT(t, hooks, blockstest.WithGasTarget(hooks.Target))
+	ctx, sut := newSUT(t, hooks)
 	wallet := sut.wallet
 	exportEOA := wallet.Addresses()[0]
+	// The import EOA is deliberately not from [newSUT] to ensure that it's got
+	// a zero starting balance.
 	importEOA := common.Address{'i', 'm', 'p', 'o', 'r', 't'}
 
 	initialTime := sut.lastExecuted.Load().ExecutedByGasTime()
@@ -363,15 +359,13 @@ func TestExtraBlockOps(t *testing.T) {
 	hooks.Ops = []hook.Op{
 		{
 			Gas: 100_000,
-			From: map[common.Address]hook.AccountDebit{
-				exportEOA: {
-					Amount: *uint256.NewInt(10),
-				},
+			Burn: map[common.Address]uint256.Int{
+				exportEOA: *uint256.NewInt(10),
 			},
 		},
 		{
 			Gas: 150_000,
-			To: map[common.Address]uint256.Int{
+			Mint: map[common.Address]uint256.Int{
 				importEOA: *uint256.NewInt(100),
 			},
 		},
@@ -385,25 +379,27 @@ func TestExtraBlockOps(t *testing.T) {
 	t.Run("committed_state", func(t *testing.T) {
 		sdb, err := state.New(b.PostExecutionStateRoot(), e.StateCache(), nil)
 		require.NoErrorf(t, err, "state.New(%T.PostExecutionStateRoot(), %T.StateCache(), nil)", b, e)
-		require.Equal(t, uint64(1), sdb.GetNonce(exportEOA), "unexpected export nonce")
-		require.Zero(t, sdb.GetNonce(importEOA), "unexpected import nonce")
-		require.Equal(t, uint256.NewInt(100), sdb.GetBalance(importEOA), "unexpected imported balance")
+		assert.Equal(t, uint64(1), sdb.GetNonce(exportEOA), "export nonce incremented")
+		assert.Zero(t, sdb.GetNonce(importEOA), "import nonce unchanged")
+		assert.Equal(t, uint256.NewInt(100), sdb.GetBalance(importEOA), "imported balance")
 
-		expectedTime := initialTime.Clone()
-		expectedTime.Tick(100_000 + 150_000)
+		wantTime := initialTime.Clone()
+		wantTime.Tick(100_000 + 150_000)
 
-		opt := proxytime.CmpOpt[gas.Gas](proxytime.IgnoreRateInvariants)
-		if diff := cmp.Diff(expectedTime.Time, b.ExecutedByGasTime().Time, opt); diff != "" {
-			t.Errorf("%T.ExecutedByGasTime().Time diff (-want +got):\n%s", b, diff)
+		opt := gastime.CmpOpt()
+		if diff := cmp.Diff(wantTime, b.ExecutedByGasTime(), opt); diff != "" {
+			t.Errorf("%T.ExecutedByGasTime() diff (-want +got):\n%s", b, diff)
 		}
 	})
 }
 
 func TestGasAccounting(t *testing.T) {
-	hooks := &saehookstest.Stub{}
+	const gasPerTx = gas.Gas(params.TxGas)
+	hooks := &saehookstest.Stub{
+		Target: 5 * gasPerTx,
+	}
 	ctx, sut := newSUT(t, hooks)
 
-	const gasPerTx = gas.Gas(params.TxGas)
 	at := func(blockTime, txs uint64, rate gas.Gas) *proxytime.Time[gas.Gas] {
 		tm := proxytime.New[gas.Gas](blockTime, rate)
 		tm.Tick(gas.Gas(txs) * gasPerTx)
@@ -427,15 +423,6 @@ func TestGasAccounting(t *testing.T) {
 		wantExcessAfter gas.Gas
 		wantPriceAfter  gas.Price
 	}{
-		{
-			// Initially set the gasTarget for the next block.
-			blockTime:       0,
-			numTxs:          0,
-			targetAfter:     5 * gasPerTx,
-			wantExecutedBy:  at(0, 0, 10*gasPerTx),
-			wantExcessAfter: 0,
-			wantPriceAfter:  1,
-		},
 		{
 			blockTime:       2,
 			numTxs:          3,

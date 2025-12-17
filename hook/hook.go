@@ -10,6 +10,7 @@ package hook
 import (
 	"math"
 
+	"github.com/ava-labs/avalanchego/ids"
 	"github.com/ava-labs/avalanchego/vms/components/gas"
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core"
@@ -21,59 +22,6 @@ import (
 	"github.com/ava-labs/strevm/intmath"
 	saeparams "github.com/ava-labs/strevm/params"
 )
-
-// AccountDebit includes an amount that an account should have debited,
-// along with the nonce used to debit the account.
-type AccountDebit struct {
-	Nonce  uint64
-	Amount uint256.Int
-}
-
-// Op is an operation that can be applied to state during the execution of a
-// block.
-type Op struct {
-	// Gas consumed by this operation
-	Gas gas.Gas
-	// GasPrice this operation is willing to spend
-	GasPrice uint256.Int
-	// From specifies the set of accounts and the authorization of funds to be
-	// removed from the accounts.
-	From map[common.Address]AccountDebit
-	// To specifies the amount to increase account balances by. These funds are
-	// not necessarily tied to the funds consumed in the From field. The sum of
-	// the To amounts may even exceed the sum of the From amounts.
-	To map[common.Address]uint256.Int
-}
-
-// ApplyTo applies the operation to the statedb.
-//
-// If an account has insufficient funds, [core.ErrInsufficientFunds] is returned
-// and the statedb is unchanged.
-func (o *Op) ApplyTo(stateDB *state.StateDB) error {
-	for from, acc := range o.From {
-		if balance := stateDB.GetBalance(from); balance.Lt(&acc.Amount) {
-			return core.ErrInsufficientFunds
-		}
-	}
-	for from, acc := range o.From {
-		// We use the state as the source of truth for the current nonce rather
-		// than the value provided by the hook. This prevents any situations,
-		// such as with delegated accounts, where nonces might not be
-		// incremented properly.
-		//
-		// If overflow would have occurred here, the nonce must have already
-		// been increased during execution, so we are already protected against
-		// replay attacks.
-		if nonce := stateDB.GetNonce(from); nonce < math.MaxUint64 {
-			stateDB.SetNonce(from, nonce+1)
-		}
-		stateDB.SubBalance(from, &acc.Amount)
-	}
-	for to, amount := range o.To {
-		stateDB.AddBalance(to, &amount)
-	}
-	return nil
-}
 
 // Points define user-injected hook points.
 type Points interface {
@@ -94,6 +42,52 @@ type Points interface {
 	BeforeExecutingBlock(params.Rules, *state.StateDB, *types.Block) error
 	// AfterExecutingBlock is called immediately after executing the block.
 	AfterExecutingBlock(*state.StateDB, *types.Block, types.Receipts)
+}
+
+// Op is an operation that can be applied to state during the execution of a
+// block.
+type Op struct {
+	// ID of this operation. It is used for logging and debugging purposes.
+	ID ids.ID
+	// Gas consumed by this operation.
+	Gas gas.Gas
+	// Burn specifies the set of accounts and the authorization of funds to be
+	// removed from the accounts.
+	Burn map[common.Address]uint256.Int
+	// Mint specifies the amount to increase account balances by. These funds
+	// are not necessarily tied to the funds consumed in the Burn field. The
+	// sum of the Mint amounts may even exceed the sum of the Burn amounts.
+	Mint map[common.Address]uint256.Int
+}
+
+// ApplyTo applies the operation to the statedb.
+//
+// If an account has insufficient funds, [core.ErrInsufficientFunds] is returned
+// and the statedb is unchanged.
+func (o *Op) ApplyTo(stateDB *state.StateDB) error {
+	for from, amount := range o.Burn {
+		if b := stateDB.GetBalance(from); b.Lt(&amount) {
+			return core.ErrInsufficientFunds
+		}
+	}
+	for from, amount := range o.Burn {
+		// We use the state as the source of truth for the current nonce rather
+		// than the value provided by the hook. This prevents any situations,
+		// such as with delegated accounts, where nonces might not be
+		// incremented properly.
+		//
+		// If overflow would have occurred here, the nonce must have already
+		// been increased during execution, so we are already protected against
+		// replay attacks.
+		if nonce := stateDB.GetNonce(from); nonce < math.MaxUint64 {
+			stateDB.SetNonce(from, nonce+1)
+		}
+		stateDB.SubBalance(from, &amount)
+	}
+	for to, amount := range o.Mint {
+		stateDB.AddBalance(to, &amount)
+	}
+	return nil
 }
 
 // MinimumGasConsumption MUST be used as the implementation for the respective

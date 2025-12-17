@@ -172,6 +172,7 @@ func (e *Executor) execute(b *blocks.Block, logger logging.Logger) error {
 			logger.Fatal(
 				"Extra block operation errored; see emergency playbook",
 				zap.Int("op_index", i),
+				zap.Stringer("op_id", o.ID),
 				zap.String("playbook", "https://github.com/ava-labs/strevm/issues/28"),
 				zap.Error(err),
 			)
