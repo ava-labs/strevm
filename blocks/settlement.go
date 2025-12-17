@@ -8,6 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+
+	"go.uber.org/zap"
 )
 
 type ancestry struct {
@@ -207,15 +209,26 @@ func LastToSettleAt(settleAt uint64, parent *Block) (b *Block, ok bool, _ error)
 	// settled (see invariant in [Block]). If a block was already settled then
 	// only it or a later (i.e. unsettled) block can be returned by this loop,
 	// therefore we have a guarantee that the loop update will never result in
-	// `block==nil` during block building. Verification, however, MUST protect
-	// against malformed input so performs a check.
+	// `block==nil`.
 	for block := parent; ; block = block.ParentBlock() {
 		if block == nil {
+			// Although the below [Block.Settled] check (performed in the last
+			// loop iteration) precludes this from happening, that assumes no
+			// settlement concurrently with a call to [LastToSettleAt]. While
+			// that may be true now, the consequence of a race condition when
+			// omitting this check would be a panic for nil-pointer
+			// dereferencing.
+			parent.log.Error(
+				"Race condition when determining last block to settle",
+				zap.Stringer("parent_hash", parent.Hash()),
+				zap.Uint64("parent_height", parent.Height()),
+				zap.Uint64("settle_at", settleAt),
+			)
 			return nil, false, fmt.Errorf("%w: settling at %d with parent %#x (%v)", errIncompleteBlockHistory, settleAt, parent.Hash(), parent.Number())
 		}
 		// Guarantees that the loop will always exit as the last pre-SAE block
 		// (perhaps the genesis) is always settled, by definition.
-		if settled := block.ancestry.Load() == nil; settled {
+		if block.Settled() {
 			return block, known, nil
 		}
 
