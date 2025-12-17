@@ -47,26 +47,31 @@ func uint256FromBig(b *big.Int, nilHandling nilAllowed) (*uint256.Int, error) {
 }
 
 type sMap[K comparable, V any] struct {
-	m sync.Map
+	m  map[K]V
+	mu sync.RWMutex
 }
 
-func (m *sMap[K, V]) zeroValue() V {
-	var zero V
-	return zero
+func newSMap[K comparable, V any]() *sMap[K, V] {
+	return &sMap[K, V]{
+		m: make(map[K]V),
+	}
 }
 
 func (m *sMap[K, V]) Load(k K) (V, bool) {
-	v, ok := m.m.Load(k)
-	if !ok {
-		return m.zeroValue(), false
-	}
-	return v.(V), true //nolint:forcetypeassert // Known invariant
+	m.mu.RLock()
+	v, ok := m.m[k]
+	m.mu.RUnlock()
+	return v, ok
 }
 
 func (m *sMap[K, V]) Store(k K, v V) {
-	m.m.Store(k, v)
+	m.mu.Lock()
+	m.m[k] = v
+	m.mu.Unlock()
 }
 
 func (m *sMap[K, V]) Delete(k K) {
-	m.m.Delete(k)
+	m.mu.Lock()
+	delete(m.m, k)
+	m.mu.Unlock()
 }

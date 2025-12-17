@@ -41,7 +41,7 @@ type VM struct {
 	now     func() time.Time
 	metrics *prometheus.Registry
 
-	blocks                   sMap[common.Hash, *blocks.Block]
+	blocks                   *sMap[common.Hash, *blocks.Block]
 	preference, lastAccepted atomic.Pointer[blocks.Block]
 
 	exec    *saexec.Executor
@@ -70,6 +70,7 @@ func NewVM(c Config) *VM {
 	return &VM{
 		config: Config{},
 		now:    now,
+		blocks: newSMap[common.Hash, *blocks.Block](),
 	}
 }
 
