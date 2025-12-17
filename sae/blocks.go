@@ -159,15 +159,12 @@ func (vm *VM) VerifyBlock(ctx context.Context, bCtx *block.Context, b *blocks.Bl
 	if err != nil {
 		return fmt.Errorf("unknown block parent %#x: %w", b.ParentHash(), err)
 	}
-	if b.Height() != parent.Height()+1 {
-		return fmt.Errorf("non-incrementing block height; building at %d with parent at %d", b.Height(), parent.Height())
-	}
-	if parent.Settled() && !parent.Synchronous() {
-		// If the parent is settled then it MUST have some descendent block that
-		// was already accepted by consensus. There is therefore no reason to
-		// allow `b` into consensus, and doing so would break invariants
-		// required by, for example, [blocks.LastToSettleAt].
-		return fmt.Errorf("verifying block %#x with settled parent %#x", b.Hash(), b.ParentHash())
+
+	switch height, accepted := b.Height(), vm.lastAccepted.Load().Height(); {
+	case height != parent.Height()+1:
+		return fmt.Errorf("non-incrementing block height; verifying at %d with parent at %d", height, parent.Height())
+	case height <= accepted:
+		return fmt.Errorf("verifying block at height %d <= last-accepted (%d)", height, accepted)
 	}
 
 	txs := make([]*txgossip.LazyTransaction, len(b.Transactions()))

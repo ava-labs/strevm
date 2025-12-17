@@ -41,8 +41,8 @@ type VM struct {
 	now     func() time.Time
 	metrics *prometheus.Registry
 
-	blocks     sMap[common.Hash, *blocks.Block]
-	preference atomic.Pointer[blocks.Block]
+	blocks                   sMap[common.Hash, *blocks.Block]
+	preference, lastAccepted atomic.Pointer[blocks.Block]
 
 	exec    *saexec.Executor
 	mempool *txgossip.Set
@@ -87,6 +87,7 @@ func (vm *VM) Init(
 	vm.hooks = hooks
 	vm.blocks.Store(lastSynchronous.Hash(), lastSynchronous)
 	vm.preference.Store(lastSynchronous)
+	vm.lastAccepted.Store(lastSynchronous)
 
 	vm.metrics = prometheus.NewRegistry()
 	if err := snowCtx.Metrics.Register("SAE", vm.metrics); err != nil {
