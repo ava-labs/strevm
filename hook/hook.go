@@ -70,14 +70,9 @@ func (o *Op) ApplyTo(stateDB *state.StateDB) error {
 		}
 	}
 	for from, amount := range o.Burn {
-		// We use the state as the source of truth for the current nonce rather
-		// than the value provided by the hook. This prevents any situations,
-		// such as with delegated accounts, where nonces might not be
-		// incremented properly.
-		//
 		// If overflow would have occurred here, the nonce must have already
-		// been increased during execution, so we are already protected against
-		// replay attacks.
+		// been increased by a delegated account's execution, so we are already
+		// protected against replay attacks.
 		if nonce := stateDB.GetNonce(from); nonce < math.MaxUint64 {
 			stateDB.SetNonce(from, nonce+1)
 		}
