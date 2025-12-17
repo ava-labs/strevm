@@ -18,7 +18,9 @@ jobs:
   # what gates PRs.
   go:
     runs-on: ubuntu-latest
-    needs: [go_test, go_generate, go_tidy, go_fuzz]
+    needs: [go_test, go_generate, go_tidy, require_fuzz_corpus]
+    # TODO(arr4n) investigate why setup-go wasn't properly caching fuzz corpora
+    # and then reinstate a go_fuzz job that extends them.
     steps:
       - run: echo "Dependencies successful"
 
@@ -70,23 +72,26 @@ jobs:
         run: |
           echo "targets=$(grep --recursive --include '**_test.go' -oP "^func \KFuzz[^(]+" | xargs jq -c -n '$ARGS.positional' --args)" >> $GITHUB_OUTPUT
 
-  go_fuzz:
+  require_fuzz_corpus:
     needs: [find_fuzz_targets]
     runs-on: ubuntu-latest
     strategy:
       matrix:
         target: ${{fromJSON(needs.find_fuzz_targets.outputs.targets)}}
     env:
-      FUZZ_TIME: ${{ github.ref_name == 'main' && '15m' || '60s' }}
+      # The actual corpus size is dependent on the test in question and how many
+      # "interesting" cases can be found. This is an arbitrary lower bound,
+      # chosen as approximately half the size of the very basic
+      # `FuzzEffectiveGasTip`.
+      MIN_CORPUS_SIZE: 20
     steps:
       - run: |
           echo "${{ matrix.target }}" | awk -F: '{print $1}' | xargs dirname | xargs -i echo "PACKAGE={}" >> "$GITHUB_ENV"
       - run: |
           echo "${{ matrix.target }}" | awk -F: '{print $2}' | xargs -i echo "FUNCTION={}" >> "$GITHUB_ENV"
-      - uses: actions/checkout@v4
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: "go.mod"
       - run: |
-          go test -fuzz ${FUNCTION} -fuzztime ${FUZZ_TIME} ./${PACKAGE}
+          echo "CORPUS_DIR=./${PACKAGE}/testdata/fuzz/${FUNCTION}" >> "$GITHUB_ENV"
+      - uses: actions/checkout@v4
+      - name: Require existing corpus of at least ${MIN_CORPUS_SIZE}
+        run: | # Raw `go test` will be meaningful, and `-fuzz` won't start from nowhere
+          [ -d "${CORPUS_DIR}" ] && [ $(ls "${CORPUS_DIR}" | wc -l) -gt ${MIN_CORPUS_SIZE} ]
