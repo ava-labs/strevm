@@ -51,12 +51,11 @@ type Op struct {
 	ID ids.ID
 	// Gas consumed by this operation.
 	Gas gas.Gas
-	// Burn specifies the set of accounts and the authorization of funds to be
-	// removed from the accounts.
+	// Burn specifies the amount to decrease account balances by.
 	Burn map[common.Address]uint256.Int
 	// Mint specifies the amount to increase account balances by. These funds
 	// are not necessarily tied to the funds consumed in the Burn field. The
-	// sum of the Mint amounts may even exceed the sum of the Burn amounts.
+	// sum of the Mint amounts may exceed the sum of the Burn amounts.
 	Mint map[common.Address]uint256.Int
 }
 
