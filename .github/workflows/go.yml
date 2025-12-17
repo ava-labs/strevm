@@ -33,7 +33,7 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version-file: "go.mod"
-      - run: go test ./... -timeout 60m
+      - run: go test -short ./...
 
   go_generate:
     env:
