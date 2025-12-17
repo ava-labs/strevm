@@ -80,9 +80,7 @@ func (vm *VM) buildBlock(ctx context.Context, bCtx *block.Context, parent *block
 	// [blocks.LastToSettleAt] guarantees that the returned block has finished
 	// execution, this isn't a stated invariant and it's possible for it to be
 	// more aggressive in the future.
-	wCtx, cancel := context.WithTimeout(ctx, 10*time.Millisecond)
-	defer cancel()
-	if err := lastSettled.WaitUntilExecuted(wCtx); err != nil {
+	if !lastSettled.Executed() {
 		log.Warn(
 			"Execution lagging for settlement artefacts",
 			zap.Uint64("settling_height", lastSettled.Height()),
