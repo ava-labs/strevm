@@ -554,21 +554,20 @@ func asBytes(ops ...vm.OpCode) []byte {
 }
 
 func FuzzOpCodes(f *testing.F) {
-	// SUT setup is too expensive to only fuzz a single transaction, but the
-	// total number is arbitrary.
-	f.Fuzz(func(t *testing.T, c0, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13, c14, c15 []byte) {
-		_, sut := newSUT(t, defaultHooks())
+	// Although it's tempting to run multiple `code` slices in a block, to
+	// amortise the fixed setup cost of the SUT, this stops the Go fuzzer from
+	// knowing about their independence, resulting in a lot of empty inputs.
+	f.Fuzz(func(t *testing.T, code []byte) {
+		t.Parallel() // for corpus in ./testdata/
 
-		var txs types.Transactions
-		for _, code := range [][]byte{c0, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13, c14, c15} {
-			txs = append(txs, sut.wallet.SetNonceAndSign(t, 0, &types.LegacyTx{
-				To:       nil, // i.e. contract creation, resulting in `code` being executed
-				GasPrice: big.NewInt(1),
-				Gas:      30e6,
-				Data:     code,
-			}))
-		}
-		b := sut.chain.NewBlock(t, txs)
+		_, sut := newSUT(t, defaultHooks())
+		tx := sut.wallet.SetNonceAndSign(t, 0, &types.LegacyTx{
+			To:       nil, // i.e. contract creation, resulting in `code` being executed
+			GasPrice: big.NewInt(1),
+			Gas:      30e6,
+			Data:     code,
+		})
+		b := sut.chain.NewBlock(t, types.Transactions{tx})
 
 		// Ensure that the SUT [logging.Logger] remains of this type so >=WARN
 		// logs become failures.
