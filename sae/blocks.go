@@ -58,7 +58,7 @@ func (vm *VM) BuildBlock(ctx context.Context, bCtx *block.Context) (*blocks.Bloc
 	filter := txpool.PendingFilter{
 		BaseFee: baseFee,
 	}
-	return vm.buildBlock(ctx, bCtx, parent, vm.now(), vm.mempool.TransactionsByPriority(filter))
+	return vm.buildBlock(ctx, bCtx, parent, vm.config.Now(), vm.mempool.TransactionsByPriority(filter))
 }
 
 var errExecutionLagging = errors.New("execution lagging for settlement")

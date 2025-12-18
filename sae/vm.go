@@ -38,7 +38,6 @@ type VM struct {
 	config  Config
 	snowCtx *snow.Context
 	hooks   hook.Points
-	now     func() time.Time
 	metrics *prometheus.Registry
 
 	blocks                   *sMap[common.Hash, *blocks.Block]
@@ -62,14 +61,11 @@ type Config struct {
 // other use. This deferment allows the [VM] to be constructed before
 // `Initialize` has been called on the harness.
 func NewVM(c Config) *VM {
-	now := c.Now
-	if now == nil {
-		now = time.Now
+	if c.Now == nil {
+		c.Now = time.Now
 	}
-
 	return &VM{
-		config: Config{},
-		now:    now,
+		config: c,
 		blocks: newSMap[common.Hash, *blocks.Block](),
 	}
 }
