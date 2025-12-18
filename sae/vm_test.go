@@ -97,7 +97,7 @@ func newSUT(tb testing.TB, numAccounts uint) (context.Context, *SUT) {
 
 	handlers, err := snow.CreateHandlers(ctx)
 	require.NoErrorf(tb, err, "%T.CreateHandlers()", snow)
-	server := httptest.NewServer(handlers["/"])
+	server := httptest.NewServer(handlers[rpcHTTPExtensionPath])
 	tb.Cleanup(server.Close)
 	client, err := ethclient.Dial(server.URL)
 	require.NoError(tb, err, "ethclient.Dial(http.NewServer(%T.CreateHandlers()))", snow)
