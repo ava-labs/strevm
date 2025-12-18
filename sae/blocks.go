@@ -48,7 +48,13 @@ func (vm *VM) ParseBlock(ctx context.Context, buf []byte) (*blocks.Block, error)
 func (vm *VM) BuildBlock(ctx context.Context, bCtx *block.Context) (*blocks.Block, error) {
 	parent := vm.preference.Load()
 
-	baseFee := uint256.NewInt(0) // TODO(arr4n) source this from the parent's worst-case *end* of execution
+	baseFee := uint256.NewInt(0)
+	if false { // Demonstrate the expected actual computation of `baseFee`
+		clock := parent.ExecutedByGasTime() // TODO(arr4n) carry the worst-case equivalent and use it instead
+		clock.BeforeBlock(vm.hooks, nil)    // TODO(arr4n) modify this to accept the FastForward() arguments, not the Header
+		baseFee = clock.BaseFee()
+	}
+
 	filter := txpool.PendingFilter{
 		BaseFee: baseFee,
 	}
