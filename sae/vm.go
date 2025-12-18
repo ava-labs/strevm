@@ -123,9 +123,8 @@ func (vm *VM) Init(
 		if err != nil {
 			return err
 		}
-		pool, err := txgossip.NewSet(snowCtx.Log, txPool, gossip.BloomSetConfig{
-			Metrics:                        metrics,
-		})
+		conf := gossip.BloomSetConfig{Metrics: metrics}
+		pool, err := txgossip.NewSet(snowCtx.Log, txPool, conf)
 		if err != nil {
 			return err
 		}
