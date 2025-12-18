@@ -57,8 +57,8 @@ func TestOp_ApplyTo(t *testing.T) {
 		{
 			name: "transfer_from_eoa_to_eoaMaxNonce",
 			op: &Op{
-				Burn: map[common.Address]uint256.Int{
-					eoa: *uint256.NewInt(100_000),
+				Burn: map[common.Address]AccountDebit{
+					eoa: {Amount: *uint256.NewInt(100_000)},
 				},
 				Mint: map[common.Address]uint256.Int{
 					eoaMaxNonce: *uint256.NewInt(100_000),
@@ -80,9 +80,9 @@ func TestOp_ApplyTo(t *testing.T) {
 		{
 			name: "burn_all_funds",
 			op: &Op{
-				Burn: map[common.Address]uint256.Int{
-					eoa:         *uint256.NewInt(900_000),
-					eoaMaxNonce: *uint256.NewInt(100_000),
+				Burn: map[common.Address]AccountDebit{
+					eoa:         {Amount: *uint256.NewInt(900_000)},
+					eoaMaxNonce: {Amount: *uint256.NewInt(100_000)},
 				},
 			},
 			wantAccounts: []account{
@@ -101,8 +101,8 @@ func TestOp_ApplyTo(t *testing.T) {
 		{
 			name: "insufficient_funds",
 			op: &Op{
-				Burn: map[common.Address]uint256.Int{
-					eoa: *uint256.NewInt(1),
+				Burn: map[common.Address]AccountDebit{
+					eoa: {Amount: *uint256.NewInt(1)},
 				},
 			},
 			wantErr: core.ErrInsufficientFunds,
