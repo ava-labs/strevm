@@ -125,9 +125,6 @@ func (vm *VM) Init(
 		}
 		pool, err := txgossip.NewSet(snowCtx.Log, txPool, gossip.BloomSetConfig{
 			Metrics:                        metrics,
-			MinTargetElements:              10,
-			TargetFalsePositiveProbability: 0.1,
-			ResetFalsePositiveProbability:  0.1,
 		})
 		if err != nil {
 			return err
