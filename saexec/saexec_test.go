@@ -345,7 +345,7 @@ func TestExecution(t *testing.T) {
 	})
 }
 
-func TestExtraBlockOps(t *testing.T) {
+func TestEndOfBlockOps(t *testing.T) {
 	hooks := defaultHooks()
 	ctx, sut := newSUT(t, hooks)
 	wallet := sut.wallet

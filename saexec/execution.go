@@ -163,7 +163,7 @@ func (e *Executor) execute(b *blocks.Block, logger logging.Logger) error {
 		receipts[ti] = receipt
 	}
 
-	for i, o := range e.hooks.ExtraBlockOps(b.EthBlock()) {
+	for i, o := range e.hooks.EndOfBlockOps(b.EthBlock()) {
 		blockGasConsumed += o.Gas
 		perTxClock.Tick(o.Gas)
 		b.SetInterimExecutionTime(perTxClock)

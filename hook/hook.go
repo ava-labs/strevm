@@ -34,10 +34,11 @@ type Points interface {
 	// For example, if the block timestamp is 10.75 seconds and the gas rate is
 	// 100 gas/second, then this method should return 75 gas.
 	SubSecondBlockTime(gasRate gas.Gas, h *types.Header) gas.Gas
-	// ExtraBlockOps returns operations outside of the normal EVM state changes
-	// to perform while executing the block. These operations will be performed
-	// during both worst-case and actual execution.
-	ExtraBlockOps(*types.Block) []Op
+	// EndOfBlockOps returns operations outside of the normal EVM state changes
+	// to perform while executing the block, after regular EVM transactions.
+	// These operations will be performed during both worst-case and actual
+	// execution.
+	EndOfBlockOps(*types.Block) []Op
 	// BeforeExecutingBlock is called immediately prior to executing the block.
 	BeforeExecutingBlock(params.Rules, *state.StateDB, *types.Block) error
 	// AfterExecutingBlock is called immediately after executing the block.

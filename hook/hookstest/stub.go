@@ -33,8 +33,8 @@ func (s *Stub) SubSecondBlockTime(gas.Gas, *types.Header) gas.Gas {
 	return s.SubSecondTime
 }
 
-// ExtraBlockOps ignores its argument and always returns [Stub.Ops].
-func (s *Stub) ExtraBlockOps(*types.Block) []hook.Op {
+// EndOfBlockOps ignores its argument and always returns [Stub.Ops].
+func (s *Stub) EndOfBlockOps(*types.Block) []hook.Op {
 	return s.Ops
 }
 
