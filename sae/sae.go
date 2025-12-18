@@ -27,16 +27,10 @@ func unix(t time.Time) uint64 {
 	return uint64(t.Unix()) //nolint:gosec // Guaranteed to be positive
 }
 
-type nilAllowed bool
-
-const (
-	allowNil nilAllowed = true
-	errOnNil nilAllowed = false
-)
-
-// uint256FromBig is a wrapper around [uint256.FromBig] with extra checks.
-func uint256FromBig(b *big.Int, nilHandling nilAllowed) (*uint256.Int, error) {
-	if b == nil && nilHandling == errOnNil {
+// uint256FromBig is a wrapper around [uint256.FromBig] with extra checks, for
+// nil input and for overflow.
+func uint256FromBig(b *big.Int) (*uint256.Int, error) {
+	if b == nil {
 		return nil, errors.New("nil big.Int")
 	}
 	u, overflow := uint256.FromBig(b)

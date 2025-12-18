@@ -174,11 +174,11 @@ func (vm *VM) VerifyBlock(ctx context.Context, bCtx *block.Context, b *blocks.Bl
 			return fmt.Errorf("recovering sender of tx %#x: %v", tx.Hash(), err)
 		}
 
-		feeCap, err := uint256FromBig(tx.GasFeeCap(), errOnNil)
+		feeCap, err := uint256FromBig(tx.GasFeeCap())
 		if err != nil {
 			return fmt.Errorf("tx %#x fee cap: %v", tx.Hash(), err)
 		}
-		tipCap, err := uint256FromBig(tx.GasTipCap(), errOnNil)
+		tipCap, err := uint256FromBig(tx.GasTipCap())
 		if err != nil {
 			return fmt.Errorf("tx %#x tip cap: %v", tx.Hash(), err)
 		}
