@@ -82,6 +82,7 @@ func TestMultipleBlocks(t *testing.T) {
 	})
 	state := sut.State
 	lastHash := sut.Genesis.Hash()
+	const importedAmount = 10
 	type op struct {
 		name    string
 		op      Op
@@ -140,7 +141,7 @@ func TestMultipleBlocks(t *testing.T) {
 						Gas:       1,
 						GasFeeCap: *uint256.NewInt(2),
 						Mint: map[common.Address]uint256.Int{
-							eoaNoBalance: *uint256.NewInt(10),
+							eoaNoBalance: *uint256.NewInt(importedAmount),
 						},
 					},
 					wantErr: nil,
@@ -152,7 +153,7 @@ func TestMultipleBlocks(t *testing.T) {
 						GasFeeCap: *uint256.NewInt(2),
 						Burn: map[common.Address]AccountDebit{
 							eoaNoBalance: {
-								Amount: *uint256.NewInt(11),
+								Amount: *uint256.NewInt(importedAmount + 1),
 							},
 						},
 					},
@@ -165,7 +166,7 @@ func TestMultipleBlocks(t *testing.T) {
 						GasFeeCap: *uint256.NewInt(2),
 						Burn: map[common.Address]AccountDebit{
 							eoaNoBalance: {
-								Amount: *uint256.NewInt(10),
+								Amount: *uint256.NewInt(importedAmount),
 							},
 						},
 					},
@@ -250,7 +251,6 @@ func TestTransactionValidation(t *testing.T) {
 				GasPrice: new(big.Int).Lsh(big.NewInt(1), 256),
 				Gas:      params.TxGas,
 				To:       &common.Address{},
-				Value:    big.NewInt(10),
 			},
 			wantErr: core.ErrFeeCapVeryHigh,
 		},
@@ -260,7 +260,6 @@ func TestTransactionValidation(t *testing.T) {
 				GasPrice: new(big.Int).Lsh(big.NewInt(1), 256-1),
 				Gas:      params.TxGas,
 				To:       &common.Address{},
-				Value:    big.NewInt(10),
 			},
 			wantErr: errCostOverflow,
 		},
