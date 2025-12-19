@@ -255,6 +255,25 @@ func TestTransactionValidation(t *testing.T) {
 			wantErr: core.ErrFeeCapVeryHigh,
 		},
 		{
+			name: "negative_value",
+			tx: &types.LegacyTx{
+				GasPrice: big.NewInt(1),
+				Gas:      params.TxGas,
+				To:       &common.Address{},
+				Value:    big.NewInt(-1),
+			},
+			wantErr: txpool.ErrNegativeValue,
+		},
+		{
+			name: "negative_gas_price",
+			tx: &types.LegacyTx{
+				GasPrice: big.NewInt(-1),
+				Gas:      params.TxGas,
+				To:       &common.Address{},
+			},
+			wantErr: txpool.ErrUnderpriced,
+		},
+		{
 			name: "cost_overflow",
 			tx: &types.LegacyTx{
 				GasPrice: new(big.Int).Lsh(big.NewInt(1), 256-1),
