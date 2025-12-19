@@ -102,7 +102,7 @@ func TestMultipleBlocks(t *testing.T) {
 			wantBaseFee:  uint256.NewInt(1),
 			ops: []op{
 				{
-					name: "include_small operation",
+					name: "include_small_operation",
 					op: Op{
 						Gas:       gas.Gas(params.TxGas),
 						GasFeeCap: *uint256.NewInt(1),
