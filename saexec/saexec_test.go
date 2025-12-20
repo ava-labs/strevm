@@ -68,7 +68,7 @@ type SUT struct {
 // newSUT returns a new SUT. Any >= [logging.Error] on the logger will also
 // cancel the returned context, which is useful when waiting for blocks that
 // can never finish execution because of an error.
-func newSUT(tb testing.TB, hooks hook.Points) (context.Context, SUT) {
+func newSUT(tb testing.TB, hooks *saehookstest.Stub) (context.Context, SUT) {
 	tb.Helper()
 
 	logger := saetest.NewTBLogger(tb, logging.Warn)
@@ -80,7 +80,7 @@ func newSUT(tb testing.TB, hooks hook.Points) (context.Context, SUT) {
 
 	wallet := saetest.NewUNSAFEWallet(tb, 1, types.LatestSigner(config))
 	alloc := saetest.MaxAllocFor(wallet.Addresses()...)
-	genesis := blockstest.NewGenesis(tb, db, config, alloc, blockstest.WithTrieDBConfig(tdbConfig))
+	genesis := blockstest.NewGenesis(tb, db, config, alloc, blockstest.WithTrieDBConfig(tdbConfig), blockstest.WithGasTarget(hooks.Target))
 
 	opts := blockstest.WithBlockOptions(
 		blockstest.WithLogger(logger),
@@ -345,11 +345,61 @@ func TestExecution(t *testing.T) {
 	})
 }
 
+func TestEndOfBlockOps(t *testing.T) {
+	hooks := defaultHooks()
+	ctx, sut := newSUT(t, hooks)
+	wallet := sut.wallet
+	exportEOA := wallet.Addresses()[0]
+	// The import EOA is deliberately not from [newSUT] to ensure that it's got
+	// a zero starting balance.
+	importEOA := common.Address{'i', 'm', 'p', 'o', 'r', 't'}
+
+	initialTime := sut.lastExecuted.Load().ExecutedByGasTime()
+
+	hooks.Ops = []hook.Op{
+		{
+			Gas: 100_000,
+			Burn: map[common.Address]uint256.Int{
+				exportEOA: *uint256.NewInt(10),
+			},
+		},
+		{
+			Gas: 150_000,
+			Mint: map[common.Address]uint256.Int{
+				importEOA: *uint256.NewInt(100),
+			},
+		},
+	}
+	b := sut.chain.NewBlock(t, nil)
+
+	e := sut.Executor
+	require.NoError(t, e.Enqueue(ctx, b), "Enqueue()")
+	require.NoErrorf(t, b.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", b)
+
+	t.Run("committed_state", func(t *testing.T) {
+		sdb, err := state.New(b.PostExecutionStateRoot(), e.StateCache(), nil)
+		require.NoErrorf(t, err, "state.New(%T.PostExecutionStateRoot(), %T.StateCache(), nil)", b, e)
+		assert.Equal(t, uint64(1), sdb.GetNonce(exportEOA), "export nonce incremented")
+		assert.Zero(t, sdb.GetNonce(importEOA), "import nonce unchanged")
+		assert.Equal(t, uint256.NewInt(100), sdb.GetBalance(importEOA), "imported balance")
+
+		wantTime := initialTime.Clone()
+		wantTime.Tick(100_000 + 150_000)
+
+		opt := gastime.CmpOpt()
+		if diff := cmp.Diff(wantTime, b.ExecutedByGasTime(), opt); diff != "" {
+			t.Errorf("%T.ExecutedByGasTime() diff (-want +got):\n%s", b, diff)
+		}
+	})
+}
+
 func TestGasAccounting(t *testing.T) {
-	hooks := &saehookstest.Stub{}
+	const gasPerTx = gas.Gas(params.TxGas)
+	hooks := &saehookstest.Stub{
+		Target: 5 * gasPerTx,
+	}
 	ctx, sut := newSUT(t, hooks)
 
-	const gasPerTx = gas.Gas(params.TxGas)
 	at := func(blockTime, txs uint64, rate gas.Gas) *proxytime.Time[gas.Gas] {
 		tm := proxytime.New[gas.Gas](blockTime, rate)
 		tm.Tick(gas.Gas(txs) * gasPerTx)
@@ -373,15 +423,6 @@ func TestGasAccounting(t *testing.T) {
 		wantExcessAfter gas.Gas
 		wantPriceAfter  gas.Price
 	}{
-		{
-			// Initially set the gasTarget for the next block.
-			blockTime:       0,
-			numTxs:          0,
-			targetAfter:     5 * gasPerTx,
-			wantExecutedBy:  at(0, 0, 10*gasPerTx),
-			wantExcessAfter: 0,
-			wantPriceAfter:  1,
-		},
 		{
 			blockTime:       2,
 			numTxs:          3,

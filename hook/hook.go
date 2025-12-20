@@ -8,10 +8,16 @@
 package hook
 
 import (
+	"math"
+
+	"github.com/ava-labs/avalanchego/ids"
 	"github.com/ava-labs/avalanchego/vms/components/gas"
+	"github.com/ava-labs/libevm/common"
+	"github.com/ava-labs/libevm/core"
 	"github.com/ava-labs/libevm/core/state"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/params"
+	"github.com/holiman/uint256"
 
 	"github.com/ava-labs/strevm/intmath"
 	saeparams "github.com/ava-labs/strevm/params"
@@ -28,10 +34,55 @@ type Points interface {
 	// For example, if the block timestamp is 10.75 seconds and the gas rate is
 	// 100 gas/second, then this method should return 75 gas.
 	SubSecondBlockTime(gasRate gas.Gas, h *types.Header) gas.Gas
+	// EndOfBlockOps returns operations outside of the normal EVM state changes
+	// to perform while executing the block, after regular EVM transactions.
+	// These operations will be performed during both worst-case and actual
+	// execution.
+	EndOfBlockOps(*types.Block) []Op
 	// BeforeExecutingBlock is called immediately prior to executing the block.
 	BeforeExecutingBlock(params.Rules, *state.StateDB, *types.Block) error
 	// AfterExecutingBlock is called immediately after executing the block.
 	AfterExecutingBlock(*state.StateDB, *types.Block, types.Receipts)
+}
+
+// Op is an operation that can be applied to state during the execution of a
+// block.
+type Op struct {
+	// ID of this operation. It is used for logging and debugging purposes.
+	ID ids.ID
+	// Gas consumed by this operation.
+	Gas gas.Gas
+	// Burn specifies the amount to decrease account balances by.
+	Burn map[common.Address]uint256.Int
+	// Mint specifies the amount to increase account balances by. These funds
+	// are not necessarily tied to the funds consumed in the Burn field. The
+	// sum of the Mint amounts may exceed the sum of the Burn amounts.
+	Mint map[common.Address]uint256.Int
+}
+
+// ApplyTo applies the operation to the statedb.
+//
+// If an account has insufficient funds, [core.ErrInsufficientFunds] is returned
+// and the statedb is unchanged.
+func (o *Op) ApplyTo(stateDB *state.StateDB) error {
+	for from, amount := range o.Burn {
+		if b := stateDB.GetBalance(from); b.Lt(&amount) {
+			return core.ErrInsufficientFunds
+		}
+	}
+	for from, amount := range o.Burn {
+		// If overflow would have occurred here, the nonce must have already
+		// been increased by a delegated account's execution, so we are already
+		// protected against replay attacks.
+		if nonce := stateDB.GetNonce(from); nonce < math.MaxUint64 {
+			stateDB.SetNonce(from, nonce+1)
+		}
+		stateDB.SubBalance(from, &amount)
+	}
+	for to, amount := range o.Mint {
+		stateDB.AddBalance(to, &amount)
+	}
+	return nil
 }
 
 // MinimumGasConsumption MUST be used as the implementation for the respective
