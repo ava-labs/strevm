@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/ava-labs/avalanchego/ids"
 	"github.com/ava-labs/avalanchego/snow/consensus/snowman"
@@ -206,4 +207,40 @@ func TestIntegration(t *testing.T) {
 		want := new(uint256.Int).Mul(transfer, uint256.NewInt(numTxs))
 		require.Equalf(t, want, got, "%T.GetBalance(...)", sdb)
 	})
+}
+
+func TestSyntacticBlockChecks(t *testing.T) {
+	ctx, sut := newSUT(t, 0)
+
+	const now = 1e6
+	sut.rawVM.config.Now = func() time.Time {
+		return time.Unix(now, 0)
+	}
+
+	tests := []struct {
+		header  *types.Header
+		wantErr error
+	}{
+		{
+			header: &types.Header{
+				Number: new(big.Int).Lsh(big.NewInt(1), 64),
+			},
+			wantErr: errBlockHeightNotUint64,
+		},
+		{
+			header: &types.Header{
+				Number: big.NewInt(1),
+				Time:   now + maxBlockFutureSeconds + 1,
+			},
+			wantErr: errBlockTooFarInFuture,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run("", func(t *testing.T) {
+			b := blockstest.NewBlock(t, types.NewBlockWithHeader(tt.header), nil, nil)
+			_, err := sut.ParseBlock(ctx, b.Bytes())
+			assert.ErrorIs(t, err, tt.wantErr, "ParseBlock(#%v @ time %v) when stubbed time is %d", tt.header.Number, tt.header.Time, uint64(now))
+		})
+	}
 }

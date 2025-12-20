@@ -32,6 +32,13 @@ func (vm *VM) newBlock(eth *types.Block, parent, lastSettled *blocks.Block) (*bl
 	return blocks.New(eth, parent, lastSettled, vm.log())
 }
 
+var (
+	errBlockHeightNotUint64 = errors.New("block height not uint64")
+	errBlockTooFarInFuture  = errors.New("block too far in the future")
+)
+
+const maxBlockFutureSeconds = 3600
+
 // ParseBlock parses the buffer as [rlp] encoding of a [types.Block]. It does
 // NOT populate the block ancestry, which is done by [VM.VerifyBlock] i.f.f.
 // verification passes.
@@ -40,6 +47,16 @@ func (vm *VM) ParseBlock(ctx context.Context, buf []byte) (*blocks.Block, error)
 	if err := rlp.DecodeBytes(buf, b); err != nil {
 		return nil, fmt.Errorf("rlp.DecodeBytes(..., %T): %v", b, err)
 	}
+
+	if !b.Number().IsUint64() {
+		return nil, errBlockHeightNotUint64
+	}
+	// The uint64 timestamp can't underflow [time.Time] but it can overflow so
+	// make this some future engineer's problem in a few millennia.
+	if b.Time() > unix(vm.config.Now())+maxBlockFutureSeconds {
+		return nil, fmt.Errorf("%w: >%s", errBlockTooFarInFuture, maxBlockFutureSeconds*time.Second)
+	}
+
 	return vm.newBlock(b, nil, nil)
 }
 
