@@ -163,6 +163,7 @@ func TestIntegration(t *testing.T) {
 	ctx, sut := newSUT(t, 1)
 
 	testWaitForEvent := func(t *testing.T) {
+		t.Helper()
 		ev, err := sut.WaitForEvent(ctx)
 		require.NoError(t, err)
 		require.Equal(t, snowcommon.PendingTxs, ev)
@@ -201,6 +202,8 @@ func TestIntegration(t *testing.T) {
 	for range numTxs + 1 {
 		t.Run("WaitForEvent_with_existing_txs", testWaitForEvent)
 	}
+
+	sut.syncMempool(t) // technically we've only proven 1 tx added, as unlikely as a race is
 	require.Equal(t, numTxs, sut.rawVM.numPendingTxs(), "number of pending txs")
 
 	preference := sut.genesis.ID()
