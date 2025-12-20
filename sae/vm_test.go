@@ -162,6 +162,18 @@ func unwrapAndWaitForExecution(ctx context.Context, tb testing.TB, snow snowman.
 func TestIntegration(t *testing.T) {
 	ctx, sut := newSUT(t, 1)
 
+	testWaitForEvent := func(t *testing.T) {
+		ev, err := sut.WaitForEvent(ctx)
+		require.NoError(t, err)
+		require.Equal(t, snowcommon.PendingTxs, ev)
+	}
+
+	waitForEvDone := make(chan struct{})
+	go func() {
+		defer close(waitForEvDone)
+		t.Run("WaitForEvent_early_unblocks", testWaitForEvent)
+	}()
+
 	transfer := uint256.NewInt(42)
 	recipient := common.Address{1, 2, 3, 4}
 	const numTxs = 2
@@ -175,12 +187,21 @@ func TestIntegration(t *testing.T) {
 		sut.mustSendTx(t, tx)
 	}
 
-	t.Run("WaitForEvent", func(t *testing.T) {
-		ev, err := sut.WaitForEvent(ctx)
-		require.NoError(t, err)
-		assert.Equal(t, snowcommon.PendingTxs, ev)
-	})
-	sut.syncMempool(t) // WaitForEvent only guarantees >= 1
+	select {
+	case <-waitForEvDone:
+	case <-time.After(time.Second):
+		t.Error("WaitForEvent() called before SendTx() did not unblock")
+	}
+
+	// Each tx sent to the VM can unblock at most 1 call to [VM.WaitForEvent] so
+	// making an extra call proves that it returns due to pending txs already in
+	// the mempool. Yes, the one above would be a sufficient extra, but it's
+	// best to keep this logic self-contained, should the unblocking test be
+	// removed.
+	for range numTxs + 1 {
+		t.Run("WaitForEvent_with_existing_txs", testWaitForEvent)
+	}
+	require.Equal(t, numTxs, sut.rawVM.numPendingTxs(), "number of pending txs")
 
 	preference := sut.genesis.ID()
 	require.NoError(t, sut.SetPreference(ctx, preference), "SetPreference([genesis])")

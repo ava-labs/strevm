@@ -135,10 +135,9 @@ func (vm *VM) Init(
 	return nil
 }
 
-// signalNewTxsToEngine subscribes to the [txpool.TxPool] to unblock a current
-// or future call to [VM.WaitForEvent]. At most one future call will be
-// unblocked through the use of a buffered channel. [VM.Shutdown] MUST be
-// called to release a goroutine started by this method.
+// signalNewTxsToEngine subscribes to the [txpool.TxPool] to unblock
+// [VM.WaitForEvent] when necessary. [VM.Shutdown] MUST be called to release a
+// goroutine started by this method.
 func (vm *VM) signalNewTxsToEngine() {
 	ch := make(chan core.NewTxsEvent)
 	sub := vm.mempool.Pool.SubscribeTransactions(ch, false /*reorgs but ignored by legacypool*/)
@@ -148,6 +147,7 @@ func (vm *VM) signalNewTxsToEngine() {
 		return <-sub.Err() // guaranteed to be closed due to unsubscribing
 	})
 
+	// See [VM.WaitForEvent] for why this requires a buffer.
 	vm.newTxs = make(chan struct{}, 1)
 	go func() {
 		defer close(vm.newTxs)
@@ -162,19 +162,41 @@ func (vm *VM) signalNewTxsToEngine() {
 	}()
 }
 
-// WaitForEvent blocks until the VM needs to signal the consensus engine, and
-// then returns the message to send.
+// WaitForEvent returns immediately if there are already pending transactions in
+// the mempool, otherwise it blocks until the mempool notifies it of new
+// transactions. In both cases it returns [snowcommon.PendingTxs]. In the latter
+// scenario it respects context cancellation.
 func (vm *VM) WaitForEvent(ctx context.Context) (snowcommon.Message, error) {
-	select {
-	case _, ok := <-vm.newTxs:
-		if !ok {
-			return 0, errors.New("VM closed")
+	if vm.numPendingTxs() > 0 {
+		select {
+		case <-vm.newTxs: // probably has something buffered
+		default:
 		}
 		return snowcommon.PendingTxs, nil
-
-	case <-ctx.Done():
-		return 0, context.Cause(ctx)
 	}
+
+	// Sends on the `newTxs` channel are performed on a best-effort basis, which
+	// could race here if it weren't for the channel buffer.
+
+	for {
+		select {
+		case _, ok := <-vm.newTxs:
+			if !ok {
+				return 0, errors.New("VM closed")
+			}
+			if vm.numPendingTxs() > 0 {
+				return snowcommon.PendingTxs, nil
+			}
+
+		case <-ctx.Done():
+			return 0, context.Cause(ctx)
+		}
+	}
+}
+
+func (vm *VM) numPendingTxs() int {
+	p, _ := vm.mempool.Pool.Stats()
+	return p
 }
 
 // SetState notifies the VM of a transition in the state lifecycle.
