@@ -87,7 +87,7 @@ func (vm *VM) Init(
 	vm.lastAccepted.Store(lastSynchronous)
 
 	vm.metrics = prometheus.NewRegistry()
-	if err := snowCtx.Metrics.Register("SAE", vm.metrics); err != nil {
+	if err := snowCtx.Metrics.Register("sae", vm.metrics); err != nil {
 		return err
 	}
 
