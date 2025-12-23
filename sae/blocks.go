@@ -94,7 +94,7 @@ func (vm *VM) buildBlock(
 	if blockTime.Before(parent.Timestamp()) {
 		return nil, fmt.Errorf("block time %s < parent time %s", blockTime, parent.Timestamp())
 	}
-	// The block's time must be verified here to avoid underflow [unix].
+	// The block's time must be verified here to avoid underflow in [unix].
 	if blockTime.Unix() < params.TauSeconds {
 		return nil, fmt.Errorf("block time %d < minimum allowed unix time %d", blockTime.Unix(), params.TauSeconds)
 	}
