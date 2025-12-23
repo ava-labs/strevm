@@ -24,6 +24,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/ava-labs/strevm/blocks"
+	"github.com/ava-labs/strevm/hook"
 	"github.com/ava-labs/strevm/params"
 	"github.com/ava-labs/strevm/txgossip"
 )
@@ -75,14 +76,28 @@ func (vm *VM) BuildBlock(ctx context.Context, bCtx *block.Context) (*blocks.Bloc
 	filter := txpool.PendingFilter{
 		BaseFee: baseFee,
 	}
-	return vm.buildBlock(ctx, bCtx, parent, vm.config.Now(), vm.mempool.TransactionsByPriority(filter))
+	return vm.buildBlock(
+		ctx,
+		bCtx,
+		parent,
+		vm.config.Now(),
+		vm.mempool.TransactionsByPriority(filter),
+		vm.hooks,
+	)
 }
 
 var errExecutionLagging = errors.New("execution lagging for settlement")
 
 // buildBlock implements the block-building logic shared by [VM.BuildBlock] and
 // [VM.VerifyBlock].
-func (vm *VM) buildBlock(ctx context.Context, bCtx *block.Context, parent *blocks.Block, blockTime time.Time, candidates []*txgossip.LazyTransaction) (*blocks.Block, error) {
+func (vm *VM) buildBlock(
+	ctx context.Context,
+	bCtx *block.Context,
+	parent *blocks.Block,
+	blockTime time.Time,
+	candidates []*txgossip.LazyTransaction,
+	builder hook.BlockBuilder,
+) (*blocks.Block, error) {
 	log := vm.log().With(
 		zap.Uint64("parent_height", parent.Height()),
 		zap.Stringer("parent_hash", parent.Hash()),
@@ -157,12 +172,10 @@ func (vm *VM) buildBlock(ctx context.Context, bCtx *block.Context, parent *block
 		included = append(included, tx)
 	}
 
-	ethB := types.NewBlock(
+	ethB := builder.BuildBlock(
 		hdr,
 		included,
-		nil, // uncles,
 		receipts,
-		trieHasher(),
 	)
 	return vm.newBlock(ethB, parent, lastSettled)
 }
@@ -218,7 +231,14 @@ func (vm *VM) VerifyBlock(ctx context.Context, bCtx *block.Context, b *blocks.Bl
 		}
 	}
 
-	rebuilt, err := vm.buildBlock(ctx, bCtx, parent, b.Timestamp(), txs)
+	rebuilt, err := vm.buildBlock(
+		ctx,
+		bCtx,
+		parent,
+		b.Timestamp(),
+		txs,
+		vm.hooks.BlockRebuilderFrom(b.EthBlock()),
+	)
 	if err != nil {
 		return err
 	}

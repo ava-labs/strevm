@@ -24,7 +24,19 @@ import (
 )
 
 // Points define user-injected hook points.
+//
+// Directly using this interface as a [BlockBuilder] is indicative of this node
+// locally building a block. Calling [Points.BlockRebuilderFrom] with an
+// existing block is indicative of this node reconstructing a block built
+// elsewhere during verification.
 type Points interface {
+	BlockBuilder
+	// BlockRebuilderFrom returns a [BlockBuilder] that will attempt to
+	// reconstruct the provided block. If the provided block is valid for
+	// inclusion, then the returned builder MUST be able to reconstruct an
+	// identical block.
+	BlockRebuilderFrom(block *types.Block) BlockBuilder
+
 	// GasTargetAfter returns the gas target that should go into effect
 	// immediately after the provided block.
 	GasTargetAfter(*types.Header) gas.Gas
@@ -43,6 +55,18 @@ type Points interface {
 	BeforeExecutingBlock(params.Rules, *state.StateDB, *types.Block) error
 	// AfterExecutingBlock is called immediately after executing the block.
 	AfterExecutingBlock(*state.StateDB, *types.Block, types.Receipts)
+}
+
+// BlockBuilder constructs a block given its components.
+type BlockBuilder interface {
+	// BuildBlock constructs a block with the given components. This method MUST
+	// be used rather than [types.NewBlock] to ensure any libevm block extras
+	// are properly populated.
+	BuildBlock(
+		header *types.Header,
+		txs []*types.Transaction,
+		receipts []*types.Receipt,
+	) *types.Block
 }
 
 // AccountDebit includes an amount that an account should have debited,

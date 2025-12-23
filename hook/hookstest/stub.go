@@ -11,6 +11,7 @@ import (
 	"github.com/ava-labs/libevm/params"
 
 	"github.com/ava-labs/strevm/hook"
+	"github.com/ava-labs/strevm/saetest"
 )
 
 // Stub implements [hook.Points].
@@ -21,6 +22,20 @@ type Stub struct {
 }
 
 var _ hook.Points = (*Stub)(nil)
+
+// BuildBlock calls [types.NewBlock] with its arguments.
+func (*Stub) BuildBlock(
+	header *types.Header,
+	txs []*types.Transaction,
+	receipts []*types.Receipt,
+) *types.Block {
+	return types.NewBlock(header, txs, nil, receipts, saetest.TrieHasher())
+}
+
+// BlockRebuilderFrom ignores its argument and returns itself.
+func (s *Stub) BlockRebuilderFrom(*types.Block) hook.BlockBuilder {
+	return s
+}
 
 // GasTargetAfter ignores its argument and always returns [Stub.Target].
 func (s *Stub) GasTargetAfter(*types.Header) gas.Gas {
