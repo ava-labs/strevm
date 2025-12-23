@@ -65,7 +65,7 @@ func newSUT(tb testing.TB, alloc types.GenesisAlloc) SUT {
 }
 
 const (
-	targetToMaxBlockSize = gastime.TargetToRate * rateToMaxBlockSize
+	targetToMaxBlockSize = gastime.TargetToRate * maxGasSecondsPerBlock
 	initialMaxBlockSize  = initialGasTarget * targetToMaxBlockSize
 )
 

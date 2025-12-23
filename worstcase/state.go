@@ -84,11 +84,18 @@ func NewState(
 	}, nil
 }
 
-const rateToMaxBlockSize = saeparams.Tau * saeparams.Lambda
+const (
+	maxGasSecondsPerBlock = saeparams.Tau * saeparams.Lambda
+	// The concepts of "fullness" and "capacity" are ambiguous with respect to
+	// the SAE queue so it is better to think of it as "open" or "closed" to
+	// accepting a new block. An open queue MAY accept an entire, maximal block,
+	// which could leave it in an _allowed_ over-threshold (closed) state.
+	maxFullBlocksInOpenQueue = 2
+)
 
 var (
 	errNonConsecutiveBlocks = errors.New("non-consecutive blocks")
-	errQueueFull            = errors.New("queue full")
+	errQueueFull            = errors.New("queue exceeds gas threshold for new block")
 )
 
 // StartBlock updates the worst-case state to the beginning of the provided
@@ -111,21 +118,9 @@ func (s *State) StartBlock(h *types.Header) error {
 	s.clock.BeforeBlock(s.hooks, h)
 	s.blockSize = 0
 
-	const (
-		maxQSizeMultiplier = 2
-		// In order to avoid overflow when calculating the queue size, we cap
-		// the maximum gas rate to a safe value.
-		//
-		// This follows from:
-		//   maxBlockSize = maxRate * Tau * Lambda
-		//   maxQSizeInStart = maxQSizeMultiplier * maxBlockSize
-		//   maxQSizeInFinish = maxQSizeInStart + maxBlockSize
-		maxRate gas.Gas = math.MaxUint64 / rateToMaxBlockSize / (maxQSizeMultiplier + 1)
-	)
-	r := min(s.clock.Rate(), maxRate)
-	s.maxBlockSize = r * rateToMaxBlockSize
-	if maxQSize := maxQSizeMultiplier * s.maxBlockSize; s.qSize > maxQSize {
-		return fmt.Errorf("%w: current size %d exceeds maximum size %d", errQueueFull, s.qSize, maxQSize)
+	s.maxBlockSize = safeMaxBlockSize(s.clock)
+	if maxOpenQSize := maxFullBlocksInOpenQueue * s.maxBlockSize; s.qSize > maxOpenQSize {
+		return fmt.Errorf("%w: current size %d exceeds maximum size for accepting new blocks %d", errQueueFull, s.qSize, maxOpenQSize)
 	}
 
 	s.baseFee = s.clock.BaseFee()
@@ -142,6 +137,20 @@ func (s *State) StartBlock(h *types.Header) error {
 	s.rules = s.config.Rules(h.Number, true /*merge*/, h.Time)
 	s.signer = types.MakeSigner(s.config, h.Number, h.Time)
 	return nil
+}
+
+// safeMaxBlockSize returns the maximum block size for the clock's rate,
+// possibly capping it to avoid overflow when calculating the queue size. At the
+// time of writing, the cap is ~6e17, so capping is exceedingly unlikely.
+//
+// The cap follows from:
+//
+//	maxBlockSize = maxSafeRate * maxGasSecondsPerBlock
+//	maxOpenQSize = maxFullBlocksInOpenQueue * maxBlockSize
+//	maxClosedQSize = maxOpenQSize + maxBlockSize
+func safeMaxBlockSize(clock *gastime.Time) gas.Gas {
+	const maxSafeRate gas.Gas = math.MaxUint64 / maxGasSecondsPerBlock / (maxFullBlocksInOpenQueue + 1)
+	return min(clock.Rate(), maxSafeRate) * maxGasSecondsPerBlock
 }
 
 // GasLimit returns the available gas limit for the current block.
