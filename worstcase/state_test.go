@@ -85,8 +85,10 @@ func TestMultipleBlocks(t *testing.T) {
 			Balance: new(big.Int).SetUint64(math.MaxUint64),
 		},
 	})
+
 	state := sut.State
 	lastHash := sut.Genesis.Hash()
+
 	const importedAmount = 10
 	type op struct {
 		name    string
@@ -180,9 +182,6 @@ func TestMultipleBlocks(t *testing.T) {
 			},
 		},
 		{
-			hooks: &hookstest.Stub{
-				Target: initialGasTarget, // Restore the target _after_ this block.
-			},
 			// We have currently included slightly over 10s worth of gas. We
 			// should increase the time by that same amount to restore the base
 			// fee.
