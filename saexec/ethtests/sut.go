@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/ava-labs/avalanchego/utils/logging"
+	"github.com/ava-labs/libevm/consensus"
 	"github.com/ava-labs/libevm/core"
 	"github.com/ava-labs/libevm/core/rawdb"
 	"github.com/ava-labs/libevm/core/state/snapshot"
@@ -17,7 +18,6 @@ import (
 	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/triedb"
 	"github.com/ava-labs/strevm/blocks/blockstest"
-	"github.com/ava-labs/strevm/hook"
 	saehookstest "github.com/ava-labs/strevm/hook/hookstest"
 	"github.com/ava-labs/strevm/saetest"
 	"github.com/ava-labs/strevm/saexec"
@@ -69,7 +69,7 @@ func WithSnapshotConfig(snapshotConfig *snapshot.Config) SutOption {
 // newSUT returns a new SUT. Any >= [logging.Error] on the logger will also
 // cancel the returned context, which is useful when waiting for blocks that
 // can never finish execution because of an error.
-func newSUT(tb testing.TB, hooks hook.Points, opts ...SutOption) (context.Context, SUT) {
+func newSUT(tb testing.TB, engine consensus.Engine, opts ...SutOption) (context.Context, SUT) {
 	tb.Helper()
 
 	logger := saetest.NewTBLogger(tb, logging.Warn)
@@ -109,6 +109,8 @@ func newSUT(tb testing.TB, hooks hook.Points, opts ...SutOption) (context.Contex
 	)
 	chain := blockstest.NewChainBuilder(genesis, blockOpts)
 
+	reader := newReaderAdapter(chain, db, chainConfig, logger)
+	hooks := newTestConsensusHooks(engine, reader)
 	e, err := saexec.New(genesis, chain.GetBlock, chainConfig, db, tdbConfig, *snapshotConfig, hooks, logger)
 	require.NoError(tb, err, "New()")
 	tb.Cleanup(func() {

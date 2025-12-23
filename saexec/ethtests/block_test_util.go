@@ -160,12 +160,7 @@ func (t *BlockTest) Run(tb testing.TB, snapshotter bool, scheme string, tracer v
 
 	// Wrap the original engine within the beacon-engine
 	engine := beacon.New(ethash.NewFaker())
-	reader := &ReaderAdapter{}
-	hooks := NewTestConsensusHooks(engine, reader)
-
-	ctx, sut := newSUT(tb, hooks, opts...)
-	// TODO(cey): jank initialize
-	reader.InitializeReaderAdapter(&sut)
+	ctx, sut := newSUT(tb, engine, opts...)
 	gblock := sut.LastExecuted()
 	require.Equal(tb, gblock.Hash(), t.json.Genesis.Hash)
 	require.Equal(tb, gblock.PostExecutionStateRoot(), t.json.Genesis.StateRoot)

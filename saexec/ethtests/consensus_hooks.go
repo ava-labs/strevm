@@ -25,7 +25,7 @@ type ConsensusHooks struct {
 
 var _ hook.Points = (*ConsensusHooks)(nil)
 
-func NewTestConsensusHooks(consensus consensus.Engine, reader *ReaderAdapter) *ConsensusHooks {
+func newTestConsensusHooks(consensus consensus.Engine, reader *ReaderAdapter) *ConsensusHooks {
 	return &ConsensusHooks{consensus: consensus, reader: reader}
 }
 
@@ -58,7 +58,9 @@ func (c *ConsensusHooks) AfterExecutingBlock(statedb *state.StateDB, b *types.Bl
 		currentTd = c.reader.GetTd(b.ParentHash(), currentNumber-1)
 		if currentTd == nil {
 			currentTd = big.NewInt(0)
-			c.reader.sut.Logger.Error("currentTd is nil")
+			if c.reader.logger != nil {
+				c.reader.logger.Error("currentTd is nil")
+			}
 		}
 	}
 	newTd := new(big.Int).Add(currentTd, b.Difficulty())
