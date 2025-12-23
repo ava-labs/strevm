@@ -30,7 +30,7 @@ import (
 // State tracks the worst-case gas price and account state as operations are
 // executed.
 //
-// Usage of the [State] must follow the pattern:
+// Usage of [State] must follow the pattern:
 //  1. [State.StartBlock] for each block to be included.
 //  2. [State.GasLimit] and [State.BaseFee] to query the block's parameters.
 //  3. [State.ApplyTx] or [State.Apply] for each [types.Transaction] or
@@ -125,8 +125,8 @@ func (s *State) StartBlock(h *types.Header) error {
 
 	s.baseFee = s.clock.BaseFee()
 
-	// expectedParentHash is used prior to modifying the GasLimit and BaseFee to
-	// ensure that historical block hashes are not modified.
+	// expectedParentHash is updated prior to modifying the GasLimit and BaseFee
+	// to ensure that historical block hashes are not modified.
 	s.expectedParentHash = h.Hash()
 	s.curr = types.CopyHeader(h)
 	s.curr.GasLimit = uint64(s.maxBlockSize)
