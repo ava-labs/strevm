@@ -33,5 +33,7 @@ func (vm *SinceGenesis) Initialize(
 	fxs []*snowcommon.Fx,
 	appSender snowcommon.AppSender,
 ) error {
+	// TODO(arr4n) when implementing this, also consolidate [NewVM] and
+	// [VM.Init] so a freshly constructed [VM] is ready to use.
 	return errUnimplemented
 }

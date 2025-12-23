@@ -8,10 +8,22 @@ import (
 	"net/http"
 )
 
+const (
+	rpcHTTPExtensionPath = "/rpc"
+	wsHTTPExtensionPath  = "/ws"
+)
+
 // CreateHandlers returns all VM-specific HTTP handlers to be exposed by the
 // node, keyed by extension.
-func (vm *VM) CreateHandlers(context.Context) (map[string]http.Handler, error) {
-	return nil, errUnimplemented
+func (vm *VM) CreateHandlers(ctx context.Context) (map[string]http.Handler, error) {
+	s, err := vm.ethRPCServer()
+	if err != nil {
+		return nil, err
+	}
+	return map[string]http.Handler{
+		rpcHTTPExtensionPath: s,
+		// TODO(arr4n): add websocket support at [wsHTTPExtensionPath]
+	}, nil
 }
 
 // NewHTTPHandler returns the HTTP handler that will be invoked if a client
