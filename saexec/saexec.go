@@ -18,7 +18,6 @@ import (
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/ethdb"
 	"github.com/ava-labs/libevm/event"
-	"github.com/ava-labs/libevm/libevm/options"
 	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/triedb"
 
@@ -46,23 +45,7 @@ type Executor struct {
 	stateCache   state.Database
 	// snaps MUST NOT be accessed by any methods other than [Executor.execute]
 	// and [Executor.Close].
-	snaps    *snapshot.Tree
-	execOpts *executorOptions
-}
-
-type ExecutorOption = options.Option[executorOptions]
-
-type executorOptions struct {
-	preserveBaseFee bool
-}
-
-// WithPreserveBaseFee configures the executor to preserve the base fee on the header rather than calculating it through the gas clock.
-// This is useful for testing and should not be used in production.
-// ASK(cey): This is a janky hack to pass the base fee tests in ethtests. Alternatively we can modify those tests but that's a huge effort.
-func WithPreserveBaseFee(preserveBaseFee bool) ExecutorOption {
-	return options.Func[executorOptions](func(o *executorOptions) {
-		o.preserveBaseFee = preserveBaseFee
-	})
+	snaps *snapshot.Tree
 }
 
 // New constructs and starts a new [Executor]. Call [Executor.Close] to release
@@ -76,13 +59,12 @@ func New(
 	blockSrc blocks.Source,
 	chainConfig *params.ChainConfig,
 	db ethdb.Database,
+	// TODO(cey): should these be an option?
 	triedbConfig *triedb.Config,
 	snapshotConfig snapshot.Config,
 	hooks hook.Points,
 	log logging.Logger,
-	opts ...ExecutorOption,
 ) (*Executor, error) {
-	execOpts := options.ApplyTo(&executorOptions{}, opts...)
 	cache := state.NewDatabaseWithConfig(db, triedbConfig)
 	snaps, err := snapshot.New(snapshotConfig, db, cache.TrieDB(), lastExecuted.PostExecutionStateRoot())
 	if err != nil {
@@ -100,7 +82,6 @@ func New(
 		db:           db,
 		stateCache:   cache,
 		snaps:        snaps,
-		execOpts:     execOpts,
 	}
 	e.lastEnqueued.Store(lastExecuted)
 	e.lastExecuted.Store(lastExecuted)

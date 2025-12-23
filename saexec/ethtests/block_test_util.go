@@ -37,8 +37,11 @@ import (
 	"math/big"
 	"os"
 	"reflect"
+	"sort"
 	"testing"
+	"time"
 
+	"github.com/ava-labs/avalanchego/vms/components/gas"
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/common/hexutil"
 	"github.com/ava-labs/libevm/common/math"
@@ -55,9 +58,9 @@ import (
 	"github.com/ava-labs/libevm/triedb"
 	"github.com/ava-labs/libevm/triedb/hashdb"
 	"github.com/ava-labs/libevm/triedb/pathdb"
+	"github.com/ava-labs/strevm/blocks"
 	"github.com/ava-labs/strevm/blocks/blockstest"
-	"github.com/ava-labs/strevm/saexec"
-	"github.com/ava-labs/strevm/saexec/saexectest"
+	"github.com/ava-labs/strevm/gastime"
 	"github.com/stretchr/testify/require"
 )
 
@@ -126,12 +129,12 @@ type btHeaderMarshaling struct {
 	ExcessBlobGas *math.HexOrDecimal64
 }
 
-func (t *BlockTest) Run(tb testing.TB, snapshotter bool, scheme string, tracer vm.EVMLogger, postCheck func(error, *saexectest.SUT)) (result error) {
+func (t *BlockTest) Run(tb testing.TB, snapshotter bool, scheme string, tracer vm.EVMLogger, postCheck func(error, *SUT)) (result error) {
 	config, ok := Forks[t.json.Network]
 	if !ok {
 		return UnsupportedForkError{t.json.Network}
 	}
-	opts := []saexectest.SutOption{saexectest.WithChainConfig(config)}
+	opts := []SutOption{WithChainConfig(config)}
 
 	// Configure trie database configuration
 	tconf := &triedb.Config{
@@ -143,27 +146,24 @@ func (t *BlockTest) Run(tb testing.TB, snapshotter bool, scheme string, tracer v
 		tconf.HashDB = hashdb.Defaults
 	}
 	// Configure snapshot configuration
-	opts = append(opts, saexectest.WithTrieDBConfig(tconf))
+	opts = append(opts, WithTrieDBConfig(tconf))
 	if snapshotter {
 		snapshotConfig := snapshot.Config{
 			CacheSize:  1,
 			AsyncBuild: false,
 		}
-		opts = append(opts, saexectest.WithSnapshotConfig(&snapshotConfig))
+		opts = append(opts, WithSnapshotConfig(&snapshotConfig))
 	}
 	// Commit genesis state
 	gspec := t.genesis(config)
-	opts = append(opts, saexectest.WithGenesisSpec(gspec))
+	opts = append(opts, WithGenesisSpec(gspec))
 
 	// Wrap the original engine within the beacon-engine
 	engine := beacon.New(ethash.NewFaker())
 	reader := &ReaderAdapter{}
 	hooks := NewTestConsensusHooks(engine, reader)
 
-	execOpts := []saexec.ExecutorOption{saexec.WithPreserveBaseFee(true)}
-	opts = append(opts, saexectest.WithExecutorOptions(execOpts...))
-
-	ctx, sut := saexectest.NewSUT(tb, hooks, opts...)
+	ctx, sut := newSUT(tb, hooks, opts...)
 	// TODO(cey): jank initialize
 	reader.InitializeReaderAdapter(&sut)
 	gblock := sut.LastExecuted()
@@ -234,7 +234,7 @@ See https://github.com/ethereum/tests/wiki/Blockchain-Tests-II
 	expected we are expected to ignore it and continue processing and then validate the
 	post state.
 */
-func (t *BlockTest) insertBlocks(ctx context.Context, tb testing.TB, sut *saexectest.SUT) ([]btBlock, error) {
+func (t *BlockTest) insertBlocks(ctx context.Context, tb testing.TB, sut *SUT) ([]btBlock, error) {
 	validBlocks := make([]btBlock, 0)
 	blocks := make([]*types.Block, 0)
 	// insert the test blocks, which will execute all transactions
@@ -270,11 +270,49 @@ func (t *BlockTest) insertBlocks(ctx context.Context, tb testing.TB, sut *saexec
 	}
 
 	// Insert the blocks into the chain
-	i, err := sut.InsertChain(ctx, tb, blocks)
-	if err != nil {
-		return nil, fmt.Errorf("block #%v insertion into chain failed: %v", blocks[i].Number(), err)
-	}
+	insertWithHeaderBaseFee(tb, sut, blocks)
 	return validBlocks, nil
+}
+
+func insertWithHeaderBaseFee(tb testing.TB, sut *SUT, bs types.Blocks) {
+	for _, b := range bs {
+		parent := sut.Chain.Last()
+		baseFee := b.BaseFee()
+		// TODO(cey): This is a hack to set the base fee to the block header base fee.
+		// Instead we should properly modify the test fixtures to apply expected base fee from the gasclock.
+		if baseFee != nil {
+			target := parent.ExecutedByGasTime().Target()
+			desiredExcessGas := desiredExcess(gas.Price(baseFee.Uint64()), target)
+			var grandParent *blocks.Block
+			if parent.NumberU64() != 0 {
+				grandParent = parent.ParentBlock()
+			}
+			fakeParent := blockstest.NewBlock(tb, parent.EthBlock(), grandParent, nil)
+			// Also set the build time to the block time so that we do not fast forward the excess to the block time
+			// during execution.
+			require.NoError(tb, fakeParent.MarkExecuted(sut.DB, gastime.New(b.Time(), target, desiredExcessGas), time.Time{}, baseFee, nil, parent.PostExecutionStateRoot()))
+			require.Equal(tb, baseFee.Uint64(), fakeParent.ExecutedByGasTime().BaseFee().Uint64())
+			parent = fakeParent
+		}
+		wb, err := sut.Chain.WrapBlock(tb, b, parent)
+		require.NoError(tb, err)
+		require.NoError(tb, sut.Chain.Insert(tb, wb))
+		require.NoError(tb, sut.Enqueue(tb.Context(), wb))
+		require.NoError(tb, wb.WaitUntilExecuted(tb.Context()))
+	}
+}
+
+// desiredTarget calculates the optimal desiredTarget given the
+// desired price.
+func desiredExcess(desiredPrice gas.Price, target gas.Gas) gas.Gas {
+	// This could be solved directly by calculating D * ln(desiredPrice / P)
+	// using floating point math. However, it introduces inaccuracies. So, we
+	// use a binary search to find the closest integer solution.
+	return gas.Gas(sort.Search(math.MaxInt64, func(excessGuess int) bool {
+		tm := gastime.New(0, target, gas.Gas(excessGuess))
+		price := tm.Price()
+		return price >= desiredPrice
+	})) //nolint:gosec // Known to not overflow
 }
 
 func validateHeader(h *btHeader, h2 *types.Header) error {

@@ -88,7 +88,6 @@ func TestBlockchain(t *testing.T) {
 	skippedTestRegexp = append(skippedTestRegexp, `.*/use_value_in_tx.json/002-fork=Cancun-tx_in_withdrawals_block`)
 	// Skip tx type check
 	bt.skipLoad(`.*/bcBerlinToLondon/initialVal.json`)
-	// TODO(cey): We cannot run baseFee related tests, since in SAE base fee calculation is different.
 
 	bt.walk(t, blockTestDir, func(t *testing.T, name string, test *BlockTest) {
 		if runtime.GOARCH == "386" && runtime.GOOS == "windows" && rand.Int63()%2 == 0 {

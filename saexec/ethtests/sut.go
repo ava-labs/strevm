@@ -1,7 +1,7 @@
 // Copyright (C) 2025, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
-package saexectest
+package ethtests
 
 import (
 	"context"
@@ -38,7 +38,6 @@ type sutOptions struct {
 	genesisSpec    *core.Genesis
 	chainConfig    *params.ChainConfig
 	snapshotConfig *snapshot.Config
-	execOpts       []saexec.ExecutorOption
 }
 
 type SutOption = options.Option[sutOptions]
@@ -67,16 +66,10 @@ func WithSnapshotConfig(snapshotConfig *snapshot.Config) SutOption {
 	})
 }
 
-func WithExecutorOptions(execOpts ...saexec.ExecutorOption) SutOption {
-	return options.Func[sutOptions](func(o *sutOptions) {
-		o.execOpts = execOpts
-	})
-}
-
-// NewSUT returns a new SUT. Any >= [logging.Error] on the logger will also
+// newSUT returns a new SUT. Any >= [logging.Error] on the logger will also
 // cancel the returned context, which is useful when waiting for blocks that
 // can never finish execution because of an error.
-func NewSUT(tb testing.TB, hooks hook.Points, opts ...SutOption) (context.Context, SUT) {
+func newSUT(tb testing.TB, hooks hook.Points, opts ...SutOption) (context.Context, SUT) {
 	tb.Helper()
 
 	logger := saetest.NewTBLogger(tb, logging.Warn)
@@ -109,14 +102,14 @@ func NewSUT(tb testing.TB, hooks hook.Points, opts ...SutOption) (context.Contex
 		}
 	}
 
-	genesis := blockstest.NewGenesis(tb, db, genesisSpec, blockstest.WithTrieDBConfig(tdbConfig))
+	genesis := blockstest.NewGenesis(tb, db, genesisSpec, blockstest.WithTrieDBConfig(tdbConfig), blockstest.WithGasTarget(1e6))
 
 	blockOpts := blockstest.WithBlockOptions(
 		blockstest.WithLogger(logger),
 	)
 	chain := blockstest.NewChainBuilder(genesis, blockOpts)
 
-	e, err := saexec.New(genesis, chain.GetBlock, chainConfig, db, tdbConfig, *snapshotConfig, hooks, logger, conf.execOpts...)
+	e, err := saexec.New(genesis, chain.GetBlock, chainConfig, db, tdbConfig, *snapshotConfig, hooks, logger)
 	require.NoError(tb, err, "New()")
 	tb.Cleanup(func() {
 		require.NoErrorf(tb, e.Close(), "%T.Close()", e)
@@ -133,21 +126,4 @@ func NewSUT(tb testing.TB, hooks hook.Points, opts ...SutOption) (context.Contex
 
 func DefaultHooks() *saehookstest.Stub {
 	return &saehookstest.Stub{Target: 1e6}
-}
-
-func (sut *SUT) InsertChain(ctx context.Context, tb testing.TB, blocks types.Blocks) (int, error) {
-	tb.Helper()
-	for i, b := range blocks {
-		wb, err := sut.Chain.InsertBlock(tb, b)
-		if err != nil {
-			return i, err
-		}
-		if err := sut.Enqueue(ctx, wb); err != nil {
-			return i, err
-		}
-	}
-
-	last := sut.Chain.Last()
-	require.NoErrorf(tb, last.WaitUntilExecuted(ctx), "%T.Last().WaitUntilExecuted()")
-	return len(blocks), nil
 }

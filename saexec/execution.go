@@ -113,10 +113,7 @@ func (e *Executor) execute(b *blocks.Block, logger logging.Logger) error {
 	}
 
 	header := types.CopyHeader(b.Header())
-	// TODO(cey): this is a janky hack to pass the base fee tests in ethtests.
-	if !e.execOpts.preserveBaseFee {
-		header.BaseFee = gasClock.BaseFee().ToBig()
-	}
+	header.BaseFee = gasClock.BaseFee().ToBig()
 
 	gasPool := core.GasPool(math.MaxUint64) // required by geth but irrelevant so max it out
 	var blockGasConsumed gas.Gas

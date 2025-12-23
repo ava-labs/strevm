@@ -69,7 +69,6 @@ func newWallet(tb testing.TB, numAccounts uint) *saetest.Wallet {
 	return saetest.NewUNSAFEWallet(tb, numAccounts, signer)
 }
 
-// TODO(cey): This should be merged with saexectest.NewSUT
 func newSUT(t *testing.T, numAccounts uint) SUT {
 	t.Helper()
 	logger := saetest.NewTBLogger(t, logging.Warn)

@@ -11,16 +11,15 @@ import (
 	"github.com/ava-labs/libevm/core/rawdb"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/params"
-	"github.com/ava-labs/strevm/saexec/saexectest"
 )
 
 var _ consensus.ChainHeaderReader = (*ReaderAdapter)(nil)
 
 type ReaderAdapter struct {
-	sut *saexectest.SUT
+	sut *SUT
 }
 
-func (r *ReaderAdapter) InitializeReaderAdapter(sut *saexectest.SUT) {
+func (r *ReaderAdapter) InitializeReaderAdapter(sut *SUT) {
 	r.sut = sut
 }
 

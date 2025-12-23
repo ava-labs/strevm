@@ -85,23 +85,27 @@ func (cb *ChainBuilder) NewBlock(tb testing.TB, txs []*types.Transaction, opts .
 	return b
 }
 
-func (cb *ChainBuilder) InsertBlock(tb testing.TB, block *types.Block, opts ...ChainOption) (*blocks.Block, error) {
+func (cb *ChainBuilder) WrapBlock(tb testing.TB, block *types.Block, parent *blocks.Block, opts ...ChainOption) (*blocks.Block, error) {
 	tb.Helper()
 
 	allOpts := new(chainOptions)
 	options.ApplyTo(allOpts, cb.defaultOpts...)
 	options.ApplyTo(allOpts, opts...)
 
-	parent := cb.Last()
-	// ASK(cey): last settled should be nil?
 	wb, err := TryNewBlock(tb, block, parent, nil, allOpts.sae...)
 	if err != nil {
 		return nil, err
 	}
-	cb.chain = append(cb.chain, wb)
-	cb.blocksByHash.Store(wb.Hash(), wb)
-
 	return wb, nil
+}
+
+func (cb *ChainBuilder) Insert(tb testing.TB, block *blocks.Block) error {
+	tb.Helper()
+
+	cb.chain = append(cb.chain, block)
+	cb.blocksByHash.Store(block.Hash(), block)
+
+	return nil
 }
 
 // Last returns the last block to be built by the builder, which MAY be the
