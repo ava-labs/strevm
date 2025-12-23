@@ -242,16 +242,19 @@ func TestSyntacticBlockChecks(t *testing.T) {
 	}
 
 	tests := []struct {
+		name    string
 		header  *types.Header
 		wantErr error
 	}{
 		{
+			name: "block_height_overflow_protection",
 			header: &types.Header{
 				Number: new(big.Int).Lsh(big.NewInt(1), 64),
 			},
 			wantErr: errBlockHeightNotUint64,
 		},
 		{
+			name: "block_time_overflow_protection",
 			header: &types.Header{
 				Number: big.NewInt(1),
 				Time:   now + maxBlockFutureSeconds + 1,
@@ -261,7 +264,7 @@ func TestSyntacticBlockChecks(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		t.Run("", func(t *testing.T) {
+		t.Run(tt.name, func(t *testing.T) {
 			b := blockstest.NewBlock(t, types.NewBlockWithHeader(tt.header), nil, nil)
 			_, err := sut.ParseBlock(ctx, b.Bytes())
 			assert.ErrorIs(t, err, tt.wantErr, "ParseBlock(#%v @ time %v) when stubbed time is %d", tt.header.Number, tt.header.Time, uint64(now))
