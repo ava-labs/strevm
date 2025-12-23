@@ -162,6 +162,24 @@ func (e *Executor) execute(b *blocks.Block, logger logging.Logger) error {
 		// to access them before the end of the block.
 		receipts[ti] = receipt
 	}
+
+	for i, o := range e.hooks.EndOfBlockOps(b.EthBlock()) {
+		blockGasConsumed += o.Gas
+		perTxClock.Tick(o.Gas)
+		b.SetInterimExecutionTime(perTxClock)
+
+		if err := o.ApplyTo(stateDB); err != nil {
+			logger.Fatal(
+				"Extra block operation errored; see emergency playbook",
+				zap.Int("op_index", i),
+				zap.Stringer("op_id", o.ID),
+				zap.String("playbook", "https://github.com/ava-labs/strevm/issues/28"),
+				zap.Error(err),
+			)
+			return err
+		}
+	}
+
 	e.hooks.AfterExecutingBlock(stateDB, b.EthBlock(), receipts)
 	endTime := time.Now()
 	if err := gasClock.AfterBlock(blockGasConsumed, e.hooks, b.Header()); err != nil {

@@ -25,7 +25,11 @@ import (
 //nolint:testableexamples // Output is meaningless
 func ExampleBlock_WhenChildSettles() {
 	parent := blockBuildingPreference()
-	settle, ok := LastToSettleAt(uint64(time.Now().Unix()), parent) //nolint:gosec // Time won't overflow for quite a while
+	settle, ok, err := LastToSettleAt(uint64(time.Now().Unix()), parent) //nolint:gosec // Time won't overflow for quite a while
+	if err != nil {
+		// Due to a malformed input to block verification.
+		return // err
+	}
 	if !ok {
 		return // execution is lagging; please come back soon
 	}
@@ -353,8 +357,10 @@ func TestLastToSettleAt(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, gotOK := LastToSettleAt(tt.settleAt, tt.parent)
-			require.Equalf(t, tt.wantOK, gotOK, "LastToSettleAt(%d, [parent height %d])", tt.settleAt, tt.parent.Height())
+			got, gotOK, err := LastToSettleAt(tt.settleAt, tt.parent)
+			if err != nil || gotOK != tt.wantOK {
+				t.Fatalf("LastToSettleAt(%d, [parent height %d]) got (_, %t, %v); want (_, %t, nil)", tt.settleAt, tt.parent.Height(), gotOK, err, tt.wantOK)
+			}
 			if tt.wantOK {
 				require.Equal(t, tt.want.Height(), got.Height(), "LastToSettleAt(%d, [parent height %d])", tt.settleAt, tt.parent.Height())
 			}

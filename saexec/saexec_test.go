@@ -68,7 +68,7 @@ type SUT struct {
 // newSUT returns a new SUT. Any >= [logging.Error] on the logger will also
 // cancel the returned context, which is useful when waiting for blocks that
 // can never finish execution because of an error.
-func newSUT(tb testing.TB, hooks hook.Points) (context.Context, SUT) {
+func newSUT(tb testing.TB, hooks *saehookstest.Stub) (context.Context, SUT) {
 	tb.Helper()
 
 	logger := saetest.NewTBLogger(tb, logging.Warn)
@@ -349,11 +349,61 @@ func TestExecution(t *testing.T) {
 	})
 }
 
+func TestEndOfBlockOps(t *testing.T) {
+	hooks := defaultHooks()
+	ctx, sut := newSUT(t, hooks)
+	wallet := sut.wallet
+	exportEOA := wallet.Addresses()[0]
+	// The import EOA is deliberately not from [newSUT] to ensure that it's got
+	// a zero starting balance.
+	importEOA := common.Address{'i', 'm', 'p', 'o', 'r', 't'}
+
+	initialTime := sut.lastExecuted.Load().ExecutedByGasTime()
+
+	hooks.Ops = []hook.Op{
+		{
+			Gas: 100_000,
+			Burn: map[common.Address]uint256.Int{
+				exportEOA: *uint256.NewInt(10),
+			},
+		},
+		{
+			Gas: 150_000,
+			Mint: map[common.Address]uint256.Int{
+				importEOA: *uint256.NewInt(100),
+			},
+		},
+	}
+	b := sut.chain.NewBlock(t, nil)
+
+	e := sut.Executor
+	require.NoError(t, e.Enqueue(ctx, b), "Enqueue()")
+	require.NoErrorf(t, b.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", b)
+
+	t.Run("committed_state", func(t *testing.T) {
+		sdb, err := state.New(b.PostExecutionStateRoot(), e.StateCache(), nil)
+		require.NoErrorf(t, err, "state.New(%T.PostExecutionStateRoot(), %T.StateCache(), nil)", b, e)
+		assert.Equal(t, uint64(1), sdb.GetNonce(exportEOA), "export nonce incremented")
+		assert.Zero(t, sdb.GetNonce(importEOA), "import nonce unchanged")
+		assert.Equal(t, uint256.NewInt(100), sdb.GetBalance(importEOA), "imported balance")
+
+		wantTime := initialTime.Clone()
+		wantTime.Tick(100_000 + 150_000)
+
+		opt := gastime.CmpOpt()
+		if diff := cmp.Diff(wantTime, b.ExecutedByGasTime(), opt); diff != "" {
+			t.Errorf("%T.ExecutedByGasTime() diff (-want +got):\n%s", b, diff)
+		}
+	})
+}
+
 func TestGasAccounting(t *testing.T) {
-	hooks := &saehookstest.Stub{}
+	const gasPerTx = gas.Gas(params.TxGas)
+	hooks := &saehookstest.Stub{
+		Target: 5 * gasPerTx,
+	}
 	ctx, sut := newSUT(t, hooks)
 
-	const gasPerTx = gas.Gas(params.TxGas)
 	at := func(blockTime, txs uint64, rate gas.Gas) *proxytime.Time[gas.Gas] {
 		tm := proxytime.New[gas.Gas](blockTime, rate)
 		tm.Tick(gas.Gas(txs) * gasPerTx)
@@ -377,15 +427,6 @@ func TestGasAccounting(t *testing.T) {
 		wantExcessAfter gas.Gas
 		wantPriceAfter  gas.Price
 	}{
-		{
-			// Initially set the gasTarget for the next block.
-			blockTime:       0,
-			numTxs:          0,
-			targetAfter:     5 * gasPerTx,
-			wantExecutedBy:  at(0, 0, 10*gasPerTx),
-			wantExcessAfter: 0,
-			wantPriceAfter:  1,
-		},
 		{
 			blockTime:       2,
 			numTxs:          3,
@@ -558,21 +599,20 @@ func asBytes(ops ...vm.OpCode) []byte {
 }
 
 func FuzzOpCodes(f *testing.F) {
-	// SUT setup is too expensive to only fuzz a single transaction, but the
-	// total number is arbitrary.
-	f.Fuzz(func(t *testing.T, c0, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13, c14, c15 []byte) {
-		_, sut := newSUT(t, defaultHooks())
+	// Although it's tempting to run multiple `code` slices in a block, to
+	// amortise the fixed setup cost of the SUT, this stops the Go fuzzer from
+	// knowing about their independence, resulting in a lot of empty inputs.
+	f.Fuzz(func(t *testing.T, code []byte) {
+		t.Parallel() // for corpus in ./testdata/
 
-		var txs types.Transactions
-		for _, code := range [][]byte{c0, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13, c14, c15} {
-			txs = append(txs, sut.wallet.SetNonceAndSign(t, 0, &types.LegacyTx{
-				To:       nil, // i.e. contract creation, resulting in `code` being executed
-				GasPrice: big.NewInt(1),
-				Gas:      30e6,
-				Data:     code,
-			}))
-		}
-		b := sut.chain.NewBlock(t, txs)
+		_, sut := newSUT(t, defaultHooks())
+		tx := sut.wallet.SetNonceAndSign(t, 0, &types.LegacyTx{
+			To:       nil, // i.e. contract creation, resulting in `code` being executed
+			GasPrice: big.NewInt(1),
+			Gas:      30e6,
+			Data:     code,
+		})
+		b := sut.chain.NewBlock(t, types.Transactions{tx})
 
 		// Ensure that the SUT [logging.Logger] remains of this type so >=WARN
 		// logs become failures.

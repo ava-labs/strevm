@@ -82,7 +82,7 @@ func TestSetAncestors(t *testing.T) {
 
 	t.Run("incorrect_parent", func(t *testing.T) {
 		// Note that the arguments to [New] are inverted.
-		_, err := New(child, lastSettled, parent, logging.NoLog{})
+		_, err := New(child, lastSettled, parent, saetest.NewTBLogger(t, logging.Warn))
 		require.ErrorIs(t, err, errParentHashMismatch, "New() with inverted parent and last-settled blocks")
 	})
 
