@@ -7,7 +7,6 @@ import (
 	"context"
 	"math/big"
 	"net/http/httptest"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -65,7 +64,7 @@ func newSUT(tb testing.TB, numAccounts uint) (context.Context, *SUT) {
 	tb.Helper()
 
 	mempoolConf := legacypool.DefaultConfig // copies
-	mempoolConf.Journal = filepath.Join(tb.TempDir(), "transactions.rlp")
+	mempoolConf.Journal = "/dev/null"
 
 	vm := NewVM(Config{
 		MempoolConfig: mempoolConf,
