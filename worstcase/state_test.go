@@ -220,7 +220,7 @@ func TestTransactionValidation(t *testing.T) {
 	require.NoError(t, err, "crypto.HexToECDSA() for eip3607Key")
 	eip3607EOA := crypto.PubkeyToAddress(eip3607Key.PublicKey)
 	eip3607Alloc := types.Account{
-		Balance: big.NewInt(1000000000000000000), // 1 ether
+		Balance: big.NewInt(params.Ether),
 		Nonce:   0,
 		Code:    common.Hex2Bytes("B0B0FACE"),
 	}
@@ -229,6 +229,8 @@ func TestTransactionValidation(t *testing.T) {
 	require.NoError(t, err, "libevm/crypto.GenerateKey()")
 	defaultEOA := crypto.PubkeyToAddress(defaultKey.PublicKey)
 
+	// The referenced clause definitions are documented by Geth in
+	// [core.StateTransition.transitionDb].
 	tests := []struct {
 		name    string
 		nonce   uint64

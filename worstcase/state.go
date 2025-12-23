@@ -196,8 +196,10 @@ func (s *State) ApplyTx(tx *types.Transaction) error {
 	}
 
 	// While EOA enforcement is not possible to guarantee in worst-case
-	// execution, we can prevent most cases here. Therefore, we must still
-	// handle non-EOA issuance later during actual execution.
+	// execution, we can prevent most cases here.
+	//
+	// TODO: We must still handle non-EOA issuance later during actual
+	// execution.
 	if codeHash := s.db.GetCodeHash(from); codeHash != (common.Hash{}) && codeHash != types.EmptyCodeHash {
 		return fmt.Errorf("%w: address %v, codehash: %s", core.ErrSenderNoEOA, from.Hex(), codeHash)
 	}
