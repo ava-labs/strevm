@@ -73,6 +73,10 @@ func (vm *VM) BuildBlock(ctx context.Context, bCtx *block.Context) (*blocks.Bloc
 	)
 }
 
+// Max time from current time allowed for blocks, before they're considered future blocks
+// and fail verification
+const maxFutureBlockTime = 10 * time.Second
+
 var errExecutionLagging = errors.New("execution lagging for settlement")
 
 // buildBlock implements the block-building logic shared by [VM.BuildBlock] and
@@ -91,12 +95,18 @@ func (vm *VM) buildBlock(
 		zap.Time("block_time", blockTime),
 	)
 
-	if blockTime.Before(parent.Timestamp()) {
-		return nil, fmt.Errorf("block time %s < parent time %s", blockTime, parent.Timestamp())
+	// The block time is not trusted, as it can be provided maliciously during
+	// [VM.VerifyBlock]. It is allowed for [hook.Points] to further constrain
+	// the allowed block times. However, every block MUST at least satisfy these
+	// basic sanity checks.
+	if blockUnix := blockTime.Unix(); blockUnix < params.TauSeconds {
+		return nil, fmt.Errorf("block time %d < minimum allowed unix time %d", blockUnix, params.TauSeconds)
 	}
-	// The block's time must be verified here to avoid underflow in [unix].
-	if blockTime.Unix() < params.TauSeconds {
-		return nil, fmt.Errorf("block time %d < minimum allowed unix time %d", blockTime.Unix(), params.TauSeconds)
+	if parentTime := parent.Timestamp(); blockTime.Before(parentTime) {
+		return nil, fmt.Errorf("block time %s < parent time %s", blockTime, parentTime)
+	}
+	if maxBlockTime := vm.config.Now().Add(maxFutureBlockTime); blockTime.After(maxBlockTime) {
+		return nil, fmt.Errorf("block time %s > maximum allowed time %s", blockTime, maxBlockTime)
 	}
 
 	settleAt := unix(blockTime.Add(-params.Tau))
@@ -133,6 +143,9 @@ func (vm *VM) buildBlock(
 		}
 	}
 
+	// TODO: This header hasn't had an opportunity to be populated by,
+	// [hook.Points] but it is passed into [hook.Points.SubSecondBlockTime]. We
+	// should construct the header inside of [hook.Points].
 	hdr := &types.Header{
 		ParentHash: parent.Hash(),
 		Root:       lastSettled.PostExecutionStateRoot(),
