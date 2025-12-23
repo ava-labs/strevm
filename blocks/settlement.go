@@ -8,6 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+
+	"go.uber.org/zap"
 )
 
 type ancestry struct {
@@ -169,6 +171,8 @@ func settling(lastOfParent, lastOfCurr *Block) []*Block {
 	return settling
 }
 
+var errIncompleteBlockHistory = errors.New("incomplete block history when determining last-settled block")
+
 // LastToSettleAt returns (a) the last block to be settled at time `settleAt` if
 // building on the specified parent block, and (b) a boolean to indicate if
 // settlement is currently possible. If the returned boolean is false, the
@@ -181,7 +185,7 @@ func settling(lastOfParent, lastOfCurr *Block) []*Block {
 //
 // See the Example for [Block.WhenChildSettles] for one usage of the returned
 // block.
-func LastToSettleAt(settleAt uint64, parent *Block) (b *Block, ok bool) {
+func LastToSettleAt(settleAt uint64, parent *Block) (b *Block, ok bool, _ error) {
 	defer func() {
 		// Avoids having to perform this check at every return.
 		if !ok {
@@ -207,10 +211,25 @@ func LastToSettleAt(settleAt uint64, parent *Block) (b *Block, ok bool) {
 	// therefore we have a guarantee that the loop update will never result in
 	// `block==nil`.
 	for block := parent; ; block = block.ParentBlock() {
+		if block == nil {
+			// Although the below [Block.Settled] check (performed in the last
+			// loop iteration) precludes this from happening, that assumes no
+			// settlement concurrently with a call to [LastToSettleAt]. While
+			// that may be true now, the consequence of a race condition when
+			// omitting this check would be a panic for nil-pointer
+			// dereferencing.
+			parent.log.Error(
+				"Race condition when determining last block to settle",
+				zap.Stringer("parent_hash", parent.Hash()),
+				zap.Uint64("parent_height", parent.Height()),
+				zap.Uint64("settle_at", settleAt),
+			)
+			return nil, false, fmt.Errorf("%w: settling at %d with parent %#x (%v)", errIncompleteBlockHistory, settleAt, parent.Hash(), parent.Number())
+		}
 		// Guarantees that the loop will always exit as the last pre-SAE block
 		// (perhaps the genesis) is always settled, by definition.
-		if settled := block.ancestry.Load() == nil; settled {
-			return block, known
+		if block.Settled() {
+			return block, known, nil
 		}
 
 		if startsNoEarlierThan := block.BuildTime(); startsNoEarlierThan > settleAt {
@@ -233,7 +252,7 @@ func LastToSettleAt(settleAt uint64, parent *Block) (b *Block, ok bool) {
 				known = true
 				continue
 			}
-			return block, known
+			return block, known, nil
 		}
 
 		// Note that a grandchild block having unknown execution completion time

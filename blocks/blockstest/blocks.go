@@ -105,7 +105,7 @@ func WithLogger(l logging.Logger) BlockOption {
 func NewGenesis(tb testing.TB, db ethdb.Database, config *params.ChainConfig, alloc types.GenesisAlloc, opts ...GenesisOption) *blocks.Block {
 	tb.Helper()
 	conf := &genesisConfig{
-		target: math.MaxUint64,
+		gasTarget: math.MaxUint64,
 	}
 	options.ApplyTo(conf, opts...)
 
@@ -120,15 +120,15 @@ func NewGenesis(tb testing.TB, db ethdb.Database, config *params.ChainConfig, al
 	require.NoErrorf(tb, tdb.Commit(hash, true), "%T.Commit(core.SetupGenesisBlock(...))", tdb)
 
 	b := NewBlock(tb, gen.ToBlock(), nil, nil)
-	require.NoErrorf(tb, b.MarkExecuted(db, gastime.New(gen.Timestamp, conf.target, conf.excess), time.Time{}, new(big.Int), nil, b.SettledStateRoot()), "%T.MarkExecuted()", b)
+	require.NoErrorf(tb, b.MarkExecuted(db, gastime.New(gen.Timestamp, conf.gasTarget, conf.gasExcess), time.Time{}, new(big.Int), nil, b.SettledStateRoot()), "%T.MarkExecuted()", b)
 	require.NoErrorf(tb, b.MarkSynchronous(), "%T.MarkSynchronous()", b)
 	return b
 }
 
 type genesisConfig struct {
 	tdbConfig *triedb.Config
-	target    gas.Gas
-	excess    gas.Gas
+	gasTarget gas.Gas
+	gasExcess gas.Gas
 }
 
 // A GenesisOption configures [NewGenesis].
@@ -144,13 +144,13 @@ func WithTrieDBConfig(tc *triedb.Config) GenesisOption {
 // WithGasTarget overrides the gas target used by [NewGenesis].
 func WithGasTarget(target gas.Gas) GenesisOption {
 	return options.Func[genesisConfig](func(gc *genesisConfig) {
-		gc.target = target
+		gc.gasTarget = target
 	})
 }
 
 // WithGasExcess overrides the gas excess used by [NewGenesis].
 func WithGasExcess(excess gas.Gas) GenesisOption {
 	return options.Func[genesisConfig](func(gc *genesisConfig) {
-		gc.excess = excess
+		gc.gasExcess = excess
 	})
 }

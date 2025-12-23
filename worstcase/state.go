@@ -85,7 +85,7 @@ func NewState(
 }
 
 const (
-	maxGasSecondsPerBlock = saeparams.Tau * saeparams.Lambda
+	maxGasSecondsPerBlock = saeparams.TauSeconds * saeparams.Lambda
 	// The concepts of "fullness" and "capacity" are ambiguous with respect to
 	// the SAE queue so it is better to think of it as "open" or "closed" to
 	// accepting a new block. An open queue MAY accept an entire, maximal block,
