@@ -11,11 +11,10 @@ import (
 	"github.com/ava-labs/avalanchego/vms/components/gas"
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core"
-	"github.com/ava-labs/libevm/core/rawdb"
-	"github.com/ava-labs/libevm/core/state"
 	"github.com/ava-labs/libevm/core/txpool"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/crypto"
+	"github.com/ava-labs/libevm/libevm/ethtest"
 	"github.com/ava-labs/libevm/params"
 	"github.com/holiman/uint256"
 	"github.com/stretchr/testify/require"
@@ -23,7 +22,9 @@ import (
 	"github.com/ava-labs/strevm/blocks"
 	"github.com/ava-labs/strevm/blocks/blockstest"
 	"github.com/ava-labs/strevm/gastime"
+	"github.com/ava-labs/strevm/hook"
 	"github.com/ava-labs/strevm/hook/hookstest"
+	"github.com/ava-labs/strevm/saetest"
 )
 
 type SUT struct {
@@ -39,25 +40,24 @@ const (
 
 func newSUT(tb testing.TB, alloc types.GenesisAlloc) SUT {
 	tb.Helper()
-	hooks := &hookstest.Stub{
-		Target: initialGasTarget,
-	}
-	db := rawdb.NewMemoryDatabase()
+
+	db, cache, _ := ethtest.NewEmptyStateDB(tb)
+	config := saetest.ChainConfig()
+
 	genesis := blockstest.NewGenesis(
 		tb,
 		db,
-		params.MergedTestChainConfig,
+		config,
 		alloc,
 		blockstest.WithGasTarget(initialGasTarget),
 		blockstest.WithGasExcess(initialExcess),
 	)
-	s, err := NewState(
-		hooks,
-		params.MergedTestChainConfig,
-		state.NewDatabaseWithConfig(db, nil),
-		genesis,
-	)
+	hooks := &hookstest.Stub{
+		Target: initialGasTarget,
+	}
+	s, err := NewState(hooks, config, cache, genesis)
 	require.NoError(tb, err, "NewState()")
+
 	return SUT{
 		State:   s,
 		Genesis: genesis,
@@ -66,8 +66,13 @@ func newSUT(tb testing.TB, alloc types.GenesisAlloc) SUT {
 }
 
 const (
-	targetToMaxBlockSize = gastime.TargetToRate * rateToMaxBlockSize
+	targetToMaxBlockSize = gastime.TargetToRate * maxGasSecondsPerBlock
 	initialMaxBlockSize  = initialGasTarget * targetToMaxBlockSize
+)
+
+type (
+	Op           = hook.Op
+	AccountDebit = hook.AccountDebit
 )
 
 func TestMultipleBlocks(t *testing.T) {
@@ -80,8 +85,10 @@ func TestMultipleBlocks(t *testing.T) {
 			Balance: new(big.Int).SetUint64(math.MaxUint64),
 		},
 	})
+
 	state := sut.State
 	lastHash := sut.Genesis.Hash()
+
 	const importedAmount = 10
 	type op struct {
 		name    string
@@ -175,9 +182,6 @@ func TestMultipleBlocks(t *testing.T) {
 			},
 		},
 		{
-			hooks: &hookstest.Stub{
-				Target: initialGasTarget, // Restore the target _after_ this block.
-			},
 			// We have currently included slightly over 10s worth of gas. We
 			// should increase the time by that same amount to restore the base
 			// fee.
