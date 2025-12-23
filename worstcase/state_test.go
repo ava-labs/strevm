@@ -22,6 +22,7 @@ import (
 	"github.com/ava-labs/strevm/blocks"
 	"github.com/ava-labs/strevm/blocks/blockstest"
 	"github.com/ava-labs/strevm/gastime"
+	"github.com/ava-labs/strevm/hook"
 	"github.com/ava-labs/strevm/hook/hookstest"
 	"github.com/ava-labs/strevm/saetest"
 )
@@ -67,6 +68,11 @@ func newSUT(tb testing.TB, alloc types.GenesisAlloc) SUT {
 const (
 	targetToMaxBlockSize = gastime.TargetToRate * maxGasSecondsPerBlock
 	initialMaxBlockSize  = initialGasTarget * targetToMaxBlockSize
+)
+
+type (
+	Op           = hook.Op
+	AccountDebit = hook.AccountDebit
 )
 
 func TestMultipleBlocks(t *testing.T) {

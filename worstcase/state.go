@@ -163,14 +163,6 @@ func (s *State) BaseFee() *uint256.Int {
 	return s.baseFee
 }
 
-type (
-	// AccountDebit includes an amount that an account should have debited,
-	// along with the nonce used to debit the account.
-	AccountDebit = hook.AccountDebit
-	// Op is an operation that can be applied to a [State].
-	Op = hook.Op
-)
-
 var errCostOverflow = errors.New("Cost() overflows uint256")
 
 // ApplyTx validates the transaction both intrinsically and in the context of
@@ -205,7 +197,9 @@ func (s *State) ApplyTx(tx *types.Transaction) error {
 	return s.Apply(op)
 }
 
-func txToOp(signer types.Signer, tx *types.Transaction) (Op, error) {
+func txToOp(signer types.Signer, tx *types.Transaction) (hook.Op, error) {
+	type Op = hook.Op // for convenience when returning zero value
+
 	from, err := types.Sender(signer, tx)
 	if err != nil {
 		return Op{}, fmt.Errorf("determining sender: %w", err)
@@ -222,7 +216,7 @@ func txToOp(signer types.Signer, tx *types.Transaction) (Op, error) {
 	return Op{
 		Gas:       gas.Gas(tx.Gas()),
 		GasFeeCap: gasFeeCap,
-		Burn: map[common.Address]AccountDebit{
+		Burn: map[common.Address]hook.AccountDebit{
 			from: {
 				Nonce:  tx.Nonce(),
 				Amount: amount,
@@ -243,7 +237,7 @@ func txToOp(signer types.Signer, tx *types.Transaction) (Op, error) {
 //   - The operation specifies too low of a gas price.
 //   - The operation is from an account with an incorrect or invalid nonce.
 //   - The operation is from an account with an insufficient balance.
-func (s *State) Apply(o Op) error {
+func (s *State) Apply(o hook.Op) error {
 	if o.Gas > s.maxBlockSize-s.blockSize {
 		return core.ErrGasLimitReached
 	}
