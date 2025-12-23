@@ -114,7 +114,7 @@ func (vm *VM) buildBlock(
 		return nil, err
 	}
 
-	for _, b := range unsettledAncestry(lastSettled, parent) {
+	for _, b := range unsettledAncestry(parent, lastSettled.Height()) {
 		if err := state.StartBlock(b.Header()); err != nil {
 			return nil, fmt.Errorf("starting worst-case state for block %d: %v", b.Height(), err)
 		}
@@ -196,11 +196,20 @@ func (vm *VM) buildBlock(
 }
 
 // unsettledAncestry returns the ancestry of blocks from `parent` (inclusive) to
-// (not including) `settled` in order of oldest to newest.
-func unsettledAncestry(settled, parent *blocks.Block) []*blocks.Block {
-	var history []*blocks.Block
-	for b := parent; b.ID() != settled.ID(); b = b.ParentBlock() {
-		history = append(history, b)
+// the (non-inclusive) `settledHeight`; in order of oldest to newest.
+//
+// It is assumed that `parent` was successfully verified and has not been
+// rejected.
+func unsettledAncestry(parent *blocks.Block, settledHeight uint64) []*blocks.Block {
+	parentHeight := parent.Height()
+	if parentHeight <= settledHeight {
+		return nil
+	}
+
+	history := make([]*blocks.Block, parentHeight-settledHeight)
+	for i := range history {
+		history[i] = parent
+		parent = parent.ParentBlock()
 	}
 	slices.Reverse(history)
 	return history
