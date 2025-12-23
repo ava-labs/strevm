@@ -78,7 +78,12 @@ func (vm *VM) BuildBlock(ctx context.Context, bCtx *block.Context) (*blocks.Bloc
 // future blocks and fail verification.
 const maxFutureBlockTime = 10 * time.Second
 
-var errExecutionLagging = errors.New("execution lagging for settlement")
+var (
+	errBlockTimeUnderMinimum = errors.New("block time under minimum allowed time")
+	errBlockTimeBeforeParent = errors.New("block time before parent time")
+	errBlockTimeAfterMaximum = errors.New("block time after maximum allowed time")
+	errExecutionLagging      = errors.New("execution lagging for settlement")
+)
 
 // buildBlock implements the block-building logic shared by [VM.BuildBlock] and
 // [VM.VerifyBlock].
@@ -101,13 +106,13 @@ func (vm *VM) buildBlock(
 	// the allowed block times. However, every block MUST at least satisfy these
 	// basic sanity checks.
 	if blockUnix := blockTime.Unix(); blockUnix < saeparams.TauSeconds {
-		return nil, fmt.Errorf("block time %d < minimum allowed unix time %d", blockUnix, saeparams.TauSeconds)
+		return nil, fmt.Errorf("%w: %d < %d", errBlockTimeUnderMinimum, blockUnix, saeparams.TauSeconds)
 	}
 	if parentTime := parent.Timestamp(); blockTime.Before(parentTime) {
-		return nil, fmt.Errorf("block time %s < parent time %s", blockTime, parentTime)
+		return nil, fmt.Errorf("%w: %s < %s", errBlockTimeBeforeParent, blockTime, parentTime)
 	}
 	if maxBlockTime := vm.config.Now().Add(maxFutureBlockTime); blockTime.After(maxBlockTime) {
-		return nil, fmt.Errorf("block time %s > maximum allowed time %s", blockTime, maxBlockTime)
+		return nil, fmt.Errorf("%w: %s > %s", errBlockTimeAfterMaximum, blockTime, maxBlockTime)
 	}
 
 	settleAt := unix(blockTime.Add(-saeparams.Tau))
@@ -116,7 +121,6 @@ func (vm *VM) buildBlock(
 		return nil, err
 	}
 	if !ok {
-		log.Warn("Execution lagging when determining last block to settle")
 		return nil, errExecutionLagging
 	}
 
@@ -267,6 +271,12 @@ func unsettledAncestry(parent *blocks.Block, settledHeight uint64) []*blocks.Blo
 	return history
 }
 
+var (
+	errUnknownParent  = errors.New("unknown parent")
+	errFinalizedBlock = errors.New("finalized block")
+	errHashMismatch   = errors.New("hash mismatch")
+)
+
 // VerifyBlock validates the block and, if successful, populates its ancestry.
 // The block context MAY be nil.
 func (vm *VM) VerifyBlock(ctx context.Context, bCtx *block.Context, b *blocks.Block) error {
@@ -280,12 +290,12 @@ func (vm *VM) VerifyBlock(ctx context.Context, bCtx *block.Context, b *blocks.Bl
 
 	parent, err := vm.GetBlock(ctx, b.Parent())
 	if err != nil {
-		return fmt.Errorf("unknown block parent %#x: %w", b.ParentHash(), err)
+		return fmt.Errorf("%w %#x: %w", errUnknownParent, b.ParentHash(), err)
 	}
 
 	// Sanity check that we aren't verifying an accepted block.
 	if height, accepted := b.Height(), vm.lastAccepted.Load().Height(); height <= accepted {
-		return fmt.Errorf("verifying block at height %d <= last-accepted (%d)", height, accepted)
+		return fmt.Errorf("%w at height %d <= last-accepted (%d)", errFinalizedBlock, height, accepted)
 	}
 
 	txs := make([]*txgossip.LazyTransaction, len(b.Transactions()))
@@ -321,7 +331,7 @@ func (vm *VM) VerifyBlock(ctx context.Context, bCtx *block.Context, b *blocks.Bl
 		bCtx,
 		parent,
 		b.Timestamp(),
-		func(txpool.PendingFilter) []*txgossip.LazyTransaction { return txs },
+		func(f txpool.PendingFilter) []*txgossip.LazyTransaction { return txs },
 		vm.hooks.BlockRebuilderFrom(b.EthBlock()),
 	)
 	if err != nil {
@@ -331,7 +341,7 @@ func (vm *VM) VerifyBlock(ctx context.Context, bCtx *block.Context, b *blocks.Bl
 	// key to the purpose of this method so included here to be defensive. It
 	// also provides a clearer failure message.
 	if reH, verH := rebuilt.Hash(), b.Hash(); reH != verH {
-		return fmt.Errorf("block-hash mismatch when rebuilding block; rebuilt as %#x when verifying %#x", reH, verH)
+		return fmt.Errorf("%w; rebuilt as %#x when verifying %#x", errHashMismatch, reH, verH)
 	}
 	if err := b.CopyAncestorsFrom(rebuilt); err != nil {
 		return err
