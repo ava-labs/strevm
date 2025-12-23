@@ -17,6 +17,7 @@ import (
 	"github.com/ava-labs/avalanchego/snow/snowtest"
 	"github.com/ava-labs/avalanchego/utils/logging"
 	"github.com/ava-labs/libevm/common"
+	"github.com/ava-labs/libevm/core"
 	"github.com/ava-labs/libevm/core/rawdb"
 	"github.com/ava-labs/libevm/core/state"
 	"github.com/ava-labs/libevm/core/txpool"
@@ -80,7 +81,11 @@ func newSUT(tb testing.TB, numAccounts uint) (context.Context, *SUT) {
 	wallet := saetest.NewUNSAFEWallet(tb, numAccounts, signer)
 
 	db := rawdb.NewMemoryDatabase()
-	genesis := blockstest.NewGenesis(tb, db, config, saetest.MaxAllocFor(wallet.Addresses()...))
+	gen := &core.Genesis{
+		Config: config,
+		Alloc:  saetest.MaxAllocFor(wallet.Addresses()...),
+	}
+	genesis := blockstest.NewGenesis(tb, db, gen)
 
 	hooks := &hookstest.Stub{
 		Target: 100e6,

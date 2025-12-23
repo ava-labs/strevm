@@ -85,27 +85,10 @@ func (cb *ChainBuilder) NewBlock(tb testing.TB, txs []*types.Transaction, opts .
 	return b
 }
 
-func (cb *ChainBuilder) WrapBlock(tb testing.TB, block *types.Block, parent *blocks.Block, opts ...ChainOption) (*blocks.Block, error) {
-	tb.Helper()
-
-	allOpts := new(chainOptions)
-	options.ApplyTo(allOpts, cb.defaultOpts...)
-	options.ApplyTo(allOpts, opts...)
-
-	wb, err := TryNewBlock(tb, block, parent, nil, allOpts.sae...)
-	if err != nil {
-		return nil, err
-	}
-	return wb, nil
-}
-
-func (cb *ChainBuilder) Insert(tb testing.TB, block *blocks.Block) error {
-	tb.Helper()
-
+// Insert adds a block to the chain.
+func (cb *ChainBuilder) Insert(block *blocks.Block) {
 	cb.chain = append(cb.chain, block)
 	cb.blocksByHash.Store(block.Hash(), block)
-
-	return nil
 }
 
 // Last returns the last block to be built by the builder, which MAY be the
@@ -139,6 +122,8 @@ func (cb *ChainBuilder) GetBlock(h common.Hash, num uint64) (*blocks.Block, bool
 	return b, true
 }
 
+// GetHashAtHeight returns the hash of the block at the given height, and a flag indicating if it was found.
+// If the height is greater than the number of blocks in the chain, it returns an empty hash and false.
 func (cb *ChainBuilder) GetHashAtHeight(num uint64) (common.Hash, bool) {
 	if num >= uint64(len(cb.chain)) {
 		return common.Hash{}, false
@@ -147,6 +132,7 @@ func (cb *ChainBuilder) GetHashAtHeight(num uint64) (common.Hash, bool) {
 	return block.Hash(), block != nil && block.NumberU64() == num
 }
 
+// GetNumberByHash returns the number of the block with the given hash, and a flag indicating if it was found.
 func (cb *ChainBuilder) GetNumberByHash(h common.Hash) (uint64, bool) {
 	ifc, _ := cb.blocksByHash.Load(h)
 	b, ok := ifc.(*blocks.Block)

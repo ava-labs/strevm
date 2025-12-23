@@ -25,7 +25,7 @@
 // You should have received a copy of the GNU Lesser General Public License
 // along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
 
-// Package tests implements execution of Ethereum JSON tests.
+// Package ethtests implements execution of Ethereum JSON tests.
 package ethtests
 
 import (
@@ -58,10 +58,11 @@ import (
 	"github.com/ava-labs/libevm/triedb"
 	"github.com/ava-labs/libevm/triedb/hashdb"
 	"github.com/ava-labs/libevm/triedb/pathdb"
+	"github.com/stretchr/testify/require"
+
 	"github.com/ava-labs/strevm/blocks"
 	"github.com/ava-labs/strevm/blocks/blockstest"
 	"github.com/ava-labs/strevm/gastime"
-	"github.com/stretchr/testify/require"
 )
 
 // A BlockTest checks handling of entire blocks.
@@ -134,7 +135,7 @@ func (t *BlockTest) Run(tb testing.TB, snapshotter bool, scheme string, tracer v
 	if !ok {
 		return UnsupportedForkError{t.json.Network}
 	}
-	opts := []SutOption{WithChainConfig(config)}
+	opts := []sutOption{withChainConfig(config)}
 
 	// Configure trie database configuration
 	tconf := &triedb.Config{
@@ -146,17 +147,17 @@ func (t *BlockTest) Run(tb testing.TB, snapshotter bool, scheme string, tracer v
 		tconf.HashDB = hashdb.Defaults
 	}
 	// Configure snapshot configuration
-	opts = append(opts, WithTrieDBConfig(tconf))
+	opts = append(opts, withTrieDBConfig(tconf))
 	if snapshotter {
 		snapshotConfig := snapshot.Config{
 			CacheSize:  1,
 			AsyncBuild: false,
 		}
-		opts = append(opts, WithSnapshotConfig(&snapshotConfig))
+		opts = append(opts, withSnapshotConfig(&snapshotConfig))
 	}
 	// Commit genesis state
 	gspec := t.genesis(config)
-	opts = append(opts, WithGenesisSpec(gspec))
+	opts = append(opts, withGenesisSpec(gspec))
 
 	// Wrap the original engine within the beacon-engine
 	engine := beacon.New(ethash.NewFaker())
@@ -166,7 +167,7 @@ func (t *BlockTest) Run(tb testing.TB, snapshotter bool, scheme string, tracer v
 	require.Equal(tb, gblock.PostExecutionStateRoot(), t.json.Genesis.StateRoot)
 	require.Equal(tb, gblock.Header().Root, t.json.Genesis.StateRoot)
 
-	validBlocks, err := t.insertBlocks(ctx, tb, &sut)
+	validBlocks, err := t.insertBlocks(tb, ctx, &sut)
 	if err != nil {
 		return err
 	}
@@ -229,7 +230,7 @@ See https://github.com/ethereum/tests/wiki/Blockchain-Tests-II
 	expected we are expected to ignore it and continue processing and then validate the
 	post state.
 */
-func (t *BlockTest) insertBlocks(ctx context.Context, tb testing.TB, sut *SUT) ([]btBlock, error) {
+func (t *BlockTest) insertBlocks(tb testing.TB, ctx context.Context, sut *SUT) ([]btBlock, error) {
 	validBlocks := make([]btBlock, 0)
 	blocks := make([]*types.Block, 0)
 	// insert the test blocks, which will execute all transactions
@@ -289,9 +290,8 @@ func insertWithHeaderBaseFee(tb testing.TB, sut *SUT, bs types.Blocks) {
 			require.Equal(tb, baseFee.Uint64(), fakeParent.ExecutedByGasTime().BaseFee().Uint64())
 			parent = fakeParent
 		}
-		wb, err := sut.Chain.WrapBlock(tb, b, parent)
-		require.NoError(tb, err)
-		require.NoError(tb, sut.Chain.Insert(tb, wb))
+		wb := blockstest.NewBlock(tb, b, parent, nil)
+		sut.Chain.Insert(wb)
 		require.NoError(tb, sut.Enqueue(tb.Context(), wb))
 		require.NoError(tb, wb.WaitUntilExecuted(tb.Context()))
 	}
@@ -303,11 +303,11 @@ func desiredExcess(desiredPrice gas.Price, target gas.Gas) gas.Gas {
 	// This could be solved directly by calculating D * ln(desiredPrice / P)
 	// using floating point math. However, it introduces inaccuracies. So, we
 	// use a binary search to find the closest integer solution.
-	return gas.Gas(sort.Search(math.MaxInt64, func(excessGuess int) bool {
-		tm := gastime.New(0, target, gas.Gas(excessGuess))
+	return gas.Gas(sort.Search(math.MaxInt32, func(excessGuess int) bool { //nolint:gosec // Known to not overflow
+		tm := gastime.New(0, target, gas.Gas(excessGuess)) //nolint:gosec // Known to not overflow
 		price := tm.Price()
 		return price >= desiredPrice
-	})) //nolint:gosec // Known to not overflow
+	}))
 }
 
 func validateHeader(h *btHeader, h2 *types.Header) error {

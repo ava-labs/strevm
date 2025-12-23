@@ -17,11 +17,11 @@ import (
 	"github.com/ava-labs/libevm/libevm/options"
 	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/triedb"
+	"github.com/stretchr/testify/require"
+
 	"github.com/ava-labs/strevm/blocks/blockstest"
-	saehookstest "github.com/ava-labs/strevm/hook/hookstest"
 	"github.com/ava-labs/strevm/saetest"
 	"github.com/ava-labs/strevm/saexec"
-	"github.com/stretchr/testify/require"
 )
 
 // SUT is the system under test, primarily the [Executor].
@@ -40,27 +40,27 @@ type sutOptions struct {
 	snapshotConfig *snapshot.Config
 }
 
-type SutOption = options.Option[sutOptions]
+type sutOption = options.Option[sutOptions]
 
-func WithTrieDBConfig(tdbConfig *triedb.Config) SutOption {
+func withTrieDBConfig(tdbConfig *triedb.Config) sutOption {
 	return options.Func[sutOptions](func(o *sutOptions) {
 		o.triedbConfig = tdbConfig
 	})
 }
 
-func WithGenesisSpec(genesisSpec *core.Genesis) SutOption {
+func withGenesisSpec(genesisSpec *core.Genesis) sutOption {
 	return options.Func[sutOptions](func(o *sutOptions) {
 		o.genesisSpec = genesisSpec
 	})
 }
 
-func WithChainConfig(chainConfig *params.ChainConfig) SutOption {
+func withChainConfig(chainConfig *params.ChainConfig) sutOption {
 	return options.Func[sutOptions](func(o *sutOptions) {
 		o.chainConfig = chainConfig
 	})
 }
 
-func WithSnapshotConfig(snapshotConfig *snapshot.Config) SutOption {
+func withSnapshotConfig(snapshotConfig *snapshot.Config) sutOption {
 	return options.Func[sutOptions](func(o *sutOptions) {
 		o.snapshotConfig = snapshotConfig
 	})
@@ -69,7 +69,7 @@ func WithSnapshotConfig(snapshotConfig *snapshot.Config) SutOption {
 // newSUT returns a new SUT. Any >= [logging.Error] on the logger will also
 // cancel the returned context, which is useful when waiting for blocks that
 // can never finish execution because of an error.
-func newSUT(tb testing.TB, engine consensus.Engine, opts ...SutOption) (context.Context, SUT) {
+func newSUT(tb testing.TB, engine consensus.Engine, opts ...sutOption) (context.Context, SUT) {
 	tb.Helper()
 
 	// This is specifically set to [logging.Error] to ensure that the warn log in execution queue
@@ -126,8 +126,4 @@ func newSUT(tb testing.TB, engine consensus.Engine, opts ...SutOption) (context.
 		Logger:   logger,
 		DB:       db,
 	}
-}
-
-func DefaultHooks() *saehookstest.Stub {
-	return &saehookstest.Stub{Target: 1e6}
 }

@@ -17,32 +17,48 @@ import (
 	"github.com/ava-labs/strevm/hook"
 )
 
-// ConsensusHooks implements [hook.Points].
-type ConsensusHooks struct {
+// consensusHooks implements [hook.Points].
+type consensusHooks struct {
 	consensus consensus.Engine
-	reader    *ReaderAdapter
+	reader    *readerAdapter
 }
 
-var _ hook.Points = (*ConsensusHooks)(nil)
+var _ hook.Points = (*consensusHooks)(nil)
 
-func newTestConsensusHooks(consensus consensus.Engine, reader *ReaderAdapter) *ConsensusHooks {
-	return &ConsensusHooks{consensus: consensus, reader: reader}
+func newTestConsensusHooks(consensus consensus.Engine, reader *readerAdapter) *consensusHooks {
+	return &consensusHooks{consensus: consensus, reader: reader}
 }
 
-// GasTarget ignores its argument and always returns [ConsensusHooks.Target].
-func (c *ConsensusHooks) GasTargetAfter(*types.Header) gas.Gas {
+// GasTarget ignores its argument and always returns [consensusHooks.Target].
+func (c *consensusHooks) GasTargetAfter(*types.Header) gas.Gas {
 	return 1e6
 }
 
 // SubSecondBlockTime time ignores its argument and always returns 0.
-func (*ConsensusHooks) SubSecondBlockTime(gas.Gas, *types.Header) gas.Gas {
+func (*consensusHooks) SubSecondBlockTime(gas.Gas, *types.Header) gas.Gas {
 	return 0
 }
 
+// EndOfBlockOps is a no-op.
+func (*consensusHooks) EndOfBlockOps(*types.Block) []hook.Op {
+	return nil
+}
+
+var _ core.ChainContext = (*chainContext)(nil)
+
+type chainContext struct {
+	engine consensus.Engine
+	*readerAdapter
+}
+
+func (c *chainContext) Engine() consensus.Engine {
+	return c.engine
+}
+
 // BeforeExecutingBlock processes the beacon block root if present.
-func (c *ConsensusHooks) BeforeExecutingBlock(_ params.Rules, statedb *state.StateDB, b *types.Block) error {
+func (c *consensusHooks) BeforeExecutingBlock(_ params.Rules, statedb *state.StateDB, b *types.Block) error {
 	if beaconRoot := b.BeaconRoot(); beaconRoot != nil {
-		chainContext := &chainContext{engine: c.consensus, ReaderAdapter: c.reader}
+		chainContext := &chainContext{engine: c.consensus, readerAdapter: c.reader}
 		context := core.NewEVMBlockContext(b.Header(), chainContext, nil)
 		vmenv := vm.NewEVM(context, vm.TxContext{}, statedb, chainContext.Config(), vm.Config{})
 		core.ProcessBeaconBlockRoot(*beaconRoot, vmenv, statedb)
@@ -51,7 +67,7 @@ func (c *ConsensusHooks) BeforeExecutingBlock(_ params.Rules, statedb *state.Sta
 }
 
 // AfterExecutingBlock finalizes the block and updates the total difficulty.
-func (c *ConsensusHooks) AfterExecutingBlock(statedb *state.StateDB, b *types.Block, receipts types.Receipts) {
+func (c *consensusHooks) AfterExecutingBlock(statedb *state.StateDB, b *types.Block, receipts types.Receipts) {
 	currentNumber := b.NumberU64()
 	currentTd := big.NewInt(0)
 	if currentNumber > 0 {

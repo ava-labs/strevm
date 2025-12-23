@@ -75,13 +75,6 @@ type BlockOption = options.Option[blockProperties]
 // NewBlock constructs an SAE block, wrapping the raw Ethereum block.
 func NewBlock(tb testing.TB, eth *types.Block, parent, lastSettled *blocks.Block, opts ...BlockOption) *blocks.Block {
 	tb.Helper()
-	b, err := TryNewBlock(tb, eth, parent, lastSettled, opts...)
-	require.NoError(tb, err, "blocks.New()")
-	return b
-}
-
-func TryNewBlock(tb testing.TB, eth *types.Block, parent, lastSettled *blocks.Block, opts ...BlockOption) (*blocks.Block, error) {
-	tb.Helper()
 
 	props := options.ApplyTo(&blockProperties{}, opts...)
 	if props.logger == nil {
@@ -89,7 +82,8 @@ func TryNewBlock(tb testing.TB, eth *types.Block, parent, lastSettled *blocks.Bl
 	}
 
 	b, err := blocks.New(eth, parent, lastSettled, props.logger)
-	return b, err
+	require.NoError(tb, err, "blocks.New()")
+	return b
 }
 
 type blockProperties struct {

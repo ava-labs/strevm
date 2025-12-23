@@ -13,20 +13,21 @@ import (
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/ethdb"
 	"github.com/ava-labs/libevm/params"
+
 	"github.com/ava-labs/strevm/blocks/blockstest"
 )
 
-var _ consensus.ChainHeaderReader = (*ReaderAdapter)(nil)
+var _ consensus.ChainHeaderReader = (*readerAdapter)(nil)
 
-type ReaderAdapter struct {
+type readerAdapter struct {
 	chain  *blockstest.ChainBuilder
 	db     ethdb.Database
 	config *params.ChainConfig
 	logger logging.Logger
 }
 
-func newReaderAdapter(chain *blockstest.ChainBuilder, db ethdb.Database, cfg *params.ChainConfig, logger logging.Logger) *ReaderAdapter {
-	return &ReaderAdapter{
+func newReaderAdapter(chain *blockstest.ChainBuilder, db ethdb.Database, cfg *params.ChainConfig, logger logging.Logger) *readerAdapter {
+	return &readerAdapter{
 		chain:  chain,
 		db:     db,
 		config: cfg,
@@ -34,11 +35,11 @@ func newReaderAdapter(chain *blockstest.ChainBuilder, db ethdb.Database, cfg *pa
 	}
 }
 
-func (r *ReaderAdapter) Config() *params.ChainConfig {
+func (r *readerAdapter) Config() *params.ChainConfig {
 	return r.config
 }
 
-func (r *ReaderAdapter) GetHeader(hash common.Hash, number uint64) *types.Header {
+func (r *readerAdapter) GetHeader(hash common.Hash, number uint64) *types.Header {
 	b, ok := r.chain.GetBlock(hash, number)
 	if !ok {
 		return nil
@@ -46,11 +47,11 @@ func (r *ReaderAdapter) GetHeader(hash common.Hash, number uint64) *types.Header
 	return b.Header()
 }
 
-func (r *ReaderAdapter) CurrentHeader() *types.Header {
+func (r *readerAdapter) CurrentHeader() *types.Header {
 	return r.chain.Last().Header()
 }
 
-func (r *ReaderAdapter) GetHeaderByHash(hash common.Hash) *types.Header {
+func (r *readerAdapter) GetHeaderByHash(hash common.Hash) *types.Header {
 	number, ok := r.chain.GetNumberByHash(hash)
 	if !ok {
 		return nil
@@ -62,7 +63,7 @@ func (r *ReaderAdapter) GetHeaderByHash(hash common.Hash) *types.Header {
 	return b.Header()
 }
 
-func (r *ReaderAdapter) GetHeaderByNumber(number uint64) *types.Header {
+func (r *readerAdapter) GetHeaderByNumber(number uint64) *types.Header {
 	hash, ok := r.chain.GetHashAtHeight(number)
 	if !ok {
 		return nil
@@ -74,7 +75,7 @@ func (r *ReaderAdapter) GetHeaderByNumber(number uint64) *types.Header {
 	return b.Header()
 }
 
-func (r *ReaderAdapter) GetTd(hash common.Hash, number uint64) *big.Int {
+func (r *readerAdapter) GetTd(hash common.Hash, number uint64) *big.Int {
 	td := rawdb.ReadTd(r.db, hash, number)
 	if td == nil {
 		return nil
@@ -82,6 +83,6 @@ func (r *ReaderAdapter) GetTd(hash common.Hash, number uint64) *big.Int {
 	return td
 }
 
-func (r *ReaderAdapter) SetTd(hash common.Hash, number uint64, td uint64) {
+func (r *readerAdapter) SetTd(hash common.Hash, number uint64, td uint64) {
 	rawdb.WriteTd(r.db, hash, number, new(big.Int).SetUint64(td))
 }
