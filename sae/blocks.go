@@ -18,12 +18,13 @@ import (
 	"github.com/ava-labs/libevm/core"
 	"github.com/ava-labs/libevm/core/txpool"
 	"github.com/ava-labs/libevm/core/types"
+	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/rlp"
 	"go.uber.org/zap"
 
 	"github.com/ava-labs/strevm/blocks"
 	"github.com/ava-labs/strevm/hook"
-	"github.com/ava-labs/strevm/params"
+	saeparams "github.com/ava-labs/strevm/params"
 	"github.com/ava-labs/strevm/txgossip"
 	"github.com/ava-labs/strevm/worstcase"
 )
@@ -99,8 +100,8 @@ func (vm *VM) buildBlock(
 	// [VM.VerifyBlock]. It is allowed for [hook.Points] to further constrain
 	// the allowed block times. However, every block MUST at least satisfy these
 	// basic sanity checks.
-	if blockUnix := blockTime.Unix(); blockUnix < params.TauSeconds {
-		return nil, fmt.Errorf("block time %d < minimum allowed unix time %d", blockUnix, params.TauSeconds)
+	if blockUnix := blockTime.Unix(); blockUnix < saeparams.TauSeconds {
+		return nil, fmt.Errorf("block time %d < minimum allowed unix time %d", blockUnix, saeparams.TauSeconds)
 	}
 	if parentTime := parent.Timestamp(); blockTime.Before(parentTime) {
 		return nil, fmt.Errorf("block time %s < parent time %s", blockTime, parentTime)
@@ -109,7 +110,7 @@ func (vm *VM) buildBlock(
 		return nil, fmt.Errorf("block time %s > maximum allowed time %s", blockTime, maxBlockTime)
 	}
 
-	settleAt := unix(blockTime.Add(-params.Tau))
+	settleAt := unix(blockTime.Add(-saeparams.Tau))
 	lastSettled, ok, err := blocks.LastToSettleAt(settleAt, parent)
 	if err != nil {
 		return nil, err
@@ -174,6 +175,12 @@ func (vm *VM) buildBlock(
 		included []*types.Transaction
 	)
 	for _, ltx := range candidates {
+		// If we don't have enough gas remaining in the block for the minimum
+		// gas amount, we are done including transactions.
+		if remainingGas := state.GasLimit() - state.GasUsed(); remainingGas < params.TxGas {
+			break
+		}
+
 		tx, ok := ltx.Resolve()
 		if !ok {
 			continue
