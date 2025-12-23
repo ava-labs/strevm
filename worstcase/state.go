@@ -30,11 +30,11 @@ import (
 // State tracks the worst-case gas price and account state as operations are
 // executed.
 //
-// Usage of the [State] should follow the pattern:
+// Usage of the [State] must follow the pattern:
 //  1. [State.StartBlock] for each block to be included.
 //  2. [State.GasLimit] and [State.BaseFee] to query the block's parameters.
-//  3. [State.ApplyTx] or [State.Apply] for each transaction or operation to
-//     include in the block.
+//  3. [State.ApplyTx] or [State.Apply] for each [types.Transaction] or
+//     [hook.Op] to include in the block, respectively.
 //  4. [State.FinishBlock] to finalize the block's gas time.
 //  5. Repeat from step 1 for the next block.
 type State struct {
@@ -43,8 +43,10 @@ type State struct {
 
 	db    *state.StateDB
 	clock *gastime.Time
-	// expectedParentHash is used to sanity check that blocks are provided
-	// in-order.
+	// expectedParentHash is used to sanity check that blocks are provided in
+	// order. The [types.Header] in the `curr` field is modified to reflect
+	// worst-case bounds (which will almost certainly differ from actual values
+	// when replaying historical blocks) so its hash can't be used.
 	expectedParentHash common.Hash
 
 	qSize, blockSize, maxBlockSize gas.Gas
@@ -98,7 +100,7 @@ var (
 //
 // If the queue is too full to accept another block, an error is returned.
 func (s *State) StartBlock(h *types.Header) error {
-	if s.expectedParentHash != h.ParentHash {
+	if h.ParentHash != s.expectedParentHash {
 		return fmt.Errorf("%w: expected parent hash of %s but was %s",
 			errNonConsecutiveBlocks,
 			s.expectedParentHash,
@@ -217,7 +219,7 @@ func txToOp(signer types.Signer, tx *types.Transaction) (Op, error) {
 				Amount: amount,
 			},
 		},
-		// To is not populated here because this transaction may revert.
+		// To MUST NOT be populated here because this transaction may revert.
 	}, nil
 }
 
@@ -226,7 +228,7 @@ func txToOp(signer types.Signer, tx *types.Transaction) (Op, error) {
 // If the operation can not be applied, an error is returned and the state is
 // not modified.
 //
-// Operations are invalid if:
+// Operations are invalid if any of the following are true:
 //
 //   - The operation consumes more gas than the block has available.
 //   - The operation specifies too low of a gas price.
