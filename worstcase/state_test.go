@@ -237,75 +237,16 @@ func TestTransactionValidation(t *testing.T) {
 		key     *ecdsa.PrivateKey
 		wantErr error
 	}{
+		// Clause 1: the nonce of the message caller is correct
 		{
-			name: "blob_tx_not_supported",
-			tx: &types.BlobTx{
-				Gas: params.TxGas,
-			},
-			wantErr: core.ErrTxTypeNotSupported,
-		},
-		{
-			name: "not_cover_intrinsic_gas",
+			name: "nonce_too_high",
 			tx: &types.LegacyTx{
-				To:  &common.Address{},
-				Gas: params.TxGas - 1,
-			},
-			wantErr: core.ErrIntrinsicGas,
-		},
-		{
-			name: "exceed_max_init_code_size",
-			tx: &types.LegacyTx{
-				Gas:  250_000, // cover intrinsic gas
-				To:   nil,     // contract creation
-				Data: make([]byte, params.MaxInitCodeSize+1),
-			},
-			wantErr: core.ErrMaxInitCodeSizeExceeded,
-		},
-		{
-			name: "gas_price_overflow",
-			tx: &types.LegacyTx{
-				GasPrice: new(big.Int).Lsh(big.NewInt(1), 256),
-				Gas:      params.TxGas,
-				To:       &common.Address{},
-			},
-			wantErr: core.ErrFeeCapVeryHigh,
-		},
-		{
-			name: "negative_value",
-			tx: &types.LegacyTx{
+				Nonce:    1,
 				GasPrice: big.NewInt(1),
 				Gas:      params.TxGas,
 				To:       &common.Address{},
-				Value:    big.NewInt(-1),
 			},
-			wantErr: txpool.ErrNegativeValue,
-		},
-		{
-			name: "negative_gas_price",
-			tx: &types.LegacyTx{
-				GasPrice: big.NewInt(-1),
-				Gas:      params.TxGas,
-				To:       &common.Address{},
-			},
-			wantErr: txpool.ErrUnderpriced,
-		},
-		{
-			name: "cost_overflow",
-			tx: &types.LegacyTx{
-				GasPrice: new(big.Int).Lsh(big.NewInt(1), 256-1),
-				Gas:      params.TxGas,
-				To:       &common.Address{},
-			},
-			wantErr: errCostOverflow,
-		},
-		{
-			name: "gas_price_too_low",
-			tx: &types.LegacyTx{
-				GasPrice: big.NewInt(0),
-				Gas:      params.TxGas,
-				To:       &common.Address{},
-			},
-			wantErr: core.ErrFeeCapTooLow,
+			wantErr: core.ErrNonceTooHigh,
 		},
 		{
 			name:  "nonce_too_low",
@@ -318,16 +259,6 @@ func TestTransactionValidation(t *testing.T) {
 			wantErr: core.ErrNonceTooLow,
 		},
 		{
-			name: "nonce_too_high",
-			tx: &types.LegacyTx{
-				Nonce:    1,
-				GasPrice: big.NewInt(1),
-				Gas:      params.TxGas,
-				To:       &common.Address{},
-			},
-			wantErr: core.ErrNonceTooHigh,
-		},
-		{
 			name:  "max_nonce",
 			nonce: math.MaxUint64,
 			tx: &types.LegacyTx{
@@ -337,6 +268,36 @@ func TestTransactionValidation(t *testing.T) {
 				To:       &common.Address{},
 			},
 			wantErr: core.ErrNonceMax,
+		},
+		// Clause 2: caller has enough balance to cover transaction fee(gaslimit * gasprice)
+		// Clause 6: caller has enough balance to cover asset transfer for **topmost** call
+		{
+			name: "negative_gas_price",
+			tx: &types.LegacyTx{
+				GasPrice: big.NewInt(-1),
+				Gas:      params.TxGas,
+				To:       &common.Address{},
+			},
+			wantErr: txpool.ErrUnderpriced,
+		},
+		{
+			name: "negative_value",
+			tx: &types.LegacyTx{
+				GasPrice: big.NewInt(1),
+				Gas:      params.TxGas,
+				To:       &common.Address{},
+				Value:    big.NewInt(-1),
+			},
+			wantErr: txpool.ErrNegativeValue,
+		},
+		{
+			name: "cost_overflow",
+			tx: &types.LegacyTx{
+				GasPrice: new(big.Int).Lsh(big.NewInt(1), 256-1),
+				Gas:      params.TxGas,
+				To:       &common.Address{},
+			},
+			wantErr: errCostOverflow,
 		},
 		{
 			name: "insufficient_funds",
@@ -348,6 +309,7 @@ func TestTransactionValidation(t *testing.T) {
 			},
 			wantErr: core.ErrInsufficientFunds,
 		},
+		// Clause 3: the amount of gas required is available in the block
 		{
 			name:    "gas_limit_exceeded",
 			balance: initialMaxBlockSize,
@@ -358,6 +320,61 @@ func TestTransactionValidation(t *testing.T) {
 			},
 			wantErr: txpool.ErrGasLimit,
 		},
+		// Clause 4: the purchased gas is enough to cover intrinsic usage
+		{
+			name: "not_cover_intrinsic_gas",
+			tx: &types.LegacyTx{
+				To:  &common.Address{},
+				Gas: params.TxGas - 1,
+			},
+			wantErr: core.ErrIntrinsicGas,
+		},
+		// Clause 5 (there is no overflow when calculating intrinsic gas) is not
+		// tested because it requires constructing such a large transaction that
+		// the test would OOM.
+		//
+		// EIP-1559: onchain gas auction
+		{
+			name: "gas_fee_cap_very_high",
+			tx: &types.DynamicFeeTx{
+				GasTipCap: big.NewInt(1),
+				GasFeeCap: new(big.Int).Lsh(big.NewInt(1), 256),
+				Gas:       params.TxGas,
+				To:        &common.Address{},
+			},
+			wantErr: core.ErrFeeCapVeryHigh,
+		},
+		{
+			name: "gas_tip_cap_very_high",
+			tx: &types.DynamicFeeTx{
+				GasTipCap: new(big.Int).Lsh(big.NewInt(1), 256),
+				GasFeeCap: big.NewInt(1),
+				Gas:       params.TxGas,
+				To:        &common.Address{},
+			},
+			wantErr: core.ErrTipVeryHigh,
+		},
+		{
+			name: "gas_tip_above_fee_cap",
+			tx: &types.DynamicFeeTx{
+				GasTipCap: big.NewInt(2),
+				GasFeeCap: big.NewInt(1),
+				Gas:       params.TxGas,
+				To:        &common.Address{},
+			},
+			wantErr: core.ErrTipAboveFeeCap,
+		},
+		{
+			name: "gas_fee_cap_too_low",
+			tx: &types.DynamicFeeTx{
+				GasTipCap: big.NewInt(0),
+				GasFeeCap: big.NewInt(0),
+				Gas:       params.TxGas,
+				To:        &common.Address{},
+			},
+			wantErr: core.ErrFeeCapTooLow,
+		},
+		// EIP-3607: reject transactions from non-EOAs
 		{
 			name: "sender_not_eoa",
 			tx: &types.LegacyTx{
@@ -367,6 +384,24 @@ func TestTransactionValidation(t *testing.T) {
 			},
 			key:     eip3607Key,
 			wantErr: core.ErrSenderNoEOA,
+		},
+		// EIP-3860: limit init code size
+		{
+			name: "exceed_max_init_code_size",
+			tx: &types.LegacyTx{
+				Gas:  250_000, // cover intrinsic gas
+				To:   nil,     // contract creation
+				Data: make([]byte, params.MaxInitCodeSize+1),
+			},
+			wantErr: core.ErrMaxInitCodeSizeExceeded,
+		},
+		// Unsupported transaction types
+		{
+			name: "blob_tx_not_supported",
+			tx: &types.BlobTx{
+				Gas: params.TxGas,
+			},
+			wantErr: core.ErrTxTypeNotSupported,
 		},
 	}
 	for _, tt := range tests {
