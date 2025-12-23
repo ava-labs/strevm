@@ -391,7 +391,7 @@ func TestStartBlockNonConsecutiveBlocks(t *testing.T) {
 	err = state.StartBlock(&types.Header{
 		ParentHash: genesisHash, // Should be the previously provided header's hash
 	})
-	require.ErrorIs(t, err, errNonConsecutiveBlocks, "nonconsecutive StartBlock()")
+	require.ErrorIs(t, err, errNonConsecutiveBlocks, "non-consecutive StartBlock()")
 }
 
 // Test that filling the queue eventually prevents new blocks from being added.
@@ -407,17 +407,15 @@ func TestStartBlockQueueFull(t *testing.T) {
 			ParentHash: lastHash,
 			Number:     big.NewInt(int64(number)),
 		}
-		err := state.StartBlock(h)
-		require.NoError(t, err, "StartBlock()")
+		require.NoError(t, state.StartBlock(h), "StartBlock()")
 
-		err = state.Apply(Op{
+		err := state.Apply(Op{
 			Gas:       gas,
 			GasFeeCap: *uint256.NewInt(2),
 		})
 		require.NoError(t, err, "Apply()")
 
-		err = state.FinishBlock()
-		require.NoError(t, err, "FinishBlock()")
+		require.NoError(t, state.FinishBlock(), "FinishBlock()")
 
 		lastHash = h.Hash()
 	}
@@ -434,22 +432,20 @@ func TestStartBlockQueueFullDueToTargetChanges(t *testing.T) {
 	sut := newSUT(t, nil)
 	state := sut.State
 
-	sut.Hooks.Target = 1
+	sut.Hooks.Target = 1 // applied after the first block
 	h := &types.Header{
 		ParentHash: sut.Genesis.Hash(),
 		Number:     big.NewInt(0),
 	}
-	err := state.StartBlock(h)
-	require.NoError(t, err, "StartBlock()")
+	require.NoError(t, state.StartBlock(h), "StartBlock()")
 
-	err = state.Apply(Op{
+	err := state.Apply(Op{
 		Gas:       initialMaxBlockSize,
 		GasFeeCap: *uint256.NewInt(1),
 	})
 	require.NoError(t, err, "Apply()")
 
-	err = state.FinishBlock()
-	require.NoError(t, err, "FinishBlock()")
+	require.NoError(t, state.FinishBlock(), "FinishBlock()")
 
 	err = state.StartBlock(&types.Header{
 		ParentHash: h.Hash(),
