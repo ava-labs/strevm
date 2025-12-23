@@ -269,6 +269,7 @@ func TestTransactionValidation(t *testing.T) {
 			},
 			wantErr: core.ErrNonceMax,
 		},
+
 		// Clause 2: caller has enough balance to cover transaction fee(gaslimit * gasprice)
 		// Clause 6: caller has enough balance to cover asset transfer for **topmost** call
 		{
@@ -309,6 +310,7 @@ func TestTransactionValidation(t *testing.T) {
 			},
 			wantErr: core.ErrInsufficientFunds,
 		},
+
 		// Clause 3: the amount of gas required is available in the block
 		{
 			name:    "gas_limit_exceeded",
@@ -320,6 +322,7 @@ func TestTransactionValidation(t *testing.T) {
 			},
 			wantErr: txpool.ErrGasLimit,
 		},
+
 		// Clause 4: the purchased gas is enough to cover intrinsic usage
 		{
 			name: "not_cover_intrinsic_gas",
@@ -329,10 +332,11 @@ func TestTransactionValidation(t *testing.T) {
 			},
 			wantErr: core.ErrIntrinsicGas,
 		},
+
 		// Clause 5 (there is no overflow when calculating intrinsic gas) is not
 		// tested because it requires constructing such a large transaction that
 		// the test would OOM.
-		//
+
 		// EIP-1559: onchain gas auction
 		{
 			name: "gas_fee_cap_very_high",
@@ -374,6 +378,7 @@ func TestTransactionValidation(t *testing.T) {
 			},
 			wantErr: core.ErrFeeCapTooLow,
 		},
+
 		// EIP-3607: reject transactions from non-EOAs
 		{
 			name: "sender_not_eoa",
@@ -385,6 +390,7 @@ func TestTransactionValidation(t *testing.T) {
 			key:     eip3607Key,
 			wantErr: core.ErrSenderNoEOA,
 		},
+
 		// EIP-3860: limit init code size
 		{
 			name: "exceed_max_init_code_size",
@@ -395,6 +401,7 @@ func TestTransactionValidation(t *testing.T) {
 			},
 			wantErr: core.ErrMaxInitCodeSizeExceeded,
 		},
+
 		// Unsupported transaction types
 		{
 			name: "blob_tx_not_supported",
