@@ -4,6 +4,7 @@
 package worstcase
 
 import (
+	"crypto/ecdsa"
 	"math"
 	"math/big"
 	"testing"
@@ -214,15 +215,26 @@ func TestMultipleBlocks(t *testing.T) {
 }
 
 func TestTransactionValidation(t *testing.T) {
-	key, err := crypto.GenerateKey()
+	// Test parameters from https://eips.ethereum.org/EIPS/eip-3607
+	eip3607Key, err := crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
+	require.NoError(t, err, "crypto.HexToECDSA() for eip3607Key")
+	eip3607EOA := crypto.PubkeyToAddress(eip3607Key.PublicKey)
+	eip3607Alloc := types.Account{
+		Balance: big.NewInt(1000000000000000000), // 1 ether
+		Nonce:   0,
+		Code:    common.Hex2Bytes("B0B0FACE"),
+	}
+
+	defaultKey, err := crypto.GenerateKey()
 	require.NoError(t, err, "libevm/crypto.GenerateKey()")
-	eoa := crypto.PubkeyToAddress(key.PublicKey)
+	defaultEOA := crypto.PubkeyToAddress(defaultKey.PublicKey)
 
 	tests := []struct {
 		name    string
 		nonce   uint64
 		balance uint64
 		tx      types.TxData
+		key     *ecdsa.PrivateKey
 		wantErr error
 	}{
 		{
@@ -346,14 +358,25 @@ func TestTransactionValidation(t *testing.T) {
 			},
 			wantErr: txpool.ErrGasLimit,
 		},
+		{
+			name: "sender_not_eoa",
+			tx: &types.LegacyTx{
+				GasPrice: big.NewInt(1),
+				Gas:      params.TxGas,
+				To:       &common.Address{},
+			},
+			key:     eip3607Key,
+			wantErr: core.ErrSenderNoEOA,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			sut := newSUT(t, types.GenesisAlloc{
-				eoa: {
+				defaultEOA: {
 					Nonce:   tt.nonce,
 					Balance: new(big.Int).SetUint64(tt.balance),
 				},
+				eip3607EOA: eip3607Alloc,
 			})
 			state := sut.State
 
@@ -363,6 +386,10 @@ func TestTransactionValidation(t *testing.T) {
 			}
 			require.NoErrorf(t, state.StartBlock(header), "StartBlock()")
 
+			key := defaultKey
+			if tt.key != nil {
+				key = tt.key
+			}
 			tx := types.MustSignNewTx(key, types.NewCancunSigner(state.config.ChainID), tt.tx)
 			gotErr := state.ApplyTx(tx)
 			require.ErrorIsf(t, gotErr, tt.wantErr, "ApplyTx() error")

@@ -190,20 +190,27 @@ func (s *State) ApplyTx(tx *types.Transaction) error {
 		return fmt.Errorf("validating transaction: %w", err)
 	}
 
-	op, err := txToOp(s.signer, tx)
+	from, err := types.Sender(s.signer, tx)
+	if err != nil {
+		return fmt.Errorf("determining sender: %w", err)
+	}
+
+	// While EOA enforcement is not possible to guarantee in worst-case
+	// execution, we can prevent most cases here. Therefore, we must still
+	// handle non-EOA issuance later during actual execution.
+	if codeHash := s.db.GetCodeHash(from); codeHash != (common.Hash{}) && codeHash != types.EmptyCodeHash {
+		return fmt.Errorf("%w: address %v, codehash: %s", core.ErrSenderNoEOA, from.Hex(), codeHash)
+	}
+
+	op, err := txToOp(from, tx)
 	if err != nil {
 		return fmt.Errorf("converting transaction to operation: %w", err)
 	}
 	return s.Apply(op)
 }
 
-func txToOp(signer types.Signer, tx *types.Transaction) (hook.Op, error) {
+func txToOp(from common.Address, tx *types.Transaction) (hook.Op, error) {
 	type Op = hook.Op // for convenience when returning zero value
-
-	from, err := types.Sender(signer, tx)
-	if err != nil {
-		return Op{}, fmt.Errorf("determining sender: %w", err)
-	}
 
 	var gasFeeCap uint256.Int
 	if overflow := gasFeeCap.SetFromBig(tx.GasFeeCap()); overflow {
