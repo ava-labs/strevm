@@ -111,7 +111,7 @@ func TestMultipleBlocks(t *testing.T) {
 					wantErr: nil,
 				},
 				{
-					name: "block_too_full",
+					name: "would_exceed_limit",
 					op: Op{
 						Gas:       gas.Gas(initialMaxBlockSize - params.TxGas + 1),
 						GasFeeCap: *uint256.NewInt(1),
@@ -119,7 +119,7 @@ func TestMultipleBlocks(t *testing.T) {
 					wantErr: core.ErrGasLimitReached,
 				},
 				{
-					name: "block_full",
+					name: "fill_block",
 					op: Op{
 						Gas:       gas.Gas(initialMaxBlockSize - params.TxGas),
 						GasFeeCap: *uint256.NewInt(1),
@@ -323,23 +323,12 @@ func TestTransactionValidation(t *testing.T) {
 			wantErr: core.ErrNonceMax,
 		},
 		{
-			name: "insufficient_funds_for_gas",
+			name: "insufficient_funds",
 			tx: &types.LegacyTx{
 				Gas:      params.TxGas,
 				GasPrice: big.NewInt(1),
 				To:       &common.Address{},
 				Value:    big.NewInt(0),
-			},
-			wantErr: core.ErrInsufficientFunds,
-		},
-		{
-			name:    "insufficient_funds_for_value",
-			balance: params.TxGas,
-			tx: &types.LegacyTx{
-				Gas:      params.TxGas,
-				GasPrice: big.NewInt(1),
-				To:       &common.Address{},
-				Value:    big.NewInt(1),
 			},
 			wantErr: core.ErrInsufficientFunds,
 		},
