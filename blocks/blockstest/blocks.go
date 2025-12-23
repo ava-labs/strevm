@@ -117,8 +117,6 @@ func NewGenesis(tb testing.TB, db ethdb.Database, gen *core.Genesis, opts ...Gen
 	tdb := state.NewDatabaseWithConfig(db, conf.tdbConfig).TrieDB()
 	_, _, err := core.SetupGenesisBlock(db, tdb, gen)
 	require.NoError(tb, err, "core.SetupGenesisBlock()")
-	// TODO(cey): This seems wrong, why are we committing the block hash rather than the root? We should already be committing that when we called SetupGenesisBlock.
-	// require.NoErrorf(tb, tdb.Commit(hash, true), "%T.Commit(core.SetupGenesisBlock(...))", tdb)
 
 	b := NewBlock(tb, gen.ToBlock(), nil, nil)
 	require.NoErrorf(tb, b.MarkExecuted(db, gastime.New(gen.Timestamp, conf.gasTarget(), 0), time.Time{}, new(big.Int), nil, b.SettledStateRoot()), "%T.MarkExecuted()", b)

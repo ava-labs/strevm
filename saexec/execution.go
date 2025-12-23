@@ -46,8 +46,7 @@ func (e *Executor) Enqueue(ctx context.Context, block *blocks.Block) error {
 
 		case <-time.After(warnAfter):
 			// If this happens then increase the channel's buffer size.
-			// TODO(cey): this was breaking few tests because it's warning level, changing to info
-			e.log.Info(
+			e.log.Warn(
 				"Execution queue buffer too small",
 				zap.Duration("wait", warnAfter),
 				zap.Uint64("block_height", block.Height()),

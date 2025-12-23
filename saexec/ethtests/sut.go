@@ -72,7 +72,9 @@ func WithSnapshotConfig(snapshotConfig *snapshot.Config) SutOption {
 func newSUT(tb testing.TB, engine consensus.Engine, opts ...SutOption) (context.Context, SUT) {
 	tb.Helper()
 
-	logger := saetest.NewTBLogger(tb, logging.Warn)
+	// This is specifically set to [logging.Error] to ensure that the warn log in execution queue
+	// does not cause the test to fail.
+	logger := saetest.NewTBLogger(tb, logging.Error)
 	ctx := logger.CancelOnError(tb.Context())
 	db := rawdb.NewMemoryDatabase()
 

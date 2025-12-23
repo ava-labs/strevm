@@ -108,14 +108,14 @@ func (l *LogRecorder) AtLeast(lvl logging.Level) []*LogRecord {
 // NewTBLogger constructs a logger that propagates logs to [testing.TB]. WARNING
 // and ERROR logs are sent to [testing.TB.Errorf] while FATAL is sent to
 // [testing.TB.Fatalf]. All other logs are sent to [testing.TB.Logf]. Although
-// the level can be configured, it is silently capped at [logging.Warn].
+// the level can be configured, it is silently capped at [logging.Error].
 //
 //nolint:thelper // The outputs include the logging site while the TB site is most useful if here
 func NewTBLogger(tb testing.TB, level logging.Level) *TBLogger {
 	l := &TBLogger{tb: tb}
 	l.logger = &logger{
 		handler: l, // TODO(arr4n) remove the recursion here and in [LogRecorder]
-		level:   min(level, logging.Warn),
+		level:   min(level, logging.Error),
 	}
 	return l
 }
