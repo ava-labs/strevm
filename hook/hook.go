@@ -69,6 +69,13 @@ type BlockBuilder interface {
 	) *types.Block
 }
 
+// AccountDebit includes an amount that an account should have debited,
+// along with the nonce used to aut debit the account.
+type AccountDebit struct {
+	Nonce  uint64
+	Amount uint256.Int
+}
+
 // Op is an operation that can be applied to state during the execution of a
 // block.
 type Op struct {
@@ -76,8 +83,11 @@ type Op struct {
 	ID ids.ID
 	// Gas consumed by this operation.
 	Gas gas.Gas
-	// Burn specifies the amount to decrease account balances by.
-	Burn map[common.Address]uint256.Int
+	// GasFeeCap is the maximum gas price this operation is willing to pay.
+	GasFeeCap uint256.Int
+	// Burn specifies the amount to decrease account balances by and the nonce
+	// used to authorize the debit.
+	Burn map[common.Address]AccountDebit
 	// Mint specifies the amount to increase account balances by. These funds
 	// are not necessarily tied to the funds consumed in the Burn field. The
 	// sum of the Mint amounts may exceed the sum of the Burn amounts.
@@ -89,19 +99,24 @@ type Op struct {
 // If an account has insufficient funds, [core.ErrInsufficientFunds] is returned
 // and the statedb is unchanged.
 func (o *Op) ApplyTo(stateDB *state.StateDB) error {
-	for from, amount := range o.Burn {
-		if b := stateDB.GetBalance(from); b.Lt(&amount) {
+	for from, acc := range o.Burn {
+		if b := stateDB.GetBalance(from); b.Lt(&acc.Amount) {
 			return core.ErrInsufficientFunds
 		}
 	}
-	for from, amount := range o.Burn {
+	for from, acc := range o.Burn {
+		// We use the state as the source of truth for the current nonce rather
+		// than the value provided by the hook. This prevents any situations,
+		// such as with delegated accounts, where nonces might not be
+		// incremented properly.
+		//
 		// If overflow would have occurred here, the nonce must have already
 		// been increased by a delegated account's execution, so we are already
 		// protected against replay attacks.
 		if nonce := stateDB.GetNonce(from); nonce < math.MaxUint64 {
 			stateDB.SetNonce(from, nonce+1)
 		}
-		stateDB.SubBalance(from, &amount)
+		stateDB.SubBalance(from, &acc.Amount)
 	}
 	for to, amount := range o.Mint {
 		stateDB.AddBalance(to, &amount)
