@@ -30,11 +30,11 @@ import (
 // State tracks the worst-case gas price and account state as operations are
 // executed.
 //
-// Usage of the [State] should follow the pattern:
+// Usage of the [State] must follow the pattern:
 //  1. [State.StartBlock] for each block to be included.
 //  2. [State.GasLimit] and [State.BaseFee] to query the block's parameters.
-//  3. [State.ApplyTx] or [State.Apply] for each transaction or operation to
-//     include in the block.
+//  3. [State.ApplyTx] or [State.Apply] for each [types.Transaction] or
+//     [hook.Op] to include in the block, respectively.
 //  4. [State.FinishBlock] to finalize the block's gas time.
 //  5. Repeat from step 1 for the next block.
 type State struct {
@@ -43,8 +43,10 @@ type State struct {
 
 	db    *state.StateDB
 	clock *gastime.Time
-	// expectedParentHash is used to sanity check that blocks are provided
-	// in-order.
+	// expectedParentHash is used to sanity check that blocks are provided in
+	// order. The [types.Header] in the `curr` field is modified to reflect
+	// worst-case bounds (which will almost certainly differ from actual values
+	// when replaying historical blocks) so its hash can't be used.
 	expectedParentHash common.Hash
 
 	qSize, blockSize, maxBlockSize gas.Gas
@@ -82,11 +84,18 @@ func NewState(
 	}, nil
 }
 
-const rateToMaxBlockSize = saeparams.Tau * saeparams.Lambda
+const (
+	maxGasSecondsPerBlock = saeparams.Tau * saeparams.Lambda
+	// The concepts of "fullness" and "capacity" are ambiguous with respect to
+	// the SAE queue so it is better to think of it as "open" or "closed" to
+	// accepting a new block. An open queue MAY accept an entire, maximal block,
+	// which could leave it in an _allowed_ over-threshold (closed) state.
+	maxFullBlocksInOpenQueue = 2
+)
 
 var (
 	errNonConsecutiveBlocks = errors.New("non-consecutive blocks")
-	errQueueFull            = errors.New("queue full")
+	errQueueFull            = errors.New("queue exceeds gas threshold for new block")
 )
 
 // StartBlock updates the worst-case state to the beginning of the provided
@@ -98,7 +107,7 @@ var (
 //
 // If the queue is too full to accept another block, an error is returned.
 func (s *State) StartBlock(h *types.Header) error {
-	if s.expectedParentHash != h.ParentHash {
+	if h.ParentHash != s.expectedParentHash {
 		return fmt.Errorf("%w: expected parent hash of %s but was %s",
 			errNonConsecutiveBlocks,
 			s.expectedParentHash,
@@ -109,21 +118,9 @@ func (s *State) StartBlock(h *types.Header) error {
 	s.clock.BeforeBlock(s.hooks, h)
 	s.blockSize = 0
 
-	const (
-		maxQSizeMultiplier = 2
-		// In order to avoid overflow when calculating the queue size, we cap
-		// the maximum gas rate to a safe value.
-		//
-		// This follows from:
-		//   maxBlockSize = maxRate * Tau * Lambda
-		//   maxQSizeInStart = maxQSizeMultiplier * maxBlockSize
-		//   maxQSizeInFinish = maxQSizeInStart + maxBlockSize
-		maxRate gas.Gas = math.MaxUint64 / rateToMaxBlockSize / (maxQSizeMultiplier + 1)
-	)
-	r := min(s.clock.Rate(), maxRate)
-	s.maxBlockSize = r * rateToMaxBlockSize
-	if maxQSize := maxQSizeMultiplier * s.maxBlockSize; s.qSize > maxQSize {
-		return fmt.Errorf("%w: current size %d exceeds maximum size %d", errQueueFull, s.qSize, maxQSize)
+	s.maxBlockSize = safeMaxBlockSize(s.clock)
+	if maxOpenQSize := maxFullBlocksInOpenQueue * s.maxBlockSize; s.qSize > maxOpenQSize {
+		return fmt.Errorf("%w: current size %d exceeds maximum size for accepting new blocks %d", errQueueFull, s.qSize, maxOpenQSize)
 	}
 
 	s.baseFee = s.clock.BaseFee()
@@ -142,6 +139,20 @@ func (s *State) StartBlock(h *types.Header) error {
 	return nil
 }
 
+// safeMaxBlockSize returns the maximum block size for the clock's rate,
+// possibly capping it to avoid overflow when calculating the queue size. At the
+// time of writing, the cap is ~6e17, so capping is exceedingly unlikely.
+//
+// The cap follows from:
+//
+//	maxBlockSize = maxSafeRate * maxGasSecondsPerBlock
+//	maxOpenQSize = maxFullBlocksInOpenQueue * maxBlockSize
+//	maxClosedQSize = maxOpenQSize + maxBlockSize
+func safeMaxBlockSize(clock *gastime.Time) gas.Gas {
+	const maxSafeRate gas.Gas = math.MaxUint64 / maxGasSecondsPerBlock / (maxFullBlocksInOpenQueue + 1)
+	return min(clock.Rate(), maxSafeRate) * maxGasSecondsPerBlock
+}
+
 // GasLimit returns the available gas limit for the current block.
 func (s *State) GasLimit() uint64 {
 	return uint64(s.maxBlockSize)
@@ -151,14 +162,6 @@ func (s *State) GasLimit() uint64 {
 func (s *State) BaseFee() *uint256.Int {
 	return s.baseFee
 }
-
-type (
-	// AccountDebit includes an amount that an account should have debited,
-	// along with the nonce used to debit the account.
-	AccountDebit = hook.AccountDebit
-	// Op is an operation that can be applied to a [State].
-	Op = hook.Op
-)
 
 var errCostOverflow = errors.New("Cost() overflows uint256")
 
@@ -194,7 +197,9 @@ func (s *State) ApplyTx(tx *types.Transaction) error {
 	return s.Apply(op)
 }
 
-func txToOp(signer types.Signer, tx *types.Transaction) (Op, error) {
+func txToOp(signer types.Signer, tx *types.Transaction) (hook.Op, error) {
+	type Op = hook.Op // for convenience when returning zero value
+
 	from, err := types.Sender(signer, tx)
 	if err != nil {
 		return Op{}, fmt.Errorf("determining sender: %w", err)
@@ -211,13 +216,13 @@ func txToOp(signer types.Signer, tx *types.Transaction) (Op, error) {
 	return Op{
 		Gas:       gas.Gas(tx.Gas()),
 		GasFeeCap: gasFeeCap,
-		Burn: map[common.Address]AccountDebit{
+		Burn: map[common.Address]hook.AccountDebit{
 			from: {
 				Nonce:  tx.Nonce(),
 				Amount: amount,
 			},
 		},
-		// To is not populated here because this transaction may revert.
+		// To MUST NOT be populated here because this transaction may revert.
 	}, nil
 }
 
@@ -226,13 +231,13 @@ func txToOp(signer types.Signer, tx *types.Transaction) (Op, error) {
 // If the operation can not be applied, an error is returned and the state is
 // not modified.
 //
-// Operations are invalid if:
+// Operations are invalid if any of the following are true:
 //
 //   - The operation consumes more gas than the block has available.
 //   - The operation specifies too low of a gas price.
 //   - The operation is from an account with an incorrect or invalid nonce.
 //   - The operation is from an account with an insufficient balance.
-func (s *State) Apply(o Op) error {
+func (s *State) Apply(o hook.Op) error {
 	if o.Gas > s.maxBlockSize-s.blockSize {
 		return core.ErrGasLimitReached
 	}
