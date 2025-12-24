@@ -25,8 +25,20 @@ type consensusHooks struct {
 
 var _ hook.Points = (*consensusHooks)(nil)
 
+func (c *consensusHooks) BuildBlock(
+	header *types.Header,
+	txs []*types.Transaction,
+	receipts []*types.Receipt,
+) *types.Block {
+	return nil
+}
+
 func newTestConsensusHooks(consensus consensus.Engine, reader *readerAdapter) *consensusHooks {
 	return &consensusHooks{consensus: consensus, reader: reader}
+}
+
+func (c *consensusHooks) BlockRebuilderFrom(block *types.Block) hook.BlockBuilder {
+	return c
 }
 
 // GasTarget ignores its argument and always returns [consensusHooks.Target].
