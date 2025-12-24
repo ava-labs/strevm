@@ -10,6 +10,11 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
+
+env:
+  EXECUTION_SPEC_TESTS_VERSION: v2.1.0
+  EXECUTION_SPEC_TESTS_PATH: saexec/ethtests/spec-tests
+
 permissions:
   contents: read
 
@@ -24,15 +29,24 @@ jobs:
     steps:
       - run: echo "Dependencies successful"
 
+  # TODO(cey): we should only run -short tests in PRs and then run the full tests in main.
   go_test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Download and extract execution spec tests
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p "${EXECUTION_SPEC_TESTS_PATH}"
+          curl -L https://github.com/ethereum/execution-spec-tests/releases/download/${EXECUTION_SPEC_TESTS_VERSION}/fixtures_develop.tar.gz | tar -xz -C "${EXECUTION_SPEC_TESTS_PATH}"
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
           go-version-file: "go.mod"
-      - run: go test ./...
+      - run: go test -short ./...
 
   go_generate:
     env:
