@@ -5,7 +5,11 @@
 package hookstest
 
 import (
+	"math/big"
+	"time"
+
 	"github.com/ava-labs/avalanchego/vms/components/gas"
+	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core/state"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/params"
@@ -16,12 +20,27 @@ import (
 
 // Stub implements [hook.Points].
 type Stub struct {
+	Now           func() uint64
 	Target        gas.Gas
 	SubSecondTime gas.Gas
 	Ops           []hook.Op
 }
 
 var _ hook.Points = (*Stub)(nil)
+
+func (s *Stub) BuildHeader(parent *types.Header) *types.Header {
+	var now uint64
+	if s.Now != nil {
+		now = s.Now()
+	} else {
+		now = uint64(time.Now().Unix())
+	}
+	return &types.Header{
+		ParentHash: parent.Hash(),
+		Number:     new(big.Int).Add(parent.Number, common.Big1),
+		Time:       now,
+	}
+}
 
 // BuildBlock calls [types.NewBlock] with its arguments.
 func (*Stub) BuildBlock(
@@ -32,9 +51,12 @@ func (*Stub) BuildBlock(
 	return types.NewBlock(header, txs, nil, receipts, saetest.TrieHasher())
 }
 
-// BlockRebuilderFrom ignores its argument and returns itself.
-func (s *Stub) BlockRebuilderFrom(*types.Block) hook.BlockBuilder {
-	return s
+// BlockRebuilderFrom returns a block builder that uses the provided block as a
+// source of time.
+func (s *Stub) BlockRebuilderFrom(b *types.Block) hook.BlockBuilder {
+	return &Stub{
+		Now: b.Time,
+	}
 }
 
 // GasTargetAfter ignores its argument and always returns [Stub.Target].

@@ -86,7 +86,12 @@ func newSUT(
 	db := rawdb.NewMemoryDatabase()
 	genesis := blockstest.NewGenesis(tb, db, config, saetest.MaxAllocFor(wallet.Addresses()...), genesisOptions...)
 
+	// TODO(StephenButtolph) unify the time function provided in the config and
+	// the hooks.
 	hooks := &hookstest.Stub{
+		Now: func() uint64 {
+			return uint64(vm.config.Now().Unix())
+		},
 		Target: 100e6,
 	}
 
