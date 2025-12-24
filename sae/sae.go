@@ -14,14 +14,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ava-labs/libevm/core/types"
-	"github.com/ava-labs/libevm/trie"
 	"github.com/holiman/uint256"
 )
-
-func trieHasher() types.TrieHasher {
-	return trie.NewStackTrie(nil)
-}
 
 func unix(t time.Time) uint64 {
 	return uint64(t.Unix()) //nolint:gosec // Guaranteed to be positive

@@ -113,7 +113,7 @@ func NewGenesis(tb testing.TB, db ethdb.Database, gen *core.Genesis, opts ...Gen
 	require.NoError(tb, err, "core.SetupGenesisBlock()")
 
 	b := NewBlock(tb, gen.ToBlock(), nil, nil)
-	require.NoErrorf(tb, b.MarkExecuted(db, gastime.New(gen.Timestamp, conf.gasTarget, 0), time.Time{}, new(big.Int), nil, b.SettledStateRoot()), "%T.MarkExecuted()", b)
+	require.NoErrorf(tb, b.MarkExecuted(db, gastime.New(gen.Timestamp, conf.gasTarget, conf.gasExcess), time.Time{}, new(big.Int), nil, b.SettledStateRoot()), "%T.MarkExecuted()", b)
 	require.NoErrorf(tb, b.MarkSynchronous(), "%T.MarkSynchronous()", b)
 	return b
 }
@@ -121,6 +121,7 @@ func NewGenesis(tb testing.TB, db ethdb.Database, gen *core.Genesis, opts ...Gen
 type genesisConfig struct {
 	tdbConfig *triedb.Config
 	gasTarget gas.Gas
+	gasExcess gas.Gas
 }
 
 // A GenesisOption configures [NewGenesis].
@@ -137,5 +138,12 @@ func WithTrieDBConfig(tc *triedb.Config) GenesisOption {
 func WithGasTarget(target gas.Gas) GenesisOption {
 	return options.Func[genesisConfig](func(gc *genesisConfig) {
 		gc.gasTarget = target
+	})
+}
+
+// WithGasExcess overrides the gas excess used by [NewGenesis].
+func WithGasExcess(excess gas.Gas) GenesisOption {
+	return options.Func[genesisConfig](func(gc *genesisConfig) {
+		gc.gasExcess = excess
 	})
 }
