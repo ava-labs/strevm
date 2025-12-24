@@ -282,9 +282,9 @@ func TestSemanticBlockChecks(t *testing.T) {
 		return time.Unix(now, 0)
 	}
 
-	lastAcceptedID, err := sut.LastAccepted(t.Context())
+	lastAcceptedID, err := sut.LastAccepted(ctx)
 	require.NoError(t, err, "LastAccepted()")
-	lastAccepted, err := sut.GetBlock(t.Context(), lastAcceptedID)
+	lastAccepted, err := sut.GetBlock(ctx, lastAcceptedID)
 	require.NoError(t, err, "GetBlock(lastAcceptedID)")
 
 	tests := []struct {
@@ -361,7 +361,7 @@ func TestSemanticBlockChecks(t *testing.T) {
 			)
 			snowB, err := sut.ParseBlock(ctx, b.Bytes())
 			require.NoErrorf(t, err, "ParseBlock(...)")
-			require.ErrorIs(t, snowB.Verify(t.Context()), tt.wantErr, "Verify()")
+			require.ErrorIs(t, snowB.Verify(ctx), tt.wantErr, "Verify()")
 		})
 	}
 }
