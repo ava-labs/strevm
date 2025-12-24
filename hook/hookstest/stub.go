@@ -28,6 +28,7 @@ type Stub struct {
 
 var _ hook.Points = (*Stub)(nil)
 
+// BuildHeader constructs a header that builds on top of the parent header.
 func (s *Stub) BuildHeader(parent *types.Header) *types.Header {
 	var now uint64
 	if s.Now != nil {
