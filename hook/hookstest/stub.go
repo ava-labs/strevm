@@ -33,7 +33,7 @@ func (s *Stub) BuildHeader(parent *types.Header) *types.Header {
 	if s.Now != nil {
 		now = s.Now()
 	} else {
-		now = uint64(time.Now().Unix())
+		now = uint64(time.Now().Unix()) //nolint:gosec // Time won't overflow for quite a while
 	}
 	return &types.Header{
 		ParentHash: parent.Hash(),

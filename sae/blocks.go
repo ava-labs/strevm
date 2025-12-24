@@ -108,7 +108,7 @@ func (vm *VM) buildBlock(
 	if parentTime := parent.BuildTime(); hdr.Time < parentTime {
 		return nil, fmt.Errorf("%w: %d < %d", errBlockTimeBeforeParent, hdr.Time, parentTime)
 	}
-	if maxTime := uint64(vm.config.Now().Add(maxFutureBlockTime).Unix()); hdr.Time > maxTime {
+	if maxTime := uint64(vm.config.Now().Add(maxFutureBlockTime).Unix()); hdr.Time > maxTime { //nolint:gosec // Time won't overflow for quite a while
 		return nil, fmt.Errorf("%w: %d > %d", errBlockTimeAfterMaximum, hdr.Time, maxTime)
 	}
 

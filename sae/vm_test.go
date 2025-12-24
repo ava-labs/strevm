@@ -90,7 +90,7 @@ func newSUT(
 	// the hooks.
 	hooks := &hookstest.Stub{
 		Now: func() uint64 {
-			return uint64(vm.config.Now().Unix())
+			return uint64(vm.config.Now().Unix()) //nolint:gosec // Time won't overflow for quite a while
 		},
 		Target: 100e6,
 	}
