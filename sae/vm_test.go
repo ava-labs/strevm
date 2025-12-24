@@ -60,7 +60,11 @@ type SUT struct {
 	wallet  *saetest.Wallet
 }
 
-func newSUT(tb testing.TB, numAccounts uint) (context.Context, *SUT) {
+func newSUT(
+	tb testing.TB,
+	numAccounts uint,
+	genesisOptions ...blockstest.GenesisOption,
+) (context.Context, *SUT) {
 	tb.Helper()
 
 	mempoolConf := legacypool.DefaultConfig // copies
@@ -80,7 +84,7 @@ func newSUT(tb testing.TB, numAccounts uint) (context.Context, *SUT) {
 	wallet := saetest.NewUNSAFEWallet(tb, numAccounts, signer)
 
 	db := rawdb.NewMemoryDatabase()
-	genesis := blockstest.NewGenesis(tb, db, config, saetest.MaxAllocFor(wallet.Addresses()...))
+	genesis := blockstest.NewGenesis(tb, db, config, saetest.MaxAllocFor(wallet.Addresses()...), genesisOptions...)
 
 	hooks := &hookstest.Stub{
 		Target: 100e6,
@@ -267,6 +271,97 @@ func TestSyntacticBlockChecks(t *testing.T) {
 			b := blockstest.NewBlock(t, types.NewBlockWithHeader(tt.header), nil, nil)
 			_, err := sut.ParseBlock(ctx, b.Bytes())
 			assert.ErrorIs(t, err, tt.wantErr, "ParseBlock(#%v @ time %v) when stubbed time is %d", tt.header.Number, tt.header.Time, uint64(now))
+		})
+	}
+}
+
+func TestSemanticBlockChecks(t *testing.T) {
+	const now = 1e6
+	ctx, sut := newSUT(t, 1, blockstest.WithTimestamp(now))
+	sut.rawVM.config.Now = func() time.Time {
+		return time.Unix(now, 0)
+	}
+
+	lastAcceptedID, err := sut.LastAccepted(ctx)
+	require.NoError(t, err, "LastAccepted()")
+	lastAccepted, err := sut.GetBlock(ctx, lastAcceptedID)
+	require.NoError(t, err, "GetBlock(lastAcceptedID)")
+
+	tests := []struct {
+		name           string
+		parentHash     common.Hash
+		acceptedHeight bool
+		time           uint64
+		receipts       types.Receipts
+		wantErr        error
+	}{
+		{
+			name:       "unknown_parent",
+			parentHash: common.Hash{1},
+			wantErr:    errUnknownParent,
+		},
+		{
+			name:           "already_finalized",
+			acceptedHeight: true,
+			wantErr:        errFinalizedBlock,
+		},
+		{
+			name:    "block_time_under_minimum",
+			time:    1,
+			wantErr: errBlockTimeUnderMinimum,
+		},
+		{
+			name:    "block_time_before_parent",
+			time:    sut.genesis.BuildTime() - 1,
+			wantErr: errBlockTimeBeforeParent,
+		},
+		{
+			name:    "block_time_after_maximum",
+			time:    now + uint64(maxFutureBlockTime.Seconds()) + 1,
+			wantErr: errBlockTimeAfterMaximum,
+		},
+		{
+			name: "hash_mismatch",
+			receipts: types.Receipts{
+				&types.Receipt{}, // Unexpected receipt
+			},
+			wantErr: errHashMismatch,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.parentHash == (common.Hash{}) {
+				tt.parentHash = common.Hash(lastAcceptedID)
+			}
+			height := lastAccepted.Height()
+			if !tt.acceptedHeight {
+				height++
+			}
+			if tt.time == 0 {
+				tt.time = now
+			}
+
+			ethB := types.NewBlock(
+				&types.Header{
+					ParentHash: tt.parentHash,
+					Number:     new(big.Int).SetUint64(height),
+					Time:       tt.time,
+				},
+				nil,
+				nil,
+				tt.receipts,
+				saetest.TrieHasher(),
+			)
+			b := blockstest.NewBlock(
+				t,
+				ethB,
+				nil,
+				nil,
+			)
+			snowB, err := sut.ParseBlock(ctx, b.Bytes())
+			require.NoErrorf(t, err, "ParseBlock(...)")
+			require.ErrorIs(t, snowB.Verify(ctx), tt.wantErr, "Verify()")
 		})
 	}
 }
