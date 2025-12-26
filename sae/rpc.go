@@ -211,6 +211,7 @@ func (s *netAPI) PeerCount() hexutil.Uint {
 }
 
 var (
+	_ filters.Backend = (*apiBackend)(nil)
 	_ ethapi.Backend  = (*apiBackend)(nil)
 	_ tracers.Backend = (*apiBackend)(nil)
 )
