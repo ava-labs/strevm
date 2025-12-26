@@ -20,6 +20,7 @@ import (
 	"github.com/ava-labs/libevm/core"
 	"github.com/ava-labs/libevm/core/bloombits"
 	"github.com/ava-labs/libevm/core/state"
+	"github.com/ava-labs/libevm/core/txpool"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/core/vm"
 	"github.com/ava-labs/libevm/eth/filters"
@@ -276,152 +277,117 @@ func (a *apiBackend) SetHead(number uint64) {
 	)
 }
 
-// HeaderByNumber implements ethapi.Backend.
-// Subtle: this method shadows the method (apiBackend).HeaderByNumber of ethAPIBackend2.apiBackend.
 func (a *apiBackend) HeaderByNumber(ctx context.Context, number rpc.BlockNumber) (*types.Header, error) {
 	panic(errUnimplemented)
 }
 
-// HeaderByHash implements ethapi.Backend.
-// Subtle: this method shadows the method (apiBackend).HeaderByHash of ethAPIBackend2.apiBackend.
 func (a *apiBackend) HeaderByHash(ctx context.Context, hash common.Hash) (*types.Header, error) {
 	panic(errUnimplemented)
 }
 
-// HeaderByNumberOrHash implements ethapi.Backend.
-// Subtle: this method shadows the method (apiBackend).HeaderByNumberOrHash of ethAPIBackend2.apiBackend.
 func (a *apiBackend) HeaderByNumberOrHash(ctx context.Context, blockNrOrHash rpc.BlockNumberOrHash) (*types.Header, error) {
 	panic(errUnimplemented)
 }
 
-// CurrentHeader implements ethapi.Backend.
-// Subtle: this method shadows the method (apiBackend).CurrentHeader of ethAPIBackend2.apiBackend.
 func (a *apiBackend) CurrentHeader() *types.Header {
 	panic(errUnimplemented)
 }
 
-// CurrentBlock implements ethapi.Backend.
-// Subtle: this method shadows the method (apiBackend).CurrentBlock of ethAPIBackend2.apiBackend.
 func (a *apiBackend) CurrentBlock() *types.Header {
 	return types.CopyHeader(a.vm.exec.LastExecuted().Header())
 }
 
-// BlockByNumber implements ethapi.Backend.
-// Subtle: this method shadows the method (apiBackend).BlockByNumber of ethAPIBackend2.apiBackend.
 func (a *apiBackend) BlockByNumber(ctx context.Context, number rpc.BlockNumber) (*types.Block, error) {
 	panic(errUnimplemented)
 }
 
-// BlockByHash implements ethapi.Backend.
-// Subtle: this method shadows the method (apiBackend).BlockByHash of ethAPIBackend2.apiBackend.
 func (a *apiBackend) BlockByHash(ctx context.Context, hash common.Hash) (*types.Block, error) {
 	panic(errUnimplemented)
 }
 
-// BlockByNumberOrHash implements ethapi.Backend.
-// Subtle: this method shadows the method (apiBackend).BlockByNumberOrHash of ethAPIBackend2.apiBackend.
 func (a *apiBackend) BlockByNumberOrHash(ctx context.Context, blockNrOrHash rpc.BlockNumberOrHash) (*types.Block, error) {
 	panic(errUnimplemented)
 }
 
-// StateAndHeaderByNumber implements ethapi.Backend.
-// Subtle: this method shadows the method (apiBackend).StateAndHeaderByNumber of ethAPIBackend2.apiBackend.
 func (a *apiBackend) StateAndHeaderByNumber(ctx context.Context, number rpc.BlockNumber) (*state.StateDB, *types.Header, error) {
 	panic(errUnimplemented)
 }
 
-// StateAndHeaderByNumberOrHash implements ethapi.Backend.
-// Subtle: this method shadows the method (apiBackend).StateAndHeaderByNumberOrHash of ethAPIBackend2.apiBackend.
 func (a *apiBackend) StateAndHeaderByNumberOrHash(ctx context.Context, blockNrOrHash rpc.BlockNumberOrHash) (*state.StateDB, *types.Header, error) {
 	panic(errUnimplemented)
 }
 
-// PendingBlockAndReceipts implements ethapi.Backend.
-// Subtle: this method shadows the method (apiBackend).PendingBlockAndReceipts of ethAPIBackend2.apiBackend.
 func (a *apiBackend) PendingBlockAndReceipts() (*types.Block, types.Receipts) {
 	panic(errUnimplemented)
 }
 
-// GetReceipts implements ethapi.Backend.
-// Subtle: this method shadows the method (apiBackend).GetReceipts of ethAPIBackend2.apiBackend.
 func (a *apiBackend) GetReceipts(ctx context.Context, hash common.Hash) (types.Receipts, error) {
 	panic(errUnimplemented)
 }
 
-// GetTd implements ethapi.Backend.
-// Subtle: this method shadows the method (apiBackend).GetTd of ethAPIBackend2.apiBackend.
 func (a *apiBackend) GetTd(ctx context.Context, hash common.Hash) *big.Int {
 	panic(errUnimplemented)
 }
 
-// GetEVM implements ethapi.Backend.
-// Subtle: this method shadows the method (apiBackend).GetEVM of ethAPIBackend2.apiBackend.
 func (a *apiBackend) GetEVM(ctx context.Context, msg *core.Message, state *state.StateDB, header *types.Header, vmConfig *vm.Config, blockCtx *vm.BlockContext) *vm.EVM {
 	panic(errUnimplemented)
 }
 
-// SubscribeChainEvent implements ethapi.Backend.
-// Subtle: this method shadows the method (apiBackend).SubscribeChainEvent of ethAPIBackend2.apiBackend.
 func (a *apiBackend) SubscribeChainEvent(ch chan<- core.ChainEvent) event.Subscription {
 	panic(errUnimplemented)
 }
 
-// SubscribeChainHeadEvent implements ethapi.Backend.
-// Subtle: this method shadows the method (apiBackend).SubscribeChainHeadEvent of ethAPIBackend2.apiBackend.
 func (a *apiBackend) SubscribeChainHeadEvent(ch chan<- core.ChainHeadEvent) event.Subscription {
 	panic(errUnimplemented)
 }
 
-// SubscribeChainSideEvent implements ethapi.Backend.
-// Subtle: this method shadows the method (apiBackend).SubscribeChainSideEvent of ethAPIBackend2.apiBackend.
 func (a *apiBackend) SubscribeChainSideEvent(ch chan<- core.ChainSideEvent) event.Subscription {
 	panic(errUnimplemented)
 }
 
-// GetTransaction implements ethapi.Backend.
-// Subtle: this method shadows the method (apiBackend).GetTransaction of ethAPIBackend2.apiBackend.
 func (a *apiBackend) GetTransaction(ctx context.Context, txHash common.Hash) (bool, *types.Transaction, common.Hash, uint64, uint64, error) {
 	panic(errUnimplemented)
 }
 
-// GetPoolTransactions implements ethapi.Backend.
-// Subtle: this method shadows the method (apiBackend).GetPoolTransactions of ethAPIBackend2.apiBackend.
 func (a *apiBackend) GetPoolTransactions() (types.Transactions, error) {
-	panic(errUnimplemented)
+	pending := a.Pool.Pending(txpool.PendingFilter{})
+
+	var pendingCount int
+	for _, batch := range pending {
+		pendingCount += len(batch)
+	}
+
+	txs := make(types.Transactions, 0, pendingCount)
+	for _, batch := range pending {
+		for _, lazy := range batch {
+			if tx := lazy.Resolve(); tx != nil {
+				txs = append(txs, tx)
+			}
+		}
+	}
+	return txs, nil
 }
 
-// GetPoolTransaction implements ethapi.Backend.
-// Subtle: this method shadows the method (apiBackend).GetPoolTransaction of ethAPIBackend2.apiBackend.
 func (a *apiBackend) GetPoolTransaction(txHash common.Hash) *types.Transaction {
-	panic(errUnimplemented)
+	return a.Pool.Get(txHash)
 }
 
-// GetPoolNonce implements ethapi.Backend.
-// Subtle: this method shadows the method (apiBackend).GetPoolNonce of ethAPIBackend2.apiBackend.
 func (a *apiBackend) GetPoolNonce(ctx context.Context, addr common.Address) (uint64, error) {
-	panic(errUnimplemented)
+	return a.Pool.Nonce(addr), nil
 }
 
-// Stats implements ethapi.Backend.
-// Subtle: this method shadows the method (apiBackend).Stats of ethAPIBackend2.apiBackend.
 func (a *apiBackend) Stats() (pending int, queued int) {
-	panic(errUnimplemented)
+	return a.Pool.Stats()
 }
 
-// TxPoolContent implements ethapi.Backend.
-// Subtle: this method shadows the method (apiBackend).TxPoolContent of ethAPIBackend2.apiBackend.
 func (a *apiBackend) TxPoolContent() (map[common.Address][]*types.Transaction, map[common.Address][]*types.Transaction) {
-	panic(errUnimplemented)
+	return a.Pool.Content()
 }
 
-// TxPoolContentFrom implements ethapi.Backend.
-// Subtle: this method shadows the method (apiBackend).TxPoolContentFrom of ethAPIBackend2.apiBackend.
 func (a *apiBackend) TxPoolContentFrom(addr common.Address) ([]*types.Transaction, []*types.Transaction) {
-	panic(errUnimplemented)
+	return a.Pool.ContentFrom(addr)
 }
 
-// SubscribeNewTxsEvent implements ethapi.Backend.
-// Subtle: this method shadows the method (apiBackend).SubscribeNewTxsEvent of ethAPIBackend2.apiBackend.
 func (a *apiBackend) SubscribeNewTxsEvent(chan<- core.NewTxsEvent) event.Subscription {
 	panic(errUnimplemented)
 }
@@ -430,60 +396,42 @@ func (a *apiBackend) ChainConfig() *params.ChainConfig {
 	return a.vm.exec.ChainConfig()
 }
 
-// Engine implements ethapi.Backend.
-// Subtle: this method shadows the method (apiBackend).Engine of ethAPIBackend2.apiBackend.
 func (a *apiBackend) Engine() consensus.Engine {
 	panic(errUnimplemented)
 }
 
-// GetBody implements ethapi.Backend.
-// Subtle: this method shadows the method (apiBackend).GetBody of ethAPIBackend2.apiBackend.
 func (a *apiBackend) GetBody(ctx context.Context, hash common.Hash, number rpc.BlockNumber) (*types.Body, error) {
 	panic(errUnimplemented)
 }
 
-// GetLogs implements ethapi.Backend.
-// Subtle: this method shadows the method (apiBackend).GetLogs of ethAPIBackend2.apiBackend.
 func (a *apiBackend) GetLogs(ctx context.Context, blockHash common.Hash, number uint64) ([][]*types.Log, error) {
 	panic(errUnimplemented)
 }
 
-// SubscribeRemovedLogsEvent implements ethapi.Backend.
-// Subtle: this method shadows the method (apiBackend).SubscribeRemovedLogsEvent of ethAPIBackend2.apiBackend.
 func (a *apiBackend) SubscribeRemovedLogsEvent(ch chan<- core.RemovedLogsEvent) event.Subscription {
 	panic(errUnimplemented)
 }
 
-// SubscribeLogsEvent implements ethapi.Backend.
-// Subtle: this method shadows the method (apiBackend).SubscribeLogsEvent of ethAPIBackend2.apiBackend.
 func (a *apiBackend) SubscribeLogsEvent(ch chan<- []*types.Log) event.Subscription {
 	panic(errUnimplemented)
 }
 
-// SubscribePendingLogsEvent implements ethapi.Backend.
-// Subtle: this method shadows the method (apiBackend).SubscribePendingLogsEvent of ethAPIBackend2.apiBackend.
 func (a *apiBackend) SubscribePendingLogsEvent(ch chan<- []*types.Log) event.Subscription {
 	panic(errUnimplemented)
 }
 
-// BloomStatus implements ethapi.Backend.
-// Subtle: this method shadows the method (apiBackend).BloomStatus of ethAPIBackend2.apiBackend.
 func (a *apiBackend) BloomStatus() (uint64, uint64) {
 	panic(errUnimplemented)
 }
 
-// ServiceFilter implements ethapi.Backend.
-// Subtle: this method shadows the method (apiBackend).ServiceFilter of ethAPIBackend2.apiBackend.
 func (a *apiBackend) ServiceFilter(ctx context.Context, session *bloombits.MatcherSession) {
 	panic(errUnimplemented)
 }
 
-// StateAtBlock implements tracers.Backend.
 func (a *apiBackend) StateAtBlock(ctx context.Context, block *types.Block, reexec uint64, base *state.StateDB, readOnly bool, preferDisk bool) (*state.StateDB, tracers.StateReleaseFunc, error) {
 	panic(errUnimplemented)
 }
 
-// StateAtTransaction implements tracers.Backend.
 func (a *apiBackend) StateAtTransaction(ctx context.Context, block *types.Block, txIndex int, reexec uint64) (*core.Message, vm.BlockContext, *state.StateDB, tracers.StateReleaseFunc, error) {
 	panic(errUnimplemented)
 }
