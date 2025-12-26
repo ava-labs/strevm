@@ -276,7 +276,7 @@ func (a *apiBackend) UnprotectedAllowed() bool {
 }
 
 func (a *apiBackend) SetHead(number uint64) {
-	// SAE does not support reorgs, so we ignore attempts to override the chain
+	// SAE does not support reorgs. We ignore any attempts to override the chain
 	// head.
 	a.vm.log().Warn("ignoring attempt to override the chain head",
 		zap.Uint64("number", number),
