@@ -227,8 +227,8 @@ type apiBackend struct {
 }
 
 func (a *apiBackend) SyncProgress() ethereum.SyncProgress {
-	// Avalanchego does not expose APIs until after the node has fully synced,
-	// so we can just report that syncing is complete.
+	// Avalanchego does not expose APIs until after the node has fully synced.
+	// Just report that syncing is complete.
 	return ethereum.SyncProgress{}
 }
 
