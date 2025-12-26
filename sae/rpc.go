@@ -38,11 +38,15 @@ import (
 )
 
 func (vm *VM) ethRPCServer() (*rpc.Server, error) {
+	accountManager := accounts.NewManager(&accounts.Config{})
+	vm.toClose = append(vm.toClose, accountManager.Close)
+
 	b := &apiBackend{
-		vm:  vm,
-		Set: vm.mempool,
+		Set:            vm.mempool,
+		vm:             vm,
+		accountManager: accountManager,
 	}
-	filterSystem := filters.NewFilterSystem(b, filters.Config{Timeout: 5 * time.Minute})
+	filterSystem := filters.NewFilterSystem(b, filters.Config{})
 	apis := []struct {
 		namespace string
 		api       any
@@ -218,7 +222,8 @@ var (
 
 type apiBackend struct {
 	*txgossip.Set
-	vm *VM
+	vm             *VM
+	accountManager *accounts.Manager
 }
 
 func (a *apiBackend) SyncProgress() ethereum.SyncProgress {
@@ -240,7 +245,7 @@ func (a *apiBackend) ChainDb() ethdb.Database {
 }
 
 func (a *apiBackend) AccountManager() *accounts.Manager {
-	panic(errUnimplemented)
+	return a.accountManager
 }
 
 func (a *apiBackend) ExtRPCEnabled() bool {
@@ -295,7 +300,7 @@ func (a *apiBackend) CurrentHeader() *types.Header {
 }
 
 func (a *apiBackend) CurrentBlock() *types.Header {
-	return types.CopyHeader(a.vm.exec.LastExecuted().Header())
+	return a.vm.exec.LastExecuted().Header()
 }
 
 func (a *apiBackend) BlockByNumber(ctx context.Context, number rpc.BlockNumber) (*types.Block, error) {
