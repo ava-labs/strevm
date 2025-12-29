@@ -176,8 +176,8 @@ func (vm *VM) buildBlock(
 		}
 	}
 
-	// TODO: This header hasn't had an opportunity to be populated by,
-	// [hook.Points] but it is passed into [hook.Points.SubSecondBlockTime]. We
+	// TODO: This header hasn't had an opportunity to be populated by
+	// [hook.Points], but it is passed into [hook.Points.SubSecondBlockTime]. We
 	// should construct the header inside of [hook.Points].
 	hdr := &types.Header{
 		ParentHash: parent.Hash(),
