@@ -104,7 +104,8 @@ func newSUT(tb testing.TB, engine consensus.Engine, opts ...sutOption) (context.
 		}
 	}
 
-	genesis := blockstest.NewGenesisFromSpec(tb, db, genesisSpec, blockstest.WithTrieDBConfig(tdbConfig), blockstest.WithGasTarget(1e6))
+	target := 1e6
+	genesis := blockstest.NewGenesisFromSpec(tb, db, genesisSpec, blockstest.WithTrieDBConfig(tdbConfig), blockstest.WithGasTarget(target))
 
 	blockOpts := blockstest.WithBlockOptions(
 		blockstest.WithLogger(logger),
@@ -112,7 +113,7 @@ func newSUT(tb testing.TB, engine consensus.Engine, opts ...sutOption) (context.
 	chain := blockstest.NewChainBuilder(genesis, blockOpts)
 
 	reader := newReaderAdapter(chain, db, chainConfig, logger)
-	hooks := newTestConsensusHooks(engine, reader)
+	hooks := newTestConsensusHooks(engine, reader, target)
 	e, err := saexec.New(genesis, chain.GetBlock, chainConfig, db, tdbConfig, *snapshotConfig, hooks, logger)
 	require.NoError(tb, err, "New()")
 	tb.Cleanup(func() {
