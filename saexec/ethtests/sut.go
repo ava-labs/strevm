@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/ava-labs/avalanchego/utils/logging"
+	"github.com/ava-labs/avalanchego/vms/components/gas"
 	"github.com/ava-labs/libevm/consensus"
 	"github.com/ava-labs/libevm/core"
 	"github.com/ava-labs/libevm/core/rawdb"
@@ -104,7 +105,7 @@ func newSUT(tb testing.TB, engine consensus.Engine, opts ...sutOption) (context.
 		}
 	}
 
-	target := 1e6
+	target := gas.Gas(1e6)
 	genesis := blockstest.NewGenesisFromSpec(tb, db, genesisSpec, blockstest.WithTrieDBConfig(tdbConfig), blockstest.WithGasTarget(target))
 
 	blockOpts := blockstest.WithBlockOptions(
