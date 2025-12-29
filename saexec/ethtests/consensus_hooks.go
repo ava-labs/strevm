@@ -21,6 +21,7 @@ import (
 type consensusHooks struct {
 	consensus consensus.Engine
 	reader    *readerAdapter
+	target    gas.Gas
 }
 
 var _ hook.Points = (*consensusHooks)(nil)
@@ -33,17 +34,18 @@ func (c *consensusHooks) BuildBlock(
 	return nil
 }
 
-func newTestConsensusHooks(consensus consensus.Engine, reader *readerAdapter) *consensusHooks {
-	return &consensusHooks{consensus: consensus, reader: reader}
+func newTestConsensusHooks(consensus consensus.Engine, reader *readerAdapter, target gas.Gas) *consensusHooks {
+	return &consensusHooks{consensus: consensus, reader: reader, target: target}
 }
 
+// BlockRebuilderFrom ignores its argument and always returns itself.
 func (c *consensusHooks) BlockRebuilderFrom(block *types.Block) hook.BlockBuilder {
 	return c
 }
 
-// GasTarget ignores its argument and always returns [consensusHooks.Target].
+// GasTarget ignores its argument and always returns [consensusHooks.target].
 func (c *consensusHooks) GasTargetAfter(*types.Header) gas.Gas {
-	return 1e6
+	return c.target
 }
 
 // SubSecondBlockTime time ignores its argument and always returns 0.
