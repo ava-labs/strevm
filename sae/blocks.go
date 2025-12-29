@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
-	"slices"
 	"time"
 
 	"github.com/ava-labs/avalanchego/database"
@@ -260,26 +259,6 @@ func (vm *VM) buildBlock(
 		receipts,
 	)
 	return vm.newBlock(ethB, parent, lastSettled)
-}
-
-// unsettledAncestry returns the ancestry of blocks from `parent` (inclusive) to
-// the (non-inclusive) `settledHeight`; in order of oldest to newest.
-//
-// It is assumed that `parent` was successfully verified and has not been
-// rejected.
-func unsettledAncestry(parent *blocks.Block, settledHeight uint64) []*blocks.Block {
-	parentHeight := parent.Height()
-	if parentHeight <= settledHeight {
-		return nil
-	}
-
-	history := make([]*blocks.Block, parentHeight-settledHeight)
-	for i := range history {
-		history[i] = parent
-		parent = parent.ParentBlock()
-	}
-	slices.Reverse(history)
-	return history
 }
 
 var (
