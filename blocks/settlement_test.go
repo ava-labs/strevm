@@ -165,7 +165,7 @@ func TestSettles(t *testing.T) {
 
 	for _, b := range blocks[1:] {
 		tests = append(tests, testCase{
-			name: fmt.Sprintf("Block(%d).WhenChildSettles([same as parent])", b.Height()),
+			name: "Range([identical blocks])",
 			got:  Range(b.LastSettled(), b.LastSettled()),
 			want: nil,
 		})

@@ -138,26 +138,27 @@ func (vm *VM) buildBlock(
 
 	state, err := worstcase.NewState(vm.hooks, vm.exec.ChainConfig(), vm.exec.StateCache(), lastSettled)
 	if err != nil {
-		log.Warn("Worst case state not able to be created",
+		log.Warn("Worst-case state not able to be created",
 			zap.Error(err),
 		)
 		return nil, err
 	}
 
-	for _, b := range blocks.Range(lastSettled, parent) {
+	unsettled := blocks.Range(lastSettled, parent)
+	for _, b := range unsettled {
 		log := log.With(
 			zap.Uint64("block_height", b.Height()),
 			zap.Stringer("block_hash", b.Hash()),
 		)
 		if err := state.StartBlock(b.Header()); err != nil {
-			log.Warn("Could not start historical worst case calculation",
+			log.Warn("Could not start historical worst-case calculation",
 				zap.Error(err),
 			)
 			return nil, fmt.Errorf("starting worst-case state for block %d: %v", b.Height(), err)
 		}
 		for i, tx := range b.Transactions() {
 			if err := state.ApplyTx(tx); err != nil {
-				log.Warn("Could not apply tx during historical worst case calculation",
+				log.Warn("Could not apply tx during historical worst-case calculation",
 					zap.Int("tx_index", i),
 					zap.Stringer("tx_hash", tx.Hash()),
 					zap.Error(err),
@@ -167,7 +168,7 @@ func (vm *VM) buildBlock(
 		}
 		for i, op := range vm.hooks.EndOfBlockOps(b.EthBlock()) {
 			if err := state.Apply(op); err != nil {
-				log.Warn("Could not apply op during historical worst case calculation",
+				log.Warn("Could not apply op during historical worst-case calculation",
 					zap.Int("op_index", i),
 					zap.Stringer("op_id", op.ID),
 					zap.Error(err),
@@ -176,7 +177,7 @@ func (vm *VM) buildBlock(
 			}
 		}
 		if err := state.FinishBlock(); err != nil {
-			log.Warn("Could not finish historical worst case calculation",
+			log.Warn("Could not finish historical worst-case calculation",
 				zap.Error(err),
 			)
 			return nil, fmt.Errorf("finishing worst-case state for block %d: %v", b.Height(), err)
@@ -185,7 +186,7 @@ func (vm *VM) buildBlock(
 
 	hdr.Root = lastSettled.PostExecutionStateRoot()
 	if err := state.StartBlock(hdr); err != nil {
-		log.Warn("Could not start worst case block calculation",
+		log.Warn("Could not start worst-case block calculation",
 			zap.Error(err),
 		)
 		return nil, fmt.Errorf("starting worst-case state for new block: %v", err)
@@ -233,14 +234,15 @@ func (vm *VM) buildBlock(
 	// Although we never interact with the worst-case state after this point, we
 	// still mark the block as finished to align with normal execution.
 	if err := state.FinishBlock(); err != nil {
-		log.Warn("Could not finish worst case block calculation",
+		log.Warn("Could not finish worst-case block calculation",
 			zap.Error(err),
 		)
 		return nil, fmt.Errorf("finishing worst-case state for new block: %v", err)
 	}
 
 	var receipts types.Receipts
-	for _, b := range blocks.Range(parent.LastSettled(), lastSettled) {
+	settling := blocks.Range(parent.LastSettled(), lastSettled)
+	for _, b := range settling {
 		receipts = append(receipts, b.Receipts()...)
 	}
 
@@ -253,9 +255,9 @@ func (vm *VM) buildBlock(
 }
 
 var (
-	errUnknownParent  = errors.New("unknown parent")
-	errFinalizedBlock = errors.New("finalized block")
-	errHashMismatch   = errors.New("hash mismatch")
+	errUnknownParent     = errors.New("unknown parent")
+	errBlockHeightTooLow = errors.New("block height too low")
+	errHashMismatch      = errors.New("hash mismatch")
 )
 
 // VerifyBlock validates the block and, if successful, populates its ancestry.
@@ -276,7 +278,7 @@ func (vm *VM) VerifyBlock(ctx context.Context, bCtx *block.Context, b *blocks.Bl
 
 	// Sanity check that we aren't verifying an accepted block.
 	if height, accepted := b.Height(), vm.lastAccepted.Load().Height(); height <= accepted {
-		return fmt.Errorf("%w at height %d <= last-accepted (%d)", errFinalizedBlock, height, accepted)
+		return fmt.Errorf("%w at height %d <= last-accepted (%d)", errBlockHeightTooLow, height, accepted)
 	}
 
 	txs := make([]*txgossip.LazyTransaction, len(b.Transactions()))
