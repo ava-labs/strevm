@@ -7,7 +7,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math/big"
 	"time"
 
 	"github.com/ava-labs/avalanchego/database"
@@ -67,7 +66,6 @@ func (vm *VM) BuildBlock(ctx context.Context, bCtx *block.Context) (*blocks.Bloc
 		ctx,
 		bCtx,
 		vm.preference.Load(),
-		vm.config.Now(),
 		vm.mempool.TransactionsByPriority,
 		vm.hooks,
 	)
@@ -90,31 +88,40 @@ func (vm *VM) buildBlock(
 	ctx context.Context,
 	bCtx *block.Context,
 	parent *blocks.Block,
-	blockTime time.Time,
 	pendingTxs func(txpool.PendingFilter) []*txgossip.LazyTransaction,
 	builder hook.BlockBuilder,
 ) (*blocks.Block, error) {
+	hdr := builder.BuildHeader(parent.Header())
 	log := vm.log().With(
 		zap.Uint64("parent_height", parent.Height()),
 		zap.Stringer("parent_hash", parent.Hash()),
-		zap.Time("block_time", blockTime),
+		zap.Uint64("block_time", hdr.Time),
 	)
-
-	// The block time is not trusted, as it can be provided maliciously during
-	// [VM.VerifyBlock]. It is allowed for [hook.Points] to further constrain
-	// the allowed block times. However, every block MUST at least satisfy these
-	// basic sanity checks.
-	if blockUnix := blockTime.Unix(); blockUnix < saeparams.TauSeconds {
-		return nil, fmt.Errorf("%w: %d < %d", errBlockTimeUnderMinimum, blockUnix, saeparams.TauSeconds)
-	}
-	if parentTime := parent.Timestamp(); blockTime.Before(parentTime) {
-		return nil, fmt.Errorf("%w: %s < %s", errBlockTimeBeforeParent, blockTime, parentTime)
-	}
-	if maxBlockTime := vm.config.Now().Add(maxFutureBlockTime); blockTime.After(maxBlockTime) {
-		return nil, fmt.Errorf("%w: %s > %s", errBlockTimeAfterMaximum, blockTime, maxBlockTime)
+	if hdr.Root != (common.Hash{}) || hdr.GasLimit != 0 || hdr.BaseFee != nil || hdr.GasUsed != 0 {
+		log.Warn("Block builder returned header with at least one reserved field set",
+			zap.Stringer("root", hdr.Root),
+			zap.Uint64("gas_limit", hdr.GasLimit),
+			zap.Stringer("base_fee", hdr.BaseFee),
+			zap.Uint64("gas_used", hdr.GasUsed),
+		)
 	}
 
-	settleAt := unix(blockTime.Add(-saeparams.Tau))
+	// It is allowed for [hook.Points] to further constrain the allowed block
+	// times. However, every block MUST at least satisfy these basic sanity
+	// checks.
+	if hdr.Time < saeparams.TauSeconds {
+		return nil, fmt.Errorf("%w: %d < %d", errBlockTimeUnderMinimum, hdr.Time, saeparams.TauSeconds)
+	}
+	if parentTime := parent.BuildTime(); hdr.Time < parentTime {
+		return nil, fmt.Errorf("%w: %d < %d", errBlockTimeBeforeParent, hdr.Time, parentTime)
+	}
+	if maxTime := uint64(vm.config.Now().Add(maxFutureBlockTime).Unix()); hdr.Time > maxTime { //nolint:gosec // Time won't overflow for quite a while
+		return nil, fmt.Errorf("%w: %d > %d", errBlockTimeAfterMaximum, hdr.Time, maxTime)
+	}
+
+	// TODO(StephenButtolph) settlement logic needs to support sub-second block
+	// times. Tracked in https://github.com/ava-labs/strevm/issues/49
+	settleAt := hdr.Time - saeparams.TauSeconds
 	lastSettled, ok, err := blocks.LastToSettleAt(settleAt, parent)
 	if err != nil {
 		return nil, err
@@ -177,23 +184,7 @@ func (vm *VM) buildBlock(
 		}
 	}
 
-	// TODO: This header hasn't had an opportunity to be populated by
-	// [hook.Points], but it is passed into [hook.Points.SubSecondBlockTime]. We
-	// should construct the header inside of [hook.Points].
-	hdr := &types.Header{
-		ParentHash: parent.Hash(),
-		Root:       lastSettled.PostExecutionStateRoot(),
-		Number:     new(big.Int).Add(parent.Number(), common.Big1),
-		// GasLimit is populated after [worstcase.State.StartBlock].
-		// GasUsed should be populated after [worstcase.State.ApplyTx] has
-		// finished being called.
-		Time: unix(blockTime),
-		// BaseFee is populated after [worstcase.State.StartBlock].
-
-		// All other fields are, optionally, populated by the call to
-		// [hook.BlockBuilder.BuildBlock] after applying every
-		// [types.Transaction].
-	}
+	hdr.Root = lastSettled.PostExecutionStateRoot()
 	if err := state.StartBlock(hdr); err != nil {
 		log.Warn("Could not start worst-case block calculation",
 			zap.Error(err),
@@ -322,7 +313,6 @@ func (vm *VM) VerifyBlock(ctx context.Context, bCtx *block.Context, b *blocks.Bl
 		ctx,
 		bCtx,
 		parent,
-		b.Timestamp(),
 		func(f txpool.PendingFilter) []*txgossip.LazyTransaction { return txs },
 		vm.hooks.BlockRebuilderFrom(b.EthBlock()),
 	)
