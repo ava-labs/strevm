@@ -58,8 +58,7 @@ type executionResults struct {
 // true and [Block.WaitUntilExecuted] returning cleanly are both therefore
 // indicative of a successful database write by MarkExecuted.
 //
-// This method MUST NOT be called more than once and its usage is mutually
-// exclusive of [Block.RestorePostExecutionState]. The wall-clock [time.Time] is
+// This method MUST NOT be called more than once. The wall-clock [time.Time] is
 // for metrics only.
 func (b *Block) MarkExecuted(db ethdb.Database, byGas *gastime.Time, byWall time.Time, baseFee *big.Int, receipts types.Receipts, stateRootPost common.Hash) error {
 	e := &executionResults{
