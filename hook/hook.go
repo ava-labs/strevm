@@ -67,12 +67,12 @@ type BlockBuilder interface {
 	// [types.Header.GasUsed] will be ignored and overwritten. Any other fields
 	// MAY be set as desired.
 	//
-	// This method MUST be used rather than directly constructing a header to
+	// SAE always uses this method instead of directly constructing a header, to
 	// ensure any libevm header extras are properly populated.
 	BuildHeader(parent *types.Header) *types.Header
 	// BuildBlock constructs a block with the given components.
 	//
-	// This method MUST be used rather than [types.NewBlock] to ensure any
+	// SAE always uses this method instead of [types.NewBlock], to ensure any
 	// libevm block extras are properly populated.
 	BuildBlock(
 		header *types.Header,

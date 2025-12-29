@@ -98,6 +98,14 @@ func (vm *VM) buildBlock(
 		zap.Stringer("parent_hash", parent.Hash()),
 		zap.Uint64("block_time", hdr.Time),
 	)
+	if hdr.Root != (common.Hash{}) || hdr.GasLimit != 0 || hdr.BaseFee != nil || hdr.GasUsed != 0 {
+		log.Warn("Block builder returned header with at least one reserved field set",
+			zap.Stringer("root", hdr.Root),
+			zap.Uint64("gas_limit", hdr.GasLimit),
+			zap.Stringer("base_fee", hdr.BaseFee),
+			zap.Uint64("gas_used", hdr.GasUsed),
+		)
+	}
 
 	// It is allowed for [hook.Points] to further constrain the allowed block
 	// times. However, every block MUST at least satisfy these basic sanity
@@ -113,7 +121,7 @@ func (vm *VM) buildBlock(
 	}
 
 	// TODO(StephenButtolph) settlement logic needs to support sub-second block
-	// times.
+	// times. Tracked in https://github.com/ava-labs/strevm/issues/49
 	settleAt := hdr.Time - saeparams.TauSeconds
 	lastSettled, ok, err := blocks.LastToSettleAt(settleAt, parent)
 	if err != nil {
