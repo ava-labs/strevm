@@ -37,6 +37,9 @@ func ExampleRange() {
 	// Returns the (possibly empty) slice of blocks that would be settled by the
 	// block being built.
 	_ = Range(parent.LastSettled(), settle)
+	// Returns the (possibly empty) slice of blocks that would be left unsettled
+	// by the block being built.
+	_ = Range(settle, parent)
 }
 
 // blockBuildingPreference exists only to allow examples to build.
