@@ -142,9 +142,19 @@ func (b *Block) Settles() []*Block {
 //
 // If the two arguments are the same block, Range returns an empty slice.
 func Range(start, end *Block) []*Block {
-	var chain []*Block
-	for b := end; b.Hash() != start.Hash(); b = b.ParentBlock() {
-		chain = append(chain, b)
+	startHeight := start.Height()
+	endHeight := end.Height()
+	if endHeight <= startHeight {
+		return nil
+	}
+
+	var (
+		chain = make([]*Block, endHeight-startHeight)
+		b     = end
+	)
+	for i := range chain {
+		chain[i] = b
+		b = b.ParentBlock()
 	}
 	slices.Reverse(chain)
 	return chain
