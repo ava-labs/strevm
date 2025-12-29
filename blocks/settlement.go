@@ -133,14 +133,14 @@ func (b *Block) Settles() []*Block {
 	return Range(b.ParentBlock().LastSettled(), b.LastSettled())
 }
 
-// Range returns the blocks in the continuous half-open interval (start, end] in
-// order of increasing height.
+// Range returns the blocks in the continuous, half-open interval (start, end]
+// in order of increasing height.
 //
 // The `start` block MAY be settled, but all other blocks in the range MUST NOT
 // be settled. It is assumed that `start` can be reached by traversing up the
 // chain from `end`.
 //
-// If the two arguments are the same block, it returns an empty slice.
+// If the two arguments are the same block, Range returns an empty slice.
 func Range(start, end *Block) []*Block {
 	var chain []*Block
 	for b := end; b.Hash() != start.Hash(); b = b.ParentBlock() {

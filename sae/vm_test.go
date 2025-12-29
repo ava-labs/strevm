@@ -34,6 +34,7 @@ import (
 	"github.com/ava-labs/strevm/blocks"
 	"github.com/ava-labs/strevm/blocks/blockstest"
 	"github.com/ava-labs/strevm/hook/hookstest"
+	saeparams "github.com/ava-labs/strevm/params"
 	"github.com/ava-labs/strevm/saetest"
 )
 
@@ -114,6 +115,16 @@ func newSUT(
 		genesis: genesis,
 		wallet:  wallet,
 	}
+}
+
+func (s *SUT) lastAcceptedBlock(tb testing.TB) snowman.Block {
+	tb.Helper()
+	ctx := tb.Context()
+	lastAcceptedID, err := s.LastAccepted(ctx)
+	require.NoError(tb, err, "LastAccepted()")
+	lastAccepted, err := s.GetBlock(ctx, lastAcceptedID)
+	require.NoError(tb, err, "GetBlock(lastAcceptedID)")
+	return lastAccepted
 }
 
 func (s *SUT) mustSendTx(tb testing.TB, tx *types.Transaction) {
@@ -282,16 +293,12 @@ func TestSemanticBlockChecks(t *testing.T) {
 		return time.Unix(now, 0)
 	}
 
-	lastAcceptedID, err := sut.LastAccepted(ctx)
-	require.NoError(t, err, "LastAccepted()")
-	lastAccepted, err := sut.GetBlock(ctx, lastAcceptedID)
-	require.NoError(t, err, "GetBlock(lastAcceptedID)")
-
+	lastAccepted := sut.lastAcceptedBlock(t)
 	tests := []struct {
 		name           string
-		parentHash     common.Hash
-		acceptedHeight bool
-		time           uint64
+		parentHash     common.Hash // defaults to lastAccepted Hash if zero
+		acceptedHeight bool        // if true, block height == lastAccepted.Height(); else +1
+		time           uint64      // defaults to `now` if zero
 		receipts       types.Receipts
 		wantErr        error
 	}{
@@ -303,16 +310,16 @@ func TestSemanticBlockChecks(t *testing.T) {
 		{
 			name:           "already_finalized",
 			acceptedHeight: true,
-			wantErr:        errFinalizedBlock,
+			wantErr:        errBlockHeightTooLow,
 		},
 		{
 			name:    "block_time_under_minimum",
-			time:    1,
+			time:    saeparams.TauSeconds - 1,
 			wantErr: errBlockTimeUnderMinimum,
 		},
 		{
 			name:    "block_time_before_parent",
-			time:    sut.genesis.BuildTime() - 1,
+			time:    unwrap(t, lastAccepted).BuildTime() - 1,
 			wantErr: errBlockTimeBeforeParent,
 		},
 		{
@@ -332,7 +339,7 @@ func TestSemanticBlockChecks(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			if tt.parentHash == (common.Hash{}) {
-				tt.parentHash = common.Hash(lastAcceptedID)
+				tt.parentHash = common.Hash(lastAccepted.ID())
 			}
 			height := lastAccepted.Height()
 			if !tt.acceptedHeight {
@@ -348,17 +355,12 @@ func TestSemanticBlockChecks(t *testing.T) {
 					Number:     new(big.Int).SetUint64(height),
 					Time:       tt.time,
 				},
-				nil,
-				nil,
+				nil, // txs
+				nil, // uncles
 				tt.receipts,
 				saetest.TrieHasher(),
 			)
-			b := blockstest.NewBlock(
-				t,
-				ethB,
-				nil,
-				nil,
-			)
+			b := blockstest.NewBlock(t, ethB, nil, nil)
 			snowB, err := sut.ParseBlock(ctx, b.Bytes())
 			require.NoErrorf(t, err, "ParseBlock(...)")
 			require.ErrorIs(t, snowB.Verify(ctx), tt.wantErr, "Verify()")
