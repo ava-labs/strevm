@@ -37,7 +37,7 @@ func (vm *VM) CreateHandlers(ctx context.Context) (map[string]http.Handler, erro
 // documentation for this method.
 //
 // Ethereum-compatible VMs don't typically utilize HTTP2, so [VM.CreateHandlers]
-// is used instead.
+// is used instead, and this method returns `nil, nil`.
 func (*VM) NewHTTPHandler(context.Context) (http.Handler, error) {
 	var _ common.VM // maintain import for [comment] rendering
 	return nil, nil
