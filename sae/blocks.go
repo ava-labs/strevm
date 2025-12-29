@@ -7,26 +7,24 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math/big"
 	"time"
 
 	"github.com/ava-labs/avalanchego/database"
 	"github.com/ava-labs/avalanchego/ids"
 	"github.com/ava-labs/avalanchego/snow/engine/snowman/block"
-	"github.com/ava-labs/avalanchego/vms/components/gas"
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core"
-	"github.com/ava-labs/libevm/core/state"
 	"github.com/ava-labs/libevm/core/txpool"
 	"github.com/ava-labs/libevm/core/types"
+	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/rlp"
-	"github.com/holiman/uint256"
 	"go.uber.org/zap"
 
 	"github.com/ava-labs/strevm/blocks"
 	"github.com/ava-labs/strevm/hook"
-	"github.com/ava-labs/strevm/params"
+	saeparams "github.com/ava-labs/strevm/params"
 	"github.com/ava-labs/strevm/txgossip"
+	"github.com/ava-labs/strevm/worstcase"
 )
 
 func (vm *VM) newBlock(eth *types.Block, parent, lastSettled *blocks.Block) (*blocks.Block, error) {
@@ -64,29 +62,25 @@ func (vm *VM) ParseBlock(ctx context.Context, buf []byte) (*blocks.Block, error)
 // BuildBlock builds a new block, using the last block passed to
 // [VM.SetPreference] as the parent. The block context MAY be nil.
 func (vm *VM) BuildBlock(ctx context.Context, bCtx *block.Context) (*blocks.Block, error) {
-	parent := vm.preference.Load()
-
-	baseFee := uint256.NewInt(0)
-	if false { // Demonstrate the expected actual computation of `baseFee`
-		clock := parent.ExecutedByGasTime() // TODO(arr4n) carry the worst-case equivalent and use it instead
-		clock.BeforeBlock(vm.hooks, nil)    // TODO(arr4n) modify this to accept the FastForward() arguments, not the Header
-		baseFee = clock.BaseFee()
-	}
-
-	filter := txpool.PendingFilter{
-		BaseFee: baseFee,
-	}
 	return vm.buildBlock(
 		ctx,
 		bCtx,
-		parent,
-		vm.config.Now(),
-		vm.mempool.TransactionsByPriority(filter),
+		vm.preference.Load(),
+		vm.mempool.TransactionsByPriority,
 		vm.hooks,
 	)
 }
 
-var errExecutionLagging = errors.New("execution lagging for settlement")
+// Max time from current time allowed for blocks, before they're considered
+// future blocks and fail verification.
+const maxFutureBlockTime = 10 * time.Second
+
+var (
+	errBlockTimeUnderMinimum = errors.New("block time under minimum allowed time")
+	errBlockTimeBeforeParent = errors.New("block time before parent time")
+	errBlockTimeAfterMaximum = errors.New("block time after maximum allowed time")
+	errExecutionLagging      = errors.New("execution lagging for settlement")
+)
 
 // buildBlock implements the block-building logic shared by [VM.BuildBlock] and
 // [VM.VerifyBlock].
@@ -94,17 +88,40 @@ func (vm *VM) buildBlock(
 	ctx context.Context,
 	bCtx *block.Context,
 	parent *blocks.Block,
-	blockTime time.Time,
-	candidates []*txgossip.LazyTransaction,
+	pendingTxs func(txpool.PendingFilter) []*txgossip.LazyTransaction,
 	builder hook.BlockBuilder,
 ) (*blocks.Block, error) {
+	hdr := builder.BuildHeader(parent.Header())
 	log := vm.log().With(
 		zap.Uint64("parent_height", parent.Height()),
 		zap.Stringer("parent_hash", parent.Hash()),
-		zap.Time("block_time", blockTime),
+		zap.Uint64("block_time", hdr.Time),
 	)
+	if hdr.Root != (common.Hash{}) || hdr.GasLimit != 0 || hdr.BaseFee != nil || hdr.GasUsed != 0 {
+		log.Warn("Block builder returned header with at least one reserved field set",
+			zap.Stringer("root", hdr.Root),
+			zap.Uint64("gas_limit", hdr.GasLimit),
+			zap.Stringer("base_fee", hdr.BaseFee),
+			zap.Uint64("gas_used", hdr.GasUsed),
+		)
+	}
 
-	settleAt := unix(blockTime.Add(-params.Tau))
+	// It is allowed for [hook.Points] to further constrain the allowed block
+	// times. However, every block MUST at least satisfy these basic sanity
+	// checks.
+	if hdr.Time < saeparams.TauSeconds {
+		return nil, fmt.Errorf("%w: %d < %d", errBlockTimeUnderMinimum, hdr.Time, saeparams.TauSeconds)
+	}
+	if parentTime := parent.BuildTime(); hdr.Time < parentTime {
+		return nil, fmt.Errorf("%w: %d < %d", errBlockTimeBeforeParent, hdr.Time, parentTime)
+	}
+	if maxTime := uint64(vm.config.Now().Add(maxFutureBlockTime).Unix()); hdr.Time > maxTime { //nolint:gosec // Time won't overflow for quite a while
+		return nil, fmt.Errorf("%w: %d > %d", errBlockTimeAfterMaximum, hdr.Time, maxTime)
+	}
+
+	// TODO(StephenButtolph) settlement logic needs to support sub-second block
+	// times. Tracked in https://github.com/ava-labs/strevm/issues/49
+	settleAt := hdr.Time - saeparams.TauSeconds
 	lastSettled, ok, err := blocks.LastToSettleAt(settleAt, parent)
 	if err != nil {
 		return nil, err
@@ -114,62 +131,119 @@ func (vm *VM) buildBlock(
 		return nil, errExecutionLagging
 	}
 
-	// Although, at the time of writing this, the implementation of
-	// [blocks.LastToSettleAt] guarantees that the returned block has finished
-	// execution, this isn't a stated invariant and it's possible for it to be
-	// more aggressive in the future.
-	if !lastSettled.Executed() {
-		log.Warn(
-			"Execution lagging for settlement artefacts",
-			zap.Uint64("settling_height", lastSettled.Height()),
-		)
-		return nil, fmt.Errorf("%w: settling block %d: %T.WaitUntilExecuted(): %v", errExecutionLagging, lastSettled.Height(), lastSettled, err)
-	}
+	log = log.With(
+		zap.Uint64("last_settled_height", lastSettled.Height()),
+		zap.Stringer("last_settled_hash", lastSettled.Hash()),
+	)
 
-	sdb, err := state.New(lastSettled.PostExecutionStateRoot(), vm.exec.StateCache(), nil)
+	state, err := worstcase.NewState(vm.hooks, vm.exec.ChainConfig(), vm.exec.StateCache(), lastSettled)
 	if err != nil {
-		b := lastSettled
-		return nil, fmt.Errorf("state.New([post-execution state root %#x of block %d], ...): %v", b.PostExecutionStateRoot(), b.Height(), err)
+		log.Warn("Worst-case state not able to be created",
+			zap.Error(err),
+		)
+		return nil, err
 	}
 
-	// TODO(arr4n) worst-case tx validation will happen here. This is just a
-	// sketch of the process.
-	history := parent.WhenChildSettles(lastSettled)
-	var receipts types.Receipts
-	for _, b := range history {
-		receipts = append(receipts, b.Receipts()...)
-	}
-
-	clock := lastSettled.ExecutedByGasTime()
-	for _, b := range history {
-		clock.BeforeBlock(vm.hooks, b.Header())
-
-		var lim gas.Gas
-		for _, tx := range b.Transactions() {
-			lim += gas.Gas(tx.Gas())
+	unsettled := blocks.Range(lastSettled, parent)
+	for _, b := range unsettled {
+		log := log.With(
+			zap.Uint64("block_height", b.Height()),
+			zap.Stringer("block_hash", b.Hash()),
+		)
+		if err := state.StartBlock(b.Header()); err != nil {
+			log.Warn("Could not start historical worst-case calculation",
+				zap.Error(err),
+			)
+			return nil, fmt.Errorf("starting worst-case state for block %d: %v", b.Height(), err)
 		}
-		if err := clock.AfterBlock(lim, vm.hooks, b.Header()); err != nil {
-			return nil, err
+		for i, tx := range b.Transactions() {
+			if err := state.ApplyTx(tx); err != nil {
+				log.Warn("Could not apply tx during historical worst-case calculation",
+					zap.Int("tx_index", i),
+					zap.Stringer("tx_hash", tx.Hash()),
+					zap.Error(err),
+				)
+				return nil, fmt.Errorf("applying tx %#x in block %d to worst-case state: %v", tx.Hash(), b.Height(), err)
+			}
+		}
+		for i, op := range vm.hooks.EndOfBlockOps(b.EthBlock()) {
+			if err := state.Apply(op); err != nil {
+				log.Warn("Could not apply op during historical worst-case calculation",
+					zap.Int("op_index", i),
+					zap.Stringer("op_id", op.ID),
+					zap.Error(err),
+				)
+				return nil, fmt.Errorf("applying op at end of block %d to worst-case state: %v", b.Height(), err)
+			}
+		}
+		if err := state.FinishBlock(); err != nil {
+			log.Warn("Could not finish historical worst-case calculation",
+				zap.Error(err),
+			)
+			return nil, fmt.Errorf("finishing worst-case state for block %d: %v", b.Height(), err)
 		}
 	}
 
-	hdr := &types.Header{
-		ParentHash: parent.Hash(),
-		Number:     new(big.Int).Add(parent.Number(), common.Big1),
-		Time:       unix(blockTime),
-		Root:       lastSettled.PostExecutionStateRoot(),
+	hdr.Root = lastSettled.PostExecutionStateRoot()
+	if err := state.StartBlock(hdr); err != nil {
+		log.Warn("Could not start worst-case block calculation",
+			zap.Error(err),
+		)
+		return nil, fmt.Errorf("starting worst-case state for new block: %v", err)
 	}
-	clock.BeforeBlock(vm.hooks, hdr)
-	hdr.BaseFee = clock.BaseFee().ToBig()
 
-	var included []*types.Transaction
+	hdr.GasLimit = state.GasLimit()
+	hdr.BaseFee = state.BaseFee().ToBig()
+
+	var (
+		candidates = pendingTxs(txpool.PendingFilter{
+			BaseFee: state.BaseFee(),
+		})
+		included []*types.Transaction
+	)
 	for _, ltx := range candidates {
+		// If we don't have enough gas remaining in the block for the minimum
+		// gas amount, we are done including transactions.
+		if remainingGas := state.GasLimit() - state.GasUsed(); remainingGas < params.TxGas {
+			break
+		}
+
 		tx, ok := ltx.Resolve()
 		if !ok {
+			log.Debug("Could not resolve lazy transaction",
+				zap.Stringer("tx_hash", ltx.Hash),
+			)
 			continue
 		}
-		_ = sdb // balance checks
+
+		if err := state.ApplyTx(tx); err != nil {
+			log.Debug("Could not apply transaction",
+				zap.Int("tx_index", len(included)),
+				zap.Stringer("tx_hash", ltx.Hash),
+				zap.Error(err),
+			)
+			continue
+		}
 		included = append(included, tx)
+	}
+
+	// TODO: Should the [hook.BlockBuilder] populate [types.Header.GasUsed] so
+	// that [hook.Op.Gas] can be included?
+	hdr.GasUsed = state.GasUsed()
+
+	// Although we never interact with the worst-case state after this point, we
+	// still mark the block as finished to align with normal execution.
+	if err := state.FinishBlock(); err != nil {
+		log.Warn("Could not finish worst-case block calculation",
+			zap.Error(err),
+		)
+		return nil, fmt.Errorf("finishing worst-case state for new block: %v", err)
+	}
+
+	var receipts types.Receipts
+	settling := blocks.Range(parent.LastSettled(), lastSettled)
+	for _, b := range settling {
+		receipts = append(receipts, b.Receipts()...)
 	}
 
 	ethB := builder.BuildBlock(
@@ -179,6 +253,12 @@ func (vm *VM) buildBlock(
 	)
 	return vm.newBlock(ethB, parent, lastSettled)
 }
+
+var (
+	errUnknownParent     = errors.New("unknown parent")
+	errBlockHeightTooLow = errors.New("block height too low")
+	errHashMismatch      = errors.New("hash mismatch")
+)
 
 // VerifyBlock validates the block and, if successful, populates its ancestry.
 // The block context MAY be nil.
@@ -193,14 +273,12 @@ func (vm *VM) VerifyBlock(ctx context.Context, bCtx *block.Context, b *blocks.Bl
 
 	parent, err := vm.GetBlock(ctx, b.Parent())
 	if err != nil {
-		return fmt.Errorf("unknown block parent %#x: %w", b.ParentHash(), err)
+		return fmt.Errorf("%w %#x: %w", errUnknownParent, b.ParentHash(), err)
 	}
 
-	switch height, accepted := b.Height(), vm.lastAccepted.Load().Height(); {
-	case height != parent.Height()+1:
-		return fmt.Errorf("non-incrementing block height; verifying at %d with parent at %d", height, parent.Height())
-	case height <= accepted:
-		return fmt.Errorf("verifying block at height %d <= last-accepted (%d)", height, accepted)
+	// Sanity check that we aren't verifying an accepted block.
+	if height, accepted := b.Height(), vm.lastAccepted.Load().Height(); height <= accepted {
+		return fmt.Errorf("%w at height %d <= last-accepted (%d)", errBlockHeightTooLow, height, accepted)
 	}
 
 	txs := make([]*txgossip.LazyTransaction, len(b.Transactions()))
@@ -235,8 +313,7 @@ func (vm *VM) VerifyBlock(ctx context.Context, bCtx *block.Context, b *blocks.Bl
 		ctx,
 		bCtx,
 		parent,
-		b.Timestamp(),
-		txs,
+		func(f txpool.PendingFilter) []*txgossip.LazyTransaction { return txs },
 		vm.hooks.BlockRebuilderFrom(b.EthBlock()),
 	)
 	if err != nil {
@@ -246,7 +323,7 @@ func (vm *VM) VerifyBlock(ctx context.Context, bCtx *block.Context, b *blocks.Bl
 	// key to the purpose of this method so included here to be defensive. It
 	// also provides a clearer failure message.
 	if reH, verH := rebuilt.Hash(), b.Hash(); reH != verH {
-		return fmt.Errorf("block-hash mismatch when rebuilding block; rebuilt as %#x when verifying %#x", reH, verH)
+		return fmt.Errorf("%w; rebuilt as %#x when verifying %#x", errHashMismatch, reH, verH)
 	}
 	if err := b.CopyAncestorsFrom(rebuilt); err != nil {
 		return err

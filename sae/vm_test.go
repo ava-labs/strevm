@@ -34,6 +34,7 @@ import (
 	"github.com/ava-labs/strevm/blocks"
 	"github.com/ava-labs/strevm/blocks/blockstest"
 	"github.com/ava-labs/strevm/hook/hookstest"
+	saeparams "github.com/ava-labs/strevm/params"
 	"github.com/ava-labs/strevm/saetest"
 )
 
@@ -60,7 +61,11 @@ type SUT struct {
 	wallet  *saetest.Wallet
 }
 
-func newSUT(tb testing.TB, numAccounts uint) (context.Context, *SUT) {
+func newSUT(
+	tb testing.TB,
+	numAccounts uint,
+	genesisOptions ...blockstest.GenesisOption,
+) (context.Context, *SUT) {
 	tb.Helper()
 
 	mempoolConf := legacypool.DefaultConfig // copies
@@ -80,9 +85,14 @@ func newSUT(tb testing.TB, numAccounts uint) (context.Context, *SUT) {
 	wallet := saetest.NewUNSAFEWallet(tb, numAccounts, signer)
 
 	db := rawdb.NewMemoryDatabase()
-	genesis := blockstest.NewGenesis(tb, db, config, saetest.MaxAllocFor(wallet.Addresses()...))
+	genesis := blockstest.NewGenesis(tb, db, config, saetest.MaxAllocFor(wallet.Addresses()...), genesisOptions...)
 
+	// TODO(StephenButtolph) unify the time function provided in the config and
+	// the hooks.
 	hooks := &hookstest.Stub{
+		Now: func() uint64 {
+			return uint64(vm.config.Now().Unix()) //nolint:gosec // Time won't overflow for quite a while
+		},
 		Target: 100e6,
 	}
 
@@ -110,6 +120,16 @@ func newSUT(tb testing.TB, numAccounts uint) (context.Context, *SUT) {
 		genesis: genesis,
 		wallet:  wallet,
 	}
+}
+
+func (s *SUT) lastAcceptedBlock(tb testing.TB) snowman.Block {
+	tb.Helper()
+	ctx := tb.Context()
+	lastAcceptedID, err := s.LastAccepted(ctx)
+	require.NoError(tb, err, "LastAccepted()")
+	lastAccepted, err := s.GetBlock(ctx, lastAcceptedID)
+	require.NoError(tb, err, "GetBlock(lastAcceptedID)")
+	return lastAccepted
 }
 
 func (s *SUT) mustSendTx(tb testing.TB, tx *types.Transaction) {
@@ -267,6 +287,88 @@ func TestSyntacticBlockChecks(t *testing.T) {
 			b := blockstest.NewBlock(t, types.NewBlockWithHeader(tt.header), nil, nil)
 			_, err := sut.ParseBlock(ctx, b.Bytes())
 			assert.ErrorIs(t, err, tt.wantErr, "ParseBlock(#%v @ time %v) when stubbed time is %d", tt.header.Number, tt.header.Time, uint64(now))
+		})
+	}
+}
+
+func TestSemanticBlockChecks(t *testing.T) {
+	const now = 1e6
+	ctx, sut := newSUT(t, 1, blockstest.WithTimestamp(now))
+	sut.rawVM.config.Now = func() time.Time {
+		return time.Unix(now, 0)
+	}
+
+	lastAccepted := sut.lastAcceptedBlock(t)
+	tests := []struct {
+		name           string
+		parentHash     common.Hash // defaults to lastAccepted Hash if zero
+		acceptedHeight bool        // if true, block height == lastAccepted.Height(); else +1
+		time           uint64      // defaults to `now` if zero
+		receipts       types.Receipts
+		wantErr        error
+	}{
+		{
+			name:       "unknown_parent",
+			parentHash: common.Hash{1},
+			wantErr:    errUnknownParent,
+		},
+		{
+			name:           "already_finalized",
+			acceptedHeight: true,
+			wantErr:        errBlockHeightTooLow,
+		},
+		{
+			name:    "block_time_under_minimum",
+			time:    saeparams.TauSeconds - 1,
+			wantErr: errBlockTimeUnderMinimum,
+		},
+		{
+			name:    "block_time_before_parent",
+			time:    unwrap(t, lastAccepted).BuildTime() - 1,
+			wantErr: errBlockTimeBeforeParent,
+		},
+		{
+			name:    "block_time_after_maximum",
+			time:    now + uint64(maxFutureBlockTime.Seconds()) + 1,
+			wantErr: errBlockTimeAfterMaximum,
+		},
+		{
+			name: "hash_mismatch",
+			receipts: types.Receipts{
+				&types.Receipt{}, // Unexpected receipt
+			},
+			wantErr: errHashMismatch,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.parentHash == (common.Hash{}) {
+				tt.parentHash = common.Hash(lastAccepted.ID())
+			}
+			height := lastAccepted.Height()
+			if !tt.acceptedHeight {
+				height++
+			}
+			if tt.time == 0 {
+				tt.time = now
+			}
+
+			ethB := types.NewBlock(
+				&types.Header{
+					ParentHash: tt.parentHash,
+					Number:     new(big.Int).SetUint64(height),
+					Time:       tt.time,
+				},
+				nil, // txs
+				nil, // uncles
+				tt.receipts,
+				saetest.TrieHasher(),
+			)
+			b := blockstest.NewBlock(t, ethB, nil, nil)
+			snowB, err := sut.ParseBlock(ctx, b.Bytes())
+			require.NoErrorf(t, err, "ParseBlock(...)")
+			require.ErrorIs(t, snowB.Verify(ctx), tt.wantErr, "Verify()")
 		})
 	}
 }
