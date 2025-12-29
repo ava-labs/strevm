@@ -98,10 +98,20 @@ func WithLogger(l logging.Logger) BlockOption {
 	})
 }
 
-// NewGenesisFromSpec constructs a new genesis from a given genesis spec [*core.Genesis],
-// writes it to the database, and returns wraps [core.Genesis.ToBlock] with [NewBlock].
-// It assumes a nil [triedb.Config] unless overridden by a [WithTrieDBConfig]. The block is
+// NewGenesis constructs a new [core.Genesis], writes it to the database, and
+// returns wraps [core.Genesis.ToBlock] with [NewBlock]. It assumes a nil
+// [triedb.Config] unless overridden by a [WithTrieDBConfig]. The block is
 // marked as both executed and synchronous.
+func NewGenesis(tb testing.TB, db ethdb.Database, config *params.ChainConfig, alloc types.GenesisAlloc, opts ...GenesisOption) *blocks.Block {
+	gen := &core.Genesis{
+		Config: config,
+		Alloc:  alloc,
+	}
+	return NewGenesisFromSpec(tb, db, gen, opts...)
+}
+
+// NewGenesisFromSpec constructs a new genesis from a given genesis spec.
+// This is similar to [NewGenesis], but allows for more flexibility in the genesis spec.
 func NewGenesisFromSpec(tb testing.TB, db ethdb.Database, gen *core.Genesis, opts ...GenesisOption) *blocks.Block {
 	tb.Helper()
 	conf := &genesisConfig{
@@ -117,15 +127,6 @@ func NewGenesisFromSpec(tb testing.TB, db ethdb.Database, gen *core.Genesis, opt
 	require.NoErrorf(tb, b.MarkExecuted(db, gastime.New(gen.Timestamp, conf.gasTarget, conf.gasExcess), time.Time{}, new(big.Int), nil, b.SettledStateRoot()), "%T.MarkExecuted()", b)
 	require.NoErrorf(tb, b.MarkSynchronous(), "%T.MarkSynchronous()", b)
 	return b
-}
-
-// NewGenesis constructs a new genesis from a given chain config and alloc,
-func NewGenesis(tb testing.TB, db ethdb.Database, config *params.ChainConfig, alloc types.GenesisAlloc, opts ...GenesisOption) *blocks.Block {
-	gen := &core.Genesis{
-		Config: config,
-		Alloc:  alloc,
-	}
-	return NewGenesisFromSpec(tb, db, gen, opts...)
 }
 
 type genesisConfig struct {
