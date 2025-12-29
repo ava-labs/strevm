@@ -35,8 +35,9 @@ import (
 //  2. [State.GasLimit] and [State.BaseFee] to query the block's parameters.
 //  3. [State.ApplyTx] or [State.Apply] for each [types.Transaction] or
 //     [hook.Op] to include in the block, respectively.
-//  4. [State.FinishBlock] to finalize the block's gas time.
-//  5. Repeat from step 1 for the next block.
+//  4. [State.GasUsed] to query the total gas used in the block.
+//  5. [State.FinishBlock] to finalize the block's gas time.
+//  6. Repeat from step 1 for the next block.
 type State struct {
 	hooks  hook.Points
 	config *params.ChainConfig
@@ -57,7 +58,7 @@ type State struct {
 	signer  types.Signer
 }
 
-var errSettledBlockNotExecuted = errors.New("settled block not executed")
+var errSettledBlockNotExecuted = errors.New("block marked for settling has not finished execution yet")
 
 // NewState constructs a new worst-case state on top of the settled block.
 func NewState(
@@ -268,6 +269,11 @@ func (s *State) Apply(o hook.Op) error {
 	}
 	s.blockSize += o.Gas
 	return nil
+}
+
+// GasUsed returns the gas used for the current block.
+func (s *State) GasUsed() uint64 {
+	return uint64(s.blockSize)
 }
 
 // FinishBlock advances the [gastime.Time] in preparation for the next block.
