@@ -23,7 +23,7 @@ import (
 )
 
 //nolint:testableexamples // Output is meaningless
-func ExampleBlock_Range() {
+func ExampleRange() {
 	parent := blockBuildingPreference()
 	settle, ok, err := LastToSettleAt(uint64(time.Now().Unix()), parent) //nolint:gosec // Time won't overflow for quite a while
 	if err != nil {
