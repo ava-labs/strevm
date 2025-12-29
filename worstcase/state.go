@@ -58,7 +58,7 @@ type State struct {
 	signer  types.Signer
 }
 
-var errSettledBlockNotExecuted = errors.New("settled block not executed")
+var errSettledBlockNotExecuted = errors.New("block marked for settling has not finished execution yet")
 
 // NewState constructs a new worst-case state on top of the settled block.
 func NewState(
