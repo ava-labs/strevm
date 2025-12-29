@@ -5,6 +5,9 @@
 package hookstest
 
 import (
+	"context"
+
+	"github.com/ava-labs/avalanchego/snow/engine/common"
 	"github.com/ava-labs/avalanchego/vms/components/gas"
 	"github.com/ava-labs/libevm/core/state"
 	"github.com/ava-labs/libevm/core/types"
@@ -22,6 +25,18 @@ type Stub struct {
 }
 
 var _ hook.Points = (*Stub)(nil)
+
+// BlockEvents immediately returns nil.
+func (*Stub) BlockEvents(context.Context) error {
+	return nil
+}
+
+// WaitForEvent blocks until the context is cancelled, and then returns the
+// context's error.
+func (*Stub) WaitForEvent(ctx context.Context) (common.Message, error) {
+	<-ctx.Done()
+	return 0, ctx.Err()
+}
 
 // BuildBlock calls [types.NewBlock] with its arguments.
 func (*Stub) BuildBlock(

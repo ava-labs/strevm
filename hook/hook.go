@@ -8,9 +8,11 @@
 package hook
 
 import (
+	"context"
 	"math"
 
 	"github.com/ava-labs/avalanchego/ids"
+	snowcommon "github.com/ava-labs/avalanchego/snow/engine/common"
 	"github.com/ava-labs/avalanchego/vms/components/gas"
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core"
@@ -30,6 +32,14 @@ import (
 // existing block is indicative of this node reconstructing a block built
 // elsewhere during verification.
 type Points interface {
+	// BlockEvents is called every time [snowcommon.VM.WaitForEvent] is invoked.
+	// If it returns a non-nil error, the error will be propagated to the caller
+	// of [snowcommon.VM.WaitForEvent].
+	BlockEvents(context.Context) error
+	// WaitForEvent is called to wait for the next message for the consensus
+	// engine.
+	WaitForEvent(context.Context) (snowcommon.Message, error)
+
 	BlockBuilder
 	// BlockRebuilderFrom returns a [BlockBuilder] that will attempt to
 	// reconstruct the provided block. If the provided block is valid for

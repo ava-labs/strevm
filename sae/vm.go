@@ -167,6 +167,35 @@ func (vm *VM) signalNewTxsToEngine() {
 // transactions. In both cases it returns [snowcommon.PendingTxs]. In the latter
 // scenario it respects context cancellation.
 func (vm *VM) WaitForEvent(ctx context.Context) (snowcommon.Message, error) {
+	// Allow the hooks to block until it's appropriate to check for block
+	// building events.
+	//
+	// For example, this can be used to delay block building until after a
+	// minimum block delay.
+	if err := vm.hooks.BlockEvents(ctx); err != nil {
+		return 0, err
+	}
+
+	// It's possible for either the hooks or the mempool to request that a block
+	// is built, so we wait on both and propagate the first event to occur.
+	ctx, cancel := context.WithCancel(ctx)
+	type event struct {
+		msg snowcommon.Message
+		err error
+	}
+	events := make(chan event, 2) // buffer to avoid goroutine leaks
+	handleEvent := func(f func(context.Context) (snowcommon.Message, error)) {
+		defer cancel()
+		msg, err := f(ctx)
+		events <- event{msg, err}
+	}
+	go handleEvent(vm.waitForEvent)
+	go handleEvent(vm.hooks.WaitForEvent)
+	e := <-events
+	return e.msg, e.err
+}
+
+func (vm *VM) waitForEvent(ctx context.Context) (snowcommon.Message, error) {
 	if vm.numPendingTxs() > 0 {
 		select {
 		case <-vm.newTxs: // probably has something buffered
