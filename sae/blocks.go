@@ -7,7 +7,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"slices"
 	"time"
 
 	"github.com/ava-labs/avalanchego/database"
@@ -128,6 +127,7 @@ func (vm *VM) buildBlock(
 		return nil, err
 	}
 	if !ok {
+		log.Warn("Execution lagging when determining last block to settle")
 		return nil, errExecutionLagging
 	}
 
@@ -138,11 +138,13 @@ func (vm *VM) buildBlock(
 
 	state, err := worstcase.NewState(vm.hooks, vm.exec.ChainConfig(), vm.exec.StateCache(), lastSettled)
 	if err != nil {
-		log.Warn("Settled state not available")
+		log.Warn("Worst case state not able to be created",
+			zap.Error(err),
+		)
 		return nil, err
 	}
 
-	for _, b := range unsettledAncestry(parent, lastSettled.Height()) {
+	for _, b := range blocks.Range(lastSettled, parent) {
 		log := log.With(
 			zap.Uint64("block_height", b.Height()),
 			zap.Stringer("block_hash", b.Hash()),
@@ -207,10 +209,18 @@ func (vm *VM) buildBlock(
 
 		tx, ok := ltx.Resolve()
 		if !ok {
+			log.Debug("Could not resolve lazy transaction",
+				zap.Stringer("tx_hash", ltx.Hash),
+			)
 			continue
 		}
 
 		if err := state.ApplyTx(tx); err != nil {
+			log.Debug("Could not apply transaction",
+				zap.Int("tx_index", len(included)),
+				zap.Stringer("tx_hash", ltx.Hash),
+				zap.Error(err),
+			)
 			continue
 		}
 		included = append(included, tx)
@@ -230,7 +240,7 @@ func (vm *VM) buildBlock(
 	}
 
 	var receipts types.Receipts
-	for _, b := range parent.WhenChildSettles(lastSettled) {
+	for _, b := range blocks.Range(parent.LastSettled(), lastSettled) {
 		receipts = append(receipts, b.Receipts()...)
 	}
 
@@ -240,26 +250,6 @@ func (vm *VM) buildBlock(
 		receipts,
 	)
 	return vm.newBlock(ethB, parent, lastSettled)
-}
-
-// unsettledAncestry returns the ancestry of blocks from `parent` (inclusive) to
-// the (non-inclusive) `settledHeight`; in order of oldest to newest.
-//
-// It is assumed that `parent` was successfully verified and has not been
-// rejected.
-func unsettledAncestry(parent *blocks.Block, settledHeight uint64) []*blocks.Block {
-	parentHeight := parent.Height()
-	if parentHeight <= settledHeight {
-		return nil
-	}
-
-	history := make([]*blocks.Block, parentHeight-settledHeight)
-	for i := range history {
-		history[i] = parent
-		parent = parent.ParentBlock()
-	}
-	slices.Reverse(history)
-	return history
 }
 
 var (

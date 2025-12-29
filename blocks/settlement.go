@@ -130,45 +130,24 @@ func (b *Block) Settles() []*Block {
 	if b.synchronous {
 		return []*Block{b}
 	}
-	return settling(b.ParentBlock().LastSettled(), b.LastSettled())
+	return Range(b.ParentBlock().LastSettled(), b.LastSettled())
 }
 
-// WhenChildSettles returns the blocks that would be settled by a child of `b`,
-// given the last-settled block at that child's block time. Note that the
-// last-settled block at the child's time MAY be equal to the last-settled of
-// `b` (its parent), in which case WhenChildSettles returns an empty slice.
+// Range returns the blocks in the continuous half-open interval (start, end] in
+// order of increasing height.
 //
-// The argument is typically the return value of [LastToSettleAt], where that
-// function receives `b` as the parent. See the Example.
+// The `start` block MAY be settled, but all other blocks in the range MUST NOT
+// be settled. It is assumed that `start` can be reached by traversing up the
+// chain from `end`.
 //
-// WhenChildSettles MUST only be called before the call to [Block.MarkSettled]
-// on `b`. The intention is that this method is called on the VM's preferred
-// block, which always meets this criterion. This is by definition of
-// settlement, which requires that at least one descendent block has already
-// been accepted, which the preference never has.
-//
-// WhenChildSettles is similar to [Block.Settles] but with different definitions
-// of `x` and `y` (as described in [Block.Settles]). It is intended for use
-// during block building and defines `x` as the block height of
-// `b.LastSettled()` while `y` as the height of the argument passed to this
-// method.
-func (b *Block) WhenChildSettles(lastSettledOfChild *Block) []*Block {
-	return settling(b.LastSettled(), lastSettledOfChild)
-}
-
-// settling returns all the blocks after `lastOfParent` up to and including
-// `lastOfCurr`, each of which are expected to be the block last-settled by a
-// respective block-and-parent pair. It returns an empty slice if the two
-// arguments have the same block hash.
-func settling(lastOfParent, lastOfCurr *Block) []*Block {
-	var settling []*Block
-	// TODO(arr4n) abstract this to combine functionality with iterators
-	// introduced by @StephenButtolph.
-	for s := lastOfCurr; s.Hash() != lastOfParent.Hash(); s = s.ParentBlock() {
-		settling = append(settling, s)
+// If the two arguments are the same block, it returns an empty slice.
+func Range(start, end *Block) []*Block {
+	var chain []*Block
+	for b := end; b.Hash() != start.Hash(); b = b.ParentBlock() {
+		chain = append(chain, b)
 	}
-	slices.Reverse(settling)
-	return settling
+	slices.Reverse(chain)
+	return chain
 }
 
 var errIncompleteBlockHistory = errors.New("incomplete block history when determining last-settled block")
