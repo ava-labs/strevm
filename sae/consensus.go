@@ -44,7 +44,7 @@ func (vm *VM) AcceptBlock(ctx context.Context, b *blocks.Block) error {
 	{
 		batch := vm.db.NewBatch()
 
-		// D(s \in S); yes, I know it's in a batch
+		// D(Σ ⊂ S); yes, I know it's in a batch
 		if len(settles) > 0 {
 			// Note that while we treat SAFE and FINALIZED identically, there is
 			// no notion of the former in [rawdb]. Furthermore, the LAST label
@@ -54,7 +54,7 @@ func (vm *VM) AcceptBlock(ctx context.Context, b *blocks.Block) error {
 
 		rawdb.WriteBlock(batch, b.EthBlock())
 		rawdb.WriteTxLookupEntriesByBlock(batch, b.EthBlock())
-		// D(B \in A)
+		// D(B ∈ A)
 		rawdb.WriteCanonicalHash(batch, b.Hash(), b.NumberU64())
 
 		if err := batch.Write(); err != nil {
@@ -74,7 +74,7 @@ func (vm *VM) AcceptBlock(ctx context.Context, b *blocks.Block) error {
 		}
 	}
 
-	// I(s \in S) before I(B \in A)
+	// I(s ∈ S) before I(B ∈ A)
 	vm.last.settled.Store(b.LastSettled())
 	vm.last.accepted.Store(b)
 	// Although it would be exceptionally unlikely for the execution queue to
