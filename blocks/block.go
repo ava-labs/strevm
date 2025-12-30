@@ -37,6 +37,9 @@ type Block struct {
 	// Only the genesis block or the last pre-SAE block is synchronous. These
 	// are self-settling by definition so their `ancestry` MUST be nil.
 	synchronous bool
+	// Determined during block building, and MUST be set before execution as
+	// expected by the Executor.
+	bounds *WorstCaseBounds
 	// Non-nil i.f.f. [Block.MarkExecuted] has returned without error.
 	execution atomic.Pointer[executionResults]
 

@@ -81,6 +81,20 @@ func (w *Wallet) SetNonceAndSign(tb testing.TB, account int, data types.TxData) 
 	return tx
 }
 
+// SetSigner updates the signer used to sign transactions.
+func (w *Wallet) SetSigner(s types.Signer) {
+	w.signer = s
+}
+
+// DecrementNonce decrements the nonce of the specified account. This is useful
+// for retrying transactions with updated parameters.
+func (w *Wallet) DecrementNonce(tb testing.TB, account int) {
+	tb.Helper()
+	a := w.accounts[account]
+	require.NotZerof(tb, a.nonce, "Nonce of account [%d] MUST be non-zero to decrement", account)
+	a.nonce--
+}
+
 // MaxAllocFor returns a genesis allocation with [MaxUint256] as the balance for
 // all addresses provided.
 func MaxAllocFor(addrs ...common.Address) types.GenesisAlloc {

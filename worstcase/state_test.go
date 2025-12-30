@@ -18,6 +18,7 @@ import (
 	"github.com/ava-labs/libevm/libevm/ethtest"
 	"github.com/ava-labs/libevm/params"
 	"github.com/holiman/uint256"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/ava-labs/strevm/blocks"
@@ -200,9 +201,14 @@ func TestMultipleBlocks(t *testing.T) {
 			Number:     big.NewInt(int64(i)),
 			Time:       block.time,
 		}
-		require.NoErrorf(t, state.StartBlock(header), "StartBlock(%d)", i)
-		require.Equalf(t, block.wantBaseFee, state.BaseFee(), "base fee after StartBlock(%d)", i)
-		require.Equalf(t, block.wantGasLimit, state.GasLimit(), "gas limit after StartBlock(%d)", i)
+		got, err := state.StartBlock(header)
+		require.NoErrorf(t, err, "StartBlock(%d)", i)
+		assert.Equalf(t, block.wantBaseFee, got, "base fee returned by StartBlock(%d)")
+		assert.Equalf(t, block.wantBaseFee, state.BaseFee(), "base fee after StartBlock(%d)", i)
+		assert.Equalf(t, block.wantGasLimit, state.GasLimit(), "gas limit after StartBlock(%d)", i)
+		if t.Failed() {
+			t.FailNow()
+		}
 
 		for _, op := range block.ops {
 			gotErr := state.Apply(op.op)
@@ -428,15 +434,17 @@ func TestTransactionValidation(t *testing.T) {
 				ParentHash: sut.Genesis.Hash(),
 				Number:     big.NewInt(0),
 			}
-			require.NoErrorf(t, state.StartBlock(header), "StartBlock()")
+			_, err := state.StartBlock(header)
+			require.NoErrorf(t, err, "StartBlock()")
 
 			key := defaultKey
 			if tt.key != nil {
 				key = tt.key
 			}
 			tx := types.MustSignNewTx(key, types.NewCancunSigner(state.config.ChainID), tt.tx)
-			gotErr := state.ApplyTx(tx)
-			require.ErrorIsf(t, gotErr, tt.wantErr, "ApplyTx() error")
+			got, err := state.ApplyTx(tx)
+			require.ErrorIsf(t, err, tt.wantErr, "ApplyTx() error")
+			_ = got // TODO(arr4n)
 		})
 	}
 }
@@ -447,12 +455,12 @@ func TestStartBlockNonConsecutiveBlocks(t *testing.T) {
 	state := sut.State
 	genesisHash := sut.Genesis.Hash()
 
-	err := state.StartBlock(&types.Header{
+	_, err := state.StartBlock(&types.Header{
 		ParentHash: genesisHash,
 	})
 	require.NoError(t, err, "StartBlock()")
 
-	err = state.StartBlock(&types.Header{
+	_, err = state.StartBlock(&types.Header{
 		ParentHash: genesisHash, // Should be the previously provided header's hash
 	})
 	require.ErrorIs(t, err, errNonConsecutiveBlocks, "non-consecutive StartBlock()")
@@ -471,9 +479,10 @@ func TestStartBlockQueueFull(t *testing.T) {
 			ParentHash: lastHash,
 			Number:     big.NewInt(int64(number)),
 		}
-		require.NoError(t, state.StartBlock(h), "StartBlock()")
+		_, err := state.StartBlock(h)
+		require.NoError(t, err, "StartBlock()")
 
-		err := state.Apply(Op{
+		err = state.Apply(Op{
 			Gas:       gas,
 			GasFeeCap: *uint256.NewInt(2),
 		})
@@ -484,11 +493,11 @@ func TestStartBlockQueueFull(t *testing.T) {
 		lastHash = h.Hash()
 	}
 
-	err := state.StartBlock(&types.Header{
+	_, err := state.StartBlock(&types.Header{
 		ParentHash: lastHash,
 		Number:     big.NewInt(3),
 	})
-	require.ErrorIs(t, err, errQueueFull, "StartBlock() with full queue")
+	require.ErrorIs(t, err, ErrQueueFull, "StartBlock() with full queue")
 }
 
 // Test that changing the target can cause the queue to be treated as full.
@@ -501,9 +510,10 @@ func TestStartBlockQueueFullDueToTargetChanges(t *testing.T) {
 		ParentHash: sut.Genesis.Hash(),
 		Number:     big.NewInt(0),
 	}
-	require.NoError(t, state.StartBlock(h), "StartBlock()")
+	_, err := state.StartBlock(h)
+	require.NoError(t, err, "StartBlock()")
 
-	err := state.Apply(Op{
+	err = state.Apply(Op{
 		Gas:       initialMaxBlockSize,
 		GasFeeCap: *uint256.NewInt(1),
 	})
@@ -511,9 +521,9 @@ func TestStartBlockQueueFullDueToTargetChanges(t *testing.T) {
 
 	require.NoError(t, state.FinishBlock(), "FinishBlock()")
 
-	err = state.StartBlock(&types.Header{
+	_, err = state.StartBlock(&types.Header{
 		ParentHash: h.Hash(),
 		Number:     big.NewInt(1),
 	})
-	require.ErrorIs(t, err, errQueueFull, "StartBlock() with full queue")
+	require.ErrorIs(t, err, ErrQueueFull, "StartBlock() with full queue")
 }

@@ -96,7 +96,11 @@ const (
 
 var (
 	errNonConsecutiveBlocks = errors.New("non-consecutive blocks")
-	errQueueFull            = errors.New("queue exceeds gas threshold for new block")
+	// ErrQueueFull is returned by [State.StartBlock] if the queue is not able
+	// to accept new blocks. This can be rectified by building a block at a
+	// later time such that additional blocks are settled and the queue is
+	// sufficiently drained.
+	ErrQueueFull = errors.New("queue exceeds gas threshold for new block")
 )
 
 // StartBlock updates the worst-case state to the beginning of the provided
@@ -107,9 +111,9 @@ var (
 // [types.Header.ParentHash] must match the previous block's hash.
 //
 // If the queue is too full to accept another block, an error is returned.
-func (s *State) StartBlock(h *types.Header) error {
+func (s *State) StartBlock(h *types.Header) (*uint256.Int, error) {
 	if h.ParentHash != s.expectedParentHash {
-		return fmt.Errorf("%w: expected parent hash of %s but was %s",
+		return nil, fmt.Errorf("%w: expected parent hash of %s but was %s",
 			errNonConsecutiveBlocks,
 			s.expectedParentHash,
 			h.ParentHash,
@@ -121,7 +125,7 @@ func (s *State) StartBlock(h *types.Header) error {
 
 	s.maxBlockSize = safeMaxBlockSize(s.clock)
 	if maxOpenQSize := maxFullBlocksInOpenQueue * s.maxBlockSize; s.qSize > maxOpenQSize {
-		return fmt.Errorf("%w: current size %d exceeds maximum size for accepting new blocks %d", errQueueFull, s.qSize, maxOpenQSize)
+		return nil, fmt.Errorf("%w: current size %d exceeds maximum size for accepting new blocks %d", ErrQueueFull, s.qSize, maxOpenQSize)
 	}
 
 	s.baseFee = s.clock.BaseFee()
@@ -137,7 +141,7 @@ func (s *State) StartBlock(h *types.Header) error {
 	// execution clock's, otherwise we might enable an upgrade too early.
 	s.rules = s.config.Rules(h.Number, true /*merge*/, h.Time)
 	s.signer = types.MakeSigner(s.config, h.Number, h.Time)
-	return nil
+	return new(uint256.Int).Set(s.baseFee), nil
 }
 
 // safeMaxBlockSize returns the maximum block size for the clock's rate,
@@ -177,7 +181,7 @@ var errCostOverflow = errors.New("Cost() overflows uint256")
 // not modified.
 //
 // TODO: Consider exporting txToOp and expecting users to call Apply directly.
-func (s *State) ApplyTx(tx *types.Transaction) error {
+func (s *State) ApplyTx(tx *types.Transaction) (*uint256.Int, error) {
 	opts := &txpool.ValidationOptions{
 		Config: s.config,
 		Accept: 0 |
@@ -188,12 +192,12 @@ func (s *State) ApplyTx(tx *types.Transaction) error {
 		MinTip:  big.NewInt(0),
 	}
 	if err := txpool.ValidateTransaction(tx, s.curr, s.signer, opts); err != nil {
-		return fmt.Errorf("validating transaction: %w", err)
+		return nil, fmt.Errorf("validating transaction: %w", err)
 	}
 
 	from, err := types.Sender(s.signer, tx)
 	if err != nil {
-		return fmt.Errorf("determining sender: %w", err)
+		return nil, fmt.Errorf("determining sender: %w", err)
 	}
 
 	// While EOA enforcement is not possible to guarantee in worst-case
@@ -202,14 +206,14 @@ func (s *State) ApplyTx(tx *types.Transaction) error {
 	// TODO: We must still handle non-EOA issuance later during actual
 	// execution.
 	if codeHash := s.db.GetCodeHash(from); codeHash != (common.Hash{}) && codeHash != types.EmptyCodeHash {
-		return fmt.Errorf("%w: address %v, codehash: %s", core.ErrSenderNoEOA, from.Hex(), codeHash)
+		return nil, fmt.Errorf("%w: address %v, codehash: %s", core.ErrSenderNoEOA, from.Hex(), codeHash)
 	}
 
 	op, err := txToOp(from, tx)
 	if err != nil {
-		return fmt.Errorf("converting transaction to operation: %w", err)
+		return nil, fmt.Errorf("converting transaction to operation: %w", err)
 	}
-	return s.Apply(op)
+	return s.db.GetBalance(from), s.Apply(op)
 }
 
 func txToOp(from common.Address, tx *types.Transaction) (hook.Op, error) {

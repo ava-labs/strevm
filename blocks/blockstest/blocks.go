@@ -23,6 +23,7 @@ import (
 	"github.com/ava-labs/libevm/libevm/options"
 	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/triedb"
+	"github.com/holiman/uint256"
 	"github.com/stretchr/testify/require"
 
 	"github.com/ava-labs/strevm/blocks"
@@ -162,4 +163,16 @@ func WithGasExcess(excess gas.Gas) GenesisOption {
 	return options.Func[genesisConfig](func(gc *genesisConfig) {
 		gc.gasExcess = excess
 	})
+}
+
+func SetUninformativeWorstCaseBounds(b *blocks.Block) {
+	n := len(b.Transactions())
+	wcb := &blocks.WorstCaseBounds{
+		BaseFee:          new(uint256.Int).SetAllOne(),
+		TxSenderBalances: make([]*uint256.Int, n),
+	}
+	for i := range n {
+		wcb.TxSenderBalances[i] = new(uint256.Int)
+	}
+	b.SetWorstCaseBounds(wcb)
 }

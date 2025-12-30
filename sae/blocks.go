@@ -150,14 +150,14 @@ func (vm *VM) buildBlock(
 			zap.Uint64("block_height", b.Height()),
 			zap.Stringer("block_hash", b.Hash()),
 		)
-		if err := state.StartBlock(b.Header()); err != nil {
+		if _, err := state.StartBlock(b.Header()); err != nil {
 			log.Warn("Could not start historical worst-case calculation",
 				zap.Error(err),
 			)
 			return nil, fmt.Errorf("starting worst-case state for block %d: %v", b.Height(), err)
 		}
 		for i, tx := range b.Transactions() {
-			if err := state.ApplyTx(tx); err != nil {
+			if _, err := state.ApplyTx(tx); err != nil {
 				log.Warn("Could not apply tx during historical worst-case calculation",
 					zap.Int("tx_index", i),
 					zap.Stringer("tx_hash", tx.Hash()),
@@ -185,11 +185,19 @@ func (vm *VM) buildBlock(
 	}
 
 	hdr.Root = lastSettled.PostExecutionStateRoot()
-	if err := state.StartBlock(hdr); err != nil {
-		log.Warn("Could not start worst-case block calculation",
+	bounds := new(blocks.WorstCaseBounds)
+	bounds.BaseFee, err = state.StartBlock(hdr)
+	if err != nil {
+		// A full queue is a normal mode of operation (backpressure working as
+		// intended) so should not be a warning.
+		logTo := log.Warn
+		if errors.Is(err, worstcase.ErrQueueFull) {
+			logTo = log.Debug
+		}
+		logTo("Could not start worst-case block calculation",
 			zap.Error(err),
 		)
-		return nil, fmt.Errorf("starting worst-case state for new block: %v", err)
+		return nil, fmt.Errorf("starting worst-case state for new block: %w", err)
 	}
 
 	hdr.GasLimit = state.GasLimit()
@@ -208,23 +216,27 @@ func (vm *VM) buildBlock(
 			break
 		}
 
+		log = log.With(zap.Stringer("tx_hash", ltx.Hash))
+
 		tx, ok := ltx.Resolve()
 		if !ok {
-			log.Debug("Could not resolve lazy transaction",
-				zap.Stringer("tx_hash", ltx.Hash),
-			)
+			log.Debug("Could not resolve lazy transaction")
 			continue
 		}
 
-		if err := state.ApplyTx(tx); err != nil {
-			log.Debug("Could not apply transaction",
-				zap.Int("tx_index", len(included)),
-				zap.Stringer("tx_hash", ltx.Hash),
-				zap.Error(err),
-			)
+		log = log.With(
+			zap.Int("tx_index", len(included)),
+			zap.Stringer("sender", ltx.Sender),
+		)
+
+		minSenderBalance, err := state.ApplyTx(tx)
+		if err != nil {
+			log.Debug("Could not apply transaction", zap.Error(err))
 			continue
 		}
+		log.Trace("Including transaction")
 		included = append(included, tx)
+		bounds.TxSenderBalances = append(bounds.TxSenderBalances, minSenderBalance)
 	}
 
 	// TODO: Should the [hook.BlockBuilder] populate [types.Header.GasUsed] so
@@ -251,7 +263,12 @@ func (vm *VM) buildBlock(
 		included,
 		receipts,
 	)
-	return vm.newBlock(ethB, parent, lastSettled)
+	b, err := vm.newBlock(ethB, parent, lastSettled)
+	if err != nil {
+		return nil, err
+	}
+	b.SetWorstCaseBounds(bounds)
+	return b, nil
 }
 
 var (
@@ -328,6 +345,7 @@ func (vm *VM) VerifyBlock(ctx context.Context, bCtx *block.Context, b *blocks.Bl
 	if err := b.CopyAncestorsFrom(rebuilt); err != nil {
 		return err
 	}
+	b.SetWorstCaseBounds(rebuilt.WorstCaseBounds())
 
 	vm.blocks.Store(b.Hash(), b)
 	return nil

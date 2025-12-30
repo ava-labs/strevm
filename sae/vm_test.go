@@ -5,6 +5,7 @@ package sae
 
 import (
 	"context"
+	"flag"
 	"math/big"
 	"math/rand/v2"
 	"net/http/httptest"
@@ -46,6 +47,9 @@ import (
 )
 
 func TestMain(m *testing.M) {
+	createWorstCaseFuzzFlags(flag.CommandLine)
+	flag.Parse()
+
 	goleak.VerifyTestMain(
 		m,
 		goleak.IgnoreCurrent(),
@@ -67,12 +71,16 @@ type SUT struct {
 	genesis *blocks.Block
 	wallet  *saetest.Wallet
 	db      ethdb.Database
+	logger  *saetest.TBLogger
 }
 
 type (
 	sutConfig struct {
 		vmConfig       Config
+		chainConfig    *params.ChainConfig
 		hooks          *hookstest.Stub
+		logLevel       logging.Level
+		alloc          types.GenesisAlloc
 		genesisOptions []blockstest.GenesisOption
 	}
 	sutOption = options.Option[sutConfig]
@@ -84,17 +92,31 @@ func newSUT(tb testing.TB, numAccounts uint, opts ...sutOption) (context.Context
 	mempoolConf := legacypool.DefaultConfig // copies
 	mempoolConf.Journal = "/dev/null"
 
+	signer := types.LatestSigner(saetest.ChainConfig())
+	wallet := saetest.NewUNSAFEWallet(tb, numAccounts, signer)
+
 	conf := options.ApplyTo(&sutConfig{
 		vmConfig: Config{
 			MempoolConfig: mempoolConf,
 		},
+		chainConfig: saetest.ChainConfig(),
 		hooks: &hookstest.Stub{
 			Target: 100e6,
 		},
+		logLevel: logging.Warn,
+		alloc:    saetest.MaxAllocFor(wallet.Addresses()...),
 		genesisOptions: []blockstest.GenesisOption{
 			blockstest.WithTimestamp(saeparams.TauSeconds),
 		},
 	}, opts...)
+
+	// If the options updated the ChainConfig it could require a new signer.
+	// This is unavoidable because we need the wallet earlier, to determine the
+	// addresses for the alloc.
+	if s := types.LatestSigner(conf.chainConfig); !s.Equal(signer) {
+		signer = s
+		wallet.SetSigner(s)
+	}
 
 	vm := NewVM(conf.vmConfig)
 	snow := adaptor.Convert(&SinceGenesis{VM: vm})
@@ -103,20 +125,16 @@ func newSUT(tb testing.TB, numAccounts uint, opts ...sutOption) (context.Context
 		require.NoError(tb, snow.Shutdown(ctx), "Shutdown()")
 	})
 
-	config := saetest.ChainConfig()
-	signer := types.LatestSigner(config)
-	wallet := saetest.NewUNSAFEWallet(tb, numAccounts, signer)
-
 	db := rawdb.NewMemoryDatabase()
-	genesis := blockstest.NewGenesis(tb, db, config, saetest.MaxAllocFor(wallet.Addresses()...), conf.genesisOptions...)
+	genesis := blockstest.NewGenesis(tb, db, conf.chainConfig, conf.alloc, conf.genesisOptions...)
 
-	logger := saetest.NewTBLogger(tb, logging.Warn)
+	logger := saetest.NewTBLogger(tb, conf.logLevel)
 	ctx := logger.CancelOnError(tb.Context())
 	snowCtx := snowtest.Context(tb, ids.GenerateTestID())
 	snowCtx.Log = logger
 
 	// TODO(arr4n) change this to use [SinceGenesis.Initialize] via the `snow` variable.
-	require.NoError(tb, vm.Init(snowCtx, conf.hooks, config, db, &triedb.Config{}, genesis), "Init()")
+	require.NoError(tb, vm.Init(snowCtx, conf.hooks, conf.chainConfig, db, &triedb.Config{}, genesis), "Init()")
 	_ = snow.Initialize
 
 	handlers, err := snow.CreateHandlers(ctx)
@@ -134,6 +152,7 @@ func newSUT(tb testing.TB, numAccounts uint, opts ...sutOption) (context.Context
 		genesis: genesis,
 		wallet:  wallet,
 		db:      db,
+		logger:  logger,
 	}
 }
 
@@ -164,9 +183,16 @@ func withGenesisOpts(opts ...blockstest.GenesisOption) sutOption {
 	})
 }
 
+// context returns a [context.Context], derived from the [testing.TB], that is
+// cancelled if the SUT's default logger receives a log at [logging.Error] or
+// higher.
+func (s *SUT) context(tb testing.TB) context.Context {
+	return s.logger.CancelOnError(tb.Context())
+}
+
 func (s *SUT) mustSendTx(tb testing.TB, tx *types.Transaction) {
 	tb.Helper()
-	require.NoErrorf(tb, s.Client.SendTransaction(tb.Context(), tx), "%T.SendTransaction([%#x])", s.Client, tx.Hash())
+	require.NoErrorf(tb, s.Client.SendTransaction(s.context(tb), tx), "%T.SendTransaction([%#x])", s.Client, tx.Hash())
 }
 
 func (s *SUT) stateAt(tb testing.TB, root common.Hash) *state.StateDB {
@@ -191,7 +217,7 @@ func (s *SUT) syncMempool(tb testing.TB) {
 func (s *SUT) runConsensusLoop(tb testing.TB, preference *blocks.Block) *blocks.Block {
 	tb.Helper()
 
-	ctx := tb.Context()
+	ctx := s.context(tb)
 	require.NoError(tb, s.SetPreference(ctx, preference.ID()), "SetPreference()")
 
 	proposed, err := s.BuildBlock(ctx)
@@ -211,7 +237,7 @@ func (s *SUT) runConsensusLoop(tb testing.TB, preference *blocks.Block) *blocks.
 // the ID from [VM.LastAccepted] as an argument.
 func (s *SUT) lastAcceptedBlock(tb testing.TB) *blocks.Block {
 	tb.Helper()
-	ctx := tb.Context()
+	ctx := s.context(tb)
 	id, err := s.LastAccepted(ctx)
 	require.NoError(tb, err, "LastAccepted()")
 	b, err := s.GetBlock(ctx, id)
