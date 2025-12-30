@@ -74,12 +74,9 @@ func (vm *VM) AcceptBlock(ctx context.Context, b *blocks.Block) error {
 		}
 	}
 
-	// I(s ∈ S) before I(B ∈ A)
+	// I(s ∈ S) before I(B ∈ A) before I(B ∈ E)
 	vm.last.settled.Store(b.LastSettled())
 	vm.last.accepted.Store(b)
-	// Although it would be exceptionally unlikely for the execution queue to
-	// process this block fast enough for an actual race, we still do this after
-	// updating [vm.last.accepted].
 	if err := vm.exec.Enqueue(ctx, b); err != nil {
 		return err
 	}
