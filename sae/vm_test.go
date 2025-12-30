@@ -232,18 +232,6 @@ func unwrap(tb testing.TB, b snowman.Block) *blocks.Block {
 	}
 }
 
-// unwrapAndWaitForExecution is equivalent to [blocks.Block.WaitUntilExecuted]
-// but accepts a [snowman.Block], which is presumed to contain a [blocks.Block].
-// It accepts a Context instead of using [testing.TB.Context] to allow
-// integration with [saetest.TBLogger.CancelOnError]. The unwrapped
-// [blocks.Block] is returned for convenience.
-func unwrapAndWaitForExecution(ctx context.Context, tb testing.TB, snow snowman.Block) *blocks.Block {
-	tb.Helper()
-	b := unwrap(tb, snow)
-	require.NoErrorf(tb, b.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", b)
-	return b
-}
-
 // assertBlockHashInvariants MUST NOT be called concurrently with
 // [VM.AcceptBlock] as it depends on the last-accepted block. It also blocks
 // until said block has finished execution.
