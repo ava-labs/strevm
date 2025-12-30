@@ -76,10 +76,15 @@ These guarantees are not concerned with low-level races typically protected agai
 | $X(C)$     | eXternal indicator of some $C$
 | $G \implies P$ | Some condition $G$ guarantees another condition $P$
 
-An internal indicator is any signal of state that can only be accessed by the SAE implementation.
-Examples include the last-accepted, -executed, and -settled block pointers.
+SAE tracks state as both disk and memory artefacts.
+Disk artefacts are typically the same as those stored by regular `geth` nodes.
+Examples of memory artefacts include block ancestry, receipts, and post-execution state roots.
 
-An external indicator is any signal of state that can be accessed outside of the SAE implementation, even if in the same process.
+An internal indicator is any signal of a change in state that can only be accessed by the SAE implementation.
+Such signals are intended to act as gating mechanisms before accessing memory artefacts.
+Examples include the last-accepted, -executed, and -settled block pointers, and unblocking of `Block.WaitUntil{Executed,Settled}()` methods without error.
+
+An external indicator is any signal of a change in state that can be accessed outside of the SAE implementation, even if in the same process.
 An example is a chain-head subscription, be it in the same binary or over a websocket API.
 
 #### Guarantees
