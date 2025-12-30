@@ -54,7 +54,7 @@ func (vm *VM) AcceptBlock(ctx context.Context, b *blocks.Block) error {
 
 		rawdb.WriteBlock(batch, b.EthBlock())
 		rawdb.WriteTxLookupEntriesByBlock(batch, b.EthBlock())
-		// D(B ∈ A)
+		// D(b ∈ A)
 		rawdb.WriteCanonicalHash(batch, b.Hash(), b.NumberU64())
 
 		if err := batch.Write(); err != nil {
@@ -67,14 +67,14 @@ func (vm *VM) AcceptBlock(ctx context.Context, b *blocks.Block) error {
 	// leaking blocks by keeping them in the in-memory store.
 	parentLastSettled := b.ParentBlock().LastSettled()
 
-	// f(B_{n-1}) before f(B_n)
+	// f(b_{n-1}) before f(b_n)
 	for _, s := range settles {
 		if err := s.MarkSettled(); err != nil {
 			return err
 		}
 	}
 
-	// I(s ∈ S) before I(B ∈ A) before I(B ∈ E)
+	// I(s ∈ S) before I(b ∈ A) before I(b ∈ E)
 	vm.last.settled.Store(b.LastSettled())
 	vm.last.accepted.Store(b)
 	if err := vm.exec.Enqueue(ctx, b); err != nil {

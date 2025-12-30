@@ -64,12 +64,12 @@ These guarantees are not concerned with low-level races typically protected agai
 
 |             | |
 | ----------- | -
-| $B_n$      | Block at height $n$
+| $b_n$      | Block at height $n$
 | $A$        | Set of Accepted blocks
 | $E$        | Set of Executed blocks
 | $S$        | Set of Settled blocks
-| $\Sigma_n$ | Set of blocks settled if and when $B_n$ is accepted (MAY be empty)
-| $C$        | Arbitrary condition; e.g. $B_n \in E$
+| $\Sigma_n$ | Set of blocks settled if and when $b_n$ is accepted (MAY be empty)
+| $C$        | Arbitrary condition; e.g. $b_n \in E$
 | $D(C)$     | Disk artefacts of some $C$
 | $M(C)$     | Memory artefacts of some $C$
 | $I(C)$     | Internal indicator of some $C$
@@ -90,30 +90,30 @@ An example is a chain-head subscription, be it in the same binary or over a webs
 
 | Guarantor      | Prerequisite        | Notes |
 | -------------- | ------------------- | ----- |
-| $B_n \in S$    | $B_n \in E$         | Settlement after execution
-| $B_n \in E$    | $B_n \in A$         | Execution after acceptance
+| $b_n \in S$    | $b_n \in E$         | Settlement after execution
+| $b_n \in E$    | $b_n \in A$         | Execution after acceptance
 | $X(C)$         | $I(C)$              | External indicator after internal indicator
 | $I(C)$         | $M(C)$              | Internal indicator after memory
 | $M(C)$         | $D(C)$              | Memory after disk
 | $D(C)$         | $C$                 | Disk after condition
-| $f(C_{B_n})$   | $f(C_{B_{n-1}})$    | See (1) below
-| $f(B_n \in A)$ | $f'(\sigma \in S) \quad\forall \sigma\in\Sigma_n $ | See (2) below
+| $f(C_{b_n})$   | $f(C_{b_{n-1}})$    | See (1) below
+| $f(b_n \in A)$ | $f'(\sigma \in S) \quad\forall \sigma\in\Sigma_n $ | See (2) below
 
-1. Realisation of some side effect $f(\cdot)$ of some condition $C_{B_n}$ of a block MUST occur after the *same* side effect of the parent block. See Example (3).
+1. Realisation of some side effect $f(\cdot)$ of some condition $C_{b_n}$ of a block MUST occur after the *same* side effect of the parent block. See Example (3).
 
 2. Realisation of some side effect of acceptance of a block MUST occur after the _equivalent_ side effect of all blocks settled by that acceptance. See Example (4).
 
 > [!NOTE]
-> Although by definition $B_n \in A$ i.f.f. $\Sigma_n \subset S$, in practice it may not be possible to realise side effects atomically.
-> The chosen ordering of settlement then acceptance is for practical reasons as code with access to $B_n$ can typically access $\Sigma_n$ but not vice versa, so inverting the order would provide zero benefit.
+> Although by definition $b_n \in A$ i.f.f. $\Sigma_n \subset S$, in practice it may not be possible to realise side effects atomically.
+> The chosen ordering of settlement then acceptance is for practical reasons as code with access to $b_n$ can typically access $\Sigma_n$ but not vice versa, so inverting the order would provide zero benefit.
 
 #### Examples
 
-1. If `blocks.Block.Executed()` returns `true` then the block's receipts can be read from the database because $M(B_n \in E) \implies D(B_n \in E)$.
+1. If `blocks.Block.Executed()` returns `true` then the block's receipts can be read from the database because $M(b_n \in E) \implies D(b_n \in E)$.
 
-2. If the atomic pointer to the last-executed block (an internal indicator) is at height $k \ge n$ then the post-execution state of block $n$ can be opened because $I(B_k \in E) \implies M(B_k \in E) \implies M(B_n \in E)$.
+2. If the atomic pointer to the last-executed block (an internal indicator) is at height $k \ge n$ then the post-execution state of block $n$ can be opened because $I(b_k \in E) \implies M(b_k \in E) \implies M(b_n \in E)$.
 
-3. All $\sigma \in \Sigma_n$ MUST have their `Block.MarkSettled()` methods called _in order_ as this satisfies $M(B_n \in S) \implies M(B_{n-1} \in S)$.
+3. All $\sigma \in \Sigma_n$ MUST have their `Block.MarkSettled()` methods called _in order_ as this satisfies $M(b_n \in S) \implies M(b_{n-1} \in S)$.
 Importantly, updating the last-settled pointer, $I(\sigma \in S)$, MAY be delayed because this is a different side effect and doing so would not violate any other guarantees.
 
-4. Persisting the canonical block hash for height $n$, i.e. $D(B_n \in A)$, MUST occur after persisting the `rawdb` "finalized" block hash, i.e. $D(\sigma \in S)$.
+4. Persisting the canonical block hash for height $n$, i.e. $D(b_n \in A)$, MUST occur after persisting the `rawdb` "finalized" block hash, i.e. $D(\sigma \in S)$.
