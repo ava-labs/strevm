@@ -4,8 +4,13 @@
 package sae
 
 import (
+	"context"
+	"errors"
 	"fmt"
+	"math/big"
 
+	"github.com/ava-labs/libevm/common"
+	"github.com/ava-labs/libevm/core/rawdb"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/libevm/ethapi"
 	"github.com/ava-labs/libevm/params"
@@ -21,11 +26,14 @@ func (vm *VM) ethRPCServer() (*rpc.Server, error) {
 	}
 	s := rpc.NewServer()
 
-	txAPI := ethapi.NewTransactionAPI(b, new(ethapi.AddrLocker))
-	if err := s.RegisterName("eth", txAPI); err != nil {
-		return nil, fmt.Errorf("%T.RegisterName(%q, %T): %v", s, "eth", txAPI, err)
+	for _, ethAPI := range []any{
+		ethapi.NewBlockChainAPI(b),
+		ethapi.NewTransactionAPI(b, new(ethapi.AddrLocker)),
+	} {
+		if err := s.RegisterName("eth", ethAPI); err != nil {
+			return nil, fmt.Errorf("%T.RegisterName(%q, %T): %v", s, "eth", ethAPI, err)
+		}
 	}
-
 	return s, nil
 }
 
@@ -49,4 +57,39 @@ func (b *ethAPIBackend) UnprotectedAllowed() bool {
 
 func (b *ethAPIBackend) CurrentBlock() *types.Header {
 	return types.CopyHeader(b.vm.exec.LastExecuted().Header())
+}
+
+func (b *ethAPIBackend) GetTd(context.Context, common.Hash) *big.Int {
+	return big.NewInt(0) // TODO(arr4n)
+}
+
+func (b *ethAPIBackend) BlockByNumber(ctx context.Context, number rpc.BlockNumber) (*types.Block, error) {
+	num, err := b.resolveBlockNumber(number)
+	if err != nil {
+		return nil, err
+	}
+	return rawdb.ReadBlock(
+		b.vm.db,
+		rawdb.ReadCanonicalHash(b.vm.db, num),
+		num,
+	), nil
+}
+
+var errUnsupported = errors.New("unsupported")
+
+func (b *ethAPIBackend) resolveBlockNumber(num rpc.BlockNumber) (uint64, error) {
+	switch {
+	case num == rpc.LatestBlockNumber:
+		return b.vm.exec.LastExecuted().Height(), nil
+
+	case num == rpc.SafeBlockNumber || num == rpc.FinalizedBlockNumber:
+		return b.vm.last.settled.Load().Height(), nil
+
+	case num < 0:
+		// Other labelled blocks (e.g. pending) and future definitions.
+		return 0, fmt.Errorf("%s block %w", num.String(), errUnsupported)
+
+	default:
+		return uint64(num), nil //nolint:gosec // Non-negative check performed above
+	}
 }
