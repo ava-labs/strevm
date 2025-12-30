@@ -47,7 +47,7 @@ Mirroring this on disk allows for simple integration with the upstream API imple
 * While SAE does _not_ delay finality, it does adopt a notion akin to being safe (although from disk corruption) as of the last-settled block. To maintain (a) support for all API block labels; and (b) monotonicity of said labels; the SAE spec defines both the "safe" and "final" labels as the last-settled block. Although this slightly alters the definitions, it does not overload concepts so is in keeping with the *Guiding principles*.
 
 > [!NOTE]
-> These also provide an unambigous inverse, allowing for recovery from disk.
+> These also provide an unambiguous inverse, allowing for recovery from disk.
 
 ## Timing
 
