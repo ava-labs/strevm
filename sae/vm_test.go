@@ -196,6 +196,8 @@ func (s *SUT) runConsensusLoop(tb testing.TB, preference *blocks.Block) *blocks.
 
 	proposed, err := s.BuildBlock(ctx)
 	require.NoError(tb, err, "BuildBlock()")
+	// Ensure that a peer would be able to perform the consensus loop by parsing
+	// the block.
 	b, err := s.ParseBlock(ctx, proposed.Bytes())
 	require.NoError(tb, err, "ParseBlock(BuildBlock().Bytes())")
 
