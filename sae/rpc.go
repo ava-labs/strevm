@@ -75,18 +75,17 @@ func (b *ethAPIBackend) BlockByNumber(ctx context.Context, n rpc.BlockNumber) (*
 }
 
 func (b *ethAPIBackend) resolveBlockNumber(n rpc.BlockNumber) (uint64, error) {
-	switch {
-	case n == rpc.LatestBlockNumber:
+	switch n {
+	case rpc.PendingBlockNumber:
+		return b.vm.last.accepted.Load().Height(), nil
+	case rpc.LatestBlockNumber:
 		return b.vm.exec.LastExecuted().Height(), nil
-
-	case n == rpc.SafeBlockNumber || n == rpc.FinalizedBlockNumber:
+	case rpc.SafeBlockNumber, rpc.FinalizedBlockNumber:
 		return b.vm.last.settled.Load().Height(), nil
-
-	case n < 0:
-		// Other labelled blocks (e.g. pending) and future definitions.
-		return 0, fmt.Errorf("%s block unsupported", n.String())
-
-	default:
-		return uint64(n), nil //nolint:gosec // Non-negative check performed above
 	}
+	if n < 0 {
+		// Any future definitions should be added above.
+		return 0, fmt.Errorf("%s block unsupported", n.String())
+	}
+	return uint64(n), nil //nolint:gosec // Non-negative check performed above
 }
