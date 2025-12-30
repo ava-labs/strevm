@@ -6,16 +6,20 @@ package sae
 import (
 	"context"
 	"math/big"
+	"math/rand/v2"
 	"net/http/httptest"
+	"runtime"
 	"testing"
 	"time"
 
 	"github.com/ava-labs/avalanchego/ids"
+	"github.com/ava-labs/avalanchego/snow"
 	"github.com/ava-labs/avalanchego/snow/consensus/snowman"
 	snowcommon "github.com/ava-labs/avalanchego/snow/engine/common"
 	"github.com/ava-labs/avalanchego/snow/engine/snowman/block"
 	"github.com/ava-labs/avalanchego/snow/snowtest"
 	"github.com/ava-labs/avalanchego/utils/logging"
+	"github.com/ava-labs/avalanchego/utils/set"
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core/rawdb"
 	"github.com/ava-labs/libevm/core/state"
@@ -23,7 +27,10 @@ import (
 	"github.com/ava-labs/libevm/core/txpool/legacypool"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/ethclient"
+	"github.com/ava-labs/libevm/ethdb"
+	"github.com/ava-labs/libevm/libevm/options"
 	"github.com/ava-labs/libevm/params"
+	"github.com/ava-labs/libevm/rpc"
 	"github.com/ava-labs/libevm/triedb"
 	"github.com/holiman/uint256"
 	"github.com/stretchr/testify/assert"
@@ -59,21 +66,37 @@ type SUT struct {
 	rawVM   *VM
 	genesis *blocks.Block
 	wallet  *saetest.Wallet
+	db      ethdb.Database
 }
 
-func newSUT(
-	tb testing.TB,
-	numAccounts uint,
-	genesisOptions ...blockstest.GenesisOption,
-) (context.Context, *SUT) {
+type (
+	sutConfig struct {
+		vmConfig       Config
+		hooks          *hookstest.Stub
+		genesisOptions []blockstest.GenesisOption
+	}
+	sutOption = options.Option[sutConfig]
+)
+
+func newSUT(tb testing.TB, numAccounts uint, opts ...sutOption) (context.Context, *SUT) {
 	tb.Helper()
 
 	mempoolConf := legacypool.DefaultConfig // copies
 	mempoolConf.Journal = "/dev/null"
 
-	vm := NewVM(Config{
-		MempoolConfig: mempoolConf,
-	})
+	conf := options.ApplyTo(&sutConfig{
+		vmConfig: Config{
+			MempoolConfig: mempoolConf,
+		},
+		hooks: &hookstest.Stub{
+			Target: 100e6,
+		},
+		genesisOptions: []blockstest.GenesisOption{
+			blockstest.WithTimestamp(saeparams.TauSeconds),
+		},
+	}, opts...)
+
+	vm := NewVM(conf.vmConfig)
 	snow := adaptor.Convert(&SinceGenesis{VM: vm})
 	tb.Cleanup(func() {
 		ctx := context.WithoutCancel(tb.Context())
@@ -85,16 +108,7 @@ func newSUT(
 	wallet := saetest.NewUNSAFEWallet(tb, numAccounts, signer)
 
 	db := rawdb.NewMemoryDatabase()
-	genesis := blockstest.NewGenesis(tb, db, config, saetest.MaxAllocFor(wallet.Addresses()...), genesisOptions...)
-
-	// TODO(StephenButtolph) unify the time function provided in the config and
-	// the hooks.
-	hooks := &hookstest.Stub{
-		Now: func() uint64 {
-			return uint64(vm.config.Now().Unix()) //nolint:gosec // Time won't overflow for quite a while
-		},
-		Target: 100e6,
-	}
+	genesis := blockstest.NewGenesis(tb, db, config, saetest.MaxAllocFor(wallet.Addresses()...), conf.genesisOptions...)
 
 	logger := saetest.NewTBLogger(tb, logging.Warn)
 	ctx := logger.CancelOnError(tb.Context())
@@ -102,7 +116,7 @@ func newSUT(
 	snowCtx.Log = logger
 
 	// TODO(arr4n) change this to use [SinceGenesis.Initialize] via the `snow` variable.
-	require.NoError(tb, vm.Init(snowCtx, hooks, config, db, &triedb.Config{}, genesis), "Init()")
+	require.NoError(tb, vm.Init(snowCtx, conf.hooks, config, db, &triedb.Config{}, genesis), "Init()")
 	_ = snow.Initialize
 
 	handlers, err := snow.CreateHandlers(ctx)
@@ -119,17 +133,35 @@ func newSUT(
 		rawVM:   vm,
 		genesis: genesis,
 		wallet:  wallet,
+		db:      db,
 	}
 }
 
-func (s *SUT) lastAcceptedBlock(tb testing.TB) snowman.Block {
-	tb.Helper()
-	ctx := tb.Context()
-	lastAcceptedID, err := s.LastAccepted(ctx)
-	require.NoError(tb, err, "LastAccepted()")
-	lastAccepted, err := s.GetBlock(ctx, lastAcceptedID)
-	require.NoError(tb, err, "GetBlock(lastAcceptedID)")
-	return lastAccepted
+// stubbedTime returns an option to configure a new SUT's "now" function along
+// with a function to set the time.
+func stubbedTime() (_ sutOption, setTime func(time.Time)) {
+	var now time.Time
+	set := func(n time.Time) {
+		now = n
+	}
+	opt := options.Func[sutConfig](func(c *sutConfig) {
+		// TODO(StephenButtolph) unify the time functions provided in the config
+		// and the hooks.
+		c.vmConfig.Now = func() time.Time {
+			return now
+		}
+		c.hooks.Now = func() uint64 {
+			return unix(now)
+		}
+	})
+
+	return opt, set
+}
+
+func withGenesisOpts(opts ...blockstest.GenesisOption) sutOption {
+	return options.Func[sutConfig](func(c *sutConfig) {
+		c.genesisOptions = append(c.genesisOptions, opts...)
+	})
 }
 
 func (s *SUT) mustSendTx(tb testing.TB, tx *types.Transaction) {
@@ -153,6 +185,40 @@ func (s *SUT) syncMempool(tb testing.TB) {
 	require.NoErrorf(tb, p.Sync(), "%T.Sync()", p)
 }
 
+// runConsensusLoop sets the preference to the specified block then builds,
+// verifies, accepts, and returns the new block. It does NOT wait for it to be
+// executed; to do this automatically, set the [VM] to [snow.Bootstrapping].
+func (s *SUT) runConsensusLoop(tb testing.TB, preference *blocks.Block) *blocks.Block {
+	tb.Helper()
+
+	ctx := tb.Context()
+	require.NoError(tb, s.SetPreference(ctx, preference.ID()), "SetPreference()")
+
+	proposed, err := s.BuildBlock(ctx)
+	require.NoError(tb, err, "BuildBlock()")
+	// Ensure that a peer would be able to perform the consensus loop by parsing
+	// the block.
+	b, err := s.ParseBlock(ctx, proposed.Bytes())
+	require.NoError(tb, err, "ParseBlock(BuildBlock().Bytes())")
+
+	require.NoErrorf(tb, b.Verify(ctx), "%T.Verify()", b)
+	require.NoErrorf(tb, b.Accept(ctx), "%T.Accept()", b)
+
+	return s.lastAcceptedBlock(tb)
+}
+
+// lastAcceptedBlock is a convenience wrapper for calling [VM.GetBlock] with
+// the ID from [VM.LastAccepted] as an argument.
+func (s *SUT) lastAcceptedBlock(tb testing.TB) *blocks.Block {
+	tb.Helper()
+	ctx := tb.Context()
+	id, err := s.LastAccepted(ctx)
+	require.NoError(tb, err, "LastAccepted()")
+	b, err := s.GetBlock(ctx, id)
+	require.NoError(tb, err, "GetBlock(lastAcceptedID)")
+	return unwrap(tb, b)
+}
+
 // unwrap is a convenience (un)wrapper for calling [adaptor.Block.Unwrap] after
 // confirming the concrete type of `b`.
 func unwrap(tb testing.TB, b snowman.Block) *blocks.Block {
@@ -166,16 +232,34 @@ func unwrap(tb testing.TB, b snowman.Block) *blocks.Block {
 	}
 }
 
-// unwrapAndWaitForExecution is equivalent to [blocks.Block.WaitUntilExecuted]
-// but accepts a [snowman.Block], which is presumed to contain a [blocks.Block].
-// It accepts a Context instead of using [testing.TB.Context] to allow
-// integration with [saetest.TBLogger.CancelOnError]. The unwrapped
-// [blocks.Block] is returned for convenience.
-func unwrapAndWaitForExecution(ctx context.Context, tb testing.TB, snow snowman.Block) *blocks.Block {
-	tb.Helper()
-	b := unwrap(tb, snow)
-	require.NoErrorf(tb, b.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", b)
-	return b
+// assertBlockHashInvariants MUST NOT be called concurrently with
+// [VM.AcceptBlock] as it depends on the last-accepted block. It also blocks
+// until said block has finished execution.
+func (s *SUT) assertBlockHashInvariants(ctx context.Context, t *testing.T) {
+	t.Helper()
+	t.Run("block_hash_invariants", func(t *testing.T) {
+		b := s.lastAcceptedBlock(t)
+		require.NoError(t, b.WaitUntilExecuted(t.Context()), "GetBlock(LastAccepted()).WaitUntilExecuted()")
+		t.Logf("Last accepted (and executed) block: %d", b.Height())
+
+		for num, want := range map[rpc.BlockNumber]common.Hash{
+			rpc.BlockNumber(b.Number().Int64()): b.Hash(),
+			rpc.LatestBlockNumber:               b.Hash(),               // Because we've waited until it's executed
+			rpc.SafeBlockNumber:                 b.LastSettled().Hash(), // Safe from disk corruption, not re-org, as acceptance guarantees finality
+			rpc.FinalizedBlockNumber:            b.LastSettled().Hash(), // Because we maintain label monotonicity
+		} {
+			t.Run(num.String(), func(t *testing.T) {
+				got, err := s.Client.HeaderByNumber(ctx, big.NewInt(num.Int64()))
+				require.NoErrorf(t, err, "%T.HeaderByNumber(%v)", s.Client, num)
+				assert.Equalf(t, want, got.Hash(), "%T.HeaderByNumber(%v).Hash()", s.Client, num)
+			})
+		}
+
+		// The RPC implementation doesn't use the database to resolve the block
+		// labels above, so we still need to check them.
+		assert.Equal(t, b.Hash(), rawdb.ReadHeadBlockHash(s.db), "rawdb.ReadHeadBlockHash() MUST reflect last-executed block")
+		assert.Equal(t, b.LastSettled().Hash(), rawdb.ReadFinalizedBlockHash(s.db), "rawdb.ReadFinalizedBlockHash() MUST reflect last-settled block")
+	})
 }
 
 func TestIntegration(t *testing.T) {
@@ -225,23 +309,24 @@ func TestIntegration(t *testing.T) {
 	sut.syncMempool(t) // technically we've only proven 1 tx added, as unlikely as a race is
 	require.Equal(t, numTxs, sut.rawVM.numPendingTxs(), "number of pending txs")
 
-	preference := sut.genesis.ID()
-	require.NoError(t, sut.SetPreference(ctx, preference), "SetPreference([genesis])")
-	proposed, err := sut.BuildBlock(ctx)
-	require.NoErrorf(t, err, "BuildBlock()")
-	assert.Equal(t, preference, proposed.Parent(), "BuildBlock() builds on preference")
-	require.Lenf(t, unwrap(t, proposed).Transactions(), numTxs, "%T.Transactions()", proposed)
+	b := sut.runConsensusLoop(t, sut.genesis)
+	assert.Equal(t, sut.genesis.ID(), b.Parent(), "BuildBlock() builds on preference")
+	require.Lenf(t, b.Transactions(), numTxs, "%T.Transactions()", b)
 
-	snowB, err := sut.ParseBlock(ctx, proposed.Bytes())
-	require.NoError(t, err, "ParseBlock(..., BuildBlock().Bytes())")
-	require.NoErrorf(t, snowB.Verify(ctx), "%T.Verify()", snowB)
-	require.NoErrorf(t, snowB.Accept(ctx), "%T.Accept()", snowB)
-
-	b := unwrapAndWaitForExecution(ctx, t, snowB)
+	require.NoError(t, b.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", b)
 	require.Lenf(t, b.Receipts(), numTxs, "%T.Receipts()", b)
 	for i, r := range b.Receipts() {
 		require.Equalf(t, types.ReceiptStatusSuccessful, r.Status, "%T.Receipts()[%d].Status", i, b)
 	}
+
+	t.Run("no_tx_replay", func(t *testing.T) {
+		// If the tx-inclusion logic were broken then this would include the
+		// transactions again, resulting in a FATAL in the execution loop due to
+		// non-increasing nonce.
+		b := sut.runConsensusLoop(t, b)
+		assert.Emptyf(t, b.Transactions(), "%T.Transactions()", b)
+		require.NoErrorf(t, b.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", b)
+	})
 
 	t.Run("post_execution_state", func(t *testing.T) {
 		sdb := sut.stateAt(t, b.PostExecutionStateRoot())
@@ -291,9 +376,67 @@ func TestSyntacticBlockChecks(t *testing.T) {
 	}
 }
 
+func TestAcceptBlock(t *testing.T) {
+	for blocks.InMemoryBlockCount() != 0 {
+		runtime.GC()
+	}
+
+	opt, setTime := stubbedTime()
+	var now time.Time
+	fastForward := func(by time.Duration) {
+		now = now.Add(by)
+		setTime(now)
+	}
+	fastForward(saeparams.Tau)
+
+	ctx, sut := newSUT(t, 1, opt)
+	// Causes [VM.AcceptBlock] to wait until the block has executed.
+	require.NoError(t, sut.SetState(ctx, snow.Bootstrapping), "SetState(Bootstrapping)")
+
+	unsettled := []*blocks.Block{sut.genesis}
+	last := func() *blocks.Block {
+		return unsettled[len(unsettled)-1]
+	}
+	sut.genesis = nil // allow it to be GCd when appropriate
+
+	rng := rand.New(rand.NewPCG(0, 0)) //nolint:gosec // Reproducibility is useful for tests
+	for range 100 {
+		ffMillis := 100 + rng.IntN(1000*(1+saeparams.TauSeconds))
+		fastForward(time.Millisecond * time.Duration(ffMillis))
+
+		b := sut.runConsensusLoop(t, last())
+		unsettled = append(unsettled, b)
+		sut.assertBlockHashInvariants(ctx, t)
+
+		lastSettled := b.LastSettled().Height()
+		var wantInMemory set.Set[uint64]
+		for i, bb := range unsettled {
+			switch {
+			case bb == nil: // settled earlier
+			case bb.Settled():
+				unsettled[i] = nil
+				require.LessOrEqual(t, bb.Height(), lastSettled, "height of settled block")
+
+			default:
+				require.Greater(t, bb.Height(), lastSettled, "height of unsettled block")
+				wantInMemory.Add(
+					bb.Height(),
+					bb.ParentBlock().Height(),
+					bb.LastSettled().Height(),
+				)
+			}
+		}
+
+		assert.EventuallyWithT(t, func(t *assert.CollectT) {
+			runtime.GC()
+			require.Equal(t, int64(wantInMemory.Len()), blocks.InMemoryBlockCount(), "in-memory block count")
+		}, 100*time.Millisecond, time.Millisecond)
+	}
+}
+
 func TestSemanticBlockChecks(t *testing.T) {
 	const now = 1e6
-	ctx, sut := newSUT(t, 1, blockstest.WithTimestamp(now))
+	ctx, sut := newSUT(t, 1, withGenesisOpts(blockstest.WithTimestamp(now)))
 	sut.rawVM.config.Now = func() time.Time {
 		return time.Unix(now, 0)
 	}
@@ -324,7 +467,7 @@ func TestSemanticBlockChecks(t *testing.T) {
 		},
 		{
 			name:    "block_time_before_parent",
-			time:    unwrap(t, lastAccepted).BuildTime() - 1,
+			time:    lastAccepted.BuildTime() - 1,
 			wantErr: errBlockTimeBeforeParent,
 		},
 		{

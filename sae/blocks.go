@@ -115,7 +115,7 @@ func (vm *VM) buildBlock(
 	if parentTime := parent.BuildTime(); hdr.Time < parentTime {
 		return nil, fmt.Errorf("%w: %d < %d", errBlockTimeBeforeParent, hdr.Time, parentTime)
 	}
-	if maxTime := uint64(vm.config.Now().Add(maxFutureBlockTime).Unix()); hdr.Time > maxTime { //nolint:gosec // Time won't overflow for quite a while
+	if maxTime := unix(vm.config.Now().Add(maxFutureBlockTime)); hdr.Time > maxTime {
 		return nil, fmt.Errorf("%w: %d > %d", errBlockTimeAfterMaximum, hdr.Time, maxTime)
 	}
 
@@ -277,7 +277,7 @@ func (vm *VM) VerifyBlock(ctx context.Context, bCtx *block.Context, b *blocks.Bl
 	}
 
 	// Sanity check that we aren't verifying an accepted block.
-	if height, accepted := b.Height(), vm.lastAccepted.Load().Height(); height <= accepted {
+	if height, accepted := b.Height(), vm.last.accepted.Load().Height(); height <= accepted {
 		return fmt.Errorf("%w at height %d <= last-accepted (%d)", errBlockHeightTooLow, height, accepted)
 	}
 
