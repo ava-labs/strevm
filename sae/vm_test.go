@@ -319,19 +319,11 @@ func TestIntegration(t *testing.T) {
 	sut.syncMempool(t) // technically we've only proven 1 tx added, as unlikely as a race is
 	require.Equal(t, numTxs, sut.rawVM.numPendingTxs(), "number of pending txs")
 
-	preference := sut.genesis.ID()
-	require.NoError(t, sut.SetPreference(ctx, preference), "SetPreference([genesis])")
-	proposed, err := sut.BuildBlock(ctx)
-	require.NoErrorf(t, err, "BuildBlock()")
-	assert.Equal(t, preference, proposed.Parent(), "BuildBlock() builds on preference")
-	require.Lenf(t, unwrap(t, proposed).Transactions(), numTxs, "%T.Transactions()", proposed)
+	b := sut.runConsensusLoop(t, sut.genesis)
+	assert.Equal(t, sut.genesis.ID(), b.Parent(), "BuildBlock() builds on preference")
+	require.Lenf(t, b.Transactions(), numTxs, "%T.Transactions()", b)
 
-	snowB, err := sut.ParseBlock(ctx, proposed.Bytes())
-	require.NoError(t, err, "ParseBlock(..., BuildBlock().Bytes())")
-	require.NoErrorf(t, snowB.Verify(ctx), "%T.Verify()", snowB)
-	require.NoErrorf(t, snowB.Accept(ctx), "%T.Accept()", snowB)
-
-	b := unwrapAndWaitForExecution(ctx, t, snowB)
+	require.NoError(t, b.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", b)
 	require.Lenf(t, b.Receipts(), numTxs, "%T.Receipts()", b)
 	for i, r := range b.Receipts() {
 		require.Equalf(t, types.ReceiptStatusSuccessful, r.Status, "%T.Receipts()[%d].Status", i, b)
