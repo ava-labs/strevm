@@ -70,6 +70,7 @@ func (b *Block) MarkExecuted(db ethdb.Database, byGas *gastime.Time, byWall time
 		stateRootPost: stateRootPost,
 	}
 
+	// Disk
 	batch := db.NewBatch()
 	hash := b.Hash()
 	rawdb.WriteHeadBlockHash(batch, hash)
@@ -80,6 +81,7 @@ func (b *Block) MarkExecuted(db ethdb.Database, byGas *gastime.Time, byWall time
 		return err
 	}
 
+	// Memory and indicators
 	return b.markExecuted(e)
 }
 

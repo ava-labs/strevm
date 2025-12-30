@@ -38,7 +38,7 @@ func (vm *VM) SetPreference(ctx context.Context, id ids.ID, bCtx *block.Context)
 func (vm *VM) AcceptBlock(ctx context.Context, b *blocks.Block) error {
 	// Recall the terminology and ordering from the invariants document:
 	// - (D)isk then (M)emory then (I)nternal then e(X)ternal.
-	// - B accepted (B \in A) after B.Settles() settled (s \in S) for s in B.Settles()
+	// - B accepted after all of B.Settles() settled
 
 	settles := b.Settles()
 	{
@@ -67,7 +67,7 @@ func (vm *VM) AcceptBlock(ctx context.Context, b *blocks.Block) error {
 	// leaking blocks by keeping them in the in-memory store.
 	parentLastSettled := b.ParentBlock().LastSettled()
 
-	// M(B_{n-1}) before M(B_n)
+	// f(B_{n-1}) before f(B_n)
 	for _, s := range settles {
 		if err := s.MarkSettled(); err != nil {
 			return err
@@ -77,13 +77,13 @@ func (vm *VM) AcceptBlock(ctx context.Context, b *blocks.Block) error {
 	// I(s \in S) before I(B \in A)
 	vm.last.settled.Store(b.LastSettled())
 	vm.last.accepted.Store(b)
-
 	// Although it would be exceptionally unlikely for the execution queue to
 	// process this block fast enough for an actual race, we still do this after
 	// updating [vm.last.accepted].
 	if err := vm.exec.Enqueue(ctx, b); err != nil {
 		return err
 	}
+
 	// When the chain is bootstrapping, avalanchego expects to be able to call
 	// `Verify` and `Accept` in a loop over blocks. Reporting an error during
 	// either `Verify` or `Accept` is considered FATAL during this process.

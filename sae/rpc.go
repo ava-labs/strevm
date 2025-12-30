@@ -5,7 +5,6 @@ package sae
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"math/big"
 
@@ -63,8 +62,8 @@ func (b *ethAPIBackend) GetTd(context.Context, common.Hash) *big.Int {
 	return big.NewInt(0) // TODO(arr4n)
 }
 
-func (b *ethAPIBackend) BlockByNumber(ctx context.Context, number rpc.BlockNumber) (*types.Block, error) {
-	num, err := b.resolveBlockNumber(number)
+func (b *ethAPIBackend) BlockByNumber(ctx context.Context, n rpc.BlockNumber) (*types.Block, error) {
+	num, err := b.resolveBlockNumber(n)
 	if err != nil {
 		return nil, err
 	}
@@ -75,21 +74,19 @@ func (b *ethAPIBackend) BlockByNumber(ctx context.Context, number rpc.BlockNumbe
 	), nil
 }
 
-var errUnsupported = errors.New("unsupported")
-
-func (b *ethAPIBackend) resolveBlockNumber(num rpc.BlockNumber) (uint64, error) {
+func (b *ethAPIBackend) resolveBlockNumber(n rpc.BlockNumber) (uint64, error) {
 	switch {
-	case num == rpc.LatestBlockNumber:
+	case n == rpc.LatestBlockNumber:
 		return b.vm.exec.LastExecuted().Height(), nil
 
-	case num == rpc.SafeBlockNumber || num == rpc.FinalizedBlockNumber:
+	case n == rpc.SafeBlockNumber || n == rpc.FinalizedBlockNumber:
 		return b.vm.last.settled.Load().Height(), nil
 
-	case num < 0:
+	case n < 0:
 		// Other labelled blocks (e.g. pending) and future definitions.
-		return 0, fmt.Errorf("%s block %w", num.String(), errUnsupported)
+		return 0, fmt.Errorf("%s block unsupported", n.String())
 
 	default:
-		return uint64(num), nil //nolint:gosec // Non-negative check performed above
+		return uint64(n), nil //nolint:gosec // Non-negative check performed above
 	}
 }

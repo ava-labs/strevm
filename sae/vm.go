@@ -62,8 +62,6 @@ type VM struct {
 type Config struct {
 	MempoolConfig legacypool.Config
 
-	// TODO(StephenButtolph) unify the time function provided here and in
-	// [hook.Points].
 	Now func() time.Time // defaults to [time.Now] if nil
 }
 

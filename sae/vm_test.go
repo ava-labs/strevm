@@ -140,11 +140,13 @@ func newSUT(tb testing.TB, numAccounts uint, opts ...sutOption) (context.Context
 // stubbedTime returns an option to configure a new SUT's "now" function along
 // with a function to set the time.
 func stubbedTime() (_ sutOption, setTime func(time.Time)) {
-	now := time.Unix(0, 0)
+	var now time.Time
 	set := func(n time.Time) {
 		now = n
 	}
 	opt := options.Func[sutConfig](func(c *sutConfig) {
+		// TODO(StephenButtolph) unify the time functions provided in the config
+		// and the hooks.
 		c.vmConfig.Now = func() time.Time {
 			return now
 		}
@@ -194,25 +196,25 @@ func (s *SUT) runConsensusLoop(tb testing.TB, preference *blocks.Block) *blocks.
 
 	proposed, err := s.BuildBlock(ctx)
 	require.NoError(tb, err, "BuildBlock()")
-	snowB, err := s.ParseBlock(ctx, proposed.Bytes())
+	b, err := s.ParseBlock(ctx, proposed.Bytes())
 	require.NoError(tb, err, "ParseBlock(BuildBlock().Bytes())")
 
-	require.NoErrorf(tb, snowB.Verify(ctx), "%T.Verify()", snowB)
-	require.NoErrorf(tb, snowB.Accept(ctx), "%T.Accept()", snowB)
+	require.NoErrorf(tb, b.Verify(ctx), "%T.Verify()", b)
+	require.NoErrorf(tb, b.Accept(ctx), "%T.Accept()", b)
 
-	return unwrap(tb, s.lastAcceptedBlock(tb))
+	return s.lastAcceptedBlock(tb)
 }
 
 // lastAcceptedBlock is a convenience wrapper for calling [VM.GetBlock] with
 // the ID from [VM.LastAccepted] as an argument.
-func (s *SUT) lastAcceptedBlock(tb testing.TB) snowman.Block {
+func (s *SUT) lastAcceptedBlock(tb testing.TB) *blocks.Block {
 	tb.Helper()
 	ctx := tb.Context()
-	lastAcceptedID, err := s.LastAccepted(ctx)
+	id, err := s.LastAccepted(ctx)
 	require.NoError(tb, err, "LastAccepted()")
-	lastAccepted, err := s.GetBlock(ctx, lastAcceptedID)
+	b, err := s.GetBlock(ctx, id)
 	require.NoError(tb, err, "GetBlock(lastAcceptedID)")
-	return lastAccepted
+	return unwrap(tb, b)
 }
 
 // unwrap is a convenience (un)wrapper for calling [adaptor.Block.Unwrap] after
@@ -240,42 +242,31 @@ func unwrapAndWaitForExecution(ctx context.Context, tb testing.TB, snow snowman.
 	return b
 }
 
+// assertBlockHashInvariants MUST NOT be called concurrently with
+// [VM.AcceptBlock] as it depends on the last-accepted block. It also blocks
+// until said block has finished execution.
 func (s *SUT) assertBlockHashInvariants(ctx context.Context, t *testing.T) {
 	t.Helper()
 	t.Run("block_hash_invariants", func(t *testing.T) {
-		b := unwrapAndWaitForExecution(ctx, t, s.lastAcceptedBlock(t))
+		b := s.lastAcceptedBlock(t)
+		require.NoError(t, b.WaitUntilExecuted(t.Context()), "GetBlock(LastAccepted()).WaitUntilExecuted()")
 		t.Logf("Last accepted (and executed) block: %d", b.Height())
 
-		for _, tt := range []struct {
-			num  rpc.BlockNumber
-			want common.Hash
-		}{
-			{
-				num:  rpc.LatestBlockNumber, // Because we've waited until it's executed
-				want: b.Hash(),
-			},
-			{
-				num:  rpc.BlockNumber(b.Number().Int64()),
-				want: b.Hash(),
-			},
-			{
-				num:  rpc.SafeBlockNumber,
-				want: b.LastSettled().Hash(),
-			},
-			{
-				num:  rpc.FinalizedBlockNumber,
-				want: b.LastSettled().Hash(), // Because we maintain label monotonicity
-			},
+		for num, want := range map[rpc.BlockNumber]common.Hash{
+			rpc.BlockNumber(b.Number().Int64()): b.Hash(),
+			rpc.LatestBlockNumber:               b.Hash(),               // Because we've waited until it's executed
+			rpc.SafeBlockNumber:                 b.LastSettled().Hash(), // Safe from disk corruption, not re-org, as acceptance guarantees finality
+			rpc.FinalizedBlockNumber:            b.LastSettled().Hash(), // Because we maintain label monotonicity
 		} {
-			t.Run(tt.num.String(), func(t *testing.T) {
-				got, err := s.Client.HeaderByNumber(ctx, big.NewInt(tt.num.Int64()))
-				require.NoErrorf(t, err, "%T.HeaderByNumber(%v)", s.Client, tt.num)
-				assert.Equalf(t, tt.want, got.Hash(), "%T.HeaderByNumber(%v).Hash()", s.Client, tt.num)
+			t.Run(num.String(), func(t *testing.T) {
+				got, err := s.Client.HeaderByNumber(ctx, big.NewInt(num.Int64()))
+				require.NoErrorf(t, err, "%T.HeaderByNumber(%v)", s.Client, num)
+				assert.Equalf(t, want, got.Hash(), "%T.HeaderByNumber(%v).Hash()", s.Client, num)
 			})
 		}
 
-		// The RPC implementation doesn't check the database to resolve the
-		// block labels above, so we still need to check them.
+		// The RPC implementation doesn't use the database to resolve the block
+		// labels above, so we still need to check them.
 		assert.Equal(t, b.Hash(), rawdb.ReadHeadBlockHash(s.db), "rawdb.ReadHeadBlockHash() MUST reflect last-executed block")
 		assert.Equal(t, b.LastSettled().Hash(), rawdb.ReadFinalizedBlockHash(s.db), "rawdb.ReadFinalizedBlockHash() MUST reflect last-settled block")
 	})
@@ -400,12 +391,12 @@ func TestAcceptBlock(t *testing.T) {
 	}
 
 	opt, setTime := stubbedTime()
-	now := time.Unix(saeparams.TauSeconds, 0)
-	setTime(now)
+	var now time.Time
 	fastForward := func(by time.Duration) {
 		now = now.Add(by)
 		setTime(now)
 	}
+	fastForward(saeparams.Tau)
 
 	ctx, sut := newSUT(t, 1, opt)
 	// Causes [VM.AcceptBlock] to wait until the block has executed.
@@ -433,10 +424,10 @@ func TestAcceptBlock(t *testing.T) {
 			case bb == nil: // settled earlier
 			case bb.Settled():
 				unsettled[i] = nil
-				require.LessOrEqual(t, bb.Height(), lastSettled)
+				require.LessOrEqual(t, bb.Height(), lastSettled, "height of settled block")
 
 			default:
-				require.Greater(t, bb.Height(), lastSettled)
+				require.Greater(t, bb.Height(), lastSettled, "height of unsettled block")
 				wantInMemory.Add(
 					bb.Height(),
 					bb.ParentBlock().Height(),
@@ -444,9 +435,11 @@ func TestAcceptBlock(t *testing.T) {
 				)
 			}
 		}
-		for blocks.InMemoryBlockCount() != int64(wantInMemory.Len()) {
+
+		assert.EventuallyWithT(t, func(t *assert.CollectT) {
 			runtime.GC()
-		}
+			require.Equal(t, int64(wantInMemory.Len()), blocks.InMemoryBlockCount(), "in-memory block count")
+		}, 100*time.Millisecond, time.Millisecond)
 	}
 }
 
@@ -483,7 +476,7 @@ func TestSemanticBlockChecks(t *testing.T) {
 		},
 		{
 			name:    "block_time_before_parent",
-			time:    unwrap(t, lastAccepted).BuildTime() - 1,
+			time:    lastAccepted.BuildTime() - 1,
 			wantErr: errBlockTimeBeforeParent,
 		},
 		{
