@@ -45,11 +45,11 @@ func (vm *VM) AcceptBlock(ctx context.Context, b *blocks.Block) error {
 		batch := vm.db.NewBatch()
 
 		// D(s \in S); yes, I know it's in a batch
-		if s := settles; len(s) > 0 {
+		if len(settles) > 0 {
 			// Note that while we treat SAFE and FINALIZED identically, there is
 			// no notion of the former in [rawdb]. Furthermore, the LAST label
 			// is reserved for the last executed so it too isn't persisted here.
-			rawdb.WriteFinalizedBlockHash(batch, s[len(s)-1].Hash())
+			rawdb.WriteFinalizedBlockHash(batch, b.LastSettled().Hash())
 		}
 
 		rawdb.WriteBlock(batch, b.EthBlock())
