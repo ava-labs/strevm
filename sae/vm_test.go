@@ -329,6 +329,15 @@ func TestIntegration(t *testing.T) {
 		require.Equalf(t, types.ReceiptStatusSuccessful, r.Status, "%T.Receipts()[%d].Status", i, b)
 	}
 
+	t.Run("no_tx_replay", func(t *testing.T) {
+		// If the tx-inclusion logic were broken then this would include the
+		// transactions again, resulting in a FATAL in the execution loop due to
+		// non-increasing nonce.
+		b := sut.runConsensusLoop(t, b)
+		assert.Emptyf(t, b.Transactions(), "%T.Transactions()", b)
+		require.NoErrorf(t, b.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", b)
+	})
+
 	t.Run("post_execution_state", func(t *testing.T) {
 		sdb := sut.stateAt(t, b.PostExecutionStateRoot())
 
