@@ -5,6 +5,7 @@ package sae
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math/big"
 
@@ -64,7 +65,9 @@ func (b *ethAPIBackend) GetTd(context.Context, common.Hash) *big.Int {
 
 func (b *ethAPIBackend) BlockByNumber(ctx context.Context, n rpc.BlockNumber) (*types.Block, error) {
 	num, err := b.resolveBlockNumber(n)
-	if err != nil {
+	if errors.Is(err, errFutureBlockNotResolved) {
+		return nil, nil
+	} else if err != nil {
 		return nil, err
 	}
 	return rawdb.ReadBlock(
@@ -73,6 +76,8 @@ func (b *ethAPIBackend) BlockByNumber(ctx context.Context, n rpc.BlockNumber) (*
 		num,
 	), nil
 }
+
+var errFutureBlockNotResolved = errors.New("not accepted yet")
 
 func (b *ethAPIBackend) resolveBlockNumber(bn rpc.BlockNumber) (uint64, error) {
 	head := b.vm.last.accepted.Load().Height()
@@ -92,7 +97,7 @@ func (b *ethAPIBackend) resolveBlockNumber(bn rpc.BlockNumber) (uint64, error) {
 	}
 	n := uint64(bn) //nolint:gosec // Non-negative check performed above
 	if n > head {
-		return 0, fmt.Errorf("block %d not accepted yet", n)
+		return 0, fmt.Errorf("%w: block %d", errFutureBlockNotResolved, n)
 	}
 	return n, nil
 }
