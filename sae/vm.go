@@ -173,11 +173,12 @@ func (vm *VM) Init(
 				maxValidatorSetStaleness,
 			)
 		)
+		const p2pNamespace = "p2p"
 		network, err := p2p.NewNetwork(
 			snowCtx.Log,
 			sender,
 			vm.metrics,
-			"p2p",
+			p2pNamespace,
 			&peers,
 			validatorPeers,
 		)
@@ -185,7 +186,8 @@ func (vm *VM) Init(
 			return err
 		}
 
-		metrics, err := gossip.NewMetrics(vm.metrics, "gossip")
+		const gossipNamespace = "gossip"
+		metrics, err := gossip.NewMetrics(vm.metrics, gossipNamespace)
 		if err != nil {
 			return err
 		}
@@ -211,7 +213,7 @@ func (vm *VM) Init(
 			throttlingPeriod,
 			requestsPerPeerPerPeriod,
 			vm.metrics,
-			"gossip",
+			gossipNamespace,
 		)
 		if err != nil {
 			return err
