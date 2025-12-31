@@ -568,6 +568,15 @@ func newNetworkSUT(tb testing.TB, numValidators, numNonValidators int) *networkS
 	maps.Copy(allNodes, validatorNodes)
 	maps.Copy(allNodes, nonValidatorNodes)
 
+	// Sanity check that the nodes agree on the genesis block, otherwise the
+	// network will exhibit very weird behavior.
+	{
+		_, expectedSUT := newSUT(tb, numAccounts)
+		for nodeID, sut := range allNodes {
+			require.Equalf(tb, expectedSUT.genesis.ID(), sut.genesis.ID(), "genesis ID for node %s", nodeID)
+		}
+	}
+
 	validatorSet := make(map[ids.NodeID]*validators.GetValidatorOutput)
 	for _, sut := range validatorNodes {
 		nodeID := sut.rawVM.snowCtx.NodeID
