@@ -126,11 +126,6 @@ func newSUT(tb testing.TB, numAccounts uint, opts ...sutOption) (context.Context
 	ctx := logger.CancelOnError(tb.Context())
 
 	snowCtx := snowtest.Context(tb, chainID)
-	validators, ok := snowCtx.ValidatorState.(*validatorstest.State)
-	require.Truef(tb, ok, "unexpected type %T for snowCtx.ValidatorState", snowCtx.ValidatorState)
-	validators.GetCurrentHeightF = func(context.Context) (uint64, error) {
-		return 0, nil
-	}
 	snowCtx.Log = logger
 
 	sender := &enginetest.Sender{}
@@ -147,6 +142,8 @@ func newSUT(tb testing.TB, numAccounts uint, opts ...sutOption) (context.Context
 	require.NoError(tb, err, "ethclient.Dial(http.NewServer(%T.CreateHandlers()))", snow)
 	tb.Cleanup(client.Close)
 
+	validators, ok := snowCtx.ValidatorState.(*validatorstest.State)
+	require.Truef(tb, ok, "unexpected type %T for snowCtx.ValidatorState", snowCtx.ValidatorState)
 	return ctx, &SUT{
 		ChainVM: snow,
 		Client:  client,
