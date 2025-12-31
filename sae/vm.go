@@ -173,8 +173,6 @@ func (vm *VM) Init(
 			return fmt.Errorf("network.AddHandler(...): %v", err)
 		}
 
-		vm.mempool.RegisterPushGossiper(pushGossiper)
-
 		var (
 			gossipCtx, cancel = context.WithCancel(context.Background())
 			wg                sync.WaitGroup
@@ -190,6 +188,7 @@ func (vm *VM) Init(
 		}()
 
 		vm.Network = network
+		vm.mempool.RegisterPushGossiper(pushGossiper)
 		vm.toClose = append(vm.toClose, func() error {
 			cancel()
 			wg.Wait()
