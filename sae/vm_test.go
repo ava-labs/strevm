@@ -5,10 +5,12 @@ package sae
 
 import (
 	"context"
+	"maps"
 	"math/big"
 	"math/rand/v2"
 	"net/http/httptest"
 	"runtime"
+	"slices"
 	"testing"
 	"time"
 
@@ -16,10 +18,15 @@ import (
 	"github.com/ava-labs/avalanchego/snow"
 	"github.com/ava-labs/avalanchego/snow/consensus/snowman"
 	snowcommon "github.com/ava-labs/avalanchego/snow/engine/common"
+	"github.com/ava-labs/avalanchego/snow/engine/enginetest"
 	"github.com/ava-labs/avalanchego/snow/engine/snowman/block"
 	"github.com/ava-labs/avalanchego/snow/snowtest"
+	"github.com/ava-labs/avalanchego/snow/validators"
+	"github.com/ava-labs/avalanchego/snow/validators/validatorstest"
 	"github.com/ava-labs/avalanchego/utils/logging"
 	"github.com/ava-labs/avalanchego/utils/set"
+	"github.com/ava-labs/avalanchego/utils/timer/mockable"
+	"github.com/ava-labs/avalanchego/version"
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core/rawdb"
 	"github.com/ava-labs/libevm/core/state"
@@ -67,6 +74,9 @@ type SUT struct {
 	genesis *blocks.Block
 	wallet  *saetest.Wallet
 	db      ethdb.Database
+
+	validators *validatorstest.State
+	sender     *enginetest.Sender
 }
 
 type (
@@ -77,6 +87,8 @@ type (
 	}
 	sutOption = options.Option[sutConfig]
 )
+
+var chainID = ids.GenerateTestID()
 
 func newSUT(tb testing.TB, numAccounts uint, opts ...sutOption) (context.Context, *SUT) {
 	tb.Helper()
@@ -112,11 +124,18 @@ func newSUT(tb testing.TB, numAccounts uint, opts ...sutOption) (context.Context
 
 	logger := saetest.NewTBLogger(tb, logging.Warn)
 	ctx := logger.CancelOnError(tb.Context())
-	snowCtx := snowtest.Context(tb, ids.GenerateTestID())
+
+	snowCtx := snowtest.Context(tb, chainID)
+	validators := snowCtx.ValidatorState.(*validatorstest.State)
+	validators.GetCurrentHeightF = func(context.Context) (uint64, error) {
+		return 0, nil
+	}
 	snowCtx.Log = logger
 
+	sender := &enginetest.Sender{}
+
 	// TODO(arr4n) change this to use [SinceGenesis.Initialize] via the `snow` variable.
-	require.NoError(tb, vm.Init(snowCtx, conf.hooks, config, db, &triedb.Config{}, genesis), "Init()")
+	require.NoError(tb, vm.Init(snowCtx, conf.hooks, config, db, &triedb.Config{}, genesis, sender), "Init()")
 	_ = snow.Initialize
 
 	handlers, err := snow.CreateHandlers(ctx)
@@ -134,6 +153,9 @@ func newSUT(tb testing.TB, numAccounts uint, opts ...sutOption) (context.Context
 		genesis: genesis,
 		wallet:  wallet,
 		db:      db,
+
+		validators: validators,
+		sender:     sender,
 	}
 }
 
@@ -514,4 +536,192 @@ func TestSemanticBlockChecks(t *testing.T) {
 			require.ErrorIs(t, snowB.Verify(ctx), tt.wantErr, "Verify()")
 		})
 	}
+}
+
+type network struct {
+	validators    []*SUT
+	nonValidators []*SUT
+}
+
+func newNetwork(tb testing.TB, numValidators, numNonValidators int) *network {
+	tb.Helper()
+
+	validatorNodes := make(map[ids.NodeID]*SUT, numValidators)
+	for range numValidators {
+		_, sut := newSUT(tb, 1)
+		validatorNodes[sut.rawVM.snowCtx.NodeID] = sut
+	}
+
+	validatorSet := make(map[ids.NodeID]*validators.GetValidatorOutput)
+	for _, sut := range validatorNodes {
+		nodeID := sut.rawVM.snowCtx.NodeID
+		validatorSet[nodeID] = &validators.GetValidatorOutput{
+			NodeID:    nodeID,
+			PublicKey: sut.rawVM.snowCtx.PublicKey,
+			Weight:    1,
+		}
+	}
+	getValidatorSetF := func(context.Context, uint64, ids.ID) (map[ids.NodeID]*validators.GetValidatorOutput, error) {
+		return validatorSet, nil
+	}
+
+	nonValidatorNodes := make(map[ids.NodeID]*SUT, numNonValidators)
+	for range numNonValidators {
+		_, sut := newSUT(tb, 1)
+		nonValidatorNodes[sut.rawVM.snowCtx.NodeID] = sut
+	}
+	allNodes := make(map[ids.NodeID]*SUT, numValidators+numNonValidators)
+	maps.Copy(allNodes, validatorNodes)
+	maps.Copy(allNodes, nonValidatorNodes)
+	for _, sut := range allNodes {
+		sut.validators.GetValidatorSetF = getValidatorSetF
+	}
+
+	// Connect all nodes to every validator.
+	for nodeID, sut := range allNodes {
+		peers := make(map[ids.NodeID]*SUT, len(allNodes))
+		peers[nodeID] = sut // self-registration
+		maps.Copy(peers, validatorNodes)
+
+		// Non-validators do not connect to other non-validators.
+		var nonValidatorPeers map[ids.NodeID]*SUT
+		if _, isValidator := validatorNodes[nodeID]; isValidator {
+			nonValidatorPeers = nonValidatorNodes
+		}
+		maps.Copy(peers, nonValidatorPeers)
+
+		sender := sut.sender
+		sender.SendAppRequestF = func(ctx context.Context, s set.Set[ids.NodeID], r uint32, b []byte) error {
+			go func() {
+				tb.Helper()
+
+				for peerID := range s {
+					if peer, ok := peers[peerID]; ok {
+						assert.NoError(tb, peer.AppRequest(ctx, nodeID, r, mockable.MaxTime, b))
+					} else {
+						assert.NoError(tb, sut.AppRequestFailed(ctx, peerID, r, snowcommon.ErrTimeout))
+					}
+				}
+			}()
+			return nil
+		}
+		sender.SendAppResponseF = func(ctx context.Context, peerID ids.NodeID, r uint32, b []byte) error {
+			go func() {
+				tb.Helper()
+
+				assert.Contains(tb, peers, peerID, "unknown peer in SendAppResponse")
+				peer, ok := peers[peerID]
+				if !ok {
+					return
+				}
+
+				assert.NoError(tb, peer.AppResponse(ctx, nodeID, r, b))
+			}()
+
+			return nil
+		}
+		sender.SendAppErrorF = func(ctx context.Context, peerID ids.NodeID, r uint32, code int32, msg string) error {
+			go func() {
+				tb.Helper()
+				assert.Contains(tb, peers, peerID, "unknown peer in SendAppError")
+				peer, ok := peers[peerID]
+				if !ok {
+					return
+				}
+
+				appErr := &snowcommon.AppError{
+					Code:    code,
+					Message: msg,
+				}
+				assert.NoError(tb, peer.AppRequestFailed(ctx, nodeID, r, appErr))
+			}()
+			return nil
+		}
+		sender.SendAppGossipF = func(ctx context.Context, c snowcommon.SendConfig, b []byte) error {
+			go func() {
+				tb.Helper()
+
+				for peerID := range c.NodeIDs {
+					if peer, ok := peers[peerID]; ok {
+						assert.NoError(tb, peer.AppGossip(ctx, nodeID, b))
+					}
+				}
+				var sent set.Set[ids.NodeID]
+				sent.Union(c.NodeIDs)
+
+				send := func(peers map[ids.NodeID]*SUT, count int) error {
+					for peerID := range peers {
+						if count <= 0 {
+							break
+						}
+						if sent.Contains(peerID) {
+							continue
+						}
+						peer, ok := peers[peerID]
+						if !ok {
+							continue
+						}
+						if err := peer.AppGossip(ctx, nodeID, b); err != nil {
+							return err
+						}
+
+						sent.Add(peerID)
+						count--
+					}
+					return nil
+				}
+
+				assert.NoError(tb, send(validatorNodes, c.Validators))
+				assert.NoError(tb, send(nonValidatorPeers, c.NonValidators))
+				assert.NoError(tb, send(peers, c.Peers))
+			}()
+			return nil
+		}
+
+		// Connect all the peers _after_ setting up the sender functions.
+		defer func() {
+			tb.Helper()
+			for peerID := range peers {
+				require.NoErrorf(tb, sut.Connected(tb.Context(), peerID, version.Current), "Connected(%s)", peerID)
+			}
+		}()
+	}
+
+	return &network{
+		validators:    slices.Collect(maps.Values(validatorNodes)),
+		nonValidators: slices.Collect(maps.Values(nonValidatorNodes)),
+	}
+}
+
+func requireReceiveTx(tb testing.TB, nodes []*SUT, txHash common.Hash) {
+	tb.Helper()
+	for _, sut := range nodes {
+		assert.Eventuallyf(tb, func() bool {
+			return sut.rawVM.mempool.Has(ids.ID(txHash))
+		}, 5*time.Second, 100*time.Millisecond, "tx %x not gossiped to node %s", txHash, sut.rawVM.snowCtx.NodeID)
+	}
+	require.False(tb, tb.Failed())
+}
+
+func requireNotReceiveTx(tb testing.TB, nodes []*SUT, txHash common.Hash) {
+	tb.Helper()
+	for _, sut := range nodes {
+		assert.False(tb, sut.rawVM.mempool.Has(ids.ID(txHash)), "tx %x was gossiped to node %s", txHash, sut.rawVM.snowCtx.NodeID)
+	}
+	require.False(tb, tb.Failed())
+}
+
+func TestGossip(t *testing.T) {
+	n := newNetwork(t, 2, 2)
+
+	api := n.nonValidators[0]
+	tx := api.wallet.SetNonceAndSign(t, 0, &types.DynamicFeeTx{
+		To:        &common.Address{},
+		Gas:       params.TxGas,
+		GasFeeCap: big.NewInt(1),
+		Value:     big.NewInt(1),
+	})
+	api.mustSendTx(t, tx)
+	requireReceiveTx(t, n.validators, tx.Hash())
+	requireNotReceiveTx(t, n.nonValidators[1:], tx.Hash())
 }

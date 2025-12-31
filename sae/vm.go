@@ -7,15 +7,19 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/ava-labs/avalanchego/ids"
+	"github.com/ava-labs/avalanchego/network/p2p"
 	"github.com/ava-labs/avalanchego/network/p2p/gossip"
 	"github.com/ava-labs/avalanchego/snow"
 	snowcommon "github.com/ava-labs/avalanchego/snow/engine/common"
 	"github.com/ava-labs/avalanchego/utils"
 	"github.com/ava-labs/avalanchego/utils/bloom"
 	"github.com/ava-labs/avalanchego/utils/logging"
+	"github.com/ava-labs/avalanchego/utils/units"
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core"
 	"github.com/ava-labs/libevm/core/rawdb"
@@ -37,6 +41,8 @@ import (
 // which needs to be provided by a harness. In all cases, the harness MUST
 // provide a last-synchronous block, which MAY be the genesis.
 type VM struct {
+	*p2p.Network
+
 	config  Config
 	snowCtx *snow.Context
 	hooks   hook.Points
@@ -87,6 +93,7 @@ func (vm *VM) Init(
 	db ethdb.Database,
 	triedbConfig *triedb.Config,
 	lastSynchronous *blocks.Block,
+	sender snowcommon.AppSender,
 ) error {
 	vm.snowCtx = snowCtx
 	vm.hooks = hooks
@@ -153,6 +160,156 @@ func (vm *VM) Init(
 		}
 		vm.mempool = pool
 		vm.signalNewTxsToEngine()
+	}
+
+	{ // ==========  P2P Gossip  ==========
+		const maxValidatorSetStaleness = time.Minute
+		var (
+			peers          p2p.Peers
+			validatorPeers = p2p.NewValidators(
+				snowCtx.Log,
+				snowCtx.SubnetID,
+				snowCtx.ValidatorState,
+				maxValidatorSetStaleness,
+			)
+		)
+		network, err := p2p.NewNetwork(
+			snowCtx.Log,
+			sender,
+			vm.metrics,
+			"p2p",
+			&peers,
+			validatorPeers,
+		)
+		if err != nil {
+			return err
+		}
+
+		metrics, err := gossip.NewMetrics(vm.metrics, "gossip")
+		if err != nil {
+			return err
+		}
+
+		const targetMessageSize = 20 * units.KiB
+		handler := gossip.NewHandler(
+			snowCtx.Log,
+			txgossip.Marshaller{},
+			vm.mempool,
+			metrics,
+			targetMessageSize,
+		)
+
+		const (
+			throttlingPeriod         = time.Hour                                 // seconds/period
+			requestPeriod            = time.Second                               // seconds/request
+			requestsPerPeerPerPeriod = float64(throttlingPeriod / requestPeriod) // requests/period
+		)
+		throttledHandler, err := p2p.NewDynamicThrottlerHandler(
+			snowCtx.Log,
+			handler,
+			validatorPeers,
+			throttlingPeriod,
+			requestsPerPeerPerPeriod,
+			vm.metrics,
+			"gossip",
+		)
+		if err != nil {
+			return err
+		}
+		validatorOnlyHandler := p2p.NewValidatorHandler(
+			throttledHandler,
+			validatorPeers,
+			snowCtx.Log,
+		)
+
+		// Pull requests are filtered by validators and are throttled to prevent
+		// spamming. Push messages are not filtered.
+		type (
+			appRequester interface {
+				AppRequest(context.Context, ids.NodeID, time.Time, []byte) ([]byte, *snowcommon.AppError)
+			}
+			appGossiper interface {
+				AppGossip(context.Context, ids.NodeID, []byte)
+			}
+		)
+		gossipHandler := struct {
+			appRequester
+			appGossiper
+		}{
+			appRequester: validatorOnlyHandler,
+			appGossiper:  handler,
+		}
+		if err := network.AddHandler(p2p.TxGossipHandlerID, gossipHandler); err != nil {
+			return err
+		}
+
+		client := network.NewClient(p2p.TxGossipHandlerID, validatorPeers)
+		const pollSize = 1
+		pullGossiper := gossip.NewPullGossiper[txgossip.Transaction](
+			vm.snowCtx.Log,
+			txgossip.Marshaller{},
+			vm.mempool,
+			client,
+			metrics,
+			pollSize,
+		)
+		pullGossiperWhenValidator := &gossip.ValidatorGossiper{
+			Gossiper:   pullGossiper,
+			NodeID:     snowCtx.NodeID,
+			Validators: validatorPeers,
+		}
+
+		pushGossipParams := gossip.BranchingFactor{
+			StakePercentage: .9,
+			Validators:      100,
+		}
+		pushRegossipParams := gossip.BranchingFactor{
+			Validators: 10,
+		}
+		const (
+			discardedCacheSize = 16_384
+			regossipPeriod     = 30 * time.Second
+		)
+		pushGossiper, err := gossip.NewPushGossiper(
+			txgossip.Marshaller{},
+			vm.mempool,
+			validatorPeers,
+			client,
+			metrics,
+			pushGossipParams,
+			pushRegossipParams,
+			discardedCacheSize,
+			targetMessageSize,
+			regossipPeriod,
+		)
+		if err != nil {
+			return err
+		}
+
+		vm.mempool.RegisterPushGossiper(pushGossiper)
+
+		var (
+			gossipCtx, cancel = context.WithCancel(context.Background())
+			wg                sync.WaitGroup
+		)
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			gossip.Every(gossipCtx, snowCtx.Log, pullGossiperWhenValidator, requestPeriod)
+		}()
+
+		const pushPeriod = 100 * time.Millisecond
+		go func() {
+			defer wg.Done()
+			gossip.Every(gossipCtx, snowCtx.Log, pushGossiper, pushPeriod)
+		}()
+
+		vm.Network = network
+		vm.toClose = append(vm.toClose, func() error {
+			cancel()
+			wg.Wait()
+			return nil
+		})
 	}
 
 	return nil
