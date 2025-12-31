@@ -169,7 +169,7 @@ func (vm *VM) Init(
 		if err != nil {
 			return fmt.Errorf("newGossipers(...): %v", err)
 		}
-		if err := network.AddHandler(p2p.TxGossipHandlerID, handler); err != nil {
+		if err := network.AddHandler(gossipHandlerID, handler); err != nil {
 			return fmt.Errorf("network.AddHandler(...): %v", err)
 		}
 

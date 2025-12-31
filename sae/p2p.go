@@ -18,6 +18,7 @@ import (
 )
 
 const (
+	gossipHandlerID   = p2p.TxGossipHandlerID
 	pullRequestPeriod = time.Second // seconds/request
 	pushGossipPeriod  = 100 * time.Millisecond
 )
@@ -33,13 +34,11 @@ func newNetwork(
 	error,
 ) {
 	const maxValidatorSetStaleness = time.Minute
-	var (
-		validatorPeers = p2p.NewValidators(
-			snowCtx.Log,
-			snowCtx.SubnetID,
-			snowCtx.ValidatorState,
-			maxValidatorSetStaleness,
-		)
+	validatorPeers := p2p.NewValidators(
+		snowCtx.Log,
+		snowCtx.SubnetID,
+		snowCtx.ValidatorState,
+		maxValidatorSetStaleness,
 	)
 	const p2pNamespace = "p2p"
 	network, err := p2p.NewNetwork(
@@ -123,7 +122,7 @@ func newGossipers(
 		appGossiper:  handler,
 	}
 
-	client := network.NewClient(p2p.TxGossipHandlerID, validatorPeers)
+	client := network.NewClient(gossipHandlerID, validatorPeers)
 	const pollSize = 1
 	pullGossiper := gossip.NewPullGossiper[txgossip.Transaction](
 		snowCtx.Log,
