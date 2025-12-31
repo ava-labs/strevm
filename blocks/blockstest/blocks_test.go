@@ -29,7 +29,7 @@ func TestIntegration(t *testing.T) {
 		txsPerAccountPerBlock = 3
 	)
 
-	config := params.AllDevChainProtocolChanges
+	config := saetest.ChainConfig()
 	wallet := saetest.NewUNSAFEWallet(t, numAccounts, types.LatestSigner(config))
 	alloc := saetest.MaxAllocFor(wallet.Addresses()...)
 
@@ -113,7 +113,7 @@ func (engine) Finalize(consensus.ChainHeaderReader, *types.Header, *state.StateD
 }
 
 func TestNewGenesis(t *testing.T) {
-	config := params.AllDevChainProtocolChanges
+	config := saetest.ChainConfig()
 	signer := types.LatestSigner(config)
 	wallet := saetest.NewUNSAFEWallet(t, 10, signer)
 	alloc := saetest.MaxAllocFor(wallet.Addresses()...)

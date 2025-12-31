@@ -52,26 +52,26 @@ type SUT struct {
 	*Executor
 	chain  *blockstest.ChainBuilder
 	wallet *saetest.Wallet
-	logger logging.Logger
+	logger *saetest.TBLogger
 	db     ethdb.Database
 }
 
 // newSUT returns a new SUT. Any >= [logging.Error] on the logger will also
 // cancel the returned context, which is useful when waiting for blocks that
 // can never finish execution because of an error.
-func newSUT(tb testing.TB, hooks hook.Points) (context.Context, SUT) {
+func newSUT(tb testing.TB, hooks *saehookstest.Stub) (context.Context, SUT) {
 	tb.Helper()
 
 	logger := saetest.NewTBLogger(tb, logging.Warn)
 	ctx := logger.CancelOnError(tb.Context())
 
-	config := params.AllDevChainProtocolChanges
+	config := saetest.ChainConfig()
 	db := rawdb.NewMemoryDatabase()
 	tdbConfig := &triedb.Config{}
 
 	wallet := saetest.NewUNSAFEWallet(tb, 1, types.LatestSigner(config))
 	alloc := saetest.MaxAllocFor(wallet.Addresses()...)
-	genesis := blockstest.NewGenesis(tb, db, config, alloc, blockstest.WithTrieDBConfig(tdbConfig))
+	genesis := blockstest.NewGenesis(tb, db, config, alloc, blockstest.WithTrieDBConfig(tdbConfig), blockstest.WithGasTarget(hooks.Target))
 
 	opts := blockstest.WithBlockOptions(
 		blockstest.WithLogger(logger),
@@ -336,11 +336,61 @@ func TestExecution(t *testing.T) {
 	})
 }
 
+func TestEndOfBlockOps(t *testing.T) {
+	hooks := defaultHooks()
+	ctx, sut := newSUT(t, hooks)
+	wallet := sut.wallet
+	exportEOA := wallet.Addresses()[0]
+	// The import EOA is deliberately not from [newSUT] to ensure that it's got
+	// a zero starting balance.
+	importEOA := common.Address{'i', 'm', 'p', 'o', 'r', 't'}
+
+	initialTime := sut.lastExecuted.Load().ExecutedByGasTime()
+
+	hooks.Ops = []hook.Op{
+		{
+			Gas: 100_000,
+			Burn: map[common.Address]hook.AccountDebit{
+				exportEOA: {Amount: *uint256.NewInt(10)},
+			},
+		},
+		{
+			Gas: 150_000,
+			Mint: map[common.Address]uint256.Int{
+				importEOA: *uint256.NewInt(100),
+			},
+		},
+	}
+	b := sut.chain.NewBlock(t, nil)
+
+	e := sut.Executor
+	require.NoError(t, e.Enqueue(ctx, b), "Enqueue()")
+	require.NoErrorf(t, b.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", b)
+
+	t.Run("committed_state", func(t *testing.T) {
+		sdb, err := state.New(b.PostExecutionStateRoot(), e.StateCache(), nil)
+		require.NoErrorf(t, err, "state.New(%T.PostExecutionStateRoot(), %T.StateCache(), nil)", b, e)
+		assert.Equal(t, uint64(1), sdb.GetNonce(exportEOA), "export nonce incremented")
+		assert.Zero(t, sdb.GetNonce(importEOA), "import nonce unchanged")
+		assert.Equal(t, uint256.NewInt(100), sdb.GetBalance(importEOA), "imported balance")
+
+		wantTime := initialTime.Clone()
+		wantTime.Tick(100_000 + 150_000)
+
+		opt := gastime.CmpOpt()
+		if diff := cmp.Diff(wantTime, b.ExecutedByGasTime(), opt); diff != "" {
+			t.Errorf("%T.ExecutedByGasTime() diff (-want +got):\n%s", b, diff)
+		}
+	})
+}
+
 func TestGasAccounting(t *testing.T) {
-	hooks := &saehookstest.Stub{}
+	const gasPerTx = gas.Gas(params.TxGas)
+	hooks := &saehookstest.Stub{
+		Target: 5 * gasPerTx,
+	}
 	ctx, sut := newSUT(t, hooks)
 
-	const gasPerTx = gas.Gas(params.TxGas)
 	at := func(blockTime, txs uint64, rate gas.Gas) *proxytime.Time[gas.Gas] {
 		tm := proxytime.New[gas.Gas](blockTime, rate)
 		tm.Tick(gas.Gas(txs) * gasPerTx)
@@ -354,9 +404,9 @@ func TestGasAccounting(t *testing.T) {
 	// Steps are _not_ independent, so the execution time of one is the starting
 	// time of the next.
 	steps := []struct {
-		target         gas.Gas
 		blockTime      uint64
 		numTxs         int
+		targetAfter    gas.Gas
 		wantExecutedBy *proxytime.Time[gas.Gas]
 		// Because of the 2:1 ratio between Rate and Target, gas consumption
 		// increases excess by half of the amount consumed, while
@@ -365,74 +415,76 @@ func TestGasAccounting(t *testing.T) {
 		wantPriceAfter  gas.Price
 	}{
 		{
-			target:          5 * gasPerTx,
 			blockTime:       2,
 			numTxs:          3,
+			targetAfter:     5 * gasPerTx,
 			wantExecutedBy:  at(2, 3, 10*gasPerTx),
 			wantExcessAfter: 3 * gasPerTx / 2,
 			wantPriceAfter:  1, // Excess isn't high enough so price is effectively e^0
 		},
 		{
-			target:          5 * gasPerTx,
 			blockTime:       3, // fast-forward
 			numTxs:          12,
+			targetAfter:     5 * gasPerTx,
 			wantExecutedBy:  at(4, 2, 10*gasPerTx),
 			wantExcessAfter: 12 * gasPerTx / 2,
 			wantPriceAfter:  1,
 		},
 		{
-			target:          5 * gasPerTx,
 			blockTime:       4, // no fast-forward so starts at last execution time
 			numTxs:          20,
+			targetAfter:     5 * gasPerTx,
 			wantExecutedBy:  at(6, 2, 10*gasPerTx),
 			wantExcessAfter: (12 + 20) * gasPerTx / 2,
 			wantPriceAfter:  1,
 		},
 		{
-			target:          5 * gasPerTx,
-			blockTime:       7, // fast-forward equivalent of 8 txs
-			numTxs:          16,
-			wantExecutedBy:  at(8, 6, 10*gasPerTx),
-			wantExcessAfter: (12 + 20 - 8 + 16) * gasPerTx / 2,
+			blockTime:   7, // fast-forward equivalent of 8 txs
+			numTxs:      16,
+			targetAfter: 10 * gasPerTx, // double gas/block --> halve ticking rate
+			// Doubling the target scales both the ending time and excess to compensate.
+			wantExecutedBy:  at(8, 2*6, 2*10*gasPerTx),
+			wantExcessAfter: 2 * (12 + 20 - 8 + 16) * gasPerTx / 2,
 			wantPriceAfter:  1,
 		},
 		{
-			target:          10 * gasPerTx, // double gas/block --> halve ticking rate
-			blockTime:       8,             // no fast-forward
-			numTxs:          4,
-			wantExecutedBy:  at(8, (6*2)+4, 20*gasPerTx), // starting point scales
-			wantExcessAfter: (2*(12+20-8+16) + 4) * gasPerTx / 2,
+			blockTime:   8, // no fast-forward
+			numTxs:      4,
+			targetAfter: 5 * gasPerTx, // back to original
+			// Halving the target inverts the scaling seen in the last block.
+			wantExecutedBy:  at(8, 6+(4/2), 10*gasPerTx),
+			wantExcessAfter: ((12 + 20 - 8 + 16) + 4/2) * gasPerTx / 2,
 			wantPriceAfter:  1,
 		},
 		{
-			target:          5 * gasPerTx, // back to original
 			blockTime:       8,
 			numTxs:          5,
+			targetAfter:     5 * gasPerTx,
 			wantExecutedBy:  at(8, 6+(4/2)+5, 10*gasPerTx),
 			wantExcessAfter: ((12 + 20 - 8 + 16) + 4/2 + 5) * gasPerTx / 2,
 			wantPriceAfter:  1,
 		},
 		{
-			target:          5 * gasPerTx,
 			blockTime:       20, // more than double the last executed-by time, reduces excess to 0
 			numTxs:          1,
+			targetAfter:     5 * gasPerTx,
 			wantExecutedBy:  at(20, 1, 10*gasPerTx),
 			wantExcessAfter: gasPerTx / 2,
 			wantPriceAfter:  1,
 		},
 		{
-			target:          5 * gasPerTx,
 			blockTime:       21,                                 // fast-forward so excess is 0
 			numTxs:          30 * gastime.TargetToExcessScaling, // deliberate, see below
+			targetAfter:     5 * gasPerTx,
 			wantExecutedBy:  at(21, 30*gastime.TargetToExcessScaling, 10*gasPerTx),
 			wantExcessAfter: 3 * ((5 * gasPerTx /*T*/) * gastime.TargetToExcessScaling /* == K */),
 			// Excess is now 3·K so the price is e^3
 			wantPriceAfter: gas.Price(math.Floor(math.Pow(math.E, 3 /* <----- NB */))),
 		},
 		{
-			target:          5 * gasPerTx,
 			blockTime:       22, // no fast-forward
 			numTxs:          10 * gastime.TargetToExcessScaling,
+			targetAfter:     5 * gasPerTx,
 			wantExecutedBy:  at(21, 40*gastime.TargetToExcessScaling, 10*gasPerTx),
 			wantExcessAfter: 4 * ((5 * gasPerTx /*T*/) * gastime.TargetToExcessScaling /* == K */),
 			wantPriceAfter:  gas.Price(math.Floor(math.Pow(math.E, 4 /* <----- NB */))),
@@ -442,7 +494,7 @@ func TestGasAccounting(t *testing.T) {
 	e, chain, wallet := sut.Executor, sut.chain, sut.wallet
 
 	for i, step := range steps {
-		hooks.Target = step.target
+		hooks.Target = step.targetAfter
 
 		txs := make(types.Transactions, step.numTxs)
 		for i := range txs {
@@ -531,6 +583,31 @@ func asBytes(ops ...vm.OpCode) []byte {
 		buf[i] = byte(op)
 	}
 	return buf
+}
+
+func FuzzOpCodes(f *testing.F) {
+	// Although it's tempting to run multiple `code` slices in a block, to
+	// amortise the fixed setup cost of the SUT, this stops the Go fuzzer from
+	// knowing about their independence, resulting in a lot of empty inputs.
+	f.Fuzz(func(t *testing.T, code []byte) {
+		t.Parallel() // for corpus in ./testdata/
+
+		_, sut := newSUT(t, defaultHooks())
+		tx := sut.wallet.SetNonceAndSign(t, 0, &types.LegacyTx{
+			To:       nil, // i.e. contract creation, resulting in `code` being executed
+			GasPrice: big.NewInt(1),
+			Gas:      30e6,
+			Data:     code,
+		})
+		b := sut.chain.NewBlock(t, types.Transactions{tx})
+
+		// Ensure that the SUT [logging.Logger] remains of this type so >=WARN
+		// logs become failures.
+		var logger *saetest.TBLogger = sut.logger
+		// Errors in execution (i.e. reverts) are fine, but we don't want them
+		// bubbling up any further.
+		require.NoErrorf(t, sut.execute(b, logger), "%T.execute()", sut.Executor)
+	})
 }
 
 func TestContextualOpCodes(t *testing.T) {
@@ -642,6 +719,14 @@ func TestContextualOpCodes(t *testing.T) {
 			name:      "CHAINID",
 			code:      logTopOfStackAfter(vm.CHAINID),
 			wantTopic: bigToHash(sut.ChainConfig().ChainID),
+		},
+		{
+			name: "BLOBBASEFEE",
+			code: logTopOfStackAfter(vm.BLOBBASEFEE),
+			header: func(h *types.Header) {
+				h.ExcessBlobGas = new(uint64)
+			},
+			wantTopic: common.Hash{31: 1},
 		},
 		// BASEFEE is tested in [TestGasAccounting] because getting the clock
 		// excess to a specific value is complicated.

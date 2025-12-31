@@ -9,6 +9,7 @@ package saetest
 
 import (
 	"context"
+	"math/big"
 	"slices"
 	"sync"
 	"testing"
@@ -16,6 +17,7 @@ import (
 	"github.com/ava-labs/avalanchego/utils/lock"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/event"
+	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/trie"
 	"github.com/google/go-cmp/cmp"
 	"go.uber.org/goleak"
@@ -41,6 +43,19 @@ func NoLeak(m *testing.M) {
 // TrieHasher returns an arbitrary trie hasher.
 func TrieHasher() types.TrieHasher {
 	return trie.NewStackTrie(nil)
+}
+
+// ChainConfig returns [params.MergedTestChainConfig] as it includes all EIPs
+// available for testing, including post-merge upgrades. This SHOULD be used for
+// all testing.
+func ChainConfig() *params.ChainConfig {
+	return params.MergedTestChainConfig
+}
+
+// Rules returns the rules associated with [ChainConfig], at height and time
+// zero, and post-merge.
+func Rules() params.Rules {
+	return ChainConfig().Rules(new(big.Int), true, 0)
 }
 
 // MerkleRootsEqual returns whether the two arguments have the same Merkle root.

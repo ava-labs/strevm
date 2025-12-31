@@ -8,12 +8,14 @@
 package blockstest
 
 import (
+	"math"
 	"math/big"
 	"slices"
 	"testing"
 	"time"
 
 	"github.com/ava-labs/avalanchego/utils/logging"
+	"github.com/ava-labs/avalanchego/vms/components/gas"
 	"github.com/ava-labs/libevm/core"
 	"github.com/ava-labs/libevm/core/state"
 	"github.com/ava-labs/libevm/core/types"
@@ -36,9 +38,10 @@ type EthBlockOption = options.Option[ethBlockProperties]
 func NewEthBlock(parent *types.Block, txs types.Transactions, opts ...EthBlockOption) *types.Block {
 	props := &ethBlockProperties{
 		header: &types.Header{
-			Number:     new(big.Int).Add(parent.Number(), big.NewInt(1)),
-			ParentHash: parent.Hash(),
-			BaseFee:    big.NewInt(0),
+			Number:        new(big.Int).Add(parent.Number(), big.NewInt(1)),
+			ParentHash:    parent.Hash(),
+			BaseFee:       big.NewInt(0),
+			ExcessBlobGas: new(uint64),
 		},
 	}
 	props = options.ApplyTo(props, opts...)
@@ -101,11 +104,15 @@ func WithLogger(l logging.Logger) BlockOption {
 // marked as both executed and synchronous.
 func NewGenesis(tb testing.TB, db ethdb.Database, config *params.ChainConfig, alloc types.GenesisAlloc, opts ...GenesisOption) *blocks.Block {
 	tb.Helper()
-	conf := options.ApplyTo(&genesisConfig{}, opts...)
+	conf := &genesisConfig{
+		gasTarget: math.MaxUint64,
+	}
+	options.ApplyTo(conf, opts...)
 
 	gen := &core.Genesis{
-		Config: config,
-		Alloc:  alloc,
+		Config:    config,
+		Timestamp: conf.timestamp,
+		Alloc:     alloc,
 	}
 
 	tdb := state.NewDatabaseWithConfig(db, conf.tdbConfig).TrieDB()
@@ -114,13 +121,16 @@ func NewGenesis(tb testing.TB, db ethdb.Database, config *params.ChainConfig, al
 	require.NoErrorf(tb, tdb.Commit(hash, true), "%T.Commit(core.SetupGenesisBlock(...))", tdb)
 
 	b := NewBlock(tb, gen.ToBlock(), nil, nil)
-	require.NoErrorf(tb, b.MarkExecuted(db, gastime.New(gen.Timestamp, 1, 0), time.Time{}, new(big.Int), nil, b.SettledStateRoot()), "%T.MarkExecuted()", b)
+	require.NoErrorf(tb, b.MarkExecuted(db, gastime.New(gen.Timestamp, conf.gasTarget, conf.gasExcess), time.Time{}, new(big.Int), nil, b.SettledStateRoot()), "%T.MarkExecuted()", b)
 	require.NoErrorf(tb, b.MarkSynchronous(), "%T.MarkSynchronous()", b)
 	return b
 }
 
 type genesisConfig struct {
 	tdbConfig *triedb.Config
+	timestamp uint64
+	gasTarget gas.Gas
+	gasExcess gas.Gas
 }
 
 // A GenesisOption configures [NewGenesis].
@@ -130,5 +140,26 @@ type GenesisOption = options.Option[genesisConfig]
 func WithTrieDBConfig(tc *triedb.Config) GenesisOption {
 	return options.Func[genesisConfig](func(gc *genesisConfig) {
 		gc.tdbConfig = tc
+	})
+}
+
+// WithTimestamp overrides the timestamp used by [NewGenesis].
+func WithTimestamp(timestamp uint64) GenesisOption {
+	return options.Func[genesisConfig](func(gc *genesisConfig) {
+		gc.timestamp = timestamp
+	})
+}
+
+// WithGasTarget overrides the gas target used by [NewGenesis].
+func WithGasTarget(target gas.Gas) GenesisOption {
+	return options.Func[genesisConfig](func(gc *genesisConfig) {
+		gc.gasTarget = target
+	})
+}
+
+// WithGasExcess overrides the gas excess used by [NewGenesis].
+func WithGasExcess(excess gas.Gas) GenesisOption {
+	return options.Func[genesisConfig](func(gc *genesisConfig) {
+		gc.gasExcess = excess
 	})
 }

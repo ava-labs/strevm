@@ -61,13 +61,9 @@ type SUT struct {
 	exec   *saexec.Executor
 }
 
-func chainConfig() *params.ChainConfig {
-	return params.AllDevChainProtocolChanges
-}
-
 func newWallet(tb testing.TB, numAccounts uint) *saetest.Wallet {
 	tb.Helper()
-	signer := types.LatestSigner(chainConfig())
+	signer := types.LatestSigner(saetest.ChainConfig())
 	return saetest.NewUNSAFEWallet(tb, numAccounts, signer)
 }
 
@@ -76,7 +72,7 @@ func newSUT(t *testing.T, numAccounts uint) SUT {
 	logger := saetest.NewTBLogger(t, logging.Warn)
 
 	wallet := newWallet(t, numAccounts)
-	config := chainConfig()
+	config := saetest.ChainConfig()
 
 	db := rawdb.NewMemoryDatabase()
 	genesis := blockstest.NewGenesis(t, db, config, saetest.MaxAllocFor(wallet.Addresses()...))

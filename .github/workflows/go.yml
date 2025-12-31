@@ -4,19 +4,23 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
   workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
+permissions:
+  contents: read
+
 jobs:
   # If adding a new job, add it to the `needs` list of the `go` job as this is
   # what gates PRs.
   go:
     runs-on: ubuntu-latest
-    needs: [go_test, go_generate, go_tidy]
+    needs: [go_test, go_generate, go_tidy, require_fuzz_corpus]
+    # TODO(arr4n) investigate why setup-go wasn't properly caching fuzz corpora
+    # and then reinstate a go_fuzz job that extends them.
     steps:
       - run: echo "Dependencies successful"
 
@@ -57,3 +61,37 @@ jobs:
           go-version-file: "go.mod"
       - run: go mod tidy
       - run: git diff --exit-code
+
+  find_fuzz_targets:
+    runs-on: ubuntu-latest
+    outputs:
+      targets: ${{ steps.find.outputs.targets }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: find
+        run: |
+          echo "targets=$(grep --recursive --include '**_test.go' -oP "^func \KFuzz[^(]+" | xargs jq -c -n '$ARGS.positional' --args)" >> $GITHUB_OUTPUT
+
+  require_fuzz_corpus:
+    needs: [find_fuzz_targets]
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        target: ${{fromJSON(needs.find_fuzz_targets.outputs.targets)}}
+    env:
+      # The actual corpus size is dependent on the test in question and how many
+      # "interesting" cases can be found. This is an arbitrary lower bound,
+      # chosen as approximately half the size of the very basic
+      # `FuzzEffectiveGasTip`.
+      MIN_CORPUS_SIZE: 20
+    steps:
+      - run: |
+          echo "${{ matrix.target }}" | awk -F: '{print $1}' | xargs dirname | xargs -i echo "PACKAGE={}" >> "$GITHUB_ENV"
+      - run: |
+          echo "${{ matrix.target }}" | awk -F: '{print $2}' | xargs -i echo "FUNCTION={}" >> "$GITHUB_ENV"
+      - run: |
+          echo "CORPUS_DIR=./${PACKAGE}/testdata/fuzz/${FUNCTION}" >> "$GITHUB_ENV"
+      - uses: actions/checkout@v4
+      - name: Require existing corpus of at least ${MIN_CORPUS_SIZE}
+        run: | # Raw `go test` will be meaningful, and `-fuzz` won't start from nowhere
+          [ -d "${CORPUS_DIR}" ] && [ $(ls "${CORPUS_DIR}" | wc -l) -gt ${MIN_CORPUS_SIZE} ]

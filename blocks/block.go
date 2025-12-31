@@ -25,7 +25,8 @@ type Block struct {
 	b *types.Block
 	// Invariant: ancestry is non-nil and contains non-nil pointers i.f.f. the
 	// block hasn't itself been settled. A synchronous block (e.g. SAE genesis
-	// or the last pre-SAE block) is always considered settled.
+	// or the last pre-SAE block) is always considered settled. See [New] for
+	// caveats during construction.
 	//
 	// Rationale: the ancestral pointers form a linked list that would prevent
 	// garbage collection if not severed. Once a block is settled there is no
@@ -36,8 +37,7 @@ type Block struct {
 	// Only the genesis block or the last pre-SAE block is synchronous. These
 	// are self-settling by definition so their `ancestry` MUST be nil.
 	synchronous bool
-	// Non-nil i.f.f. [Block.MarkExecuted] or [Block.ResotrePostExecutionState]
-	// have returned without error.
+	// Non-nil i.f.f. [Block.MarkExecuted] has returned without error.
 	execution atomic.Pointer[executionResults]
 
 	// Allows this block to be ruled out as able to be settled at a particular
@@ -62,6 +62,12 @@ func InMemoryBlockCount() int64 {
 }
 
 // New constructs a new Block.
+//
+// While both the `parent` and `lastSettled` arguments MAY be nil, this will
+// result in an invalid Block as it breaks important invariants. In such
+// situations, [Block.CopyAncestorsFrom] MUST then be called before further use
+// of the Block. In practice, this SHOULD only be done when parsing an encoded
+// Block.
 func New(eth *types.Block, parent, lastSettled *Block, log logging.Logger) (*Block, error) {
 	b := &Block{
 		b:        eth,

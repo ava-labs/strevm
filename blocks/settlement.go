@@ -8,6 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+
+	"go.uber.org/zap"
 )
 
 type ancestry struct {
@@ -128,46 +130,37 @@ func (b *Block) Settles() []*Block {
 	if b.synchronous {
 		return []*Block{b}
 	}
-	return settling(b.ParentBlock().LastSettled(), b.LastSettled())
+	return Range(b.ParentBlock().LastSettled(), b.LastSettled())
 }
 
-// WhenChildSettles returns the blocks that would be settled by a child of `b`,
-// given the last-settled block at that child's block time. Note that the
-// last-settled block at the child's time MAY be equal to the last-settled of
-// `b` (its parent), in which case WhenChildSettles returns an empty slice.
+// Range returns the blocks in the continuous, half-open interval (start, end]
+// in order of increasing height.
 //
-// The argument is typically the return value of [LastToSettleAt], where that
-// function receives `b` as the parent. See the Example.
+// The `start` block MAY be settled, but all other blocks in the range MUST NOT
+// be settled. It is assumed that `start` can be reached by traversing up the
+// chain from `end`.
 //
-// WhenChildSettles MUST only be called before the call to [Block.MarkSettled]
-// on `b`. The intention is that this method is called on the VM's preferred
-// block, which always meets this criterion. This is by definition of
-// settlement, which requires that at least one descendent block has already
-// been accepted, which the preference never has.
-//
-// WhenChildSettles is similar to [Block.Settles] but with different definitions
-// of `x` and `y` (as described in [Block.Settles]). It is intended for use
-// during block building and defines `x` as the block height of
-// `b.LastSettled()` while `y` as the height of the argument passed to this
-// method.
-func (b *Block) WhenChildSettles(lastSettledOfChild *Block) []*Block {
-	return settling(b.LastSettled(), lastSettledOfChild)
-}
-
-// settling returns all the blocks after `lastOfParent` up to and including
-// `lastOfCurr`, each of which are expected to be the block last-settled by a
-// respective block-and-parent pair. It returns an empty slice if the two
-// arguments have the same block hash.
-func settling(lastOfParent, lastOfCurr *Block) []*Block {
-	var settling []*Block
-	// TODO(arr4n) abstract this to combine functionality with iterators
-	// introduced by @StephenButtolph.
-	for s := lastOfCurr; s.Hash() != lastOfParent.Hash(); s = s.ParentBlock() {
-		settling = append(settling, s)
+// If the two arguments are the same block, Range returns an empty slice.
+func Range(start, end *Block) []*Block {
+	startHeight := start.Height()
+	endHeight := end.Height()
+	if endHeight <= startHeight {
+		return nil
 	}
-	slices.Reverse(settling)
-	return settling
+
+	var (
+		chain = make([]*Block, endHeight-startHeight)
+		b     = end
+	)
+	for i := range chain {
+		chain[i] = b
+		b = b.ParentBlock()
+	}
+	slices.Reverse(chain)
+	return chain
 }
+
+var errIncompleteBlockHistory = errors.New("incomplete block history when determining last-settled block")
 
 // LastToSettleAt returns (a) the last block to be settled at time `settleAt` if
 // building on the specified parent block, and (b) a boolean to indicate if
@@ -181,7 +174,7 @@ func settling(lastOfParent, lastOfCurr *Block) []*Block {
 //
 // See the Example for [Block.WhenChildSettles] for one usage of the returned
 // block.
-func LastToSettleAt(settleAt uint64, parent *Block) (b *Block, ok bool) {
+func LastToSettleAt(settleAt uint64, parent *Block) (b *Block, ok bool, _ error) {
 	defer func() {
 		// Avoids having to perform this check at every return.
 		if !ok {
@@ -207,10 +200,25 @@ func LastToSettleAt(settleAt uint64, parent *Block) (b *Block, ok bool) {
 	// therefore we have a guarantee that the loop update will never result in
 	// `block==nil`.
 	for block := parent; ; block = block.ParentBlock() {
+		if block == nil {
+			// Although the below [Block.Settled] check (performed in the last
+			// loop iteration) precludes this from happening, that assumes no
+			// settlement concurrently with a call to [LastToSettleAt]. While
+			// that may be true now, the consequence of a race condition when
+			// omitting this check would be a panic for nil-pointer
+			// dereferencing.
+			parent.log.Error(
+				"Race condition when determining last block to settle",
+				zap.Stringer("parent_hash", parent.Hash()),
+				zap.Uint64("parent_height", parent.Height()),
+				zap.Uint64("settle_at", settleAt),
+			)
+			return nil, false, fmt.Errorf("%w: settling at %d with parent %#x (%v)", errIncompleteBlockHistory, settleAt, parent.Hash(), parent.Number())
+		}
 		// Guarantees that the loop will always exit as the last pre-SAE block
 		// (perhaps the genesis) is always settled, by definition.
-		if settled := block.ancestry.Load() == nil; settled {
-			return block, known
+		if block.Settled() {
+			return block, known, nil
 		}
 
 		if startsNoEarlierThan := block.BuildTime(); startsNoEarlierThan > settleAt {
@@ -233,7 +241,7 @@ func LastToSettleAt(settleAt uint64, parent *Block) (b *Block, ok bool) {
 				known = true
 				continue
 			}
-			return block, known
+			return block, known, nil
 		}
 
 		// Note that a grandchild block having unknown execution completion time

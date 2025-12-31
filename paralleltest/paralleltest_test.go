@@ -34,15 +34,15 @@ type handler struct {
 
 var _ parallel.Handler[struct{}, common.Hash, *txHashEchoer, map[int]common.Hash] = (*handler)(nil)
 
-func (h *handler) Gas(tx *types.Transaction) (uint64, bool) {
-	if to := tx.To(); to == nil || *to != h.addr {
-		return 0, false
-	}
-	return h.gas, true
-}
-
 func (*handler) BeforeBlock(libevm.StateReader, *types.Header) struct{} {
 	return struct{}{}
+}
+
+func (h *handler) ShouldProcess(tx parallel.IndexedTx, _ struct{}) (bool, uint64) {
+	if to := tx.To(); to == nil || *to != h.addr {
+		return false, 0
+	}
+	return true, h.gas
 }
 
 func (*handler) Prefetch(_ libevm.StateReader, tx parallel.IndexedTx, _ struct{}) common.Hash {

@@ -24,6 +24,7 @@ import (
 
 	"github.com/ava-labs/strevm/blocks/blockstest"
 	"github.com/ava-labs/strevm/hook"
+	saehookstest "github.com/ava-labs/strevm/hook/hookstest"
 	"github.com/ava-labs/strevm/saexec"
 )
 
@@ -55,7 +56,7 @@ func NewExecutor[CommonData, Prefetch any, R parallel.PrecompileResult, Aggregat
 	}
 	stub.Register(tb)
 
-	exec, err := saexec.New(gen, chain.GetBlock, config, db, nil, &hooks{par}, logger)
+	exec, err := saexec.New(gen, chain.GetBlock, config, db, nil, &hooks{par: par}, logger)
 	require.NoError(tb, err)
 	tb.Cleanup(func() {
 		assert.NoError(tb, exec.Close())
@@ -66,23 +67,20 @@ func NewExecutor[CommonData, Prefetch any, R parallel.PrecompileResult, Aggregat
 }
 
 type hooks struct {
+	saehookstest.Stub
 	par *parallel.Processor
 }
 
 var _ hook.Points = (*hooks)(nil)
 
-func (*hooks) GasTarget(*types.Block) gas.Gas {
+func (*hooks) GasTargetAfter(*types.Header) gas.Gas {
 	return 100e6
 }
 
-func (*hooks) SubSecondBlockTime(*types.Block) gas.Gas {
-	return 0
-}
-
-func (h *hooks) BeforeBlock(rules params.Rules, sdb *state.StateDB, b *types.Block) error {
+func (h *hooks) BeforeExecutingBlock(rules params.Rules, sdb *state.StateDB, b *types.Block) error {
 	return h.par.StartBlock(sdb, rules, b)
 }
 
-func (h *hooks) AfterBlock(sdb *state.StateDB, b *types.Block, rs types.Receipts) {
+func (h *hooks) AfterExecutingBlock(sdb *state.StateDB, b *types.Block, rs types.Receipts) {
 	h.par.FinishBlock(sdb, b, rs)
 }
