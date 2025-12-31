@@ -11,10 +11,11 @@ import (
 	"github.com/ava-labs/avalanchego/network/p2p"
 	"github.com/ava-labs/avalanchego/network/p2p/gossip"
 	"github.com/ava-labs/avalanchego/snow"
-	snowcommon "github.com/ava-labs/avalanchego/snow/engine/common"
+	"github.com/ava-labs/avalanchego/snow/engine/common"
 	"github.com/ava-labs/avalanchego/utils/units"
-	"github.com/ava-labs/strevm/txgossip"
 	"github.com/prometheus/client_golang/prometheus"
+
+	"github.com/ava-labs/strevm/txgossip"
 )
 
 const (
@@ -26,7 +27,7 @@ const (
 // newNetwork creates the P2P network with a registered validator set.
 func newNetwork(
 	snowCtx *snow.Context,
-	sender snowcommon.AppSender,
+	sender common.AppSender,
 	reg *prometheus.Registry,
 ) (
 	*p2p.Network,
@@ -109,7 +110,7 @@ func newGossipers(
 	// spamming. Push messages are not filtered.
 	type (
 		appRequester interface {
-			AppRequest(context.Context, ids.NodeID, time.Time, []byte) ([]byte, *snowcommon.AppError)
+			AppRequest(context.Context, ids.NodeID, time.Time, []byte) ([]byte, *common.AppError)
 		}
 		appGossiper interface {
 			AppGossip(context.Context, ids.NodeID, []byte)

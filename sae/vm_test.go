@@ -126,7 +126,8 @@ func newSUT(tb testing.TB, numAccounts uint, opts ...sutOption) (context.Context
 	ctx := logger.CancelOnError(tb.Context())
 
 	snowCtx := snowtest.Context(tb, chainID)
-	validators := snowCtx.ValidatorState.(*validatorstest.State)
+	validators, ok := snowCtx.ValidatorState.(*validatorstest.State)
+	require.Truef(tb, ok, "unexpected type %T for snowCtx.ValidatorState", snowCtx.ValidatorState)
 	validators.GetCurrentHeightF = func(context.Context) (uint64, error) {
 		return 0, nil
 	}
