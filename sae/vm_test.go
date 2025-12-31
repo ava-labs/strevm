@@ -538,7 +538,7 @@ func TestSemanticBlockChecks(t *testing.T) {
 	}
 }
 
-type network struct {
+type networkSUT struct {
 	validators    []*SUT
 	nonValidators []*SUT
 }
@@ -550,7 +550,7 @@ type network struct {
 // themselves as connected. While non-validators can connect to other
 // non-validators, they do not generally attempt to do so in practice, so this
 // function does not connect them to each other.
-func newNetwork(tb testing.TB, numValidators, numNonValidators int) *network {
+func newNetworkSUT(tb testing.TB, numValidators, numNonValidators int) *networkSUT {
 	tb.Helper()
 
 	validatorNodes := make(map[ids.NodeID]*SUT, numValidators)
@@ -694,7 +694,7 @@ func newNetwork(tb testing.TB, numValidators, numNonValidators int) *network {
 		}()
 	}
 
-	return &network{
+	return &networkSUT{
 		validators:    slices.Collect(maps.Values(validatorNodes)),
 		nonValidators: slices.Collect(maps.Values(nonValidatorNodes)),
 	}
@@ -719,7 +719,7 @@ func requireNotReceiveTx(tb testing.TB, nodes []*SUT, txHash common.Hash) {
 }
 
 func TestGossip(t *testing.T) {
-	n := newNetwork(t, 2, 2)
+	n := newNetworkSUT(t, 2, 2)
 
 	api := n.nonValidators[0]
 	tx := api.wallet.SetNonceAndSign(t, 0, &types.DynamicFeeTx{
