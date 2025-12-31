@@ -22,20 +22,18 @@ const (
 	pushGossipPeriod  = 100 * time.Millisecond
 )
 
+// newNetwork creates the P2P network with a registered validator set.
 func newNetwork(
 	snowCtx *snow.Context,
 	sender snowcommon.AppSender,
 	reg *prometheus.Registry,
-	mempool *txgossip.Set,
 ) (
 	*p2p.Network,
-	*gossip.ValidatorGossiper,
-	*gossip.PushGossiper[txgossip.Transaction],
+	*p2p.Validators,
 	error,
 ) {
 	const maxValidatorSetStaleness = time.Minute
 	var (
-		peers          p2p.Peers
 		validatorPeers = p2p.NewValidators(
 			snowCtx.Log,
 			snowCtx.SubnetID,
@@ -49,13 +47,27 @@ func newNetwork(
 		sender,
 		reg,
 		p2pNamespace,
-		&peers,
 		validatorPeers,
 	)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, err
 	}
+	return network, validatorPeers, nil
+}
 
+// newGossipers creates the tx gossipers for mempool dissemination.
+func newGossipers(
+	snowCtx *snow.Context,
+	network *p2p.Network,
+	validatorPeers *p2p.Validators,
+	reg *prometheus.Registry,
+	mempool *txgossip.Set,
+) (
+	p2p.Handler,
+	*gossip.ValidatorGossiper,
+	*gossip.PushGossiper[txgossip.Transaction],
+	error,
+) {
 	const gossipNamespace = "gossip"
 	metrics, err := gossip.NewMetrics(reg, gossipNamespace)
 	if err != nil {
@@ -110,9 +122,6 @@ func newNetwork(
 		appRequester: validatorOnlyHandler,
 		appGossiper:  handler,
 	}
-	if err := network.AddHandler(p2p.TxGossipHandlerID, gossipHandler); err != nil {
-		return nil, nil, nil, err
-	}
 
 	client := network.NewClient(p2p.TxGossipHandlerID, validatorPeers)
 	const pollSize = 1
@@ -156,5 +165,5 @@ func newNetwork(
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	return network, pullGossiperWhenValidator, pushGossiper, nil
+	return gossipHandler, pullGossiperWhenValidator, pushGossiper, nil
 }

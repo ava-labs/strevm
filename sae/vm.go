@@ -161,9 +161,16 @@ func (vm *VM) Init(
 	}
 
 	{ // ==========  P2P Gossip  ==========
-		network, pullGossiper, pushGossiper, err := newNetwork(snowCtx, sender, vm.metrics, vm.mempool)
+		network, validatorPeers, err := newNetwork(snowCtx, sender, vm.metrics)
 		if err != nil {
 			return fmt.Errorf("newNetwork(...): %v", err)
+		}
+		handler, pullGossiper, pushGossiper, err := newGossipers(snowCtx, network, validatorPeers, vm.metrics, vm.mempool)
+		if err != nil {
+			return fmt.Errorf("newGossipers(...): %v", err)
+		}
+		if err := network.AddHandler(p2p.TxGossipHandlerID, handler); err != nil {
+			return fmt.Errorf("network.AddHandler(...): %v", err)
 		}
 
 		vm.mempool.RegisterPushGossiper(pushGossiper)
