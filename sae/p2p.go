@@ -40,12 +40,12 @@ func newNetwork(
 		snowCtx.ValidatorState,
 		maxValidatorSetStaleness,
 	)
-	const p2pNamespace = "p2p"
+	const namespace = "p2p"
 	network, err := p2p.NewNetwork(
 		snowCtx.Log,
 		sender,
 		reg,
-		p2pNamespace,
+		namespace,
 		validatorPeers,
 	)
 	if err != nil {
@@ -67,16 +67,17 @@ func newGossipers(
 	*gossip.PushGossiper[txgossip.Transaction],
 	error,
 ) {
-	const gossipNamespace = "gossip"
-	metrics, err := gossip.NewMetrics(reg, gossipNamespace)
+	const namespace = "gossip"
+	metrics, err := gossip.NewMetrics(reg, namespace)
 	if err != nil {
 		return nil, nil, nil, err
 	}
 
 	const targetMessageSize = 20 * units.KiB
+	var marshaller txgossip.Marshaller
 	handler := gossip.NewHandler(
 		snowCtx.Log,
-		txgossip.Marshaller{},
+		marshaller,
 		mempool,
 		metrics,
 		targetMessageSize,
@@ -93,7 +94,7 @@ func newGossipers(
 		throttlingPeriod,
 		requestsPerPeerPerPeriod,
 		reg,
-		gossipNamespace,
+		namespace,
 	)
 	if err != nil {
 		return nil, nil, nil, err
@@ -126,7 +127,7 @@ func newGossipers(
 	const pollSize = 1
 	pullGossiper := gossip.NewPullGossiper[txgossip.Transaction](
 		snowCtx.Log,
-		txgossip.Marshaller{},
+		marshaller,
 		mempool,
 		client,
 		metrics,
@@ -150,7 +151,7 @@ func newGossipers(
 		regossipPeriod     = 30 * time.Second
 	)
 	pushGossiper, err := gossip.NewPushGossiper(
-		txgossip.Marshaller{},
+		marshaller,
 		mempool,
 		validatorPeers,
 		client,
