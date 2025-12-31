@@ -553,11 +553,20 @@ type networkSUT struct {
 func newNetworkSUT(tb testing.TB, numValidators, numNonValidators int) *networkSUT {
 	tb.Helper()
 
+	const numAccounts = 1
 	validatorNodes := make(map[ids.NodeID]*SUT, numValidators)
 	for range numValidators {
-		_, sut := newSUT(tb, 1)
+		_, sut := newSUT(tb, numAccounts)
 		validatorNodes[sut.rawVM.snowCtx.NodeID] = sut
 	}
+	nonValidatorNodes := make(map[ids.NodeID]*SUT, numNonValidators)
+	for range numNonValidators {
+		_, sut := newSUT(tb, numAccounts)
+		nonValidatorNodes[sut.rawVM.snowCtx.NodeID] = sut
+	}
+	allNodes := make(map[ids.NodeID]*SUT, numValidators+numNonValidators)
+	maps.Copy(allNodes, validatorNodes)
+	maps.Copy(allNodes, nonValidatorNodes)
 
 	validatorSet := make(map[ids.NodeID]*validators.GetValidatorOutput)
 	for _, sut := range validatorNodes {
@@ -571,20 +580,10 @@ func newNetworkSUT(tb testing.TB, numValidators, numNonValidators int) *networkS
 	getValidatorSetF := func(context.Context, uint64, ids.ID) (map[ids.NodeID]*validators.GetValidatorOutput, error) {
 		return validatorSet, nil
 	}
-
-	nonValidatorNodes := make(map[ids.NodeID]*SUT, numNonValidators)
-	for range numNonValidators {
-		_, sut := newSUT(tb, 1)
-		nonValidatorNodes[sut.rawVM.snowCtx.NodeID] = sut
-	}
-	allNodes := make(map[ids.NodeID]*SUT, numValidators+numNonValidators)
-	maps.Copy(allNodes, validatorNodes)
-	maps.Copy(allNodes, nonValidatorNodes)
 	for _, sut := range allNodes {
 		sut.validators.GetValidatorSetF = getValidatorSetF
 	}
 
-	// Connect all nodes to every validator.
 	for nodeID, sut := range allNodes {
 		peers := make(map[ids.NodeID]*SUT, len(allNodes))
 		peers[nodeID] = sut // self-registration
@@ -597,6 +596,8 @@ func newNetworkSUT(tb testing.TB, numValidators, numNonValidators int) *networkS
 		}
 		maps.Copy(peers, nonValidatorPeers)
 
+		// All messages are delivered in a new goroutine to prevent re-entrant
+		// calls, which would result in a deadlock.
 		sender := sut.sender
 		sender.SendAppRequestF = func(ctx context.Context, s set.Set[ids.NodeID], r uint32, b []byte) error {
 			go func() {
@@ -604,9 +605,9 @@ func newNetworkSUT(tb testing.TB, numValidators, numNonValidators int) *networkS
 
 				for peerID := range s {
 					if peer, ok := peers[peerID]; ok {
-						assert.NoError(tb, peer.AppRequest(ctx, nodeID, r, mockable.MaxTime, b))
+						assert.NoErrorf(tb, peer.AppRequest(ctx, nodeID, r, mockable.MaxTime, b), "sending request to %s", peerID)
 					} else {
-						assert.NoError(tb, sut.AppRequestFailed(ctx, peerID, r, snowcommon.ErrTimeout))
+						assert.NoErrorf(tb, sut.AppRequestFailed(ctx, peerID, r, snowcommon.ErrTimeout), "sending request failed to %s", peerID)
 					}
 				}
 			}()
@@ -622,7 +623,7 @@ func newNetworkSUT(tb testing.TB, numValidators, numNonValidators int) *networkS
 					return
 				}
 
-				assert.NoError(tb, peer.AppResponse(ctx, nodeID, r, b))
+				assert.NoErrorf(tb, peer.AppResponse(ctx, nodeID, r, b), "sending response to %s", peerID)
 			}()
 
 			return nil
@@ -640,7 +641,7 @@ func newNetworkSUT(tb testing.TB, numValidators, numNonValidators int) *networkS
 					Code:    code,
 					Message: msg,
 				}
-				assert.NoError(tb, peer.AppRequestFailed(ctx, nodeID, r, appErr))
+				assert.NoErrorf(tb, peer.AppRequestFailed(ctx, nodeID, r, appErr), "sending error to %s", peerID)
 			}()
 			return nil
 		}
@@ -650,22 +651,18 @@ func newNetworkSUT(tb testing.TB, numValidators, numNonValidators int) *networkS
 
 				for peerID := range c.NodeIDs {
 					if peer, ok := peers[peerID]; ok {
-						assert.NoError(tb, peer.AppGossip(ctx, nodeID, b))
+						assert.NoErrorf(tb, peer.AppGossip(ctx, nodeID, b), "sending gossip to %s", peerID)
 					}
 				}
 				var sent set.Set[ids.NodeID]
 				sent.Union(c.NodeIDs)
 
 				send := func(peers map[ids.NodeID]*SUT, count int) error {
-					for peerID := range peers {
+					for peerID, peer := range peers {
 						if count <= 0 {
 							break
 						}
 						if sent.Contains(peerID) {
-							continue
-						}
-						peer, ok := peers[peerID]
-						if !ok {
 							continue
 						}
 						if err := peer.AppGossip(ctx, nodeID, b); err != nil {
@@ -678,9 +675,9 @@ func newNetworkSUT(tb testing.TB, numValidators, numNonValidators int) *networkS
 					return nil
 				}
 
-				assert.NoError(tb, send(validatorNodes, c.Validators))
-				assert.NoError(tb, send(nonValidatorPeers, c.NonValidators))
-				assert.NoError(tb, send(peers, c.Peers))
+				assert.NoError(tb, send(validatorNodes, c.Validators), "sending to validators")
+				assert.NoError(tb, send(nonValidatorPeers, c.NonValidators), "sending to non-validators")
+				assert.NoError(tb, send(peers, c.Peers), "sending to peers")
 			}()
 			return nil
 		}
