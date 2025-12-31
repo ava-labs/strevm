@@ -543,6 +543,13 @@ type network struct {
 	nonValidators []*SUT
 }
 
+// newNetwork creates a network of SUTs with the specified number of validators
+// and non-validators.
+//
+// Like in production, all nodes should be connected to all validators and mark
+// themselves as connected. While non-validators can connect to other
+// non-validators, they do not generally attempt to do so in practice, so this
+// function does not connect them to each other.
 func newNetwork(tb testing.TB, numValidators, numNonValidators int) *network {
 	tb.Helper()
 
