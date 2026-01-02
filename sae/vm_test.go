@@ -114,7 +114,7 @@ func newSUT(tb testing.TB, numAccounts uint, opts ...sutOption) (context.Context
 	// This is unavoidable because we need the wallet earlier, to determine the
 	// addresses for the alloc.
 	if s := types.LatestSigner(conf.chainConfig); !s.Equal(signer) {
-		signer = s
+		signer = s //nolint:ineffassign // Protect against future changes that may use `signer` later
 		wallet.SetSigner(s)
 	}
 
@@ -186,6 +186,8 @@ func withGenesisOpts(opts ...blockstest.GenesisOption) sutOption {
 // context returns a [context.Context], derived from the [testing.TB], that is
 // cancelled if the SUT's default logger receives a log at [logging.Error] or
 // higher.
+//
+//nolint:thelper // Not a helper
 func (s *SUT) context(tb testing.TB) context.Context {
 	return s.logger.CancelOnError(tb.Context())
 }

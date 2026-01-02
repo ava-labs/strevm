@@ -1,3 +1,6 @@
+// Copyright (C) 2026, Ava Labs, Inc. All rights reserved.
+// See the file LICENSE for licensing terms.
+
 package sae
 
 import (
@@ -21,12 +24,13 @@ import (
 	"github.com/ava-labs/libevm/libevm/hookstest"
 	"github.com/ava-labs/libevm/libevm/options"
 	"github.com/ava-labs/libevm/params"
-	"github.com/ava-labs/strevm/intmath"
-	saeparams "github.com/ava-labs/strevm/params"
-	"github.com/ava-labs/strevm/worstcase"
 	"github.com/holiman/uint256"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/ava-labs/strevm/intmath"
+	saeparams "github.com/ava-labs/strevm/params"
+	"github.com/ava-labs/strevm/worstcase"
 )
 
 var worstCaseFuzzFlags struct {
@@ -54,6 +58,7 @@ func createWorstCaseFuzzFlags(set *flag.FlagSet) {
 	set.Uint64Var(&fs.maxTxValue, name("max_tx_value"), params.Ether/1000, "")
 }
 
+//nolint:tparallel // Why should we call t.Parallel at the top level by default?
 func TestWorstCase(t *testing.T) {
 	flags := worstCaseFuzzFlags
 	t.Logf("Flags: %+v", flags)
@@ -173,7 +178,7 @@ func TestWorstCase(t *testing.T) {
 			addrs = append(addrs, guzzle)
 			guzzlerIdx := numEOAs
 
-			seed := rand.Uint64()
+			seed := rand.Uint64() //nolint:gosec // Not for security
 			t.Logf("RNG seed: %d", seed)
 			rng := rand.New(rand.NewPCG(0, seed)) //nolint:gosec // Allow for reproducibility
 
