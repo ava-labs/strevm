@@ -21,6 +21,7 @@ import (
 	"github.com/ava-labs/avalanchego/utils/logging"
 	"github.com/ava-labs/avalanchego/utils/set"
 	"github.com/ava-labs/libevm/common"
+	"github.com/ava-labs/libevm/core"
 	"github.com/ava-labs/libevm/core/rawdb"
 	"github.com/ava-labs/libevm/core/state"
 	"github.com/ava-labs/libevm/core/txpool"
@@ -207,6 +208,42 @@ func (s *SUT) runConsensusLoop(tb testing.TB, preference *blocks.Block) *blocks.
 	return s.lastAcceptedBlock(tb)
 }
 
+// waitUntilExecuted blocks until an external indicator shows that `b` has been
+// executed.
+func (s *SUT) waitUntilExecuted(tb testing.TB, b *blocks.Block) {
+	tb.Helper()
+	defer func() {
+		tb.Helper()
+		require.True(tb, b.Executed(), "%T.Executed()", b)
+	}()
+
+	// The subscription is opened before checking the block number to avoid
+	// missing the notification that the block was executed.
+	c := make(chan core.ChainHeadEvent)
+	sub := s.rawVM.exec.SubscribeChainHeadEvent(c)
+	defer sub.Unsubscribe()
+
+	ctx := tb.Context()
+	num, err := s.Client.BlockNumber(ctx)
+	require.NoErrorf(tb, err, "%T.BlockNumber()", s.Client)
+	if num >= b.Height() {
+		return
+	}
+
+	for {
+		select {
+		case <-ctx.Done():
+			tb.Fatalf("waiting for block %d to execute: %v", b.Height(), ctx.Err())
+		case err := <-sub.Err():
+			require.NoErrorf(tb, err, "%T.SubscribeChainHeadEvent().Err()", s.rawVM.exec)
+		case ev := <-c:
+			if ev.Block.NumberU64() >= b.Height() {
+				return
+			}
+		}
+	}
+}
+
 // lastAcceptedBlock is a convenience wrapper for calling [VM.GetBlock] with
 // the ID from [VM.LastAccepted] as an argument.
 func (s *SUT) lastAcceptedBlock(tb testing.TB) *blocks.Block {
@@ -239,7 +276,10 @@ func (s *SUT) assertBlockHashInvariants(ctx context.Context, t *testing.T) {
 	t.Helper()
 	t.Run("block_hash_invariants", func(t *testing.T) {
 		b := s.lastAcceptedBlock(t)
-		require.NoError(t, b.WaitUntilExecuted(t.Context()), "GetBlock(LastAccepted()).WaitUntilExecuted()")
+		// The API client is an external reader, so we must wait on an external
+		// indicator. The block's WaitUntilExecuted is only an internal
+		// indicator.
+		s.waitUntilExecuted(t, b)
 		t.Logf("Last accepted (and executed) block: %d", b.Height())
 
 		for num, want := range map[rpc.BlockNumber]common.Hash{
@@ -400,7 +440,7 @@ func TestAcceptBlock(t *testing.T) {
 	sut.genesis = nil // allow it to be GCd when appropriate
 
 	rng := rand.New(rand.NewPCG(0, 0)) //nolint:gosec // Reproducibility is useful for tests
-	for range 1 {
+	for range 100 {
 		ffMillis := 100 + rng.IntN(1000*(1+saeparams.TauSeconds))
 		fastForward(time.Millisecond * time.Duration(ffMillis))
 
