@@ -1,4 +1,4 @@
-// Copyright (C) 2025, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2026, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 // Package blockstest provides test helpers for constructing [Streaming
@@ -103,6 +103,7 @@ func WithLogger(l logging.Logger) BlockOption {
 // [triedb.Config] unless overridden by a [WithTrieDBConfig]. The block is
 // marked as both executed and synchronous.
 func NewGenesis(tb testing.TB, db ethdb.Database, config *params.ChainConfig, alloc types.GenesisAlloc, opts ...GenesisOption) *blocks.Block {
+	tb.Helper()
 	gen := &core.Genesis{
 		Config: config,
 		Alloc:  alloc,

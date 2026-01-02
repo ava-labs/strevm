@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2025, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2025-2026, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 //
 // This file is a derived work, based on the go-ethereum library whose original
@@ -28,9 +28,7 @@
 package ethtests
 
 import (
-	"math/rand"
 	"regexp"
-	"runtime"
 	"testing"
 
 	"github.com/ava-labs/libevm/common"
@@ -90,9 +88,7 @@ func TestBlockchain(t *testing.T) {
 	bt.skipLoad(`.*/bcBerlinToLondon/initialVal.json`)
 
 	bt.walk(t, blockTestDir, func(t *testing.T, name string, test *BlockTest) {
-		if runtime.GOARCH == "386" && runtime.GOOS == "windows" && rand.Int63()%2 == 0 {
-			t.Skip("test (randomly) skipped on 32-bit windows")
-		}
+		t.Helper()
 		for _, skippedTestName := range skippedTestRegexp {
 			if regexp.MustCompile(skippedTestName).MatchString(name) {
 				t.Skipf("test %s skipped", name)
@@ -104,6 +100,7 @@ func TestBlockchain(t *testing.T) {
 	// prior to Istanbul. However, they are all derived from GeneralStateTests,
 	// which run natively, so there's no reason to run them here.
 	bt.walk(t, legacyBlockTestDir, func(t *testing.T, name string, test *BlockTest) {
+		t.Helper()
 		for _, skippedTestName := range skippedTestRegexp {
 			if regexp.MustCompile(skippedTestName).MatchString(name) {
 				t.Skipf("test %s skipped", name)
@@ -121,11 +118,13 @@ func TestExecutionSpecBlocktests(t *testing.T) {
 	bt := new(testMatcher)
 
 	bt.walk(t, executionSpecBlockchainTestDir, func(t *testing.T, name string, test *BlockTest) {
+		t.Helper()
 		execBlockTest(t, bt, test)
 	})
 }
 
 func execBlockTest(t *testing.T, bt *testMatcher, test *BlockTest) {
+	t.Helper()
 	if err := bt.checkFailure(t, test.Run(t, false, rawdb.HashScheme, nil, nil)); err != nil {
 		t.Errorf("test in hash mode without snapshotter failed: %v", err)
 		return

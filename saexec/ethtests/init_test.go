@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2025, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2025-2026, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 //
 // This file is a derived work, based on the go-ethereum library whose original
@@ -40,22 +40,13 @@ import (
 	"sort"
 	"strings"
 	"testing"
-
-	"github.com/ava-labs/libevm/params"
 )
 
 var (
 	baseDir                        = filepath.Join(".", "testdata")
 	blockTestDir                   = filepath.Join(baseDir, "BlockchainTests")
-	stateTestDir                   = filepath.Join(baseDir, "GeneralStateTests")
 	legacyBlockTestDir             = filepath.Join(baseDir, "LegacyTests", "Constantinople", "BlockchainTests")
-	legacyStateTestDir             = filepath.Join(baseDir, "LegacyTests", "Constantinople", "GeneralStateTests")
-	transactionTestDir             = filepath.Join(baseDir, "TransactionTests")
-	rlpTestDir                     = filepath.Join(baseDir, "RLPTests")
-	difficultyTestDir              = filepath.Join(baseDir, "BasicTests")
 	executionSpecBlockchainTestDir = filepath.Join(".", "spec-tests", "fixtures", "blockchain_tests")
-	executionSpecStateTestDir      = filepath.Join(".", "spec-tests", "fixtures", "state_tests")
-	benchmarksDir                  = filepath.Join(".", "evm-benchmarks", "benchmarks")
 )
 
 func readJSON(reader io.Reader, value interface{}) error {
@@ -74,7 +65,7 @@ func readJSON(reader io.Reader, value interface{}) error {
 }
 
 func readJSONFile(fn string, value interface{}) error {
-	file, err := os.Open(fn)
+	file, err := os.Open(fn) //nolint:gosec // We control the file path
 	if err != nil {
 		return err
 	}
@@ -103,16 +94,10 @@ func findLine(data []byte, offset int64) (line int) {
 
 // testMatcher controls skipping and chain config assignment to tests.
 type testMatcher struct {
-	configpat      []testConfig
 	failpat        []testFailure
 	skiploadpat    []*regexp.Regexp
 	slowpat        []*regexp.Regexp
 	runonlylistpat *regexp.Regexp
-}
-
-type testConfig struct {
-	p      *regexp.Regexp
-	config params.ChainConfig
 }
 
 type testFailure struct {
@@ -140,15 +125,6 @@ func (tm *testMatcher) fails(pattern string, reason string) {
 	tm.failpat = append(tm.failpat, testFailure{regexp.MustCompile(pattern), reason})
 }
 
-func (tm *testMatcher) runonly(pattern string) {
-	tm.runonlylistpat = regexp.MustCompile(pattern)
-}
-
-// config defines chain config for tests matching the pattern.
-func (tm *testMatcher) config(pattern string, cfg params.ChainConfig) {
-	tm.configpat = append(tm.configpat, testConfig{regexp.MustCompile(pattern), cfg})
-}
-
 // findSkip matches name against test skip patterns.
 func (tm *testMatcher) findSkip(name string) (reason string, skipload bool) {
 	isWin32 := runtime.GOARCH == "386" && runtime.GOOS == "windows"
@@ -170,18 +146,9 @@ func (tm *testMatcher) findSkip(name string) (reason string, skipload bool) {
 	return "", false
 }
 
-// findConfig returns the chain config matching defined patterns.
-func (tm *testMatcher) findConfig(t *testing.T) *params.ChainConfig {
-	for _, m := range tm.configpat {
-		if m.p.MatchString(t.Name()) {
-			return &m.config
-		}
-	}
-	return new(params.ChainConfig)
-}
-
 // checkFailure checks whether a failure is expected.
 func (tm *testMatcher) checkFailure(t *testing.T, err error) error {
+	t.Helper()
 	failReason := ""
 	for _, m := range tm.failpat {
 		if m.p.MatchString(t.Name()) {
@@ -205,6 +172,7 @@ func (tm *testMatcher) checkFailure(t *testing.T, err error) error {
 // runTest should be a function of type func(t *testing.T, name string, x <TestType>),
 // where TestType is the type of the test contained in test files.
 func (tm *testMatcher) walk(t *testing.T, dir string, runTest interface{}) {
+	t.Helper()
 	// Walk the directory.
 	dirinfo, err := os.Stat(dir)
 	if os.IsNotExist(err) || !dirinfo.IsDir() {
@@ -230,6 +198,7 @@ func (tm *testMatcher) walk(t *testing.T, dir string, runTest interface{}) {
 }
 
 func (tm *testMatcher) runTestFile(t *testing.T, path, name string, runTest interface{}) {
+	t.Helper()
 	if r, _ := tm.findSkip(name); r != "" {
 		t.Skip(r)
 	}
@@ -249,7 +218,7 @@ func (tm *testMatcher) runTestFile(t *testing.T, path, name string, runTest inte
 	// Run all tests from the map. Don't wrap in a subtest if there is only one test in the file.
 	keys := sortedMapKeys(m)
 	if len(keys) == 1 {
-		runTestFunc(runTest, t, name, m, keys[0])
+		runTestFunc(t, runTest, name, m, keys[0])
 	} else {
 		for _, key := range keys {
 			name := name + "/" + key
@@ -257,7 +226,7 @@ func (tm *testMatcher) runTestFile(t *testing.T, path, name string, runTest inte
 				if r, _ := tm.findSkip(name); r != "" {
 					t.Skip(r)
 				}
-				runTestFunc(runTest, t, name, m, key)
+				runTestFunc(t, runTest, name, m, key)
 			})
 		}
 	}
@@ -284,7 +253,8 @@ func sortedMapKeys(m reflect.Value) []string {
 	return keys
 }
 
-func runTestFunc(runTest interface{}, t *testing.T, name string, m reflect.Value, key string) {
+func runTestFunc(t *testing.T, runTest interface{}, name string, m reflect.Value, key string) {
+	t.Helper()
 	reflect.ValueOf(runTest).Call([]reflect.Value{
 		reflect.ValueOf(t),
 		reflect.ValueOf(name),

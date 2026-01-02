@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2025, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2025-2026, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 //
 // This file is a derived work, based on the go-ethereum library whose original
@@ -130,7 +130,16 @@ type btHeaderMarshaling struct {
 	ExcessBlobGas *math.HexOrDecimal64
 }
 
+// Run runs the block test.
+//
+// snapshotter: whether to use snapshots.
+// scheme: the scheme to use for the trie database. (rawdb.PathScheme or rawdb.HashScheme)
+// tracer: the tracer to use for the execution.
+// postCheck: the post-check function to run after the execution.
+//
+// Returns the result of the execution.
 func (t *BlockTest) Run(tb testing.TB, snapshotter bool, scheme string, tracer vm.EVMLogger, postCheck func(error, *SUT)) (result error) {
+	tb.Helper()
 	config, ok := Forks[t.json.Network]
 	if !ok {
 		return UnsupportedForkError{t.json.Network}
@@ -231,6 +240,7 @@ See https://github.com/ethereum/tests/wiki/Blockchain-Tests-II
 	post state.
 */
 func (t *BlockTest) insertBlocks(tb testing.TB, ctx context.Context, sut *SUT) ([]btBlock, error) {
+	tb.Helper()
 	validBlocks := make([]btBlock, 0)
 	blocks := make([]*types.Block, 0)
 	// insert the test blocks, which will execute all transactions
@@ -271,6 +281,7 @@ func (t *BlockTest) insertBlocks(tb testing.TB, ctx context.Context, sut *SUT) (
 }
 
 func insertWithHeaderBaseFee(tb testing.TB, sut *SUT, bs types.Blocks) {
+	tb.Helper()
 	for _, b := range bs {
 		parent := sut.Chain.Last()
 		baseFee := b.BaseFee()
