@@ -34,6 +34,7 @@ func NewChainBuilder(genesis *blocks.Block, defaultOpts ...ChainOption) *ChainBu
 		chain: []*blocks.Block{genesis},
 	}
 	c.SetDefaultOptions(defaultOpts...)
+	c.blocksByHash.Store(genesis.Hash(), genesis)
 	return c
 }
 
@@ -84,6 +85,12 @@ func (cb *ChainBuilder) NewBlock(tb testing.TB, txs []*types.Transaction, opts .
 	return b
 }
 
+// Insert adds a block to the chain.
+func (cb *ChainBuilder) Insert(block *blocks.Block) {
+	cb.chain = append(cb.chain, block)
+	cb.blocksByHash.Store(block.Hash(), block)
+}
+
 // Last returns the last block to be built by the builder, which MAY be the
 // genesis block passed to the constructor.
 func (cb *ChainBuilder) Last() *blocks.Block {
@@ -113,4 +120,24 @@ func (cb *ChainBuilder) GetBlock(h common.Hash, num uint64) (*blocks.Block, bool
 		return nil, false
 	}
 	return b, true
+}
+
+// GetHashAtHeight returns the hash of the block at the given height, and a flag indicating if it was found.
+// If the height is greater than the number of blocks in the chain, it returns an empty hash and false.
+func (cb *ChainBuilder) GetHashAtHeight(num uint64) (common.Hash, bool) {
+	if num >= uint64(len(cb.chain)) {
+		return common.Hash{}, false
+	}
+	block := cb.chain[num]
+	return block.Hash(), block != nil && block.NumberU64() == num
+}
+
+// GetNumberByHash returns the number of the block with the given hash, and a flag indicating if it was found.
+func (cb *ChainBuilder) GetNumberByHash(h common.Hash) (uint64, bool) {
+	ifc, _ := cb.blocksByHash.Load(h)
+	b, ok := ifc.(*blocks.Block)
+	if !ok {
+		return 0, false
+	}
+	return b.NumberU64(), true
 }

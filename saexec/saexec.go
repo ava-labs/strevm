@@ -59,16 +59,14 @@ func New(
 	blockSrc blocks.Source,
 	chainConfig *params.ChainConfig,
 	db ethdb.Database,
+	// TODO(cey): should these be an option?
 	triedbConfig *triedb.Config,
+	snapshotConfig snapshot.Config,
 	hooks hook.Points,
 	log logging.Logger,
 ) (*Executor, error) {
 	cache := state.NewDatabaseWithConfig(db, triedbConfig)
-	snapConf := snapshot.Config{
-		CacheSize:  128, // MB
-		AsyncBuild: true,
-	}
-	snaps, err := snapshot.New(snapConf, db, cache.TrieDB(), lastExecuted.PostExecutionStateRoot())
+	snaps, err := snapshot.New(snapshotConfig, db, cache.TrieDB(), lastExecuted.PostExecutionStateRoot())
 	if err != nil {
 		return nil, err
 	}
@@ -130,4 +128,15 @@ func (e *Executor) LastExecuted() *blocks.Block {
 // LastEnqueued returns the last-enqueued block in a threadsafe manner.
 func (e *Executor) LastEnqueued() *blocks.Block {
 	return e.lastEnqueued.Load()
+}
+
+// RefreshQuit replaces the quit channel with a new one. This is used to
+// refresh the quit channel after a test has completed. Should only be used in tests.
+func (e *Executor) RefreshQuit() {
+	e.quit = make(chan struct{})
+}
+
+// Snapshots returns the snapshot tree.
+func (e *Executor) Snapshots() *snapshot.Tree {
+	return e.snaps
 }

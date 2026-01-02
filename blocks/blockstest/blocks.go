@@ -108,17 +108,18 @@ func NewGenesis(tb testing.TB, db ethdb.Database, config *params.ChainConfig, al
 		gasTarget: math.MaxUint64,
 	}
 	options.ApplyTo(conf, opts...)
-
-	gen := &core.Genesis{
-		Config:    config,
-		Timestamp: conf.timestamp,
-		Alloc:     alloc,
+	gen := conf.genesisSpec
+	if gen == nil {
+		gen = &core.Genesis{
+			Config:    config,
+			Timestamp: conf.timestamp,
+			Alloc:     alloc,
+		}
 	}
 
 	tdb := state.NewDatabaseWithConfig(db, conf.tdbConfig).TrieDB()
-	_, hash, err := core.SetupGenesisBlock(db, tdb, gen)
+	_, _, err := core.SetupGenesisBlock(db, tdb, gen)
 	require.NoError(tb, err, "core.SetupGenesisBlock()")
-	require.NoErrorf(tb, tdb.Commit(hash, true), "%T.Commit(core.SetupGenesisBlock(...))", tdb)
 
 	b := NewBlock(tb, gen.ToBlock(), nil, nil)
 	require.NoErrorf(tb, b.MarkExecuted(db, gastime.New(gen.Timestamp, conf.gasTarget, conf.gasExcess), time.Time{}, new(big.Int), nil, b.SettledStateRoot()), "%T.MarkExecuted()", b)
@@ -127,10 +128,11 @@ func NewGenesis(tb testing.TB, db ethdb.Database, config *params.ChainConfig, al
 }
 
 type genesisConfig struct {
-	tdbConfig *triedb.Config
-	timestamp uint64
-	gasTarget gas.Gas
-	gasExcess gas.Gas
+	tdbConfig   *triedb.Config
+	timestamp   uint64
+	gasTarget   gas.Gas
+	gasExcess   gas.Gas
+	genesisSpec *core.Genesis
 }
 
 // A GenesisOption configures [NewGenesis].
@@ -140,6 +142,13 @@ type GenesisOption = options.Option[genesisConfig]
 func WithTrieDBConfig(tc *triedb.Config) GenesisOption {
 	return options.Func[genesisConfig](func(gc *genesisConfig) {
 		gc.tdbConfig = tc
+	})
+}
+
+// WithGenesisSpec overrides the genesis spec used by [NewGenesis].
+func WithGenesisSpec(gen *core.Genesis) GenesisOption {
+	return options.Func[genesisConfig](func(gc *genesisConfig) {
+		gc.genesisSpec = gen
 	})
 }
 
