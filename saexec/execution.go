@@ -206,6 +206,7 @@ func (e *Executor) execute(b *blocks.Block, logger logging.Logger) error {
 	if err := b.MarkExecuted(e.db, gasClock.Clone(), endTime, header.BaseFee, receipts, root); err != nil {
 		return err
 	}
+	time.Sleep(10 * time.Millisecond)
 	e.lastExecuted.Store(b)                           // (2)
 	e.sendPostExecutionEvents(b.EthBlock(), receipts) // (3)
 	return nil
