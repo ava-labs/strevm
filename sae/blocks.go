@@ -217,8 +217,11 @@ func (vm *VM) buildBlock(
 		if remainingGas := state.GasLimit() - state.GasUsed(); remainingGas < params.TxGas {
 			break
 		}
-
-		log = log.With(zap.Stringer("tx_hash", ltx.Hash))
+		log = log.With(
+			zap.Stringer("tx_hash", ltx.Hash),
+			zap.Int("tx_index", len(included)),
+			zap.Stringer("sender", ltx.Sender),
+		)
 
 		tx, ok := ltx.Resolve()
 		if !ok {
@@ -226,16 +229,10 @@ func (vm *VM) buildBlock(
 			continue
 		}
 
-		log = log.With(
-			zap.Int("tx_index", len(included)),
-			zap.Stringer("sender", ltx.Sender),
-		)
-
 		// The [saexec.Executor] checks the worst-case balance before tx
 		// execution so we MUST record it at the equivalent point, before
 		// ApplyTx().
 		minBalance := state.Balance(ltx.Sender)
-
 		if err := state.ApplyTx(tx); err != nil {
 			log.Debug("Could not apply transaction", zap.Error(err))
 			continue
