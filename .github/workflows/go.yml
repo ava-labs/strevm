@@ -39,9 +39,9 @@ jobs:
         run: curl -o "${EXECUTION_SPEC_TESTS_FILE}" -L "https://github.com/ethereum/execution-spec-tests/releases/download/${EXECUTION_SPEC_TESTS_VERSION}/${EXECUTION_SPEC_TESTS_FILE}"
       - name: Verify spec tests
         run: |
-            sha256sum --ignore-missing --check build/checksums.txt | grep "${EXECUTION_SPEC_TESTS_FILE}: OK"
+            sha256sum --ignore-missing --check checksums.txt | grep "${EXECUTION_SPEC_TESTS_FILE}: OK"
       - name: Extract spec tests
-        run: mkdir -p tests/spec-tests && tar -xz -f "${EXECUTION_SPEC_TESTS_FILE}" -C saexec/ethtests/spec-tests
+        run: mkdir -p saexec/ethtests/spec-tests && tar -xz -f "${EXECUTION_SPEC_TESTS_FILE}" -C saexec/ethtests/spec-tests
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
