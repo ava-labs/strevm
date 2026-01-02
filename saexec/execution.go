@@ -111,17 +111,8 @@ func (e *Executor) execute(b *blocks.Block, logger logging.Logger) error {
 		return fmt.Errorf("before-block hook: %v", err)
 	}
 
-	// Block building predicted the worst-case bounds for base fee and tx-sender
-	// balances. If they are incorrect then there is a risk, but not a guarantee
-	// that [core.ApplyTransaction] will error and result in a FATAL log. This
-	// needs to be detected during development, so we log at ERROR, which will
-	// result in failed tests due to [saetest.TBLogger]. We don't return errors
-	// because, in the event that there is a mismatch in production, there is
-	// still a chance that it's safe to continue; i.e. a near miss.
 	baseFee := gasClock.BaseFee()
-	bounds := b.WorstCaseBounds()
-	bounds.CheckBaseFee(logger, baseFee)
-
+	b.CheckBaseFeeBound(baseFee)
 	header := types.CopyHeader(b.Header())
 	header.BaseFee = baseFee.ToBig()
 
@@ -132,12 +123,12 @@ func (e *Executor) execute(b *blocks.Block, logger logging.Logger) error {
 	receipts := make(types.Receipts, len(b.Transactions()))
 	for ti, tx := range b.Transactions() {
 		stateDB.SetTxContext(tx.Hash(), ti)
+		b.CheckSenderBalanceBound(stateDB, signer, tx)
 
 		logger = logger.With(
 			zap.Int("tx_index", ti),
 			zap.Stringer("tx_hash", tx.Hash()),
 		)
-		bounds.CheckSenderBalance(logger, signer, stateDB, tx)
 
 		receipt, err := core.ApplyTransaction(
 			e.chainConfig,

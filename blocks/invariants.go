@@ -6,7 +6,6 @@ package blocks
 import (
 	"fmt"
 
-	"github.com/ava-labs/avalanchego/utils/logging"
 	"github.com/ava-labs/libevm/core/state"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/trie"
@@ -31,32 +30,33 @@ func (b *Block) WorstCaseBounds() *WorstCaseBounds {
 	return b.bounds
 }
 
-// CheckBaseFee logs at ERROR if the `actual` base fee is greater than the
-// predicted upper bound.
+// CheckBaseFeeBound logs at ERROR if the `actual` base fee is greater than the
+// predicted upper bound passed to [Block.SetWorstCaseBounds].
 //
 // Such a violation, while potentially critical, might not result in failed
 // execution so no error is returned and execution MUST continue optimistically.
 // Any such log in development will cause tests to fail.
-func (lim *WorstCaseBounds) CheckBaseFee(log logging.Logger, actual *uint256.Int) {
-	if actual.Gt(lim.MaxBaseFee) {
-		log.Error(
+func (b *Block) CheckBaseFeeBound(actual *uint256.Int) {
+	if actual.Gt(b.bounds.MaxBaseFee) {
+		b.log.Error(
 			"Actual base fee > predicted worst case",
 			zap.Stringer("actual", actual),
-			zap.Stringer("predicted", lim.MaxBaseFee),
+			zap.Stringer("predicted", b.bounds.MaxBaseFee),
 		)
 	}
 }
 
-// CheckSenderBalance logs at ERROR if the `actual` balance of the transaction
-// sender is less than the predicted lower bound.
+// CheckSenderBalanceBound logs at ERROR if the balance of the `tx` sender is
+// less than the predicted lower bound passed to [Block.SetWorstCaseBounds].
+// [state.StateDB.SetTxContext] MUST have already been called.
 //
 // Such a violation, while potentially critical, might not result in failed
 // execution so no error is returned and execution MUST continue optimistically.
 // Any such log in development will cause tests to fail.
-func (lim *WorstCaseBounds) CheckSenderBalance(log logging.Logger, signer types.Signer, stateDB *state.StateDB, tx *types.Transaction) {
+func (b *Block) CheckSenderBalanceBound(stateDB *state.StateDB, signer types.Signer, tx *types.Transaction) {
 	sender, err := types.Sender(signer, tx)
 	if err != nil {
-		log.Warn(
+		b.log.Warn(
 			"Unable to recover sender for confirming worst-case balance",
 			zap.Error(err),
 		)
@@ -64,10 +64,12 @@ func (lim *WorstCaseBounds) CheckSenderBalance(log logging.Logger, signer types.
 	}
 
 	actual := stateDB.GetBalance(sender)
-	low := lim.MinTxSenderBalances[stateDB.TxIndex()]
+	low := b.bounds.MinTxSenderBalances[stateDB.TxIndex()]
 	if actual.Lt(low) {
-		log.Error(
+		b.log.Error(
 			"Actual balance < predicted worst case",
+			zap.Int("tx_index", stateDB.TxIndex()),
+			zap.Stringer("tx_hash", tx.Hash()),
 			zap.Stringer("sender", sender),
 			zap.Stringer("actual", actual),
 			zap.Stringer("predicted", low),
