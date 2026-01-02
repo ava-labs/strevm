@@ -7,9 +7,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/ava-labs/avalanchego/network/p2p"
 	"github.com/ava-labs/avalanchego/network/p2p/gossip"
 	"github.com/ava-labs/avalanchego/snow"
 	snowcommon "github.com/ava-labs/avalanchego/snow/engine/common"
@@ -37,6 +39,8 @@ import (
 // which needs to be provided by a harness. In all cases, the harness MUST
 // provide a last-synchronous block, which MAY be the genesis.
 type VM struct {
+	*p2p.Network
+
 	config  Config
 	snowCtx *snow.Context
 	hooks   hook.Points
@@ -87,6 +91,7 @@ func (vm *VM) Init(
 	db ethdb.Database,
 	triedbConfig *triedb.Config,
 	lastSynchronous *blocks.Block,
+	sender snowcommon.AppSender,
 ) error {
 	vm.snowCtx = snowCtx
 	vm.hooks = hooks
@@ -153,6 +158,42 @@ func (vm *VM) Init(
 		}
 		vm.mempool = pool
 		vm.signalNewTxsToEngine()
+	}
+
+	{ // ==========  P2P Gossip  ==========
+		network, validatorPeers, err := newNetwork(snowCtx, sender, vm.metrics)
+		if err != nil {
+			return fmt.Errorf("newNetwork(...): %v", err)
+		}
+		handler, pullGossiper, pushGossiper, err := newGossipers(snowCtx, network, validatorPeers, vm.metrics, vm.mempool)
+		if err != nil {
+			return fmt.Errorf("newGossipers(...): %v", err)
+		}
+		if err := network.AddHandler(gossipHandlerID, handler); err != nil {
+			return fmt.Errorf("network.AddHandler(...): %v", err)
+		}
+
+		var (
+			gossipCtx, cancel = context.WithCancel(context.Background())
+			wg                sync.WaitGroup
+		)
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			gossip.Every(gossipCtx, snowCtx.Log, pullGossiper, pullRequestPeriod)
+		}()
+		go func() {
+			defer wg.Done()
+			gossip.Every(gossipCtx, snowCtx.Log, pushGossiper, pushGossipPeriod)
+		}()
+
+		vm.Network = network
+		vm.mempool.RegisterPushGossiper(pushGossiper)
+		vm.toClose = append(vm.toClose, func() error {
+			cancel()
+			wg.Wait()
+			return nil
+		})
 	}
 
 	return nil
