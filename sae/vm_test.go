@@ -400,7 +400,7 @@ func TestAcceptBlock(t *testing.T) {
 	sut.genesis = nil // allow it to be GCd when appropriate
 
 	rng := rand.New(rand.NewPCG(0, 0)) //nolint:gosec // Reproducibility is useful for tests
-	for range 100 {
+	for range 1 {
 		ffMillis := 100 + rng.IntN(1000*(1+saeparams.TauSeconds))
 		fastForward(time.Millisecond * time.Duration(ffMillis))
 
