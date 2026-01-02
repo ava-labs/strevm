@@ -31,11 +31,19 @@ func (vm *VM) ethRPCServer() (*rpc.Server, error) {
 	}
 	s := rpc.NewServer()
 
+	// Even if this function errors, we should close the quitter to prevent a
+	// goroutine from leaking in the filter API.
+	quitter := make(chan struct{})
+	vm.toClose = append(vm.toClose, func() error {
+		close(quitter)
+		return nil
+	})
+
 	filterSystem := filters.NewFilterSystem(b, filters.Config{})
 	for _, ethAPI := range []any{
 		ethapi.NewBlockChainAPI(b),
 		ethapi.NewTransactionAPI(b, new(ethapi.AddrLocker)),
-		filters.NewFilterAPI(filterSystem, false /*isLightClient*/),
+		filters.NewFilterAPI(filterSystem, false /*isLightClient*/, filters.WithQuitter(quitter)),
 	} {
 		if err := s.RegisterName("eth", ethAPI); err != nil {
 			return nil, fmt.Errorf("%T.RegisterName(%q, %T): %v", s, "eth", ethAPI, err)

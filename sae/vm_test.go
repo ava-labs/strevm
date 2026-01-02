@@ -52,8 +52,6 @@ func TestMain(m *testing.M) {
 		goleak.IgnoreTopFunction("github.com/ava-labs/libevm/core/state/snapshot.(*diskLayer).generate"),
 		// TxPool.Close() doesn't wait for its loop() method to signal termination.
 		goleak.IgnoreTopFunction("github.com/ava-labs/libevm/core/txpool.(*TxPool).loop.func2"),
-		// There is no mechanism to stop the timeoutLoop goroutine.
-		goleak.IgnoreTopFunction("github.com/ava-labs/libevm/eth/filters.(*FilterAPI).timeoutLoop"),
 	)
 }
 
@@ -304,65 +302,6 @@ func (s *SUT) assertBlockHashInvariants(ctx context.Context, t *testing.T) {
 	})
 }
 
-func TestAcceptBlock(t *testing.T) {
-	require.EventuallyWithT(t, func(t *assert.CollectT) {
-		runtime.GC()
-		require.Zero(t, blocks.InMemoryBlockCount(), "initial in-memory block count")
-	}, 100*time.Millisecond, time.Millisecond)
-
-	opt, setTime := stubbedTime()
-	var now time.Time
-	fastForward := func(by time.Duration) {
-		now = now.Add(by)
-		setTime(now)
-	}
-	fastForward(saeparams.Tau)
-
-	ctx, sut := newSUT(t, 1, opt)
-	// Causes [VM.AcceptBlock] to wait until the block has executed.
-	require.NoError(t, sut.SetState(ctx, snow.Bootstrapping), "SetState(Bootstrapping)")
-
-	unsettled := []*blocks.Block{sut.genesis}
-	last := func() *blocks.Block {
-		return unsettled[len(unsettled)-1]
-	}
-	sut.genesis = nil // allow it to be GCd when appropriate
-
-	rng := rand.New(rand.NewPCG(0, 0)) //nolint:gosec // Reproducibility is useful for tests
-	for range 100 {
-		ffMillis := 100 + rng.IntN(1000*(1+saeparams.TauSeconds))
-		fastForward(time.Millisecond * time.Duration(ffMillis))
-
-		b := sut.runConsensusLoop(t, last())
-		unsettled = append(unsettled, b)
-		sut.assertBlockHashInvariants(ctx, t)
-
-		lastSettled := b.LastSettled().Height()
-		var wantInMemory set.Set[uint64]
-		for i, bb := range unsettled {
-			switch {
-			case bb == nil: // settled earlier
-			case bb.Settled():
-				unsettled[i] = nil
-				require.LessOrEqual(t, bb.Height(), lastSettled, "height of settled block")
-
-			default:
-				require.Greater(t, bb.Height(), lastSettled, "height of unsettled block")
-				wantInMemory.Add(
-					bb.Height(),
-					bb.ParentBlock().Height(),
-					bb.LastSettled().Height(),
-				)
-			}
-		}
-
-		assert.EventuallyWithT(t, func(t *assert.CollectT) {
-			runtime.GC()
-			require.Equal(t, int64(wantInMemory.Len()), blocks.InMemoryBlockCount(), "in-memory block count")
-		}, 100*time.Millisecond, time.Millisecond)
-	}
-}
-
 func TestIntegration(t *testing.T) {
 	ctx, sut := newSUT(t, 1)
 
@@ -474,6 +413,65 @@ func TestSyntacticBlockChecks(t *testing.T) {
 			_, err := sut.ParseBlock(ctx, b.Bytes())
 			assert.ErrorIs(t, err, tt.wantErr, "ParseBlock(#%v @ time %v) when stubbed time is %d", tt.header.Number, tt.header.Time, uint64(now))
 		})
+	}
+}
+
+func TestAcceptBlock(t *testing.T) {
+	require.EventuallyWithT(t, func(t *assert.CollectT) {
+		runtime.GC()
+		require.Zero(t, blocks.InMemoryBlockCount(), "initial in-memory block count")
+	}, 100*time.Millisecond, time.Millisecond)
+
+	opt, setTime := stubbedTime()
+	var now time.Time
+	fastForward := func(by time.Duration) {
+		now = now.Add(by)
+		setTime(now)
+	}
+	fastForward(saeparams.Tau)
+
+	ctx, sut := newSUT(t, 1, opt)
+	// Causes [VM.AcceptBlock] to wait until the block has executed.
+	require.NoError(t, sut.SetState(ctx, snow.Bootstrapping), "SetState(Bootstrapping)")
+
+	unsettled := []*blocks.Block{sut.genesis}
+	last := func() *blocks.Block {
+		return unsettled[len(unsettled)-1]
+	}
+	sut.genesis = nil // allow it to be GCd when appropriate
+
+	rng := rand.New(rand.NewPCG(0, 0)) //nolint:gosec // Reproducibility is useful for tests
+	for range 100 {
+		ffMillis := 100 + rng.IntN(1000*(1+saeparams.TauSeconds))
+		fastForward(time.Millisecond * time.Duration(ffMillis))
+
+		b := sut.runConsensusLoop(t, last())
+		unsettled = append(unsettled, b)
+		sut.assertBlockHashInvariants(ctx, t)
+
+		lastSettled := b.LastSettled().Height()
+		var wantInMemory set.Set[uint64]
+		for i, bb := range unsettled {
+			switch {
+			case bb == nil: // settled earlier
+			case bb.Settled():
+				unsettled[i] = nil
+				require.LessOrEqual(t, bb.Height(), lastSettled, "height of settled block")
+
+			default:
+				require.Greater(t, bb.Height(), lastSettled, "height of unsettled block")
+				wantInMemory.Add(
+					bb.Height(),
+					bb.ParentBlock().Height(),
+					bb.LastSettled().Height(),
+				)
+			}
+		}
+
+		assert.EventuallyWithT(t, func(t *assert.CollectT) {
+			runtime.GC()
+			require.Equal(t, int64(wantInMemory.Len()), blocks.InMemoryBlockCount(), "in-memory block count")
+		}, 100*time.Millisecond, time.Millisecond)
 	}
 }
 
