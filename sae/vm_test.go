@@ -524,9 +524,7 @@ func TestSubscriptions(t *testing.T) {
 	newHeads := make(chan *types.Header, 1)
 	sub, err := sut.SubscribeNewHead(ctx, newHeads)
 	require.NoError(t, err, "SubscribeNewHead(...)")
-	t.Cleanup(func() {
-		sub.Unsubscribe()
-	})
+	t.Cleanup(sub.Unsubscribe)
 
 	b := sut.runConsensusLoop(t, sut.lastAcceptedBlock(t))
 	newHead := <-newHeads
