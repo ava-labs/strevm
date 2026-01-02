@@ -21,7 +21,6 @@ import (
 	"github.com/ava-labs/avalanchego/utils/logging"
 	"github.com/ava-labs/avalanchego/utils/set"
 	"github.com/ava-labs/libevm/common"
-	"github.com/ava-labs/libevm/core"
 	"github.com/ava-labs/libevm/core/rawdb"
 	"github.com/ava-labs/libevm/core/state"
 	"github.com/ava-labs/libevm/core/txpool"
@@ -221,12 +220,13 @@ func (s *SUT) waitUntilExecuted(tb testing.TB, b *blocks.Block) {
 
 	// The subscription is opened before checking the block number to avoid
 	// missing the notification that the block was executed.
-	c := make(chan core.ChainHeadEvent)
-	sub := s.rawVM.exec.SubscribeChainHeadEvent(c)
+	c := make(chan *types.Header)
+	ctx := tb.Context()
+	sub, err := s.SubscribeNewHead(ctx, c)
+	require.NoErrorf(tb, err, "%T.SubscribeNewHead()", s.Client)
 	defer sub.Unsubscribe()
 
-	ctx := tb.Context()
-	num, err := s.Client.BlockNumber(ctx)
+	num, err := s.BlockNumber(ctx)
 	require.NoErrorf(tb, err, "%T.BlockNumber()", s.Client)
 	if num >= b.Height() {
 		return
@@ -237,9 +237,9 @@ func (s *SUT) waitUntilExecuted(tb testing.TB, b *blocks.Block) {
 		case <-ctx.Done():
 			tb.Fatalf("waiting for block %d to execute: %v", b.Height(), ctx.Err())
 		case err := <-sub.Err():
-			require.NoErrorf(tb, err, "%T.SubscribeChainHeadEvent().Err()", s.rawVM.exec)
-		case ev := <-c:
-			if ev.Block.NumberU64() >= b.Height() {
+			require.NoErrorf(tb, err, "%T.SubscribeNewHead().Err()", s.Client)
+		case h := <-c:
+			if h.Number.Uint64() >= b.Height() {
 				return
 			}
 		}
