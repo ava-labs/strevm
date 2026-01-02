@@ -165,14 +165,18 @@ func WithGasExcess(excess gas.Gas) GenesisOption {
 	})
 }
 
+// SetUninformativeWorstCaseBounds calls [blocks.Block.SetWorstCaseBounds] with
+// a base fee of 2^256-1 and tx-sender balances of zero. These are guaranteed to
+// pass the checks and never result in error logs, and MUST NOT be used in full
+// integration tests.
 func SetUninformativeWorstCaseBounds(b *blocks.Block) {
 	n := len(b.Transactions())
 	wcb := &blocks.WorstCaseBounds{
-		BaseFee:          new(uint256.Int).SetAllOne(),
-		TxSenderBalances: make([]*uint256.Int, n),
+		MaxBaseFee:          new(uint256.Int).SetAllOne(),
+		MinTxSenderBalances: make([]*uint256.Int, n),
 	}
 	for i := range n {
-		wcb.TxSenderBalances[i] = new(uint256.Int)
+		wcb.MinTxSenderBalances[i] = new(uint256.Int)
 	}
 	b.SetWorstCaseBounds(wcb)
 }

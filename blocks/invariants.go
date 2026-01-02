@@ -14,29 +14,45 @@ import (
 	"go.uber.org/zap"
 )
 
+// WorstCaseBounds define the limits of certain values, predicted by the block
+// builder, that a [Block] will encounter when eventually executed.
 type WorstCaseBounds struct {
-	BaseFee          *uint256.Int
-	TxSenderBalances []*uint256.Int
+	MaxBaseFee          *uint256.Int
+	MinTxSenderBalances []*uint256.Int
 }
 
+// SetWorstCaseBounds sets the bounds, which MUST be done before execution.
 func (b *Block) SetWorstCaseBounds(lim *WorstCaseBounds) {
 	b.bounds = lim
 }
 
+// WorstCaseBounds returns the argument passed to [Block.SetWorstCaseBounds].
 func (b *Block) WorstCaseBounds() *WorstCaseBounds {
 	return b.bounds
 }
 
+// CheckBaseFee logs at ERROR if the `actual` base fee is greater than the
+// predicted upper bound.
+//
+// Such a violation, while potentially critical, might not result in failed
+// execution so no error is returned and execution MUST continue optimistically.
+// Any such log in development will cause tests to fail.
 func (lim *WorstCaseBounds) CheckBaseFee(log logging.Logger, actual *uint256.Int) {
-	if lim.BaseFee.Lt(actual) {
+	if actual.Gt(lim.MaxBaseFee) {
 		log.Error(
-			"Predicted worst-case base fee < actual",
-			zap.Stringer("predicted", lim.BaseFee),
+			"Actual base fee > predicted worst case",
 			zap.Stringer("actual", actual),
+			zap.Stringer("predicted", lim.MaxBaseFee),
 		)
 	}
 }
 
+// CheckSenderBalance logs at ERROR if the `actual` balance of the transaction
+// sender is less than the predicted lower bound.
+//
+// Such a violation, while potentially critical, might not result in failed
+// execution so no error is returned and execution MUST continue optimistically.
+// Any such log in development will cause tests to fail.
 func (lim *WorstCaseBounds) CheckSenderBalance(log logging.Logger, signer types.Signer, stateDB *state.StateDB, tx *types.Transaction) {
 	sender, err := types.Sender(signer, tx)
 	if err != nil {
@@ -47,14 +63,14 @@ func (lim *WorstCaseBounds) CheckSenderBalance(log logging.Logger, signer types.
 		return
 	}
 
-	bal := stateDB.GetBalance(sender)
-	low := lim.TxSenderBalances[stateDB.TxIndex()]
-	if low.Gt(bal) {
+	actual := stateDB.GetBalance(sender)
+	low := lim.MinTxSenderBalances[stateDB.TxIndex()]
+	if actual.Lt(low) {
 		log.Error(
-			"Predicted worst-case balance > actual",
+			"Actual balance < predicted worst case",
 			zap.Stringer("sender", sender),
+			zap.Stringer("actual", actual),
 			zap.Stringer("predicted", low),
-			zap.Stringer("actual", bal),
 		)
 	}
 }

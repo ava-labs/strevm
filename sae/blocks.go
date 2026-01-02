@@ -186,7 +186,7 @@ func (vm *VM) buildBlock(
 
 	hdr.Root = lastSettled.PostExecutionStateRoot()
 	bounds := new(blocks.WorstCaseBounds)
-	bounds.BaseFee, err = state.StartBlock(hdr)
+	bounds.MaxBaseFee, err = state.StartBlock(hdr)
 	if err != nil {
 		// A full queue is a normal mode of operation (backpressure working as
 		// intended) so should not be a warning.
@@ -236,7 +236,7 @@ func (vm *VM) buildBlock(
 		}
 		log.Trace("Including transaction")
 		included = append(included, tx)
-		bounds.TxSenderBalances = append(bounds.TxSenderBalances, minSenderBalance)
+		bounds.MinTxSenderBalances = append(bounds.MinTxSenderBalances, minSenderBalance)
 	}
 
 	// TODO: Should the [hook.BlockBuilder] populate [types.Header.GasUsed] so
