@@ -34,6 +34,10 @@ func (c *consensusHooks) BuildBlock(
 	return nil
 }
 
+func (c *consensusHooks) BuildHeader(parent *types.Header) *types.Header {
+	return nil
+}
+
 func newTestConsensusHooks(consensus consensus.Engine, reader *readerAdapter, target gas.Gas) *consensusHooks {
 	return &consensusHooks{consensus: consensus, reader: reader, target: target}
 }

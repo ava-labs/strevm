@@ -131,6 +131,7 @@ func NewGenesisFromSpec(tb testing.TB, db ethdb.Database, gen *core.Genesis, opt
 
 type genesisConfig struct {
 	tdbConfig *triedb.Config
+	timestamp uint64
 	gasTarget gas.Gas
 	gasExcess gas.Gas
 }
@@ -142,6 +143,13 @@ type GenesisOption = options.Option[genesisConfig]
 func WithTrieDBConfig(tc *triedb.Config) GenesisOption {
 	return options.Func[genesisConfig](func(gc *genesisConfig) {
 		gc.tdbConfig = tc
+	})
+}
+
+// WithTimestamp overrides the timestamp used by [NewGenesis].
+func WithTimestamp(timestamp uint64) GenesisOption {
+	return options.Func[genesisConfig](func(gc *genesisConfig) {
+		gc.timestamp = timestamp
 	})
 }
 

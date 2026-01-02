@@ -13,10 +13,12 @@ import (
 	"github.com/ava-labs/avalanchego/network/p2p/gossip"
 	"github.com/ava-labs/avalanchego/snow"
 	snowcommon "github.com/ava-labs/avalanchego/snow/engine/common"
+	"github.com/ava-labs/avalanchego/utils"
 	"github.com/ava-labs/avalanchego/utils/bloom"
 	"github.com/ava-labs/avalanchego/utils/logging"
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core"
+	"github.com/ava-labs/libevm/core/rawdb"
 	"github.com/ava-labs/libevm/core/state/snapshot"
 	"github.com/ava-labs/libevm/core/txpool"
 	"github.com/ava-labs/libevm/core/txpool/legacypool"
@@ -41,8 +43,14 @@ type VM struct {
 	hooks   hook.Points
 	metrics *prometheus.Registry
 
-	blocks                   *sMap[common.Hash, *blocks.Block]
-	preference, lastAccepted atomic.Pointer[blocks.Block]
+	db     ethdb.Database
+	blocks *sMap[common.Hash, *blocks.Block]
+
+	consensusState utils.Atomic[snow.State]
+	preference     atomic.Pointer[blocks.Block]
+	last           struct {
+		accepted, settled atomic.Pointer[blocks.Block]
+	}
 
 	exec    *saexec.Executor
 	mempool *txgossip.Set
@@ -83,9 +91,24 @@ func (vm *VM) Init(
 ) error {
 	vm.snowCtx = snowCtx
 	vm.hooks = hooks
+	vm.db = db
 	vm.blocks.Store(lastSynchronous.Hash(), lastSynchronous)
-	vm.preference.Store(lastSynchronous)
-	vm.lastAccepted.Store(lastSynchronous)
+
+	// Disk
+	for _, fn := range [](func(ethdb.KeyValueWriter, common.Hash)){
+		rawdb.WriteHeadBlockHash,
+		rawdb.WriteFinalizedBlockHash,
+	} {
+		fn(db, lastSynchronous.Hash())
+	}
+	// Internal indicators
+	for _, ptr := range []*atomic.Pointer[blocks.Block]{
+		&vm.preference,
+		&vm.last.accepted,
+		&vm.last.settled,
+	} {
+		ptr.Store(lastSynchronous)
+	}
 
 	vm.metrics = prometheus.NewRegistry()
 	if err := snowCtx.Metrics.Register("sae", vm.metrics); err != nil {
@@ -204,7 +227,8 @@ func (vm *VM) numPendingTxs() int {
 
 // SetState notifies the VM of a transition in the state lifecycle.
 func (vm *VM) SetState(ctx context.Context, state snow.State) error {
-	return errUnimplemented
+	vm.consensusState.Set(state)
+	return nil
 }
 
 // Shutdown gracefully closes the VM.

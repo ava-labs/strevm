@@ -59,9 +59,21 @@ type Points interface {
 
 // BlockBuilder constructs a block given its components.
 type BlockBuilder interface {
-	// BuildBlock constructs a block with the given components. This method MUST
-	// be used rather than [types.NewBlock] to ensure any libevm block extras
-	// are properly populated.
+	// BuildHeader constructs a header from the parent header.
+	//
+	// The returned header MUST have [types.Header.ParentHash],
+	// [types.Header.Number] and [types.Header.Time] set appropriately.
+	// [types.Header.Root], [types.Header.GasLimit], [types.Header.BaseFee], and
+	// [types.Header.GasUsed] will be ignored and overwritten. Any other fields
+	// MAY be set as desired.
+	//
+	// SAE always uses this method instead of directly constructing a header, to
+	// ensure any libevm header extras are properly populated.
+	BuildHeader(parent *types.Header) *types.Header
+	// BuildBlock constructs a block with the given components.
+	//
+	// SAE always uses this method instead of [types.NewBlock], to ensure any
+	// libevm block extras are properly populated.
 	BuildBlock(
 		header *types.Header,
 		txs []*types.Transaction,
