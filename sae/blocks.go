@@ -18,6 +18,7 @@ import (
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/rlp"
+	"github.com/holiman/uint256"
 	"go.uber.org/zap"
 
 	"github.com/ava-labs/strevm/blocks"
@@ -150,14 +151,14 @@ func (vm *VM) buildBlock(
 			zap.Uint64("block_height", b.Height()),
 			zap.Stringer("block_hash", b.Hash()),
 		)
-		if _, err := state.StartBlock(b.Header()); err != nil {
+		if err := state.StartBlock(b.Header()); err != nil {
 			log.Warn("Could not start historical worst-case calculation",
 				zap.Error(err),
 			)
 			return nil, fmt.Errorf("starting worst-case state for block %d: %v", b.Height(), err)
 		}
 		for i, tx := range b.Transactions() {
-			if _, err := state.ApplyTx(tx); err != nil {
+			if err := state.ApplyTx(tx); err != nil {
 				log.Warn("Could not apply tx during historical worst-case calculation",
 					zap.Int("tx_index", i),
 					zap.Stringer("tx_hash", tx.Hash()),
@@ -185,9 +186,7 @@ func (vm *VM) buildBlock(
 	}
 
 	hdr.Root = lastSettled.PostExecutionStateRoot()
-	bounds := new(blocks.WorstCaseBounds)
-	bounds.MaxBaseFee, err = state.StartBlock(hdr)
-	if err != nil {
+	if err := state.StartBlock(hdr); err != nil {
 		// A full queue is a normal mode of operation (backpressure working as
 		// intended) so should not be a warning.
 		logTo := log.Warn
@@ -200,8 +199,11 @@ func (vm *VM) buildBlock(
 		return nil, fmt.Errorf("starting worst-case state for new block: %w", err)
 	}
 
+	bounds := &blocks.WorstCaseBounds{
+		MaxBaseFee: new(uint256.Int).Set(state.BaseFee()),
+	}
 	hdr.GasLimit = state.GasLimit()
-	hdr.BaseFee = state.BaseFee().ToBig()
+	hdr.BaseFee = bounds.MaxBaseFee.ToBig()
 
 	var (
 		candidates = pendingTxs(txpool.PendingFilter{
@@ -229,14 +231,18 @@ func (vm *VM) buildBlock(
 			zap.Stringer("sender", ltx.Sender),
 		)
 
-		minSenderBalance, err := state.ApplyTx(tx)
-		if err != nil {
+		// The [saexec.Executor] checks the worst-case balance before tx
+		// execution so we MUST record it at the equivalent point, before
+		// ApplyTx().
+		minBalance := state.Balance(ltx.Sender)
+
+		if err := state.ApplyTx(tx); err != nil {
 			log.Debug("Could not apply transaction", zap.Error(err))
 			continue
 		}
 		log.Trace("Including transaction")
 		included = append(included, tx)
-		bounds.MinTxSenderBalances = append(bounds.MinTxSenderBalances, minSenderBalance)
+		bounds.MinTxSenderBalances = append(bounds.MinTxSenderBalances, minBalance)
 	}
 
 	// TODO: Should the [hook.BlockBuilder] populate [types.Header.GasUsed] so

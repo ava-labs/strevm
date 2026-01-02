@@ -18,7 +18,6 @@ import (
 	"github.com/ava-labs/libevm/libevm/ethtest"
 	"github.com/ava-labs/libevm/params"
 	"github.com/holiman/uint256"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/ava-labs/strevm/blocks"
@@ -201,14 +200,9 @@ func TestMultipleBlocks(t *testing.T) {
 			Number:     big.NewInt(int64(i)),
 			Time:       block.time,
 		}
-		got, err := state.StartBlock(header)
-		require.NoErrorf(t, err, "StartBlock(%d)", i)
-		assert.Equalf(t, block.wantBaseFee, got, "base fee returned by StartBlock(%d)")
-		assert.Equalf(t, block.wantBaseFee, state.BaseFee(), "base fee after StartBlock(%d)", i)
-		assert.Equalf(t, block.wantGasLimit, state.GasLimit(), "gas limit after StartBlock(%d)", i)
-		if t.Failed() {
-			t.FailNow()
-		}
+		require.NoErrorf(t, state.StartBlock(header), "StartBlock(%d)", i)
+		require.Equalf(t, block.wantBaseFee, state.BaseFee(), "base fee after StartBlock(%d)", i)
+		require.Equalf(t, block.wantGasLimit, state.GasLimit(), "gas limit after StartBlock(%d)", i)
 
 		for _, op := range block.ops {
 			gotErr := state.Apply(op.op)
@@ -243,7 +237,6 @@ func TestTransactionValidation(t *testing.T) {
 		balance uint64
 		tx      types.TxData
 		key     *ecdsa.PrivateKey
-		want    *uint256.Int
 		wantErr error
 	}{
 		// Clause 1: the nonce of the message caller is correct
@@ -419,22 +412,6 @@ func TestTransactionValidation(t *testing.T) {
 			},
 			wantErr: core.ErrTxTypeNotSupported,
 		},
-		{
-			// The returned value is propagated to the block executor and
-			// checked against the actual balance immediately before execution.
-			// We therefore want the lower bound at the equivalent point (i.e.
-			// before) as this allows us to log violations of the worst-case
-			// prediction.
-			name:    "returns_balance_before_application",
-			balance: 123_456,
-			tx: &types.LegacyTx{
-				To:       &common.Address{},
-				Gas:      params.TxGas,
-				GasPrice: big.NewInt(1),
-			},
-			want:    uint256.NewInt(123_456), // == `balance`
-			wantErr: nil,
-		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -451,20 +428,15 @@ func TestTransactionValidation(t *testing.T) {
 				ParentHash: sut.Genesis.Hash(),
 				Number:     big.NewInt(0),
 			}
-			_, err := state.StartBlock(header)
-			require.NoErrorf(t, err, "StartBlock()")
+			require.NoErrorf(t, state.StartBlock(header), "StartBlock()")
 
 			key := defaultKey
 			if tt.key != nil {
 				key = tt.key
 			}
 			tx := types.MustSignNewTx(key, types.NewCancunSigner(state.config.ChainID), tt.tx)
-			got, err := state.ApplyTx(tx)
-			require.ErrorIsf(t, err, tt.wantErr, "ApplyTx()")
-			if tt.wantErr != nil {
-				return
-			}
-			require.Equal(t, tt.want, got, "ApplyTx()")
+			gotErr := state.ApplyTx(tx)
+			require.ErrorIsf(t, gotErr, tt.wantErr, "ApplyTx() error")
 		})
 	}
 }
@@ -475,12 +447,12 @@ func TestStartBlockNonConsecutiveBlocks(t *testing.T) {
 	state := sut.State
 	genesisHash := sut.Genesis.Hash()
 
-	_, err := state.StartBlock(&types.Header{
+	err := state.StartBlock(&types.Header{
 		ParentHash: genesisHash,
 	})
 	require.NoError(t, err, "StartBlock()")
 
-	_, err = state.StartBlock(&types.Header{
+	err = state.StartBlock(&types.Header{
 		ParentHash: genesisHash, // Should be the previously provided header's hash
 	})
 	require.ErrorIs(t, err, errNonConsecutiveBlocks, "non-consecutive StartBlock()")
@@ -499,10 +471,9 @@ func TestStartBlockQueueFull(t *testing.T) {
 			ParentHash: lastHash,
 			Number:     big.NewInt(int64(number)),
 		}
-		_, err := state.StartBlock(h)
-		require.NoError(t, err, "StartBlock()")
+		require.NoError(t, state.StartBlock(h), "StartBlock()")
 
-		err = state.Apply(Op{
+		err := state.Apply(Op{
 			Gas:       gas,
 			GasFeeCap: *uint256.NewInt(2),
 		})
@@ -513,7 +484,7 @@ func TestStartBlockQueueFull(t *testing.T) {
 		lastHash = h.Hash()
 	}
 
-	_, err := state.StartBlock(&types.Header{
+	err := state.StartBlock(&types.Header{
 		ParentHash: lastHash,
 		Number:     big.NewInt(3),
 	})
@@ -530,10 +501,9 @@ func TestStartBlockQueueFullDueToTargetChanges(t *testing.T) {
 		ParentHash: sut.Genesis.Hash(),
 		Number:     big.NewInt(0),
 	}
-	_, err := state.StartBlock(h)
-	require.NoError(t, err, "StartBlock()")
+	require.NoError(t, state.StartBlock(h), "StartBlock()")
 
-	err = state.Apply(Op{
+	err := state.Apply(Op{
 		Gas:       initialMaxBlockSize,
 		GasFeeCap: *uint256.NewInt(1),
 	})
@@ -541,7 +511,7 @@ func TestStartBlockQueueFullDueToTargetChanges(t *testing.T) {
 
 	require.NoError(t, state.FinishBlock(), "FinishBlock()")
 
-	_, err = state.StartBlock(&types.Header{
+	err = state.StartBlock(&types.Header{
 		ParentHash: h.Hash(),
 		Number:     big.NewInt(1),
 	})

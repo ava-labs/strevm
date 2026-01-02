@@ -104,17 +104,16 @@ var (
 )
 
 // StartBlock updates the worst-case state to the beginning of the provided
-// block and returns the upper bound of the base fee when the block is
-// eventually executed.
+// block.
 //
 // It is not necessary for [types.Header.GasLimit] nor [types.Header.BaseFee] to
 // be set. However, all other fields should be populated and
 // [types.Header.ParentHash] must match the previous block's hash.
 //
 // If the queue is too full to accept another block, [ErrQueueFull] is returned.
-func (s *State) StartBlock(h *types.Header) (*uint256.Int, error) {
+func (s *State) StartBlock(h *types.Header) error {
 	if h.ParentHash != s.expectedParentHash {
-		return nil, fmt.Errorf("%w: expected parent hash of %s but was %s",
+		return fmt.Errorf("%w: expected parent hash of %s but was %s",
 			errNonConsecutiveBlocks,
 			s.expectedParentHash,
 			h.ParentHash,
@@ -126,7 +125,7 @@ func (s *State) StartBlock(h *types.Header) (*uint256.Int, error) {
 
 	s.maxBlockSize = safeMaxBlockSize(s.clock)
 	if maxOpenQSize := maxFullBlocksInOpenQueue * s.maxBlockSize; s.qSize > maxOpenQSize {
-		return nil, fmt.Errorf("%w: current size %d exceeds maximum size for accepting new blocks %d", ErrQueueFull, s.qSize, maxOpenQSize)
+		return fmt.Errorf("%w: current size %d exceeds maximum size for accepting new blocks %d", ErrQueueFull, s.qSize, maxOpenQSize)
 	}
 
 	s.baseFee = s.clock.BaseFee()
@@ -142,7 +141,7 @@ func (s *State) StartBlock(h *types.Header) (*uint256.Int, error) {
 	// execution clock's, otherwise we might enable an upgrade too early.
 	s.rules = s.config.Rules(h.Number, true /*merge*/, h.Time)
 	s.signer = types.MakeSigner(s.config, h.Number, h.Time)
-	return new(uint256.Int).Set(s.baseFee), nil
+	return nil
 }
 
 // safeMaxBlockSize returns the maximum block size for the clock's rate,
@@ -169,21 +168,25 @@ func (s *State) BaseFee() *uint256.Int {
 	return s.baseFee
 }
 
+// Balance returns the worst-case balance for the account.
+func (s *State) Balance(addr common.Address) *uint256.Int {
+	return s.db.GetBalance(addr)
+}
+
 var errCostOverflow = errors.New("Cost() overflows uint256")
 
 // ApplyTx validates the transaction both intrinsically and in the context of
 // worst-case gas assumptions of all previous operations. This provides an upper
 // bound on the total cost of the transaction such that a nil error returned by
 // ApplyTx guarantees that the sender of the transaction will have sufficient
-// balance to cover its costs if consensus accepts the same operation set (and
-// order) as was applied.
+// balance to cover its costs if consensus accepts the same operation set
+// (and order) as was applied.
 //
-// The returned value is the lower bound of the sender's balance just before the
-// transaction is eventually executed. If the transaction can not be applied, an
-// error is returned and the state is not modified.
+// If the transaction can not be applied, an error is returned and the state is
+// not modified.
 //
 // TODO: Consider exporting txToOp and expecting users to call Apply directly.
-func (s *State) ApplyTx(tx *types.Transaction) (*uint256.Int, error) {
+func (s *State) ApplyTx(tx *types.Transaction) error {
 	opts := &txpool.ValidationOptions{
 		Config: s.config,
 		Accept: 0 |
@@ -194,12 +197,12 @@ func (s *State) ApplyTx(tx *types.Transaction) (*uint256.Int, error) {
 		MinTip:  big.NewInt(0),
 	}
 	if err := txpool.ValidateTransaction(tx, s.curr, s.signer, opts); err != nil {
-		return nil, fmt.Errorf("validating transaction: %w", err)
+		return fmt.Errorf("validating transaction: %w", err)
 	}
 
 	from, err := types.Sender(s.signer, tx)
 	if err != nil {
-		return nil, fmt.Errorf("determining sender: %w", err)
+		return fmt.Errorf("determining sender: %w", err)
 	}
 
 	// While EOA enforcement is not possible to guarantee in worst-case
@@ -208,15 +211,14 @@ func (s *State) ApplyTx(tx *types.Transaction) (*uint256.Int, error) {
 	// TODO: We must still handle non-EOA issuance later during actual
 	// execution.
 	if codeHash := s.db.GetCodeHash(from); codeHash != (common.Hash{}) && codeHash != types.EmptyCodeHash {
-		return nil, fmt.Errorf("%w: address %v, codehash: %s", core.ErrSenderNoEOA, from.Hex(), codeHash)
+		return fmt.Errorf("%w: address %v, codehash: %s", core.ErrSenderNoEOA, from.Hex(), codeHash)
 	}
 
 	op, err := txToOp(from, tx)
 	if err != nil {
-		return nil, fmt.Errorf("converting transaction to operation: %w", err)
+		return fmt.Errorf("converting transaction to operation: %w", err)
 	}
-	bal := s.db.GetBalance(from)
-	return bal, s.Apply(op)
+	return s.Apply(op)
 }
 
 func txToOp(from common.Address, tx *types.Transaction) (hook.Op, error) {
