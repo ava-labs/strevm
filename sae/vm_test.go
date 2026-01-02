@@ -304,6 +304,65 @@ func (s *SUT) assertBlockHashInvariants(ctx context.Context, t *testing.T) {
 	})
 }
 
+func TestAcceptBlock(t *testing.T) {
+	require.EventuallyWithT(t, func(t *assert.CollectT) {
+		runtime.GC()
+		require.Zero(t, blocks.InMemoryBlockCount(), "initial in-memory block count")
+	}, 100*time.Millisecond, time.Millisecond)
+
+	opt, setTime := stubbedTime()
+	var now time.Time
+	fastForward := func(by time.Duration) {
+		now = now.Add(by)
+		setTime(now)
+	}
+	fastForward(saeparams.Tau)
+
+	ctx, sut := newSUT(t, 1, opt)
+	// Causes [VM.AcceptBlock] to wait until the block has executed.
+	require.NoError(t, sut.SetState(ctx, snow.Bootstrapping), "SetState(Bootstrapping)")
+
+	unsettled := []*blocks.Block{sut.genesis}
+	last := func() *blocks.Block {
+		return unsettled[len(unsettled)-1]
+	}
+	sut.genesis = nil // allow it to be GCd when appropriate
+
+	rng := rand.New(rand.NewPCG(0, 0)) //nolint:gosec // Reproducibility is useful for tests
+	for range 100 {
+		ffMillis := 100 + rng.IntN(1000*(1+saeparams.TauSeconds))
+		fastForward(time.Millisecond * time.Duration(ffMillis))
+
+		b := sut.runConsensusLoop(t, last())
+		unsettled = append(unsettled, b)
+		sut.assertBlockHashInvariants(ctx, t)
+
+		lastSettled := b.LastSettled().Height()
+		var wantInMemory set.Set[uint64]
+		for i, bb := range unsettled {
+			switch {
+			case bb == nil: // settled earlier
+			case bb.Settled():
+				unsettled[i] = nil
+				require.LessOrEqual(t, bb.Height(), lastSettled, "height of settled block")
+
+			default:
+				require.Greater(t, bb.Height(), lastSettled, "height of unsettled block")
+				wantInMemory.Add(
+					bb.Height(),
+					bb.ParentBlock().Height(),
+					bb.LastSettled().Height(),
+				)
+			}
+		}
+
+		assert.EventuallyWithT(t, func(t *assert.CollectT) {
+			runtime.GC()
+			require.Equal(t, int64(wantInMemory.Len()), blocks.InMemoryBlockCount(), "in-memory block count")
+		}, 100*time.Millisecond, time.Millisecond)
+	}
+}
+
 func TestIntegration(t *testing.T) {
 	ctx, sut := newSUT(t, 1)
 
@@ -418,64 +477,6 @@ func TestSyntacticBlockChecks(t *testing.T) {
 	}
 }
 
-func TestAcceptBlock(t *testing.T) {
-	for blocks.InMemoryBlockCount() != 0 {
-		runtime.GC()
-	}
-
-	opt, setTime := stubbedTime()
-	var now time.Time
-	fastForward := func(by time.Duration) {
-		now = now.Add(by)
-		setTime(now)
-	}
-	fastForward(saeparams.Tau)
-
-	ctx, sut := newSUT(t, 1, opt)
-	// Causes [VM.AcceptBlock] to wait until the block has executed.
-	require.NoError(t, sut.SetState(ctx, snow.Bootstrapping), "SetState(Bootstrapping)")
-
-	unsettled := []*blocks.Block{sut.genesis}
-	last := func() *blocks.Block {
-		return unsettled[len(unsettled)-1]
-	}
-	sut.genesis = nil // allow it to be GCd when appropriate
-
-	rng := rand.New(rand.NewPCG(0, 0)) //nolint:gosec // Reproducibility is useful for tests
-	for range 100 {
-		ffMillis := 100 + rng.IntN(1000*(1+saeparams.TauSeconds))
-		fastForward(time.Millisecond * time.Duration(ffMillis))
-
-		b := sut.runConsensusLoop(t, last())
-		unsettled = append(unsettled, b)
-		sut.assertBlockHashInvariants(ctx, t)
-
-		lastSettled := b.LastSettled().Height()
-		var wantInMemory set.Set[uint64]
-		for i, bb := range unsettled {
-			switch {
-			case bb == nil: // settled earlier
-			case bb.Settled():
-				unsettled[i] = nil
-				require.LessOrEqual(t, bb.Height(), lastSettled, "height of settled block")
-
-			default:
-				require.Greater(t, bb.Height(), lastSettled, "height of unsettled block")
-				wantInMemory.Add(
-					bb.Height(),
-					bb.ParentBlock().Height(),
-					bb.LastSettled().Height(),
-				)
-			}
-		}
-
-		assert.EventuallyWithT(t, func(t *assert.CollectT) {
-			runtime.GC()
-			require.Equal(t, int64(wantInMemory.Len()), blocks.InMemoryBlockCount(), "in-memory block count")
-		}, 100*time.Millisecond, time.Millisecond)
-	}
-}
-
 func TestSemanticBlockChecks(t *testing.T) {
 	const now = 1e6
 	ctx, sut := newSUT(t, 1, withGenesisOpts(blockstest.WithTimestamp(now)))
@@ -567,6 +568,6 @@ func TestSubscriptions(t *testing.T) {
 	t.Cleanup(sub.Unsubscribe)
 
 	b := sut.runConsensusLoop(t, sut.lastAcceptedBlock(t))
-	newHead := <-newHeads
-	require.Equal(t, b.Hash(), newHead.Hash(), "subscription returned unexpected header")
+	got := <-newHeads
+	require.Equalf(t, b.Hash(), got.Hash(), "%T.Hash() from %T.SubscribeNewHead(...)", got, sut.Client)
 }
