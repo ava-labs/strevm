@@ -527,6 +527,6 @@ func TestSubscriptions(t *testing.T) {
 	t.Cleanup(sub.Unsubscribe)
 
 	b := sut.runConsensusLoop(t, sut.lastAcceptedBlock(t))
-	newHead := <-newHeads
-	require.Equal(t, b.Hash(), newHead.Hash(), "subscription returned unexpected header")
+	got := <-newHeads
+	require.Equalf(t, b.Hash(), got.Hash(), "%T.Hash() from %T.SubscribeNewHead(...)", got, sut.Client)
 }
