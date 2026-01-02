@@ -37,11 +37,17 @@ func (b *Block) WorstCaseBounds() *WorstCaseBounds {
 // execution so no error is returned and execution MUST continue optimistically.
 // Any such log in development will cause tests to fail.
 func (b *Block) CheckBaseFeeBound(actual *uint256.Int) {
-	if actual.Gt(b.bounds.MaxBaseFee) {
+	switch actual.Cmp(b.bounds.MaxBaseFee) {
+	case 1:
 		b.log.Error("Actual base fee > predicted worst case",
 			zap.Stringer("actual", actual),
 			zap.Stringer("predicted", b.bounds.MaxBaseFee),
 		)
+
+	case 0: // Coverage visualisation
+		_ = 0
+	case -1:
+		_ = 0
 	}
 }
 
@@ -63,7 +69,8 @@ func (b *Block) CheckSenderBalanceBound(stateDB *state.StateDB, signer types.Sig
 
 	actual := stateDB.GetBalance(sender)
 	low := b.bounds.MinTxSenderBalances[stateDB.TxIndex()]
-	if actual.Lt(low) {
+	switch actual.Cmp(low) {
+	case -1:
 		b.log.Error("Actual balance < predicted worst case",
 			zap.Int("tx_index", stateDB.TxIndex()),
 			zap.Stringer("tx_hash", tx.Hash()),
@@ -71,6 +78,11 @@ func (b *Block) CheckSenderBalanceBound(stateDB *state.StateDB, signer types.Sig
 			zap.Stringer("actual", actual),
 			zap.Stringer("predicted", low),
 		)
+
+	case 0: // Coverage visualisation
+		_ = 0
+	case 1:
+		_ = 0
 	}
 }
 
