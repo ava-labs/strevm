@@ -517,3 +517,18 @@ func TestSemanticBlockChecks(t *testing.T) {
 		})
 	}
 }
+
+func TestSubscriptions(t *testing.T) {
+	ctx, sut := newSUT(t, 1)
+
+	newHeads := make(chan *types.Header, 1)
+	sub, err := sut.SubscribeNewHead(ctx, newHeads)
+	require.NoError(t, err, "SubscribeNewHead(...)")
+	t.Cleanup(func() {
+		sub.Unsubscribe()
+	})
+
+	b := sut.runConsensusLoop(t, sut.lastAcceptedBlock(t))
+	newHead := <-newHeads
+	require.Equal(t, b.Hash(), newHead.Hash(), "subscription returned unexpected header")
+}
