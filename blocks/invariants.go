@@ -6,9 +6,85 @@ package blocks
 import (
 	"fmt"
 
+	"github.com/ava-labs/libevm/core/state"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/trie"
+	"github.com/holiman/uint256"
+	"go.uber.org/zap"
 )
+
+// WorstCaseBounds define the limits of certain values, predicted by the block
+// builder, that a [Block] will encounter when eventually executed.
+type WorstCaseBounds struct {
+	MaxBaseFee          *uint256.Int
+	MinTxSenderBalances []*uint256.Int
+}
+
+// SetWorstCaseBounds sets the bounds, which MUST be done before execution.
+func (b *Block) SetWorstCaseBounds(lim *WorstCaseBounds) {
+	b.bounds = lim
+}
+
+// WorstCaseBounds returns the argument passed to [Block.SetWorstCaseBounds].
+func (b *Block) WorstCaseBounds() *WorstCaseBounds {
+	return b.bounds
+}
+
+// CheckBaseFeeBound logs at ERROR if the `actual` base fee is greater than the
+// predicted upper bound passed to [Block.SetWorstCaseBounds].
+//
+// Such a violation, while potentially critical, might not result in failed
+// execution so no error is returned and execution MUST continue optimistically.
+// Any such log in development will cause tests to fail.
+func (b *Block) CheckBaseFeeBound(actual *uint256.Int) {
+	switch actual.Cmp(b.bounds.MaxBaseFee) {
+	case 1:
+		b.log.Error("Actual base fee > predicted worst case",
+			zap.Stringer("actual", actual),
+			zap.Stringer("predicted", b.bounds.MaxBaseFee),
+		)
+
+	case 0: // Coverage visualisation
+		_ = 0
+	case -1:
+		_ = 0
+	}
+}
+
+// CheckSenderBalanceBound logs at ERROR if the balance of the `tx` sender is
+// less than the predicted lower bound passed to [Block.SetWorstCaseBounds].
+// [state.StateDB.SetTxContext] MUST have already been called.
+//
+// Such a violation, while potentially critical, might not result in failed
+// execution so no error is returned and execution MUST continue optimistically.
+// Any such log in development will cause tests to fail.
+func (b *Block) CheckSenderBalanceBound(stateDB *state.StateDB, signer types.Signer, tx *types.Transaction) {
+	sender, err := types.Sender(signer, tx)
+	if err != nil {
+		b.log.Warn("Unable to recover sender for confirming worst-case balance",
+			zap.Error(err),
+		)
+		return
+	}
+
+	actual := stateDB.GetBalance(sender)
+	low := b.bounds.MinTxSenderBalances[stateDB.TxIndex()]
+	switch actual.Cmp(low) {
+	case -1:
+		b.log.Error("Actual balance < predicted worst case",
+			zap.Int("tx_index", stateDB.TxIndex()),
+			zap.Stringer("tx_hash", tx.Hash()),
+			zap.Stringer("sender", sender),
+			zap.Stringer("actual", actual),
+			zap.Stringer("predicted", low),
+		)
+
+	case 0: // Coverage visualisation
+		_ = 0
+	case 1:
+		_ = 0
+	}
+}
 
 // A LifeCycleStage defines the progression of a block from acceptance through
 // to settlement.

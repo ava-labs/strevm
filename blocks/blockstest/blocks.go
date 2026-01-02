@@ -23,6 +23,7 @@ import (
 	"github.com/ava-labs/libevm/libevm/options"
 	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/triedb"
+	"github.com/holiman/uint256"
 	"github.com/stretchr/testify/require"
 
 	"github.com/ava-labs/strevm/blocks"
@@ -162,4 +163,20 @@ func WithGasExcess(excess gas.Gas) GenesisOption {
 	return options.Func[genesisConfig](func(gc *genesisConfig) {
 		gc.gasExcess = excess
 	})
+}
+
+// SetUninformativeWorstCaseBounds calls [blocks.Block.SetWorstCaseBounds] with
+// a base fee of 2^256-1 and tx-sender balances of zero. These are guaranteed to
+// pass the checks and never result in error logs, and MUST NOT be used in full
+// integration tests.
+func SetUninformativeWorstCaseBounds(b *blocks.Block) {
+	n := len(b.Transactions())
+	wcb := &blocks.WorstCaseBounds{
+		MaxBaseFee:          new(uint256.Int).SetAllOne(),
+		MinTxSenderBalances: make([]*uint256.Int, n),
+	}
+	for i := range n {
+		wcb.MinTxSenderBalances[i] = new(uint256.Int)
+	}
+	b.SetWorstCaseBounds(wcb)
 }

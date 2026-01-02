@@ -488,7 +488,7 @@ func TestStartBlockQueueFull(t *testing.T) {
 		ParentHash: lastHash,
 		Number:     big.NewInt(3),
 	})
-	require.ErrorIs(t, err, errQueueFull, "StartBlock() with full queue")
+	require.ErrorIs(t, err, ErrQueueFull, "StartBlock() with full queue")
 }
 
 // Test that changing the target can cause the queue to be treated as full.
@@ -515,5 +515,5 @@ func TestStartBlockQueueFullDueToTargetChanges(t *testing.T) {
 		ParentHash: h.Hash(),
 		Number:     big.NewInt(1),
 	})
-	require.ErrorIs(t, err, errQueueFull, "StartBlock() with full queue")
+	require.ErrorIs(t, err, ErrQueueFull, "StartBlock() with full queue")
 }

@@ -96,7 +96,11 @@ const (
 
 var (
 	errNonConsecutiveBlocks = errors.New("non-consecutive blocks")
-	errQueueFull            = errors.New("queue exceeds gas threshold for new block")
+	// ErrQueueFull is returned by [State.StartBlock] if the queue is not able
+	// to accept new blocks. This can be rectified by building a block at a
+	// later time such that additional blocks are settled and the queue is
+	// sufficiently drained.
+	ErrQueueFull = errors.New("queue exceeds gas threshold for new block")
 )
 
 // StartBlock updates the worst-case state to the beginning of the provided
@@ -106,7 +110,7 @@ var (
 // be set. However, all other fields should be populated and
 // [types.Header.ParentHash] must match the previous block's hash.
 //
-// If the queue is too full to accept another block, an error is returned.
+// If the queue is too full to accept another block, [ErrQueueFull] is returned.
 func (s *State) StartBlock(h *types.Header) error {
 	if h.ParentHash != s.expectedParentHash {
 		return fmt.Errorf("%w: expected parent hash of %s but was %s",
@@ -121,7 +125,7 @@ func (s *State) StartBlock(h *types.Header) error {
 
 	s.maxBlockSize = safeMaxBlockSize(s.clock)
 	if maxOpenQSize := maxFullBlocksInOpenQueue * s.maxBlockSize; s.qSize > maxOpenQSize {
-		return fmt.Errorf("%w: current size %d exceeds maximum size for accepting new blocks %d", errQueueFull, s.qSize, maxOpenQSize)
+		return fmt.Errorf("%w: current size %d exceeds maximum size for accepting new blocks %d", ErrQueueFull, s.qSize, maxOpenQSize)
 	}
 
 	s.baseFee = s.clock.BaseFee()
@@ -162,6 +166,11 @@ func (s *State) GasLimit() uint64 {
 // BaseFee returns the worst-case base fee for the current block.
 func (s *State) BaseFee() *uint256.Int {
 	return s.baseFee
+}
+
+// Balance returns the worst-case balance for the account.
+func (s *State) Balance(addr common.Address) *uint256.Int {
+	return s.db.GetBalance(addr)
 }
 
 var errCostOverflow = errors.New("Cost() overflows uint256")
