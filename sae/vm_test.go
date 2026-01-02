@@ -53,6 +53,8 @@ func TestMain(m *testing.M) {
 		goleak.IgnoreTopFunction("github.com/ava-labs/libevm/core/state/snapshot.(*diskLayer).generate"),
 		// TxPool.Close() doesn't wait for its loop() method to signal termination.
 		goleak.IgnoreTopFunction("github.com/ava-labs/libevm/core/txpool.(*TxPool).loop.func2"),
+		// There is no mechanism to stop the timeoutLoop goroutine.
+		goleak.IgnoreTopFunction("github.com/ava-labs/libevm/eth/filters.(*FilterAPI).timeoutLoop"),
 	)
 }
 
@@ -122,9 +124,9 @@ func newSUT(tb testing.TB, numAccounts uint, opts ...sutOption) (context.Context
 
 	handlers, err := snow.CreateHandlers(ctx)
 	require.NoErrorf(tb, err, "%T.CreateHandlers()", snow)
-	server := httptest.NewServer(handlers[rpcHTTPExtensionPath])
+	server := httptest.NewServer(handlers[wsHTTPExtensionPath])
 	tb.Cleanup(server.Close)
-	client, err := ethclient.Dial(server.URL)
+	client, err := ethclient.Dial("ws://" + server.Listener.Addr().String())
 	require.NoError(tb, err, "ethclient.Dial(http.NewServer(%T.CreateHandlers()))", snow)
 	tb.Cleanup(client.Close)
 
@@ -554,4 +556,17 @@ func TestSemanticBlockChecks(t *testing.T) {
 			require.ErrorIs(t, snowB.Verify(ctx), tt.wantErr, "Verify()")
 		})
 	}
+}
+
+func TestSubscriptions(t *testing.T) {
+	ctx, sut := newSUT(t, 1)
+
+	newHeads := make(chan *types.Header, 1)
+	sub, err := sut.SubscribeNewHead(ctx, newHeads)
+	require.NoError(t, err, "SubscribeNewHead(...)")
+	t.Cleanup(sub.Unsubscribe)
+
+	b := sut.runConsensusLoop(t, sut.lastAcceptedBlock(t))
+	newHead := <-newHeads
+	require.Equal(t, b.Hash(), newHead.Hash(), "subscription returned unexpected header")
 }
