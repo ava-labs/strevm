@@ -38,8 +38,7 @@ func (b *Block) WorstCaseBounds() *WorstCaseBounds {
 // Any such log in development will cause tests to fail.
 func (b *Block) CheckBaseFeeBound(actual *uint256.Int) {
 	if actual.Gt(b.bounds.MaxBaseFee) {
-		b.log.Error(
-			"Actual base fee > predicted worst case",
+		b.log.Error("Actual base fee > predicted worst case",
 			zap.Stringer("actual", actual),
 			zap.Stringer("predicted", b.bounds.MaxBaseFee),
 		)
@@ -56,8 +55,7 @@ func (b *Block) CheckBaseFeeBound(actual *uint256.Int) {
 func (b *Block) CheckSenderBalanceBound(stateDB *state.StateDB, signer types.Signer, tx *types.Transaction) {
 	sender, err := types.Sender(signer, tx)
 	if err != nil {
-		b.log.Warn(
-			"Unable to recover sender for confirming worst-case balance",
+		b.log.Warn("Unable to recover sender for confirming worst-case balance",
 			zap.Error(err),
 		)
 		return
@@ -66,8 +64,7 @@ func (b *Block) CheckSenderBalanceBound(stateDB *state.StateDB, signer types.Sig
 	actual := stateDB.GetBalance(sender)
 	low := b.bounds.MinTxSenderBalances[stateDB.TxIndex()]
 	if actual.Lt(low) {
-		b.log.Error(
-			"Actual balance < predicted worst case",
+		b.log.Error("Actual balance < predicted worst case",
 			zap.Int("tx_index", stateDB.TxIndex()),
 			zap.Stringer("tx_hash", tx.Hash()),
 			zap.Stringer("sender", sender),
