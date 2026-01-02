@@ -243,6 +243,7 @@ func TestTransactionValidation(t *testing.T) {
 		balance uint64
 		tx      types.TxData
 		key     *ecdsa.PrivateKey
+		want    *uint256.Int
 		wantErr error
 	}{
 		// Clause 1: the nonce of the message caller is correct
@@ -418,6 +419,22 @@ func TestTransactionValidation(t *testing.T) {
 			},
 			wantErr: core.ErrTxTypeNotSupported,
 		},
+		{
+			// The returned value is propagated to the block executor and
+			// checked against the actual balance immediately before execution.
+			// We therefore want the lower bound at the equivalent point (i.e.
+			// before) as this allows us to log violations of the worst-case
+			// prediction.
+			name:    "returns_balance_before_application",
+			balance: 123_456,
+			tx: &types.LegacyTx{
+				To:       &common.Address{},
+				Gas:      params.TxGas,
+				GasPrice: big.NewInt(1),
+			},
+			want:    uint256.NewInt(123_456), // == `balance`
+			wantErr: nil,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -443,8 +460,11 @@ func TestTransactionValidation(t *testing.T) {
 			}
 			tx := types.MustSignNewTx(key, types.NewCancunSigner(state.config.ChainID), tt.tx)
 			got, err := state.ApplyTx(tx)
-			require.ErrorIsf(t, err, tt.wantErr, "ApplyTx() error")
-			_ = got // TODO(arr4n)
+			require.ErrorIsf(t, err, tt.wantErr, "ApplyTx()")
+			if tt.wantErr != nil {
+				return
+			}
+			require.Equal(t, tt.want, got, "ApplyTx()")
 		})
 	}
 }

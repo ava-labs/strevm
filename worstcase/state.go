@@ -215,7 +215,8 @@ func (s *State) ApplyTx(tx *types.Transaction) (*uint256.Int, error) {
 	if err != nil {
 		return nil, fmt.Errorf("converting transaction to operation: %w", err)
 	}
-	return s.db.GetBalance(from), s.Apply(op)
+	bal := s.db.GetBalance(from)
+	return bal, s.Apply(op)
 }
 
 func txToOp(from common.Address, tx *types.Transaction) (hook.Op, error) {
