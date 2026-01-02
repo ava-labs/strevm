@@ -1,4 +1,4 @@
-// Copyright (C) 2026, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2025-2026, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 // Package blockstest provides test helpers for constructing [Streaming
