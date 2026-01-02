@@ -90,13 +90,6 @@ func newSUT(tb testing.TB, engine consensus.Engine, opts ...sutOption) (context.
 	}
 	wallet := saetest.NewUNSAFEWallet(tb, 1, types.LatestSigner(chainConfig))
 	alloc := saetest.MaxAllocFor(wallet.Addresses()...)
-	genesisSpec := conf.genesisSpec
-	if genesisSpec == nil {
-		genesisSpec = &core.Genesis{
-			Config: chainConfig,
-			Alloc:  alloc,
-		}
-	}
 	snapshotConfig := conf.snapshotConfig
 	if snapshotConfig == nil {
 		snapshotConfig = &snapshot.Config{
@@ -106,7 +99,7 @@ func newSUT(tb testing.TB, engine consensus.Engine, opts ...sutOption) (context.
 	}
 
 	target := gas.Gas(1e6)
-	genesis := blockstest.NewGenesisFromSpec(tb, db, genesisSpec, blockstest.WithTrieDBConfig(tdbConfig), blockstest.WithGasTarget(target))
+	genesis := blockstest.NewGenesis(tb, db, chainConfig, alloc, blockstest.WithGenesisSpec(conf.genesisSpec), blockstest.WithTrieDBConfig(tdbConfig), blockstest.WithGasTarget(target))
 
 	blockOpts := blockstest.WithBlockOptions(
 		blockstest.WithLogger(logger),

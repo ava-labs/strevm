@@ -104,21 +104,18 @@ func WithLogger(l logging.Logger) BlockOption {
 // marked as both executed and synchronous.
 func NewGenesis(tb testing.TB, db ethdb.Database, config *params.ChainConfig, alloc types.GenesisAlloc, opts ...GenesisOption) *blocks.Block {
 	tb.Helper()
-	gen := &core.Genesis{
-		Config: config,
-		Alloc:  alloc,
-	}
-	return NewGenesisFromSpec(tb, db, gen, opts...)
-}
-
-// NewGenesisFromSpec constructs a new genesis from a given genesis spec.
-// This is similar to [NewGenesis], but allows for more flexibility in the genesis spec.
-func NewGenesisFromSpec(tb testing.TB, db ethdb.Database, gen *core.Genesis, opts ...GenesisOption) *blocks.Block {
-	tb.Helper()
 	conf := &genesisConfig{
 		gasTarget: math.MaxUint64,
 	}
 	options.ApplyTo(conf, opts...)
+	gen := conf.genesisSpec
+	if gen == nil {
+		gen = &core.Genesis{
+			Config:    config,
+			Timestamp: conf.timestamp,
+			Alloc:     alloc,
+		}
+	}
 
 	tdb := state.NewDatabaseWithConfig(db, conf.tdbConfig).TrieDB()
 	_, _, err := core.SetupGenesisBlock(db, tdb, gen)
@@ -131,10 +128,11 @@ func NewGenesisFromSpec(tb testing.TB, db ethdb.Database, gen *core.Genesis, opt
 }
 
 type genesisConfig struct {
-	tdbConfig *triedb.Config
-	timestamp uint64
-	gasTarget gas.Gas
-	gasExcess gas.Gas
+	tdbConfig   *triedb.Config
+	timestamp   uint64
+	gasTarget   gas.Gas
+	gasExcess   gas.Gas
+	genesisSpec *core.Genesis
 }
 
 // A GenesisOption configures [NewGenesis].
@@ -144,6 +142,13 @@ type GenesisOption = options.Option[genesisConfig]
 func WithTrieDBConfig(tc *triedb.Config) GenesisOption {
 	return options.Func[genesisConfig](func(gc *genesisConfig) {
 		gc.tdbConfig = tc
+	})
+}
+
+// WithGenesisSpec overrides the genesis spec used by [NewGenesis].
+func WithGenesisSpec(gen *core.Genesis) GenesisOption {
+	return options.Func[genesisConfig](func(gc *genesisConfig) {
+		gc.genesisSpec = gen
 	})
 }
 
