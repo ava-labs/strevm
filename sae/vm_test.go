@@ -379,9 +379,10 @@ func TestSyntacticBlockChecks(t *testing.T) {
 }
 
 func TestAcceptBlock(t *testing.T) {
-	for blocks.InMemoryBlockCount() != 0 {
+	require.EventuallyWithT(t, func(t *assert.CollectT) {
 		runtime.GC()
-	}
+		require.Zero(t, blocks.InMemoryBlockCount(), "initial in-memory block count")
+	}, 100*time.Millisecond, time.Millisecond)
 
 	opt, setTime := stubbedTime()
 	var now time.Time
