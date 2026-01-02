@@ -104,13 +104,14 @@ var (
 )
 
 // StartBlock updates the worst-case state to the beginning of the provided
-// block.
+// block and returns the upper bound of the base fee when the block is
+// eventually executed.
 //
 // It is not necessary for [types.Header.GasLimit] nor [types.Header.BaseFee] to
 // be set. However, all other fields should be populated and
 // [types.Header.ParentHash] must match the previous block's hash.
 //
-// If the queue is too full to accept another block, an error is returned.
+// If the queue is too full to accept another block, [ErrQueueFull] is returned.
 func (s *State) StartBlock(h *types.Header) (*uint256.Int, error) {
 	if h.ParentHash != s.expectedParentHash {
 		return nil, fmt.Errorf("%w: expected parent hash of %s but was %s",
@@ -174,11 +175,12 @@ var errCostOverflow = errors.New("Cost() overflows uint256")
 // worst-case gas assumptions of all previous operations. This provides an upper
 // bound on the total cost of the transaction such that a nil error returned by
 // ApplyTx guarantees that the sender of the transaction will have sufficient
-// balance to cover its costs if consensus accepts the same operation set
-// (and order) as was applied.
+// balance to cover its costs if consensus accepts the same operation set (and
+// order) as was applied.
 //
-// If the transaction can not be applied, an error is returned and the state is
-// not modified.
+// The returned value is the lower bound of the sender's balance just before the
+// transaction is eventually executed. If the transaction can not be applied, an
+// error is returned and the state is not modified.
 //
 // TODO: Consider exporting txToOp and expecting users to call Apply directly.
 func (s *State) ApplyTx(tx *types.Transaction) (*uint256.Int, error) {
