@@ -563,7 +563,10 @@ func TestSubscriptions(t *testing.T) {
 	newHeads := make(chan *types.Header, 1)
 	sub, err := sut.SubscribeNewHead(ctx, newHeads)
 	require.NoError(t, err, "SubscribeNewHead(...)")
-	t.Cleanup(sub.Unsubscribe)
+	// The subscription is closed in a defer rather than via t.Cleanup to ensure
+	// that is is closed before the rest of the SUT is torn down. Otherwise,
+	// there could be a goroutine leak.
+	defer sub.Unsubscribe()
 
 	b := sut.runConsensusLoop(t, sut.lastAcceptedBlock(t))
 	got := <-newHeads
