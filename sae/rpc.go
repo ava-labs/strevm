@@ -8,10 +8,14 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"sync"
 
 	"github.com/ava-labs/libevm/common"
+	"github.com/ava-labs/libevm/core"
 	"github.com/ava-labs/libevm/core/rawdb"
 	"github.com/ava-labs/libevm/core/types"
+	"github.com/ava-labs/libevm/eth/filters"
+	"github.com/ava-labs/libevm/event"
 	"github.com/ava-labs/libevm/libevm/ethapi"
 	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/rpc"
@@ -26,9 +30,19 @@ func (vm *VM) ethRPCServer() (*rpc.Server, error) {
 	}
 	s := rpc.NewServer()
 
+	// Even if this function errors, we should close API to prevent a goroutine
+	// from leaking.
+	filterSystem := filters.NewFilterSystem(b, filters.Config{})
+	filterAPI := filters.NewFilterAPI(filterSystem, false /*isLightClient*/)
+	vm.toClose = append(vm.toClose, func() error {
+		filterAPI.Close()
+		return nil
+	})
+
 	for _, ethAPI := range []any{
 		ethapi.NewBlockChainAPI(b),
 		ethapi.NewTransactionAPI(b, new(ethapi.AddrLocker)),
+		filterAPI,
 	} {
 		if err := s.RegisterName("eth", ethAPI); err != nil {
 			return nil, fmt.Errorf("%T.RegisterName(%q, %T): %v", s, "eth", ethAPI, err)
@@ -100,4 +114,57 @@ func (b *ethAPIBackend) resolveBlockNumber(bn rpc.BlockNumber) (uint64, error) {
 		return 0, fmt.Errorf("%w: block %d", errFutureBlockNotResolved, n)
 	}
 	return n, nil
+}
+
+func (b *ethAPIBackend) SubscribeChainEvent(ch chan<- core.ChainEvent) event.Subscription {
+	return b.vm.exec.SubscribeChainEvent(ch)
+}
+
+func (b *ethAPIBackend) SubscribeChainHeadEvent(ch chan<- core.ChainHeadEvent) event.Subscription {
+	return b.vm.exec.SubscribeChainHeadEvent(ch)
+}
+
+func (b *ethAPIBackend) SubscribeChainSideEvent(chan<- core.ChainSideEvent) event.Subscription {
+	// SAE never reorgs, so there are no side events.
+	return newNoopSubscription()
+}
+
+func (b *ethAPIBackend) SubscribeNewTxsEvent(ch chan<- core.NewTxsEvent) event.Subscription {
+	return b.Set.Pool.SubscribeTransactions(ch, true)
+}
+
+func (b *ethAPIBackend) SubscribeRemovedLogsEvent(chan<- core.RemovedLogsEvent) event.Subscription {
+	// SAE never reorgs, so no logs are ever removed.
+	return newNoopSubscription()
+}
+
+func (b *ethAPIBackend) SubscribeLogsEvent(ch chan<- []*types.Log) event.Subscription {
+	return b.vm.exec.SubscribeLogsEvent(ch)
+}
+
+func (b *ethAPIBackend) SubscribePendingLogsEvent(chan<- []*types.Log) event.Subscription {
+	// In SAE, "pending" refers to the execution status. There are no logs known
+	// for transactions pending execution.
+	return newNoopSubscription()
+}
+
+type noopSubscription struct {
+	once sync.Once
+	err  chan error
+}
+
+func newNoopSubscription() *noopSubscription {
+	return &noopSubscription{
+		err: make(chan error),
+	}
+}
+
+func (s *noopSubscription) Err() <-chan error {
+	return s.err
+}
+
+func (s *noopSubscription) Unsubscribe() {
+	s.once.Do(func() {
+		close(s.err)
+	})
 }
