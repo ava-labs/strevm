@@ -1,4 +1,4 @@
-// Copyright (C) 2025, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2025-2026, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package sae
@@ -136,9 +136,9 @@ func newSUT(tb testing.TB, numAccounts uint, opts ...sutOption) (context.Context
 
 	handlers, err := snow.CreateHandlers(ctx)
 	require.NoErrorf(tb, err, "%T.CreateHandlers()", snow)
-	server := httptest.NewServer(handlers[rpcHTTPExtensionPath])
+	server := httptest.NewServer(handlers[wsHTTPExtensionPath])
 	tb.Cleanup(server.Close)
-	client, err := ethclient.Dial(server.URL)
+	client, err := ethclient.Dial("ws://" + server.Listener.Addr().String())
 	require.NoError(tb, err, "ethclient.Dial(http.NewServer(%T.CreateHandlers()))", snow)
 	tb.Cleanup(client.Close)
 
@@ -397,9 +397,10 @@ func TestSyntacticBlockChecks(t *testing.T) {
 }
 
 func TestAcceptBlock(t *testing.T) {
-	for blocks.InMemoryBlockCount() != 0 {
+	require.EventuallyWithT(t, func(t *assert.CollectT) {
 		runtime.GC()
-	}
+		require.Zero(t, blocks.InMemoryBlockCount(), "initial in-memory block count")
+	}, 100*time.Millisecond, time.Millisecond)
 
 	opt, setTime := stubbedTime()
 	var now time.Time
@@ -534,6 +535,22 @@ func TestSemanticBlockChecks(t *testing.T) {
 			require.ErrorIs(t, snowB.Verify(ctx), tt.wantErr, "Verify()")
 		})
 	}
+}
+
+func TestSubscriptions(t *testing.T) {
+	ctx, sut := newSUT(t, 1)
+
+	newHeads := make(chan *types.Header, 1)
+	sub, err := sut.SubscribeNewHead(ctx, newHeads)
+	require.NoError(t, err, "SubscribeNewHead(...)")
+	// The subscription is closed in a defer rather than via t.Cleanup to ensure
+	// that is is closed before the rest of the SUT is torn down. Otherwise,
+	// there could be a goroutine leak.
+	defer sub.Unsubscribe()
+
+	b := sut.runConsensusLoop(t, sut.lastAcceptedBlock(t))
+	got := <-newHeads
+	require.Equalf(t, b.Hash(), got.Hash(), "%T.Hash() from %T.SubscribeNewHead(...)", got, sut.Client)
 }
 
 type networkSUT struct {
