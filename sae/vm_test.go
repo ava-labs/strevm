@@ -140,6 +140,7 @@ func newSUT(tb testing.TB, numAccounts uint, opts ...sutOption) (context.Context
 	}
 }
 
+// CallContext propagates its arguments to and from [SUT.rpcClient.CallContext].
 // Embedding both the [ethclient.Client] and the underlying [rpc.Client] isn't
 // possible due to a name conflict, so this method is manually exposed.
 func (s *SUT) CallContext(ctx context.Context, result any, method string, args ...any) error {

@@ -30,25 +30,22 @@ func TestSubscriptions(t *testing.T) {
 	require.Equalf(t, b.Hash(), got.Hash(), "%T.Hash() from %T.SubscribeNewHead(...)", got, sut.Client)
 }
 
-func TestWeb3(t *testing.T) {
+func TestWeb3Namespace(t *testing.T) {
 	ctx, sut := newSUT(t, 1)
+	testRPCMethod(ctx, t, sut, "web3_clientVersion", version.GetVersions().String())
+	var (
+		preImage hexutil.Bytes = []byte("test")
+		want                   = hexutil.Bytes(crypto.Keccak256(preImage))
+	)
+	testRPCMethod(ctx, t, sut, "web3_sha3", want, preImage)
+}
 
-	t.Run("clientVersion", func(t *testing.T) {
-		var clientVersion string
-		err := sut.CallContext(ctx, &clientVersion, "web3_clientVersion")
-		require.NoError(t, err)
-		assert.Equal(t, version.GetVersions().String(), clientVersion)
-	})
-
-	t.Run("sha3", func(t *testing.T) {
-		var (
-			input  hexutil.Bytes = []byte("test")
-			output hexutil.Bytes
-		)
-		err := sut.CallContext(ctx, &output, "web3_sha3", input)
-		require.NoError(t, err)
-
-		expected := hexutil.Bytes(crypto.Keccak256(input))
-		assert.Equal(t, expected, output)
+func testRPCMethod[T any](ctx context.Context, t *testing.T, sut *SUT, method string, want T, args ...any) {
+	t.Helper()
+	t.Run(method, func(t *testing.T) {
+		var got T
+		t.Logf("%T.CallContext(ctx, %T, %q, %v...)", sut.rpcClient, got, method, args)
+		require.NoError(t, sut.CallContext(ctx, &got, method, args...))
+		assert.Equal(t, want, got)
 	})
 }
