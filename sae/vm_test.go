@@ -69,6 +69,7 @@ func TestMain(m *testing.M) {
 type SUT struct {
 	block.ChainVM
 	*ethclient.Client
+	rpcClient *rpc.Client
 
 	rawVM   *VM
 	genesis *blocks.Block
@@ -88,6 +89,7 @@ type (
 	sutOption = options.Option[sutConfig]
 )
 
+// chainID is made a global to keep it constant across multiple SUTs.
 var chainID = ids.GenerateTestID()
 
 func newSUT(tb testing.TB, numAccounts uint, opts ...sutOption) (context.Context, *SUT) {
@@ -138,23 +140,32 @@ func newSUT(tb testing.TB, numAccounts uint, opts ...sutOption) (context.Context
 	require.NoErrorf(tb, err, "%T.CreateHandlers()", snow)
 	server := httptest.NewServer(handlers[wsHTTPExtensionPath])
 	tb.Cleanup(server.Close)
-	client, err := ethclient.Dial("ws://" + server.Listener.Addr().String())
-	require.NoError(tb, err, "ethclient.Dial(http.NewServer(%T.CreateHandlers()))", snow)
+	rpcClient, err := rpc.Dial("ws://" + server.Listener.Addr().String())
+	require.NoErrorf(tb, err, "rpc.Dial(http.NewServer(%T.CreateHandlers()))", snow)
+	client := ethclient.NewClient(rpcClient)
 	tb.Cleanup(client.Close)
 
 	validators, ok := snowCtx.ValidatorState.(*validatorstest.State)
 	require.Truef(tb, ok, "unexpected type %T for snowCtx.ValidatorState", snowCtx.ValidatorState)
 	return ctx, &SUT{
-		ChainVM: snow,
-		Client:  client,
-		rawVM:   vm,
-		genesis: genesis,
-		wallet:  wallet,
-		db:      db,
+		ChainVM:   snow,
+		Client:    client,
+		rpcClient: rpcClient,
+		rawVM:     vm,
+		genesis:   genesis,
+		wallet:    wallet,
+		db:        db,
 
 		validators: validators,
 		sender:     sender,
 	}
+}
+
+// CallContext propagates its arguments to and from [SUT.rpcClient.CallContext].
+// Embedding both the [ethclient.Client] and the underlying [rpc.Client] isn't
+// possible due to a name conflict, so this method is manually exposed.
+func (s *SUT) CallContext(ctx context.Context, result any, method string, args ...any) error {
+	return s.rpcClient.CallContext(ctx, result, method, args...)
 }
 
 // stubbedTime returns an option to configure a new SUT's "now" function along
@@ -227,6 +238,43 @@ func (s *SUT) runConsensusLoop(tb testing.TB, preference *blocks.Block) *blocks.
 	return s.lastAcceptedBlock(tb)
 }
 
+// waitUntilExecuted blocks until an external indicator shows that `b` has been
+// executed.
+func (s *SUT) waitUntilExecuted(tb testing.TB, b *blocks.Block) {
+	tb.Helper()
+	defer func() {
+		tb.Helper()
+		require.True(tb, b.Executed(), "%T.Executed()", b)
+	}()
+
+	// The subscription is opened before checking the block number to avoid
+	// missing the notification that the block was executed.
+	c := make(chan *types.Header)
+	ctx := tb.Context()
+	sub, err := s.SubscribeNewHead(ctx, c)
+	require.NoErrorf(tb, err, "%T.SubscribeNewHead()", s.Client)
+	defer sub.Unsubscribe()
+
+	num, err := s.BlockNumber(ctx)
+	require.NoErrorf(tb, err, "%T.BlockNumber()", s.Client)
+	if num >= b.Height() {
+		return
+	}
+
+	for {
+		select {
+		case <-ctx.Done():
+			tb.Fatalf("waiting for block %d to execute: %v", b.Height(), ctx.Err())
+		case err := <-sub.Err():
+			tb.Fatalf("%T.SubscribeNewHead().Err() returned: %v", s.Client, err)
+		case h := <-c:
+			if h.Number.Uint64() >= b.Height() {
+				return
+			}
+		}
+	}
+}
+
 // lastAcceptedBlock is a convenience wrapper for calling [VM.GetBlock] with
 // the ID from [VM.LastAccepted] as an argument.
 func (s *SUT) lastAcceptedBlock(tb testing.TB) *blocks.Block {
@@ -259,7 +307,10 @@ func (s *SUT) assertBlockHashInvariants(ctx context.Context, t *testing.T) {
 	t.Helper()
 	t.Run("block_hash_invariants", func(t *testing.T) {
 		b := s.lastAcceptedBlock(t)
-		require.NoError(t, b.WaitUntilExecuted(t.Context()), "GetBlock(LastAccepted()).WaitUntilExecuted()")
+		// The API client is an external reader, so we must wait on an external
+		// indicator. The block's WaitUntilExecuted is only an internal
+		// indicator.
+		s.waitUntilExecuted(t, b)
 		t.Logf("Last accepted (and executed) block: %d", b.Height())
 
 		for num, want := range map[rpc.BlockNumber]common.Hash{
@@ -535,22 +586,6 @@ func TestSemanticBlockChecks(t *testing.T) {
 			require.ErrorIs(t, snowB.Verify(ctx), tt.wantErr, "Verify()")
 		})
 	}
-}
-
-func TestSubscriptions(t *testing.T) {
-	ctx, sut := newSUT(t, 1)
-
-	newHeads := make(chan *types.Header, 1)
-	sub, err := sut.SubscribeNewHead(ctx, newHeads)
-	require.NoError(t, err, "SubscribeNewHead(...)")
-	// The subscription is closed in a defer rather than via t.Cleanup to ensure
-	// that is is closed before the rest of the SUT is torn down. Otherwise,
-	// there could be a goroutine leak.
-	defer sub.Unsubscribe()
-
-	b := sut.runConsensusLoop(t, sut.lastAcceptedBlock(t))
-	got := <-newHeads
-	require.Equalf(t, b.Hash(), got.Hash(), "%T.Hash() from %T.SubscribeNewHead(...)", got, sut.Client)
 }
 
 type networkSUT struct {

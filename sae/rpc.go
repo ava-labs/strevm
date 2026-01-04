@@ -237,7 +237,7 @@ type web3API struct {
 
 func newWeb3API() *web3API {
 	return &web3API{
-		clientVersion: version.Current.String(),
+		clientVersion: version.GetVersions().String(),
 	}
 }
 
@@ -343,8 +343,8 @@ func (a *apiBackend) SetHead(number uint64) {
 	)
 }
 
-func (a *apiBackend) HeaderByNumber(ctx context.Context, number rpc.BlockNumber) (*types.Header, error) {
-	panic(errUnimplemented)
+func (a *apiBackend) HeaderByNumber(ctx context.Context, n rpc.BlockNumber) (*types.Header, error) {
+	return readByNumber(a, n, rawdb.ReadHeader)
 }
 
 func (a *apiBackend) HeaderByHash(ctx context.Context, hash common.Hash) (*types.Header, error) {
@@ -364,13 +364,19 @@ func (a *apiBackend) CurrentBlock() *types.Header {
 }
 
 func (a *apiBackend) BlockByNumber(ctx context.Context, n rpc.BlockNumber) (*types.Block, error) {
+	return readByNumber(a, n, rawdb.ReadBlock)
+}
+
+type canonicalReader[T any] func(ethdb.Reader, common.Hash, uint64) *T
+
+func readByNumber[T any](a *apiBackend, n rpc.BlockNumber, read canonicalReader[T]) (*T, error) {
 	num, err := a.resolveBlockNumber(n)
 	if errors.Is(err, errFutureBlockNotResolved) {
 		return nil, nil
 	} else if err != nil {
 		return nil, err
 	}
-	return rawdb.ReadBlock(
+	return read(
 		a.vm.db,
 		rawdb.ReadCanonicalHash(a.vm.db, num),
 		num,
