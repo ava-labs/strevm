@@ -62,6 +62,7 @@ func TestMain(m *testing.M) {
 type SUT struct {
 	block.ChainVM
 	*ethclient.Client
+	rpcClient *rpc.Client
 
 	rawVM   *VM
 	genesis *blocks.Block
@@ -123,18 +124,27 @@ func newSUT(tb testing.TB, numAccounts uint, opts ...sutOption) (context.Context
 	require.NoErrorf(tb, err, "%T.CreateHandlers()", snow)
 	server := httptest.NewServer(handlers[wsHTTPExtensionPath])
 	tb.Cleanup(server.Close)
-	client, err := ethclient.Dial("ws://" + server.Listener.Addr().String())
-	require.NoError(tb, err, "ethclient.Dial(http.NewServer(%T.CreateHandlers()))", snow)
+	rpcClient, err := rpc.Dial("ws://" + server.Listener.Addr().String())
+	require.NoErrorf(tb, err, "rpc.Dial(http.NewServer(%T.CreateHandlers()))", snow)
+	client := ethclient.NewClient(rpcClient)
 	tb.Cleanup(client.Close)
 
 	return ctx, &SUT{
-		ChainVM: snow,
-		Client:  client,
-		rawVM:   vm,
-		genesis: genesis,
-		wallet:  wallet,
-		db:      db,
+		ChainVM:   snow,
+		Client:    client,
+		rpcClient: rpcClient,
+		rawVM:     vm,
+		genesis:   genesis,
+		wallet:    wallet,
+		db:        db,
 	}
+}
+
+// CallContext propagates its arguments to and from [SUT.rpcClient.CallContext].
+// Embedding both the [ethclient.Client] and the underlying [rpc.Client] isn't
+// possible due to a name conflict, so this method is manually exposed.
+func (s *SUT) CallContext(ctx context.Context, result any, method string, args ...any) error {
+	return s.rpcClient.CallContext(ctx, result, method, args...)
 }
 
 // stubbedTime returns an option to configure a new SUT's "now" function along
@@ -555,20 +565,4 @@ func TestSemanticBlockChecks(t *testing.T) {
 			require.ErrorIs(t, snowB.Verify(ctx), tt.wantErr, "Verify()")
 		})
 	}
-}
-
-func TestSubscriptions(t *testing.T) {
-	ctx, sut := newSUT(t, 1)
-
-	newHeads := make(chan *types.Header, 1)
-	sub, err := sut.SubscribeNewHead(ctx, newHeads)
-	require.NoError(t, err, "SubscribeNewHead(...)")
-	// The subscription is closed in a defer rather than via t.Cleanup to ensure
-	// that is is closed before the rest of the SUT is torn down. Otherwise,
-	// there could be a goroutine leak.
-	defer sub.Unsubscribe()
-
-	b := sut.runConsensusLoop(t, sut.lastAcceptedBlock(t))
-	got := <-newHeads
-	require.Equalf(t, b.Hash(), got.Hash(), "%T.Hash() from %T.SubscribeNewHead(...)", got, sut.Client)
 }
