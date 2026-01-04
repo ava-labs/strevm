@@ -117,11 +117,6 @@ func (e *Executor) ChainConfig() *params.ChainConfig {
 	return e.chainConfig
 }
 
-// DB returns the db originally passed to [New].
-func (e *Executor) DB() ethdb.Database {
-	return e.db
-}
-
 // StateCache returns caching database underpinning execution.
 func (e *Executor) StateCache() state.Database {
 	return e.stateCache
