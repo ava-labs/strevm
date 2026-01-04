@@ -113,6 +113,9 @@ func newSUT(tb testing.TB, numAccounts uint, opts ...sutOption) (context.Context
 	// If the options updated the ChainConfig it could require a new signer.
 	// This is unavoidable because we need the wallet earlier, to determine the
 	// addresses for the alloc.
+	//
+	// TODO(arr4n) abstract a keychain (responsible for private keys) from the
+	// wallet (responsible for nonce management).
 	if s := types.LatestSigner(conf.chainConfig); !s.Equal(signer) {
 		signer = s //nolint:ineffassign // Protect against future changes that may use `signer` later
 		wallet.SetSigner(s)
