@@ -235,7 +235,7 @@ func (s *SUT) waitUntilExecuted(tb testing.TB, b *blocks.Block) {
 		case <-ctx.Done():
 			tb.Fatalf("waiting for block %d to execute: %v", b.Height(), ctx.Err())
 		case err := <-sub.Err():
-			require.NoErrorf(tb, err, "%T.SubscribeNewHead().Err()", s.Client)
+			tb.Fatalf("%T.SubscribeNewHead().Err() returned error: %v", s.Client, err)
 		case h := <-c:
 			if h.Number.Uint64() >= b.Height() {
 				return
