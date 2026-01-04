@@ -10,10 +10,13 @@ import (
 	"math/big"
 	"sync"
 
+	"github.com/ava-labs/avalanchego/version"
 	"github.com/ava-labs/libevm/common"
+	"github.com/ava-labs/libevm/common/hexutil"
 	"github.com/ava-labs/libevm/core"
 	"github.com/ava-labs/libevm/core/rawdb"
 	"github.com/ava-labs/libevm/core/types"
+	"github.com/ava-labs/libevm/crypto"
 	"github.com/ava-labs/libevm/eth/filters"
 	"github.com/ava-labs/libevm/event"
 	"github.com/ava-labs/libevm/libevm/ethapi"
@@ -39,16 +42,46 @@ func (vm *VM) ethRPCServer() (*rpc.Server, error) {
 		return nil
 	})
 
-	for _, ethAPI := range []any{
-		ethapi.NewBlockChainAPI(b),
-		ethapi.NewTransactionAPI(b, new(ethapi.AddrLocker)),
-		filterAPI,
-	} {
-		if err := s.RegisterName("eth", ethAPI); err != nil {
-			return nil, fmt.Errorf("%T.RegisterName(%q, %T): %v", s, "eth", ethAPI, err)
+	// Standard Ethereum APIs are documented at: https://ethereum.org/developers/docs/apis/json-rpc
+	// Geth-specific APIs are documented at: https://geth.ethereum.org/docs/interacting-with-geth/rpc
+	apis := []struct {
+		namespace string
+		api       any
+	}{
+		// Standard Ethereum node APIs:
+		// - web3_clientVersion
+		// - web3_sha3
+		{"web3", newWeb3API()},
+
+		{"eth", ethapi.NewBlockChainAPI(b)},
+		{"eth", ethapi.NewTransactionAPI(b, new(ethapi.AddrLocker))},
+		{"eth", filterAPI},
+	}
+	for _, api := range apis {
+		if err := s.RegisterName(api.namespace, api.api); err != nil {
+			return nil, fmt.Errorf("%T.RegisterName(%q, %T): %v", s, api.namespace, api.api, err)
 		}
 	}
 	return s, nil
+}
+
+// web3API offers the `web3` RPCs.
+type web3API struct {
+	clientVersion string
+}
+
+func newWeb3API() *web3API {
+	return &web3API{
+		clientVersion: version.Current.String(),
+	}
+}
+
+func (w *web3API) ClientVersion() string {
+	return w.clientVersion
+}
+
+func (*web3API) Sha3(input hexutil.Bytes) hexutil.Bytes {
+	return crypto.Keccak256(input)
 }
 
 type ethAPIBackend struct {
