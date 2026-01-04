@@ -89,6 +89,7 @@ type (
 	sutOption = options.Option[sutConfig]
 )
 
+// chainID is made a global to keep it constant across multiple SUTs.
 var chainID = ids.GenerateTestID()
 
 func newSUT(tb testing.TB, numAccounts uint, opts ...sutOption) (context.Context, *SUT) {
