@@ -448,7 +448,7 @@ func (a *apiBackend) SubscribeChainHeadEvent(ch chan<- core.ChainHeadEvent) even
 	return a.vm.exec.SubscribeChainHeadEvent(ch)
 }
 
-func (*apiBackend) SubscribeChainSideEvent(ch chan<- core.ChainSideEvent) event.Subscription {
+func (*apiBackend) SubscribeChainSideEvent(chan<- core.ChainSideEvent) event.Subscription {
 	// SAE never reorgs, so there are no side events.
 	return newNoopSubscription()
 }
@@ -525,7 +525,7 @@ func (a *apiBackend) SubscribeLogsEvent(ch chan<- []*types.Log) event.Subscripti
 	return a.vm.exec.SubscribeLogsEvent(ch)
 }
 
-func (a *apiBackend) SubscribePendingLogsEvent(ch chan<- []*types.Log) event.Subscription {
+func (*apiBackend) SubscribePendingLogsEvent(chan<- []*types.Log) event.Subscription {
 	// In SAE, "pending" refers to the execution status. There are no logs known
 	// for transactions pending execution.
 	return newNoopSubscription()
