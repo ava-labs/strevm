@@ -186,8 +186,8 @@ func TestWorstCase(t *testing.T) {
 				for range rng.UintN(flags.maxNewTxsPerBlock) {
 					from := rng.IntN(numEOAs)
 					to := rng.IntN(numEOAs + 1)
-					// TODO(arr4n) why does increasing this slow everything
-					// down? Without parallel tests:
+					// TODO(arr4n) why does increasing maxGasLimit slow
+					// everything down? Without parallel tests:
 					//
 					//   10e6 : 2.2s
 					//   60e6 : 3.5s
