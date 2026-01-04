@@ -10,11 +10,15 @@ import (
 	"math/big"
 	"sync"
 
+	"github.com/ava-labs/avalanchego/version"
 	"github.com/ava-labs/libevm/common"
+	"github.com/ava-labs/libevm/common/hexutil"
 	"github.com/ava-labs/libevm/core"
 	"github.com/ava-labs/libevm/core/rawdb"
 	"github.com/ava-labs/libevm/core/types"
+	"github.com/ava-labs/libevm/crypto"
 	"github.com/ava-labs/libevm/eth/filters"
+	"github.com/ava-labs/libevm/ethdb"
 	"github.com/ava-labs/libevm/event"
 	"github.com/ava-labs/libevm/libevm/ethapi"
 	"github.com/ava-labs/libevm/params"
@@ -39,16 +43,46 @@ func (vm *VM) ethRPCServer() (*rpc.Server, error) {
 		return nil
 	})
 
-	for _, ethAPI := range []any{
-		ethapi.NewBlockChainAPI(b),
-		ethapi.NewTransactionAPI(b, new(ethapi.AddrLocker)),
-		filterAPI,
-	} {
-		if err := s.RegisterName("eth", ethAPI); err != nil {
-			return nil, fmt.Errorf("%T.RegisterName(%q, %T): %v", s, "eth", ethAPI, err)
+	// Standard Ethereum APIs are documented at: https://ethereum.org/developers/docs/apis/json-rpc
+	// Geth-specific APIs are documented at: https://geth.ethereum.org/docs/interacting-with-geth/rpc
+	apis := []struct {
+		namespace string
+		api       any
+	}{
+		// Standard Ethereum node APIs:
+		// - web3_clientVersion
+		// - web3_sha3
+		{"web3", newWeb3API()},
+
+		{"eth", ethapi.NewBlockChainAPI(b)},
+		{"eth", ethapi.NewTransactionAPI(b, new(ethapi.AddrLocker))},
+		{"eth", filterAPI},
+	}
+	for _, api := range apis {
+		if err := s.RegisterName(api.namespace, api.api); err != nil {
+			return nil, fmt.Errorf("%T.RegisterName(%q, %T): %v", s, api.namespace, api.api, err)
 		}
 	}
 	return s, nil
+}
+
+// web3API offers the `web3` RPCs.
+type web3API struct {
+	clientVersion string
+}
+
+func newWeb3API() *web3API {
+	return &web3API{
+		clientVersion: version.GetVersions().String(),
+	}
+}
+
+func (w *web3API) ClientVersion() string {
+	return w.clientVersion
+}
+
+func (*web3API) Sha3(input hexutil.Bytes) hexutil.Bytes {
+	return crypto.Keccak256(input)
 }
 
 type ethAPIBackend struct {
@@ -77,14 +111,24 @@ func (b *ethAPIBackend) GetTd(context.Context, common.Hash) *big.Int {
 	return big.NewInt(0) // TODO(arr4n)
 }
 
+func (b *ethAPIBackend) HeaderByNumber(ctx context.Context, n rpc.BlockNumber) (*types.Header, error) {
+	return readByNumber(b, n, rawdb.ReadHeader)
+}
+
 func (b *ethAPIBackend) BlockByNumber(ctx context.Context, n rpc.BlockNumber) (*types.Block, error) {
+	return readByNumber(b, n, rawdb.ReadBlock)
+}
+
+type canonicalReader[T any] func(ethdb.Reader, common.Hash, uint64) *T
+
+func readByNumber[T any](b *ethAPIBackend, n rpc.BlockNumber, read canonicalReader[T]) (*T, error) {
 	num, err := b.resolveBlockNumber(n)
 	if errors.Is(err, errFutureBlockNotResolved) {
 		return nil, nil
 	} else if err != nil {
 		return nil, err
 	}
-	return rawdb.ReadBlock(
+	return read(
 		b.vm.db,
 		rawdb.ReadCanonicalHash(b.vm.db, num),
 		num,
