@@ -18,7 +18,6 @@ import (
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/rlp"
-	"github.com/holiman/uint256"
 	"go.uber.org/zap"
 
 	"github.com/ava-labs/strevm/blocks"
@@ -177,7 +176,7 @@ func (vm *VM) buildBlock(
 				return nil, fmt.Errorf("applying op at end of block %d to worst-case state: %v", b.Height(), err)
 			}
 		}
-		if err := state.FinishBlock(); err != nil {
+		if _, err := state.FinishBlock(); err != nil {
 			log.Warn("Could not finish historical worst-case calculation",
 				zap.Error(err),
 			)
@@ -199,11 +198,8 @@ func (vm *VM) buildBlock(
 		return nil, fmt.Errorf("starting worst-case state for new block: %w", err)
 	}
 
-	bounds := &blocks.WorstCaseBounds{
-		MaxBaseFee: new(uint256.Int).Set(state.BaseFee()),
-	}
 	hdr.GasLimit = state.GasLimit()
-	hdr.BaseFee = bounds.MaxBaseFee.ToBig()
+	hdr.BaseFee = state.BaseFee().ToBig()
 
 	var (
 		candidates = pendingTxs(txpool.PendingFilter{
@@ -232,23 +228,20 @@ func (vm *VM) buildBlock(
 		// The [saexec.Executor] checks the worst-case balance before tx
 		// execution so we MUST record it at the equivalent point, before
 		// ApplyTx().
-		minBalance := state.Balance(ltx.Sender)
 		if err := state.ApplyTx(tx); err != nil {
 			log.Debug("Could not apply transaction", zap.Error(err))
 			continue
 		}
 		log.Trace("Including transaction")
 		included = append(included, tx)
-		bounds.MinTxSenderBalances = append(bounds.MinTxSenderBalances, minBalance)
 	}
 
 	// TODO: Should the [hook.BlockBuilder] populate [types.Header.GasUsed] so
 	// that [hook.Op.Gas] can be included?
 	hdr.GasUsed = state.GasUsed()
 
-	// Although we never interact with the worst-case state after this point, we
-	// still mark the block as finished to align with normal execution.
-	if err := state.FinishBlock(); err != nil {
+	bounds, err := state.FinishBlock()
+	if err != nil {
 		log.Warn("Could not finish worst-case block calculation",
 			zap.Error(err),
 		)

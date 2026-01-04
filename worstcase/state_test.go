@@ -17,6 +17,8 @@ import (
 	"github.com/ava-labs/libevm/crypto"
 	"github.com/ava-labs/libevm/libevm/ethtest"
 	"github.com/ava-labs/libevm/params"
+	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/holiman/uint256"
 	"github.com/stretchr/testify/require"
 
@@ -77,13 +79,19 @@ type (
 )
 
 func TestMultipleBlocks(t *testing.T) {
+	wallet := saetest.NewUNSAFEWallet(t, 1, types.LatestSigner(saetest.ChainConfig()))
 	var (
 		eoa          = common.Address{0x01}
 		eoaNoBalance = common.Address{0x02}
+		eoaViaTx     = wallet.Addresses()[0]
 	)
+	const startingBalance = math.MaxUint64
 	sut := newSUT(t, types.GenesisAlloc{
 		eoa: {
-			Balance: new(big.Int).SetUint64(math.MaxUint64),
+			Balance: new(big.Int).SetUint64(startingBalance),
+		},
+		eoaViaTx: {
+			Balance: new(big.Int).SetUint64(startingBalance),
 		},
 	})
 
@@ -96,12 +104,14 @@ func TestMultipleBlocks(t *testing.T) {
 		op      Op
 		wantErr error
 	}
-	blocks := []struct {
-		hooks        *hookstest.Stub
-		time         uint64
-		wantGasLimit uint64
-		wantBaseFee  *uint256.Int
-		ops          []op
+	tests := []struct { // note that they are not independent
+		hooks                 *hookstest.Stub
+		time                  uint64
+		wantGasLimit          uint64
+		wantBaseFee           *uint256.Int
+		ops                   []op
+		txsAfterOps           []*types.Transaction
+		wantMinSenderBalances []uint64 // transformed to uint256.Int
 	}{
 		{
 			hooks: &hookstest.Stub{
@@ -181,6 +191,46 @@ func TestMultipleBlocks(t *testing.T) {
 					wantErr: nil,
 				},
 			},
+			txsAfterOps: []*types.Transaction{
+				wallet.SetNonceAndSign(t, 0, &types.LegacyTx{
+					To:       &common.Address{},
+					Gas:      100_000,
+					GasPrice: big.NewInt(2),
+				}),
+				wallet.SetNonceAndSign(t, 0, &types.LegacyTx{
+					To:       &common.Address{},
+					Gas:      200_000,
+					GasPrice: big.NewInt(2),
+					Value:    big.NewInt(123_456),
+				}),
+				wallet.SetNonceAndSign(t, 0, &types.LegacyTx{
+					To:  nil,
+					Gas: 100_000,
+					// TODO(arr4n) do we want to be more lenient for dynamic-fee
+					// txs since we know the worst-case base fee?
+					GasPrice: big.NewInt(10), // charged in full
+				}),
+				wallet.SetNonceAndSign(t, 0, &types.DynamicFeeTx{
+					To:        &common.Address{},
+					Gas:       100_000,
+					GasFeeCap: big.NewInt(100),
+				}),
+				wallet.SetNonceAndSign(t, 0, &types.LegacyTx{
+					// Irrelevant parameters that only need to be valid. Needed
+					// to induce one more sender balance and test the effect of
+					// the penultimate tx.
+					To:       &common.Address{},
+					Gas:      params.TxGas,
+					GasPrice: big.NewInt(2),
+				}),
+			},
+			wantMinSenderBalances: []uint64{ // before each tx
+				startingBalance,
+				startingBalance - 2*100_000,
+				startingBalance - 2*100_000 - (2*200_000 + 123_456),
+				startingBalance - 2*100_000 - (2*200_000 + 123_456) - 10*100_000,               // non-dynamic fee
+				startingBalance - 2*100_000 - (2*200_000 + 123_456) - 10*100_000 - 100*100_000, // dynamic fee _not_ reduced
+			},
 		},
 		{
 			// We have currently included slightly over 10s worth of gas. We
@@ -191,7 +241,7 @@ func TestMultipleBlocks(t *testing.T) {
 			wantBaseFee:  uint256.NewInt(1),
 		},
 	}
-	for i, block := range blocks {
+	for i, block := range tests {
 		if block.hooks != nil {
 			*sut.Hooks = *block.hooks
 		}
@@ -208,8 +258,23 @@ func TestMultipleBlocks(t *testing.T) {
 			gotErr := state.Apply(op.op)
 			require.ErrorIsf(t, gotErr, op.wantErr, "Apply(%s) error", op.name)
 		}
+		for _, tx := range block.txsAfterOps {
+			require.NoErrorf(t, state.ApplyTx(tx), "ApplyTx()")
+		}
 
-		require.NoError(t, state.FinishBlock(), "FinishBlock()")
+		got, err := state.FinishBlock()
+		require.NoError(t, err, "FinishBlock()")
+
+		want := &blocks.WorstCaseBounds{
+			MaxBaseFee: block.wantBaseFee,
+		}
+		for _, bal := range block.wantMinSenderBalances {
+			want.MinTxSenderBalances = append(want.MinTxSenderBalances, uint256.NewInt(bal))
+		}
+		if diff := cmp.Diff(want, got, cmpopts.EquateEmpty()); diff != "" {
+			t.Errorf("FinishBlock() diff (-want +got): \n%s", diff)
+		}
+
 		lastHash = header.Hash()
 	}
 }
@@ -479,7 +544,8 @@ func TestStartBlockQueueFull(t *testing.T) {
 		})
 		require.NoError(t, err, "Apply()")
 
-		require.NoError(t, state.FinishBlock(), "FinishBlock()")
+		_, err = state.FinishBlock()
+		require.NoError(t, err, "FinishBlock()")
 
 		lastHash = h.Hash()
 	}
@@ -509,7 +575,8 @@ func TestStartBlockQueueFullDueToTargetChanges(t *testing.T) {
 	})
 	require.NoError(t, err, "Apply()")
 
-	require.NoError(t, state.FinishBlock(), "FinishBlock()")
+	_, err = state.FinishBlock()
+	require.NoError(t, err, "FinishBlock()")
 
 	err = state.StartBlock(&types.Header{
 		ParentHash: h.Hash(),

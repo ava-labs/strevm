@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"math"
 	"math/big"
+	"slices"
 
 	"github.com/ava-labs/avalanchego/vms/components/gas"
 	"github.com/ava-labs/libevm/common"
@@ -52,10 +53,11 @@ type State struct {
 
 	qSize, blockSize, maxBlockSize gas.Gas
 
-	baseFee *uint256.Int
-	curr    *types.Header
-	rules   params.Rules
-	signer  types.Signer
+	baseFee             *uint256.Int
+	curr                *types.Header
+	rules               params.Rules
+	signer              types.Signer
+	minTxSenderBalances []*uint256.Int
 }
 
 var errSettledBlockNotExecuted = errors.New("block marked for settling has not finished execution yet")
@@ -129,6 +131,7 @@ func (s *State) StartBlock(h *types.Header) error {
 	}
 
 	s.baseFee = s.clock.BaseFee()
+	s.minTxSenderBalances = s.minTxSenderBalances[:0] // [State.FinishBlock] returns a clone so we can reuse the alloc here
 
 	// expectedParentHash is updated prior to modifying the GasLimit and BaseFee
 	// to ensure that historical block hashes are not modified.
@@ -218,7 +221,12 @@ func (s *State) ApplyTx(tx *types.Transaction) error {
 	if err != nil {
 		return fmt.Errorf("converting transaction to operation: %w", err)
 	}
-	return s.Apply(op)
+	bal := s.db.GetBalance(from) // MUST be before [State.Apply] to mirror [saexec.Executor] check
+	if err := s.Apply(op); err != nil {
+		return err
+	}
+	s.minTxSenderBalances = append(s.minTxSenderBalances, bal)
+	return nil
 }
 
 func txToOp(from common.Address, tx *types.Transaction) (hook.Op, error) {
@@ -241,7 +249,7 @@ func txToOp(from common.Address, tx *types.Transaction) (hook.Op, error) {
 				Amount: amount,
 			},
 		},
-		// To MUST NOT be populated here because this transaction may revert.
+		// Mint MUST NOT be populated here because this transaction may revert.
 	}, nil
 }
 
@@ -286,10 +294,17 @@ func (s *State) GasUsed() uint64 {
 }
 
 // FinishBlock advances the [gastime.Time] in preparation for the next block.
-func (s *State) FinishBlock() error {
+//
+// The returned bounds assume that every non-nil error from [State.ApplyTx]
+// resulted in said transaction being included, which is reflected in the
+// indexing of tx-sender balances.
+func (s *State) FinishBlock() (*blocks.WorstCaseBounds, error) {
 	if err := s.clock.AfterBlock(s.blockSize, s.hooks, s.curr); err != nil {
-		return fmt.Errorf("finishing block gas time update: %w", err)
+		return nil, fmt.Errorf("finishing block gas time update: %w", err)
 	}
 	s.qSize += s.blockSize
-	return nil
+	return &blocks.WorstCaseBounds{
+		MaxBaseFee:          s.baseFee,
+		MinTxSenderBalances: slices.Clone(s.minTxSenderBalances),
+	}, nil
 }
