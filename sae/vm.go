@@ -1,4 +1,4 @@
-// Copyright (C) 2025, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2025-2026, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package sae
@@ -7,16 +7,20 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/ava-labs/avalanchego/network/p2p"
 	"github.com/ava-labs/avalanchego/network/p2p/gossip"
 	"github.com/ava-labs/avalanchego/snow"
 	snowcommon "github.com/ava-labs/avalanchego/snow/engine/common"
+	"github.com/ava-labs/avalanchego/utils"
 	"github.com/ava-labs/avalanchego/utils/bloom"
 	"github.com/ava-labs/avalanchego/utils/logging"
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core"
+	"github.com/ava-labs/libevm/core/rawdb"
 	"github.com/ava-labs/libevm/core/txpool"
 	"github.com/ava-labs/libevm/core/txpool/legacypool"
 	"github.com/ava-labs/libevm/core/types"
@@ -35,13 +39,22 @@ import (
 // which needs to be provided by a harness. In all cases, the harness MUST
 // provide a last-synchronous block, which MAY be the genesis.
 type VM struct {
+	*p2p.Network
+	peers *p2p.Peers
+
 	config  Config
 	snowCtx *snow.Context
 	hooks   hook.Points
 	metrics *prometheus.Registry
 
-	blocks                   *sMap[common.Hash, *blocks.Block]
-	preference, lastAccepted atomic.Pointer[blocks.Block]
+	db     ethdb.Database
+	blocks *sMap[common.Hash, *blocks.Block]
+
+	consensusState utils.Atomic[snow.State]
+	preference     atomic.Pointer[blocks.Block]
+	last           struct {
+		accepted, settled atomic.Pointer[blocks.Block]
+	}
 
 	exec    *saexec.Executor
 	mempool *txgossip.Set
@@ -79,12 +92,28 @@ func (vm *VM) Init(
 	db ethdb.Database,
 	triedbConfig *triedb.Config,
 	lastSynchronous *blocks.Block,
+	sender snowcommon.AppSender,
 ) error {
 	vm.snowCtx = snowCtx
 	vm.hooks = hooks
+	vm.db = db
 	vm.blocks.Store(lastSynchronous.Hash(), lastSynchronous)
-	vm.preference.Store(lastSynchronous)
-	vm.lastAccepted.Store(lastSynchronous)
+
+	// Disk
+	for _, fn := range [](func(ethdb.KeyValueWriter, common.Hash)){
+		rawdb.WriteHeadBlockHash,
+		rawdb.WriteFinalizedBlockHash,
+	} {
+		fn(db, lastSynchronous.Hash())
+	}
+	// Internal indicators
+	for _, ptr := range []*atomic.Pointer[blocks.Block]{
+		&vm.preference,
+		&vm.last.accepted,
+		&vm.last.settled,
+	} {
+		ptr.Store(lastSynchronous)
+	}
 
 	vm.metrics = prometheus.NewRegistry()
 	if err := snowCtx.Metrics.Register("sae", vm.metrics); err != nil {
@@ -130,6 +159,43 @@ func (vm *VM) Init(
 		}
 		vm.mempool = pool
 		vm.signalNewTxsToEngine()
+	}
+
+	{ // ==========  P2P Gossip  ==========
+		network, peers, validatorPeers, err := newNetwork(snowCtx, sender, vm.metrics)
+		if err != nil {
+			return fmt.Errorf("newNetwork(...): %v", err)
+		}
+		handler, pullGossiper, pushGossiper, err := newGossipers(snowCtx, network, validatorPeers, vm.metrics, vm.mempool)
+		if err != nil {
+			return fmt.Errorf("newGossipers(...): %v", err)
+		}
+		if err := network.AddHandler(gossipHandlerID, handler); err != nil {
+			return fmt.Errorf("network.AddHandler(...): %v", err)
+		}
+
+		var (
+			gossipCtx, cancel = context.WithCancel(context.Background())
+			wg                sync.WaitGroup
+		)
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			gossip.Every(gossipCtx, snowCtx.Log, pullGossiper, pullRequestPeriod)
+		}()
+		go func() {
+			defer wg.Done()
+			gossip.Every(gossipCtx, snowCtx.Log, pushGossiper, pushGossipPeriod)
+		}()
+
+		vm.Network = network
+		vm.peers = peers
+		vm.mempool.RegisterPushGossiper(pushGossiper)
+		vm.toClose = append(vm.toClose, func() error {
+			cancel()
+			wg.Wait()
+			return nil
+		})
 	}
 
 	return nil
@@ -201,7 +267,8 @@ func (vm *VM) numPendingTxs() int {
 
 // SetState notifies the VM of a transition in the state lifecycle.
 func (vm *VM) SetState(ctx context.Context, state snow.State) error {
-	return errUnimplemented
+	vm.consensusState.Set(state)
+	return nil
 }
 
 // Shutdown gracefully closes the VM.

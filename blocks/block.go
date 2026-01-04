@@ -1,4 +1,4 @@
-// Copyright (C) 2025, Ava Labs, Inc. All rights reserved.
+// Copyright (C) ((20\d\d\-2026)|(2026)), Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 // Package blocks defines [Streaming Asynchronous Execution] (SAE) blocks.
@@ -37,8 +37,7 @@ type Block struct {
 	// Only the genesis block or the last pre-SAE block is synchronous. These
 	// are self-settling by definition so their `ancestry` MUST be nil.
 	synchronous bool
-	// Non-nil i.f.f. [Block.MarkExecuted] or [Block.ResotrePostExecutionState]
-	// have returned without error.
+	// Non-nil i.f.f. [Block.MarkExecuted] has returned without error.
 	execution atomic.Pointer[executionResults]
 
 	// Allows this block to be ruled out as able to be settled at a particular

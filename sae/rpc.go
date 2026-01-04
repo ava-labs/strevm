@@ -1,13 +1,15 @@
-// Copyright (C) 2025, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2025-2026, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package sae
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math/big"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/ava-labs/avalanchego/network/p2p"
@@ -19,17 +21,18 @@ import (
 	"github.com/ava-labs/libevm/consensus"
 	"github.com/ava-labs/libevm/core"
 	"github.com/ava-labs/libevm/core/bloombits"
+	"github.com/ava-labs/libevm/core/rawdb"
 	"github.com/ava-labs/libevm/core/state"
 	"github.com/ava-labs/libevm/core/txpool"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/core/vm"
+	"github.com/ava-labs/libevm/crypto"
 	"github.com/ava-labs/libevm/eth/filters"
 	"github.com/ava-labs/libevm/eth/tracers"
 	"github.com/ava-labs/libevm/ethdb"
 	"github.com/ava-labs/libevm/event"
 	"github.com/ava-labs/libevm/libevm/debug"
 	"github.com/ava-labs/libevm/libevm/ethapi"
-	"github.com/ava-labs/libevm/node"
 	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/rpc"
 	"go.uber.org/zap"
@@ -46,132 +49,173 @@ func (vm *VM) ethRPCServer() (*rpc.Server, error) {
 		vm:             vm,
 		accountManager: accountManager,
 	}
+	// Even if this function errors, we should close API to prevent a goroutine
+	// from leaking.
 	filterSystem := filters.NewFilterSystem(b, filters.Config{})
+	filterAPI := filters.NewFilterAPI(filterSystem, false /*isLightClient*/)
+	vm.toClose = append(vm.toClose, func() error {
+		filterAPI.Close()
+		return nil
+	})
+
+	// Standard Ethereum APIs are documented at: https://ethereum.org/developers/docs/apis/json-rpc
+	// Geth-specific APIs are documented at: https://geth.ethereum.org/docs/interacting-with-geth/rpc
 	apis := []struct {
 		namespace string
 		api       any
 	}{
-		// https://ethereum.org/developers/docs/apis/json-rpc/#web3_clientversion
-		// https://ethereum.org/developers/docs/apis/json-rpc/#web3_sha3
-		{"web3", node.NewWeb3API(version.Current.String())},
-		// https://ethereum.org/developers/docs/apis/json-rpc#net_version
-		// https://ethereum.org/developers/docs/apis/json-rpc#net_listening
-		// https://ethereum.org/developers/docs/apis/json-rpc#net_peercount
+		// Standard Ethereum node APIs:
+		// - web3_clientVersion
+		// - web3_sha3
+		{"web3", &web3API{}},
+		// Standard Ethereum node APIs:
+		// - net_listening
+		// - net_peerCount
+		// - net_version
+		{"net", newNetAPI(vm.peers, vm.exec.ChainConfig().ChainID.Uint64())},
+		// Standard Ethereum node APIs:
+		// - eth_gasPrice
+		// - eth_syncing
 		//
-		// TODO: Populate p2p.Peers once we have P2P networking integrated.
-		{"net", newNetAPI(nil, vm.exec.ChainConfig().ChainID.Uint64())},
-		// https://ethereum.org/developers/docs/apis/json-rpc#eth_syncing
-		// https://ethereum.org/developers/docs/apis/json-rpc#eth_gasprice
+		// Undocumented APIs:
+		// - eth_feeHistory
+		// - eth_maxPriorityFeePerGas
 		{"eth", ethapi.NewEthereumAPI(b)},
-		// https://ethereum.org/developers/docs/apis/json-rpc#eth_chainid
-		// https://ethereum.org/developers/docs/apis/json-rpc#eth_blocknumber
-		// https://ethereum.org/developers/docs/apis/json-rpc#eth_getbalance
-		// https://ethereum.org/developers/docs/apis/json-rpc#eth_getstorageat
-		// https://ethereum.org/developers/docs/apis/json-rpc#eth_getunclecountbyblockhash
-		// https://ethereum.org/developers/docs/apis/json-rpc#eth_getunclecountbyblocknumber
-		// https://ethereum.org/developers/docs/apis/json-rpc#eth_getcode
-		// https://ethereum.org/developers/docs/apis/json-rpc#eth_call
-		// https://ethereum.org/developers/docs/apis/json-rpc#eth_estimategas
-		// https://ethereum.org/developers/docs/apis/json-rpc#eth_getblockbyhash
-		// https://ethereum.org/developers/docs/apis/json-rpc#eth_getblockbynumber
-		// https://ethereum.org/developers/docs/apis/json-rpc#eth_getunclebyblockhashandindex
-		// https://ethereum.org/developers/docs/apis/json-rpc#eth_getunclebyblocknumberandindex
+		// Standard Ethereum node APIs:
+		// - eth_blockNumber
+		// - eth_call
+		// - eth_chainId
+		// - eth_estimateGas
+		// - eth_getBalance
+		// - eth_getBlockByHash
+		// - eth_getBlockByNumber
+		// - eth_getCode
+		// - eth_getStorageAt
+		// - eth_getUncleByBlockHashAndIndex
+		// - eth_getUncleByBlockNumberAndIndex
+		// - eth_getUncleCountByBlockHash
+		// - eth_getUncleCountByBlockNumber
 		//
-		// https://geth.ethereum.org/docs/interacting-with-geth/rpc/ns-eth#eth-createaccesslist
-		// https://geth.ethereum.org/docs/interacting-with-geth/rpc/ns-eth#ethgetheaderbynumber
-		// https://geth.ethereum.org/docs/interacting-with-geth/rpc/ns-eth#ethgetheaderbyhash
+		// Geth-specific APIs:
+		// - eth_createAccessList
+		// - eth_getHeaderByHash
+		// - eth_getHeaderByNumber
+		//
+		// Undocumented APIs:
+		// - eth_getBlockReceipts
+		// - eth_getProof
 		{"eth", ethapi.NewBlockChainAPI(b)},
-		// https://ethereum.org/developers/docs/apis/json-rpc#eth_gettransactioncount
-		// https://ethereum.org/developers/docs/apis/json-rpc#eth_getblocktransactioncountbyhash
-		// https://ethereum.org/developers/docs/apis/json-rpc#eth_getblocktransactioncountbynumber
-		// https://ethereum.org/developers/docs/apis/json-rpc#eth_sign
-		// https://ethereum.org/developers/docs/apis/json-rpc#eth_signtransaction
-		// https://ethereum.org/developers/docs/apis/json-rpc#eth_sendtransaction
-		// https://ethereum.org/developers/docs/apis/json-rpc#eth_sendrawtransaction
-		// https://ethereum.org/developers/docs/apis/json-rpc#eth_gettransactionbyhash
-		// https://ethereum.org/developers/docs/apis/json-rpc#eth_gettransactionbyblockhashandindex
-		// https://ethereum.org/developers/docs/apis/json-rpc#eth_gettransactionbyblocknumberandindex
-		// https://ethereum.org/developers/docs/apis/json-rpc#eth_gettransactionreceipt
+		// Standard Ethereum node APIs:
+		// - eth_getBlockTransactionCountByHash
+		// - eth_getBlockTransactionCountByNumber
+		// - eth_getTransactionByBlockHashAndIndex
+		// - eth_getTransactionByBlockNumberAndIndex
+		// - eth_getTransactionByHash
+		// - eth_getTransactionCount
+		// - eth_getTransactionReceipt
+		// - eth_sendRawTransaction
+		// - eth_sendTransaction
+		// - eth_sign
+		// - eth_signTransaction
+		//
+		// Undocumented APIs:
+		// - eth_fillTransaction
+		// - eth_getRawTransactionByBlockHashAndIndex
+		// - eth_getRawTransactionByBlockNumberAndIndex
+		// - eth_getRawTransactionByHash
+		// - eth_pendingTransactions
+		// - eth_resend
 		{"eth", ethapi.NewTransactionAPI(b, new(ethapi.AddrLocker))},
-		// https://ethereum.org/developers/docs/apis/json-rpc#eth_newfilter
-		// https://ethereum.org/developers/docs/apis/json-rpc#eth_newblockfilter
-		// https://ethereum.org/developers/docs/apis/json-rpc#eth_newpendingtransactionfilter
-		// https://ethereum.org/developers/docs/apis/json-rpc#eth_uninstallfilter
-		// https://ethereum.org/developers/docs/apis/json-rpc#eth_getfilterchanges
-		// https://ethereum.org/developers/docs/apis/json-rpc#eth_getfilterlogs
-		// https://ethereum.org/developers/docs/apis/json-rpc#eth_getlogs
-		{"eth", filters.NewFilterAPI(filterSystem, false)},
-		// https://geth.ethereum.org/docs/interacting-with-geth/rpc/ns-txpool#txpool-content
-		// https://geth.ethereum.org/docs/interacting-with-geth/rpc/ns-txpool#txpool-contentfrom
-		// https://geth.ethereum.org/docs/interacting-with-geth/rpc/ns-txpool#txpool-inspect
-		// https://geth.ethereum.org/docs/interacting-with-geth/rpc/ns-txpool#txpool-status
+		// Standard Ethereum node APIs:
+		// - eth_getFilterChanges
+		// - eth_getFilterLogs
+		// - eth_getLogs
+		// - eth_newBlockFilter
+		// - eth_newFilter
+		// - eth_newPendingTransactionFilter
+		// - eth_uninstallFilter
+		//
+		// Geth-specific APIs:
+		// - eth_subscribe
+		//  - logs
+		//  - newHeads
+		//  - newPendingTransactions
+		{"eth", filterAPI},
+		// Geth-specific APIs:
+		// - txpool_content
+		// - txpool_contentFrom
+		// - txpool_inspect
+		// - txpool_status
 		{"txpool", ethapi.NewTxPoolAPI(b)},
-		// https://geth.ethereum.org/docs/interacting-with-geth/rpc/ns-debug#debugchaindbcompact
-		// https://geth.ethereum.org/docs/interacting-with-geth/rpc/ns-debug#debugchaindbproperty
-		// https://geth.ethereum.org/docs/interacting-with-geth/rpc/ns-debug#debugdbancient
-		// https://geth.ethereum.org/docs/interacting-with-geth/rpc/ns-debug#debugdbancients
-		// https://geth.ethereum.org/docs/interacting-with-geth/rpc/ns-debug#debugdbget
-		// https://geth.ethereum.org/docs/interacting-with-geth/rpc/ns-debug#debuggetrawblock
-		// https://geth.ethereum.org/docs/interacting-with-geth/rpc/ns-debug#debuggetrawheader
-		// https://geth.ethereum.org/docs/interacting-with-geth/rpc/ns-debug#debuggetrawtransaction
-		// https://geth.ethereum.org/docs/interacting-with-geth/rpc/ns-debug#debuggetrawreceipts
-		// https://geth.ethereum.org/docs/interacting-with-geth/rpc/ns-debug#debugprintblock
-		// https://geth.ethereum.org/docs/interacting-with-geth/rpc/ns-debug#debugsethead
+		// Geth-specific APIs:
+		// - debug_chainDbCompact
+		// - debug_chainDbProperty
+		// - debug_dbAncient
+		// - debug_dbAncients
+		// - debug_dbGet
+		// - debug_getRawBlock
+		// - debug_getRawHeader
+		// - debug_getRawReceipts
+		// - debug_getRawTransaction
+		// - debug_printBlock
+		// - debug_setHead
 		{"debug", ethapi.NewDebugAPI(b)},
-		// https://geth.ethereum.org/docs/interacting-with-geth/rpc/ns-debug#debugintermediateroots
-		// https://geth.ethereum.org/docs/interacting-with-geth/rpc/ns-debug#debugstandardtraceblocktofile
-		// https://geth.ethereum.org/docs/interacting-with-geth/rpc/ns-debug#debugstandardtracebadblocktofile
-		// https://geth.ethereum.org/docs/interacting-with-geth/rpc/ns-debug#debugtracebadblock
-		// https://geth.ethereum.org/docs/interacting-with-geth/rpc/ns-debug#debugtraceblock
-		// https://geth.ethereum.org/docs/interacting-with-geth/rpc/ns-debug#debugtraceblockbynumber
-		// https://geth.ethereum.org/docs/interacting-with-geth/rpc/ns-debug#debugtraceblockbyhash
-		// https://geth.ethereum.org/docs/interacting-with-geth/rpc/ns-debug#debugtraceblockfromfile
-		// https://geth.ethereum.org/docs/interacting-with-geth/rpc/ns-debug#debugtracecall
-		// https://geth.ethereum.org/docs/interacting-with-geth/rpc/ns-debug#debugtracechain
-		// https://geth.ethereum.org/docs/interacting-with-geth/rpc/ns-debug#debugtracetransaction
+		// Geth-specific APIs:
+		// - debug_intermediateRoots
+		// - debug_standardTraceBadBlockToFile
+		// - debug_standardTraceBlockToFile
+		// - debug_traceBadBlock
+		// - debug_traceBlock
+		// - debug_traceBlockByHash
+		// - debug_traceBlockByNumber
+		// - debug_traceBlockFromFile
+		// - debug_traceCall
+		// - debug_traceChain
+		// - debug_traceTransaction
 		{"debug", tracers.NewAPI(b)},
-		// https://geth.ethereum.org/docs/interacting-with-geth/rpc/ns-debug#debugblockprofile
-		// https://geth.ethereum.org/docs/interacting-with-geth/rpc/ns-debug#debugcpuprofile
-		// https://geth.ethereum.org/docs/interacting-with-geth/rpc/ns-debug#debugfreeosmemory
-		// https://geth.ethereum.org/docs/interacting-with-geth/rpc/ns-debug#debuggcstats
-		// https://geth.ethereum.org/docs/interacting-with-geth/rpc/ns-debug#debuggotrace
-		// https://geth.ethereum.org/docs/interacting-with-geth/rpc/ns-debug#debugmemstats
-		// https://geth.ethereum.org/docs/interacting-with-geth/rpc/ns-debug#debugmutexprofile
-		// https://geth.ethereum.org/docs/interacting-with-geth/rpc/ns-debug#debugsetblockprofilerate
-		// https://geth.ethereum.org/docs/interacting-with-geth/rpc/ns-debug#debugsetgcpercent
-		// https://geth.ethereum.org/docs/interacting-with-geth/rpc/ns-debug#debugsetmutexprofilefraction
-		// https://geth.ethereum.org/docs/interacting-with-geth/rpc/ns-debug#debugstacks
-		// https://geth.ethereum.org/docs/interacting-with-geth/rpc/ns-debug#debugstartcpuprofile
-		// https://geth.ethereum.org/docs/interacting-with-geth/rpc/ns-debug#debugstartgotrace
-		// https://geth.ethereum.org/docs/interacting-with-geth/rpc/ns-debug#debugstopcpuprofile
-		// https://geth.ethereum.org/docs/interacting-with-geth/rpc/ns-debug#debugstopgotrace
-		// https://geth.ethereum.org/docs/interacting-with-geth/rpc/ns-debug#debugverbosity
-		// https://geth.ethereum.org/docs/interacting-with-geth/rpc/ns-debug#debugvmodule
-		// https://geth.ethereum.org/docs/interacting-with-geth/rpc/ns-debug#debugwriteblockprofile
-		// https://geth.ethereum.org/docs/interacting-with-geth/rpc/ns-debug#debugwritememprofile
-		// https://geth.ethereum.org/docs/interacting-with-geth/rpc/ns-debug#debugwritemutexprofile
+		// Geth-specific APIs:
+		// - debug_blockProfile
+		// - debug_cpuProfile
+		// - debug_freeOSMemory
+		// - debug_gcStats
+		// - debug_goTrace
+		// - debug_memStats
+		// - debug_mutexProfile
+		// - debug_setBlockProfileRate
+		// - debug_setGCPercent
+		// - debug_setMutexProfileFraction
+		// - debug_stacks
+		// - debug_startCPUProfile
+		// - debug_startGoTrace
+		// - debug_stopCPUProfile
+		// - debug_stopGoTrace
+		// - debug_verbosity
+		// - debug_vmodule
+		// - debug_writeBlockProfile
+		// - debug_writeMemProfile
+		// - debug_writeMutexProfile
 		{"debug", debug.Handler},
 	}
 	// Unsupported APIs:
 	//
-	// "Standard" Ethereum node APIs:
-	// https://ethereum.org/developers/docs/apis/json-rpc#eth_protocolversion
-	// https://ethereum.org/developers/docs/apis/json-rpc#eth_coinbase
-	// https://ethereum.org/developers/docs/apis/json-rpc#eth_mining
-	// https://ethereum.org/developers/docs/apis/json-rpc#eth_hashrate
-	// https://ethereum.org/developers/docs/apis/json-rpc#eth_accounts
+	// Standard Ethereum node APIs:
+	// - eth_protocolVersion
+	// - eth_coinbase
+	// - eth_mining
+	// - eth_hashrate
+	// - eth_accounts
 	//
 	// Block and state inspection APIs:
-	// https://geth.ethereum.org/docs/interacting-with-geth/rpc/ns-debug#debugaccountrange
-	// https://geth.ethereum.org/docs/interacting-with-geth/rpc/ns-debug#debugdumpblock
-	// https://geth.ethereum.org/docs/interacting-with-geth/rpc/ns-debug#debuggetaccessiblestate
-	// https://geth.ethereum.org/docs/interacting-with-geth/rpc/ns-debug#debuggetbadblocks
-	// https://geth.ethereum.org/docs/interacting-with-geth/rpc/ns-debug#debuggetmodifiedaccountsbyhash
-	// https://geth.ethereum.org/docs/interacting-with-geth/rpc/ns-debug#debuggetmodifiedaccountsbynumber
-	// https://geth.ethereum.org/docs/interacting-with-geth/rpc/ns-debug#debuggettrieflushinterval
-	// https://geth.ethereum.org/docs/interacting-with-geth/rpc/ns-debug#debugpreimage
-	// https://geth.ethereum.org/docs/interacting-with-geth/rpc/ns-debug#debugsettrieflushinterval
-	// https://geth.ethereum.org/docs/interacting-with-geth/rpc/ns-debug#debugstoragerangeat
+	// - debug_accountRange
+	// - debug_dumpBlock
+	// - debug_getAccessibleState
+	// - debug_getBadBlocks
+	// - debug_getModifiedAccountsByHash
+	// - debug_getModifiedAccountsByNumber
+	// - debug_getTrieFlushInterval
+	// - debug_preimage
+	// - debug_setTrieFlushInterval
+	// - debug_storageRangeAt
 	//
 	// The admin namespace.
 	// The clique namespace.
@@ -185,6 +229,17 @@ func (vm *VM) ethRPCServer() (*rpc.Server, error) {
 		}
 	}
 	return s, nil
+}
+
+// web3API offers the `web3` RPCs.
+type web3API struct{}
+
+func (*web3API) ClientVersion() string {
+	return version.Current.String()
+}
+
+func (*web3API) Sha3(input hexutil.Bytes) hexutil.Bytes {
+	return crypto.Keccak256(input)
 }
 
 // netAPI offers the `net` RPCs.
@@ -209,9 +264,7 @@ func (s *netAPI) Listening() bool {
 }
 
 func (s *netAPI) PeerCount() hexutil.Uint {
-	// TODO(StephenButtolph) Once [avalanchego#4792] is merged, we should report
-	// the correct number of peers.
-	return 0
+	return hexutil.Uint(s.peers.Len()) //nolint:gosec // Peer count will not overflow
 }
 
 var (
@@ -241,7 +294,7 @@ func (a *apiBackend) FeeHistory(ctx context.Context, blockCount uint64, lastBloc
 }
 
 func (a *apiBackend) ChainDb() ethdb.Database {
-	return a.vm.exec.DB()
+	return a.vm.db
 }
 
 func (a *apiBackend) AccountManager() *accounts.Manager {
@@ -303,8 +356,43 @@ func (a *apiBackend) CurrentBlock() *types.Header {
 	return a.vm.exec.LastExecuted().Header()
 }
 
-func (a *apiBackend) BlockByNumber(ctx context.Context, number rpc.BlockNumber) (*types.Block, error) {
-	panic(errUnimplemented)
+func (a *apiBackend) BlockByNumber(ctx context.Context, n rpc.BlockNumber) (*types.Block, error) {
+	num, err := a.resolveBlockNumber(n)
+	if errors.Is(err, errFutureBlockNotResolved) {
+		return nil, nil
+	} else if err != nil {
+		return nil, err
+	}
+	return rawdb.ReadBlock(
+		a.vm.db,
+		rawdb.ReadCanonicalHash(a.vm.db, num),
+		num,
+	), nil
+}
+
+var errFutureBlockNotResolved = errors.New("not accepted yet")
+
+func (a *apiBackend) resolveBlockNumber(bn rpc.BlockNumber) (uint64, error) {
+	head := a.vm.last.accepted.Load().Height()
+
+	switch bn {
+	case rpc.PendingBlockNumber: // i.e. pending execution
+		return head, nil
+	case rpc.LatestBlockNumber:
+		return a.vm.exec.LastExecuted().Height(), nil
+	case rpc.SafeBlockNumber, rpc.FinalizedBlockNumber:
+		return a.vm.last.settled.Load().Height(), nil
+	}
+
+	if bn < 0 {
+		// Any future definitions should be added above.
+		return 0, fmt.Errorf("%s block unsupported", bn.String())
+	}
+	n := uint64(bn) //nolint:gosec // Non-negative check performed above
+	if n > head {
+		return 0, fmt.Errorf("%w: block %d", errFutureBlockNotResolved, n)
+	}
+	return n, nil
 }
 
 func (a *apiBackend) BlockByHash(ctx context.Context, hash common.Hash) (*types.Block, error) {
@@ -332,7 +420,7 @@ func (a *apiBackend) GetReceipts(ctx context.Context, hash common.Hash) (types.R
 }
 
 func (a *apiBackend) GetTd(ctx context.Context, hash common.Hash) *big.Int {
-	panic(errUnimplemented)
+	return big.NewInt(0) // TODO(arr4n)
 }
 
 func (a *apiBackend) GetEVM(ctx context.Context, msg *core.Message, state *state.StateDB, header *types.Header, vmConfig *vm.Config, blockCtx *vm.BlockContext) *vm.EVM {
@@ -340,15 +428,16 @@ func (a *apiBackend) GetEVM(ctx context.Context, msg *core.Message, state *state
 }
 
 func (a *apiBackend) SubscribeChainEvent(ch chan<- core.ChainEvent) event.Subscription {
-	panic(errUnimplemented)
+	return a.vm.exec.SubscribeChainEvent(ch)
 }
 
 func (a *apiBackend) SubscribeChainHeadEvent(ch chan<- core.ChainHeadEvent) event.Subscription {
-	panic(errUnimplemented)
+	return a.vm.exec.SubscribeChainHeadEvent(ch)
 }
 
-func (a *apiBackend) SubscribeChainSideEvent(ch chan<- core.ChainSideEvent) event.Subscription {
-	panic(errUnimplemented)
+func (*apiBackend) SubscribeChainSideEvent(ch chan<- core.ChainSideEvent) event.Subscription {
+	// SAE never reorgs, so there are no side events.
+	return newNoopSubscription()
 }
 
 func (a *apiBackend) GetTransaction(ctx context.Context, txHash common.Hash) (bool, *types.Transaction, common.Hash, uint64, uint64, error) {
@@ -394,8 +483,8 @@ func (a *apiBackend) TxPoolContentFrom(addr common.Address) ([]*types.Transactio
 	return a.Pool.ContentFrom(addr)
 }
 
-func (a *apiBackend) SubscribeNewTxsEvent(chan<- core.NewTxsEvent) event.Subscription {
-	panic(errUnimplemented)
+func (a *apiBackend) SubscribeNewTxsEvent(ch chan<- core.NewTxsEvent) event.Subscription {
+	return a.Set.Pool.SubscribeTransactions(ch, true)
 }
 
 func (a *apiBackend) ChainConfig() *params.ChainConfig {
@@ -414,16 +503,19 @@ func (a *apiBackend) GetLogs(ctx context.Context, blockHash common.Hash, number 
 	panic(errUnimplemented)
 }
 
-func (a *apiBackend) SubscribeRemovedLogsEvent(ch chan<- core.RemovedLogsEvent) event.Subscription {
-	panic(errUnimplemented)
+func (*apiBackend) SubscribeRemovedLogsEvent(chan<- core.RemovedLogsEvent) event.Subscription {
+	// SAE never reorgs, so no logs are ever removed.
+	return newNoopSubscription()
 }
 
 func (a *apiBackend) SubscribeLogsEvent(ch chan<- []*types.Log) event.Subscription {
-	panic(errUnimplemented)
+	return a.vm.exec.SubscribeLogsEvent(ch)
 }
 
 func (a *apiBackend) SubscribePendingLogsEvent(ch chan<- []*types.Log) event.Subscription {
-	panic(errUnimplemented)
+	// In SAE, "pending" refers to the execution status. There are no logs known
+	// for transactions pending execution.
+	return newNoopSubscription()
 }
 
 func (a *apiBackend) BloomStatus() (uint64, uint64) {
@@ -440,4 +532,25 @@ func (a *apiBackend) StateAtBlock(ctx context.Context, block *types.Block, reexe
 
 func (a *apiBackend) StateAtTransaction(ctx context.Context, block *types.Block, txIndex int, reexec uint64) (*core.Message, vm.BlockContext, *state.StateDB, tracers.StateReleaseFunc, error) {
 	panic(errUnimplemented)
+}
+
+type noopSubscription struct {
+	once sync.Once
+	err  chan error
+}
+
+func newNoopSubscription() *noopSubscription {
+	return &noopSubscription{
+		err: make(chan error),
+	}
+}
+
+func (s *noopSubscription) Err() <-chan error {
+	return s.err
+}
+
+func (s *noopSubscription) Unsubscribe() {
+	s.once.Do(func() {
+		close(s.err)
+	})
 }

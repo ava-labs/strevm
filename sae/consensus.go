@@ -1,13 +1,17 @@
-// Copyright (C) 2025, Ava Labs, Inc. All rights reserved.
+// Copyright (C) ((20\d\d\-2026)|(2026)), Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package sae
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/ava-labs/avalanchego/ids"
+	"github.com/ava-labs/avalanchego/snow"
 	"github.com/ava-labs/avalanchego/snow/engine/snowman/block"
+	"github.com/ava-labs/libevm/core/rawdb"
+	"go.uber.org/zap"
 
 	"github.com/ava-labs/strevm/blocks"
 )
@@ -32,15 +36,86 @@ func (vm *VM) SetPreference(ctx context.Context, id ids.ID, bCtx *block.Context)
 //
 // [accepted]: https://github.com/ava-labs/avalanchego/tree/master/vms#block-statuses
 func (vm *VM) AcceptBlock(ctx context.Context, b *blocks.Block) error {
-	// TODO(arr4n) implement settlement, updating of database canonical block,
-	// head, etc.
-	vm.lastAccepted.Store(b)
-	return vm.exec.Enqueue(ctx, b)
+	// Recall the terminology and ordering from the invariants document:
+	// - (D)isk then (M)emory then (I)nternal then e(X)ternal.
+	// - B accepted after all of B.Settles() settled
+
+	settles := b.Settles()
+	{
+		batch := vm.db.NewBatch()
+
+		// D(Σ ⊂ S); yes, I know it's in a batch
+		if len(settles) > 0 {
+			// Note that while we treat SAFE and FINALIZED identically, there is
+			// no notion of the former in [rawdb]. Furthermore, the LAST label
+			// is reserved for the last executed so it too isn't persisted here.
+			rawdb.WriteFinalizedBlockHash(batch, b.LastSettled().Hash())
+		}
+
+		rawdb.WriteBlock(batch, b.EthBlock())
+		rawdb.WriteTxLookupEntriesByBlock(batch, b.EthBlock())
+		// D(b ∈ A)
+		rawdb.WriteCanonicalHash(batch, b.Hash(), b.NumberU64())
+
+		if err := batch.Write(); err != nil {
+			return err
+		}
+	}
+
+	// If the block being accepted settles its parent then we will lose access
+	// to the ancestry, which is needed at the end of this method to avoid
+	// leaking blocks by keeping them in the in-memory store.
+	parentLastSettled := b.ParentBlock().LastSettled()
+
+	// f(b_{n-1}) before f(b_n)
+	for _, s := range settles {
+		if err := s.MarkSettled(); err != nil {
+			return err
+		}
+	}
+
+	// I(s ∈ S) before I(b ∈ A) before I(b ∈ E)
+	vm.last.settled.Store(b.LastSettled())
+	vm.last.accepted.Store(b)
+	if err := vm.exec.Enqueue(ctx, b); err != nil {
+		return err
+	}
+
+	// When the chain is bootstrapping, avalanchego expects to be able to call
+	// `Verify` and `Accept` in a loop over blocks. Reporting an error during
+	// either `Verify` or `Accept` is considered FATAL during this process.
+	// Therefore, we must ensure that avalanchego does not get too far ahead of
+	// the execution thread and FATAL during block verification.
+	if vm.consensusState.Get() == snow.Bootstrapping {
+		if err := b.WaitUntilExecuted(ctx); err != nil {
+			return fmt.Errorf("waiting for block %d to execute: %v", b.Height(), err)
+		}
+	}
+
+	vm.log().Debug(
+		"Accepted block",
+		zap.Uint64("height", b.Height()),
+		zap.Stringer("hash", b.Hash()),
+	)
+
+	// Same rationale as the invariant described in [blocks.Block]. Praised be
+	// the GC!
+	keep := b.LastSettled().Hash()
+	for _, s := range settles {
+		if s.Hash() == keep {
+			continue
+		}
+		vm.blocks.Delete(s.Hash())
+	}
+	if h := parentLastSettled.Hash(); h != keep { // i.e. `parentLastSettled` was the last block's `keep`
+		vm.blocks.Delete(h)
+	}
+	return nil
 }
 
 // LastAccepted returns the ID of the last block received by [VM.AcceptBlock].
 func (vm *VM) LastAccepted(context.Context) (ids.ID, error) {
-	return vm.lastAccepted.Load().ID(), nil
+	return vm.last.accepted.Load().ID(), nil
 }
 
 // RejectBlock is a no-op in SAE because execution only occurs after acceptance.

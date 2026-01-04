@@ -1,12 +1,12 @@
 module github.com/ava-labs/strevm
 
-go 1.24.9
+go 1.24.11
 
 tool github.com/go-task/task/v3/cmd/task
 
 require (
-	github.com/ava-labs/avalanchego v1.14.1-0.20251203215505-70148edc6eca
-	github.com/ava-labs/libevm v1.13.15-0.20251215204913-9021836d7dbc
+	github.com/ava-labs/avalanchego v1.14.1-antithesis-docker-image-fix.0.20251231210902-f917492d193e
+	github.com/ava-labs/libevm v1.13.15-0.20260104032733-ab2c5f27be83
 	github.com/google/go-cmp v0.7.0
 	github.com/holiman/uint256 v1.2.4
 	github.com/stretchr/testify v1.11.1
@@ -166,5 +166,3 @@ require (
 	gopkg.in/natefinch/lumberjack.v2 v2.0.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
-
-replace github.com/ava-labs/libevm => /Users/stephen/go/src/github.com/ava-labs/libevm

@@ -1,4 +1,4 @@
-// Copyright (C) 2025, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2025-2026, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package sae
@@ -8,62 +8,166 @@ import (
 	"time"
 
 	"github.com/ava-labs/avalanchego/ids"
-	snowcommon "github.com/ava-labs/avalanchego/snow/engine/common"
-	"github.com/ava-labs/avalanchego/version"
+	"github.com/ava-labs/avalanchego/network/p2p"
+	"github.com/ava-labs/avalanchego/network/p2p/gossip"
+	"github.com/ava-labs/avalanchego/snow"
+	"github.com/ava-labs/avalanchego/snow/engine/common"
+	"github.com/ava-labs/avalanchego/utils/units"
+	"github.com/prometheus/client_golang/prometheus"
+
+	"github.com/ava-labs/strevm/txgossip"
 )
 
-// Connected notifies the VM that a p2p connection has been established with the
-// specified node.
-func (vm *VM) Connected(
-	ctx context.Context,
-	nodeID ids.NodeID,
-	nodeVersion *version.Application,
-) error {
-	return errUnimplemented
+const (
+	gossipHandlerID   = p2p.TxGossipHandlerID
+	pullRequestPeriod = time.Second // seconds/request
+	pushGossipPeriod  = 100 * time.Millisecond
+)
+
+// newNetwork creates the P2P network with a registered validator set.
+func newNetwork(
+	snowCtx *snow.Context,
+	sender common.AppSender,
+	reg *prometheus.Registry,
+) (
+	*p2p.Network,
+	*p2p.Peers,
+	*p2p.Validators,
+	error,
+) {
+	peers := &p2p.Peers{}
+	const maxValidatorSetStaleness = time.Minute
+	validatorPeers := p2p.NewValidators(
+		snowCtx.Log,
+		snowCtx.SubnetID,
+		snowCtx.ValidatorState,
+		maxValidatorSetStaleness,
+	)
+	const namespace = "p2p"
+	network, err := p2p.NewNetwork(
+		snowCtx.Log,
+		sender,
+		reg,
+		namespace,
+		peers,
+		validatorPeers,
+	)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	return network, peers, validatorPeers, nil
 }
 
-// Disconnected notifies the VM that the p2p connection with the specified node
-// has terminated.
-func (vm *VM) Disconnected(ctx context.Context, nodeID ids.NodeID) error {
-	return errUnimplemented
-}
+// newGossipers creates the tx gossipers for mempool dissemination.
+func newGossipers(
+	snowCtx *snow.Context,
+	network *p2p.Network,
+	validatorPeers *p2p.Validators,
+	reg *prometheus.Registry,
+	mempool *txgossip.Set,
+) (
+	p2p.Handler,
+	*gossip.ValidatorGossiper,
+	*gossip.PushGossiper[txgossip.Transaction],
+	error,
+) {
+	const namespace = "gossip"
+	metrics, err := gossip.NewMetrics(reg, namespace)
+	if err != nil {
+		return nil, nil, nil, err
+	}
 
-// AppRequest notifies the VM of an incoming request from the specified node.
-func (vm *VM) AppRequest(
-	ctx context.Context,
-	nodeID ids.NodeID,
-	requestID uint32,
-	deadline time.Time,
-	request []byte,
-) error {
-	return errUnimplemented
-}
+	const targetMessageSize = 20 * units.KiB
+	var marshaller txgossip.Marshaller
+	handler := gossip.NewHandler(
+		snowCtx.Log,
+		marshaller,
+		mempool,
+		metrics,
+		targetMessageSize,
+	)
 
-// AppResponse notifies the VM of an incoming response from the specified node.
-func (vm *VM) AppResponse(
-	ctx context.Context,
-	nodeID ids.NodeID,
-	requestID uint32,
-	response []byte,
-) error {
-	return errUnimplemented
-}
+	const (
+		throttlingPeriod         = time.Hour                                     // seconds/period
+		requestsPerPeerPerPeriod = float64(throttlingPeriod / pullRequestPeriod) // requests/period
+	)
+	throttledHandler, err := p2p.NewDynamicThrottlerHandler(
+		snowCtx.Log,
+		handler,
+		validatorPeers,
+		throttlingPeriod,
+		requestsPerPeerPerPeriod,
+		reg,
+		namespace,
+	)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	validatorOnlyHandler := p2p.NewValidatorHandler(
+		throttledHandler,
+		validatorPeers,
+		snowCtx.Log,
+	)
 
-// AppRequestFailed notifies the VM that an outgoing request failed.
-func (vm *VM) AppRequestFailed(
-	ctx context.Context,
-	nodeID ids.NodeID,
-	requestID uint32,
-	appErr *snowcommon.AppError,
-) error {
-	return errUnimplemented
-}
+	// Pull requests are filtered by validators and are throttled to prevent
+	// spamming. Push messages are not filtered.
+	type (
+		appRequester interface {
+			AppRequest(context.Context, ids.NodeID, time.Time, []byte) ([]byte, *common.AppError)
+		}
+		appGossiper interface {
+			AppGossip(context.Context, ids.NodeID, []byte)
+		}
+	)
+	gossipHandler := struct {
+		appRequester
+		appGossiper
+	}{
+		appRequester: validatorOnlyHandler,
+		appGossiper:  handler,
+	}
 
-// AppGossip notifies the VM of gossip from the specified node.
-func (vm *VM) AppGossip(
-	ctx context.Context,
-	nodeID ids.NodeID,
-	msg []byte,
-) error {
-	return errUnimplemented
+	client := network.NewClient(gossipHandlerID, validatorPeers)
+	const pollSize = 1
+	pullGossiper := gossip.NewPullGossiper[txgossip.Transaction](
+		snowCtx.Log,
+		marshaller,
+		mempool,
+		client,
+		metrics,
+		pollSize,
+	)
+	pullGossiperWhenValidator := &gossip.ValidatorGossiper{
+		Gossiper:   pullGossiper,
+		NodeID:     snowCtx.NodeID,
+		Validators: validatorPeers,
+	}
+
+	pushGossipParams := gossip.BranchingFactor{
+		StakePercentage: .9,
+		Validators:      100,
+	}
+	pushRegossipParams := gossip.BranchingFactor{
+		Validators: 10,
+	}
+	const (
+		discardedCacheSize = 16_384
+		regossipPeriod     = 30 * time.Second
+	)
+	pushGossiper, err := gossip.NewPushGossiper(
+		marshaller,
+		mempool,
+		validatorPeers,
+		client,
+		metrics,
+		pushGossipParams,
+		pushRegossipParams,
+		discardedCacheSize,
+		targetMessageSize,
+		regossipPeriod,
+	)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	return gossipHandler, pullGossiperWhenValidator, pushGossiper, nil
 }

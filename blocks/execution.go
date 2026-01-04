@@ -1,4 +1,4 @@
-// Copyright (C) 2025, Ava Labs, Inc. All rights reserved.
+// Copyright (C) ((20\d\d\-2026)|(2026)), Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package blocks
@@ -58,8 +58,7 @@ type executionResults struct {
 // true and [Block.WaitUntilExecuted] returning cleanly are both therefore
 // indicative of a successful database write by MarkExecuted.
 //
-// This method MUST NOT be called more than once and its usage is mutually
-// exclusive of [Block.RestorePostExecutionState]. The wall-clock [time.Time] is
+// This method MUST NOT be called more than once. The wall-clock [time.Time] is
 // for metrics only.
 func (b *Block) MarkExecuted(db ethdb.Database, byGas *gastime.Time, byWall time.Time, baseFee *big.Int, receipts types.Receipts, stateRootPost common.Hash) error {
 	e := &executionResults{
@@ -71,6 +70,7 @@ func (b *Block) MarkExecuted(db ethdb.Database, byGas *gastime.Time, byWall time
 		stateRootPost: stateRootPost,
 	}
 
+	// Disk
 	batch := db.NewBatch()
 	hash := b.Hash()
 	rawdb.WriteHeadBlockHash(batch, hash)
@@ -81,6 +81,7 @@ func (b *Block) MarkExecuted(db ethdb.Database, byGas *gastime.Time, byWall time
 		return err
 	}
 
+	// Memory and indicators
 	return b.markExecuted(e)
 }
 
