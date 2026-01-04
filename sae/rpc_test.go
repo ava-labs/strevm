@@ -4,6 +4,7 @@
 package sae
 
 import (
+	"context"
 	"testing"
 
 	"github.com/ava-labs/avalanchego/version"
