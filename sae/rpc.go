@@ -72,7 +72,7 @@ type web3API struct {
 
 func newWeb3API() *web3API {
 	return &web3API{
-		clientVersion: version.Current.String(),
+		clientVersion: version.GetVersions().String(),
 	}
 }
 

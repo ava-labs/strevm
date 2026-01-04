@@ -37,7 +37,7 @@ func TestWeb3(t *testing.T) {
 		var clientVersion string
 		err := sut.CallContext(ctx, &clientVersion, "web3_clientVersion")
 		require.NoError(t, err)
-		assert.Equal(t, version.Current.String(), clientVersion)
+		assert.Equal(t, version.GetVersions().String(), clientVersion)
 	})
 
 	t.Run("sha3", func(t *testing.T) {
