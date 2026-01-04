@@ -125,7 +125,7 @@ func newSUT(tb testing.TB, numAccounts uint, opts ...sutOption) (context.Context
 	server := httptest.NewServer(handlers[wsHTTPExtensionPath])
 	tb.Cleanup(server.Close)
 	rpcClient, err := rpc.Dial("ws://" + server.Listener.Addr().String())
-	require.NoErrorf(tb, err, "ethclient.Dial(http.NewServer(%T.CreateHandlers()))", snow)
+	require.NoErrorf(tb, err, "rpc.Dial(http.NewServer(%T.CreateHandlers()))", snow)
 	client := ethclient.NewClient(rpcClient)
 	tb.Cleanup(client.Close)
 
