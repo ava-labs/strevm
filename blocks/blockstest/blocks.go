@@ -11,6 +11,7 @@ import (
 	"math"
 	"math/big"
 	"slices"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -121,7 +122,15 @@ func NewGenesis(tb testing.TB, db ethdb.Database, config *params.ChainConfig, al
 	require.NoErrorf(tb, tdb.Commit(hash, true), "%T.Commit(core.SetupGenesisBlock(...))", tdb)
 
 	b := NewBlock(tb, gen.ToBlock(), nil, nil)
-	require.NoErrorf(tb, b.MarkExecuted(db, gastime.New(gen.Timestamp, conf.gasTarget, conf.gasExcess), time.Time{}, new(big.Int), nil, b.SettledStateRoot()), "%T.MarkExecuted()", b)
+	require.NoErrorf(tb, b.MarkExecuted(
+		db,
+		gastime.New(gen.Timestamp, conf.gasTarget, conf.gasExcess),
+		time.Time{},
+		new(big.Int),
+		nil,
+		b.SettledStateRoot(),
+		new(atomic.Pointer[blocks.Block]),
+	), "%T.MarkExecuted()", b)
 	require.NoErrorf(tb, b.MarkSynchronous(), "%T.MarkSynchronous()", b)
 	return b
 }
