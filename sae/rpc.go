@@ -49,8 +49,7 @@ func (vm *VM) ethRPCServer() (*rpc.Server, error) {
 		vm:             vm,
 		accountManager: accountManager,
 	}
-	// Even if this function errors, we should close API to prevent a goroutine
-	// from leaking.
+
 	filterSystem := filters.NewFilterSystem(b, filters.Config{})
 	filterAPI := filters.NewFilterAPI(filterSystem, false /*isLightClient*/)
 	vm.toClose = append(vm.toClose, func() error {
@@ -67,7 +66,7 @@ func (vm *VM) ethRPCServer() (*rpc.Server, error) {
 		// Standard Ethereum node APIs:
 		// - web3_clientVersion
 		// - web3_sha3
-		{"web3", &web3API{}},
+		{"web3", newWeb3API()},
 		// Standard Ethereum node APIs:
 		// - net_listening
 		// - net_peerCount
@@ -232,10 +231,18 @@ func (vm *VM) ethRPCServer() (*rpc.Server, error) {
 }
 
 // web3API offers the `web3` RPCs.
-type web3API struct{}
+type web3API struct {
+	clientVersion string
+}
 
-func (*web3API) ClientVersion() string {
-	return version.Current.String()
+func newWeb3API() *web3API {
+	return &web3API{
+		clientVersion: version.Current.String(),
+	}
+}
+
+func (w *web3API) ClientVersion() string {
+	return w.clientVersion
 }
 
 func (*web3API) Sha3(input hexutil.Bytes) hexutil.Bytes {
