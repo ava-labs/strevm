@@ -117,6 +117,9 @@ func newSUT(tb testing.TB, hookFactory HookFactory, opts ...sutOption) (context.
 
 	e, err := saexec.New(genesis, chain.GetBlock, chainConfig, db, tdbConfig, *snapshotConfig, hooks, logger)
 	require.NoError(tb, err, "New()")
+	tb.Cleanup(func() {
+		require.NoErrorf(tb, e.Close(), "%T.Close()", e)
+	})
 
 	return ctx, SUT{
 		Executor: e,

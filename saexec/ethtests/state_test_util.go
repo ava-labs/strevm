@@ -299,10 +299,6 @@ func (t *StateTest) RunWithSAE(tb testing.TB, subtest StateSubtest, snapshotter 
 	}
 
 	ctx, sut := newSUT(tb, hookFactory, opts...)
-	tb.Cleanup(func() {
-		st.Close()
-		require.NoErrorf(tb, sut.Close(), "%T.Close()", sut)
-	})
 	genesisBlock := sut.LastExecuted()
 
 	// Get the post state configuration
@@ -394,9 +390,11 @@ func (t *StateTest) RunWithSAE(tb testing.TB, subtest StateSubtest, snapshotter 
 	require.NoErrorf(tb, err, "state.New(%T.PostExecutionStateRoot(), %T.StateCache(), nil)", saeBlock, sut)
 
 	st = StateTestState{
-		StateDB:   sdb,
-		TrieDB:    sut.StateCache().TrieDB(),
-		Snapshots: sut.Snapshots(),
+		StateDB: sdb,
+		// CONTEXT(cey): We intentionally don't set TrieDB or Snapshots here because the
+		// SUT owns these resources and will close them in sut.Close(). Setting
+		// them here would cause st.Close() to close them first, making
+		// sut.Close() fail.
 	}
 
 	root = saeBlock.PostExecutionStateRoot()

@@ -192,7 +192,7 @@ func (e *Executor) execute(b *blocks.Block, logger logging.Logger) error {
 		zap.Time("wall_time", endTime),
 	)
 
-	root, err := stateDB.Commit(b.NumberU64(), true)
+	root, err := stateDB.Commit(b.NumberU64(), rules.IsEIP158)
 	if err != nil {
 		return fmt.Errorf("%T.Commit() at end of block %d: %w", stateDB, b.NumberU64(), err)
 	}
