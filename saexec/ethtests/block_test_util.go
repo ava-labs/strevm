@@ -168,9 +168,12 @@ func (t *BlockTest) Run(tb testing.TB, snapshotter bool, scheme string, tracer v
 	gspec := t.genesis(config)
 	opts = append(opts, withGenesisSpec(gspec))
 
-	// Wrap the original engine within the beacon-engine
+	// Create SUT with consensus hooks factory
 	engine := beacon.New(ethash.NewFaker())
-	ctx, sut := newSUT(tb, engine, opts...)
+	ctx, sut := newSUT(tb, NewTestConsensusHooksFactory(engine), opts...)
+	tb.Cleanup(func() {
+		require.NoErrorf(tb, sut.Close(), "%T.Close()", sut)
+	})
 	gblock := sut.LastExecuted()
 	require.Equal(tb, gblock.Hash(), t.json.Genesis.Hash)
 	require.Equal(tb, gblock.PostExecutionStateRoot(), t.json.Genesis.StateRoot)

@@ -16,8 +16,10 @@ import (
 	"github.com/ava-labs/libevm/core/state"
 	"github.com/ava-labs/libevm/core/state/snapshot"
 	"github.com/ava-labs/libevm/core/types"
+	"github.com/ava-labs/libevm/core/vm"
 	"github.com/ava-labs/libevm/ethdb"
 	"github.com/ava-labs/libevm/event"
+	"github.com/ava-labs/libevm/libevm/options"
 	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/triedb"
 
@@ -45,7 +47,27 @@ type Executor struct {
 	stateCache   state.Database
 	// snaps MUST NOT be accessed by any methods other than [Executor.execute]
 	// and [Executor.Close].
-	snaps *snapshot.Tree
+	snaps    *snapshot.Tree
+	vmConfig vm.Config
+}
+
+// A ExecutorOption configures [Executor].
+type ExecutorOption = options.Option[executorOptions]
+
+type executorOptions struct {
+	vmConfig vm.Config
+}
+
+func WithVMConfig(vmConfig vm.Config) ExecutorOption {
+	return options.Func[executorOptions](func(o *executorOptions) {
+		o.vmConfig = vmConfig
+	})
+}
+
+func defaultExecutorOptions() *executorOptions {
+	return &executorOptions{
+		vmConfig: vm.Config{},
+	}
 }
 
 // New constructs and starts a new [Executor]. Call [Executor.Close] to release
@@ -64,12 +86,14 @@ func New(
 	snapshotConfig snapshot.Config,
 	hooks hook.Points,
 	log logging.Logger,
+	opts ...ExecutorOption,
 ) (*Executor, error) {
 	cache := state.NewDatabaseWithConfig(db, triedbConfig)
 	snaps, err := snapshot.New(snapshotConfig, db, cache.TrieDB(), lastExecuted.PostExecutionStateRoot())
 	if err != nil {
 		return nil, err
 	}
+	conf := options.ApplyTo(defaultExecutorOptions(), opts...)
 
 	e := &Executor{
 		quit:         make(chan struct{}), // closed by [Executor.Close]
@@ -82,6 +106,7 @@ func New(
 		db:           db,
 		stateCache:   cache,
 		snaps:        snaps,
+		vmConfig:     conf.vmConfig,
 	}
 	e.lastEnqueued.Store(lastExecuted)
 	e.lastExecuted.Store(lastExecuted)

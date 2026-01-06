@@ -15,7 +15,6 @@ import (
 	"github.com/ava-labs/libevm/core"
 	"github.com/ava-labs/libevm/core/state"
 	"github.com/ava-labs/libevm/core/types"
-	"github.com/ava-labs/libevm/core/vm"
 	"go.uber.org/zap"
 
 	"github.com/ava-labs/strevm/blocks"
@@ -130,7 +129,7 @@ func (e *Executor) execute(b *blocks.Block, logger logging.Logger) error {
 			header,
 			tx,
 			(*uint64)(&blockGasConsumed),
-			vm.Config{},
+			e.vmConfig,
 		)
 		if err != nil {
 			logger.Fatal(

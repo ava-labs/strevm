@@ -12,16 +12,18 @@ import (
 	"github.com/ava-labs/libevm/core/state"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/core/vm"
+	"github.com/ava-labs/libevm/ethdb"
 	"github.com/ava-labs/libevm/params"
 
+	"github.com/ava-labs/strevm/blocks/blockstest"
 	"github.com/ava-labs/strevm/hook"
+	"github.com/ava-labs/strevm/saetest"
 )
 
 // consensusHooks implements [hook.Points].
 type consensusHooks struct {
 	consensus consensus.Engine
 	reader    *readerAdapter
-	target    gas.Gas
 }
 
 var _ hook.Points = (*consensusHooks)(nil)
@@ -38,8 +40,16 @@ func (c *consensusHooks) BuildHeader(parent *types.Header) *types.Header {
 	return nil
 }
 
-func newTestConsensusHooks(consensus consensus.Engine, reader *readerAdapter, target gas.Gas) *consensusHooks {
-	return &consensusHooks{consensus: consensus, reader: reader, target: target}
+func newTestConsensusHooks(consensus consensus.Engine, reader *readerAdapter) *consensusHooks {
+	return &consensusHooks{consensus: consensus, reader: reader}
+}
+
+// NewTestConsensusHooksFactory returns a HookFactory that creates consensus hooks with a default engine.
+func NewTestConsensusHooksFactory(engine consensus.Engine) HookFactory {
+	return func(chain *blockstest.ChainBuilder, db ethdb.Database, chainConfig *params.ChainConfig, logger *saetest.TBLogger) hook.Points {
+		reader := newReaderAdapter(chain, db, chainConfig, logger)
+		return newTestConsensusHooks(engine, reader)
+	}
 }
 
 // BlockRebuilderFrom ignores its argument and always returns itself.
@@ -49,7 +59,7 @@ func (c *consensusHooks) BlockRebuilderFrom(block *types.Block) hook.BlockBuilde
 
 // GasTarget ignores its argument and always returns [consensusHooks.target].
 func (c *consensusHooks) GasTargetAfter(*types.Header) gas.Gas {
-	return c.target
+	return 1e6
 }
 
 // SubSecondBlockTime time ignores its argument and always returns 0.

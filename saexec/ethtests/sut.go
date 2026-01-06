@@ -9,7 +9,6 @@ import (
 
 	"github.com/ava-labs/avalanchego/utils/logging"
 	"github.com/ava-labs/avalanchego/vms/components/gas"
-	"github.com/ava-labs/libevm/consensus"
 	"github.com/ava-labs/libevm/core"
 	"github.com/ava-labs/libevm/core/rawdb"
 	"github.com/ava-labs/libevm/core/state/snapshot"
@@ -21,6 +20,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/ava-labs/strevm/blocks/blockstest"
+	"github.com/ava-labs/strevm/hook"
 	"github.com/ava-labs/strevm/saetest"
 	"github.com/ava-labs/strevm/saexec"
 )
@@ -67,10 +67,14 @@ func withSnapshotConfig(snapshotConfig *snapshot.Config) sutOption {
 	})
 }
 
+// HookFactory is a function that creates hooks given the chain, database, chain config, and logger.
+type HookFactory func(chain *blockstest.ChainBuilder, db ethdb.Database, chainConfig *params.ChainConfig, logger *saetest.TBLogger) hook.Points
+
 // newSUT returns a new SUT. Any >= [logging.Error] on the logger will also
 // cancel the returned context, which is useful when waiting for blocks that
 // can never finish execution because of an error.
-func newSUT(tb testing.TB, engine consensus.Engine, opts ...sutOption) (context.Context, SUT) {
+// If hookFactory is nil, default consensus hooks will be created using a default engine.
+func newSUT(tb testing.TB, hookFactory HookFactory, opts ...sutOption) (context.Context, SUT) {
 	tb.Helper()
 
 	// This is specifically set to [logging.Error] to ensure that the warn log in execution queue
@@ -106,13 +110,13 @@ func newSUT(tb testing.TB, engine consensus.Engine, opts ...sutOption) (context.
 	)
 	chain := blockstest.NewChainBuilder(genesis, blockOpts)
 
-	reader := newReaderAdapter(chain, db, chainConfig, logger)
-	hooks := newTestConsensusHooks(engine, reader, target)
+	var hooks hook.Points
+	if hookFactory != nil {
+		hooks = hookFactory(chain, db, chainConfig, logger)
+	}
+
 	e, err := saexec.New(genesis, chain.GetBlock, chainConfig, db, tdbConfig, *snapshotConfig, hooks, logger)
 	require.NoError(tb, err, "New()")
-	tb.Cleanup(func() {
-		require.NoErrorf(tb, e.Close(), "%T.Close()", e)
-	})
 
 	return ctx, SUT{
 		Executor: e,
