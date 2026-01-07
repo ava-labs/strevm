@@ -34,6 +34,7 @@ import (
 	"math/rand"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"runtime"
 	"testing"
 
@@ -96,7 +97,21 @@ func TestExecutionSpecState(t *testing.T) {
 	}
 	st := new(testMatcher)
 
+	var skippedTestRegexp []string
+	// TODO(cey): We cannot run Pre-check tests
+	// skip code maxsize tests
+	skippedTestRegexp = append(skippedTestRegexp, `.*/test_initcode.py::test_contract_creating_tx\[.*-over_limit_.*\]`)
+	// skip intrinsic gas tests
+	skippedTestRegexp = append(skippedTestRegexp, `.*/test_initcode.py::TestContractCreationGasUsage::test_gas_usage\[.*-too_little_intrinsic_gas.*\]`)
+	// skip blob txs as it's not relevant to Avalanche EVM chains
+	skippedTestRegexp = append(skippedTestRegexp, `.*blob_txs.*`)
+
 	st.walk(t, executionSpecStateTestDir, func(t *testing.T, name string, test *StateTest) {
+		for _, skippedTestName := range skippedTestRegexp {
+			if regexp.MustCompile(skippedTestName).MatchString(name) {
+				t.Skipf("test %s skipped", name)
+			}
+		}
 		execStateTest(t, st, test)
 	})
 }
