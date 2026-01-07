@@ -149,30 +149,31 @@ func execStateTest(t *testing.T, st *testMatcher, test *StateTest) {
 				return result
 			})
 		})
-		t.Run(key+"/path/trie", func(t *testing.T) {
-			withTrace(t, test.gasLimit(subtest), func(vmconfig vm.Config) error {
-				var result error
-				test.Run(t, subtest, vmconfig, false, rawdb.PathScheme, func(err error, state *StateTestState) {
-					result = st.checkFailure(t, err)
-				})
-				return result
-			})
-		})
-		t.Run(key+"/path/snap", func(t *testing.T) {
-			withTrace(t, test.gasLimit(subtest), func(vmconfig vm.Config) error {
-				var result error
-				test.Run(t, subtest, vmconfig, true, rawdb.PathScheme, func(err error, state *StateTestState) {
-					if state.Snapshots != nil && state.StateDB != nil {
-						if _, err := state.Snapshots.Journal(state.StateDB.IntermediateRoot(false)); err != nil {
-							result = err
-							return
-						}
-					}
-					result = st.checkFailure(t, err)
-				})
-				return result
-			})
-		})
+		// Context(cey): Path scheme is not supported yet
+		// t.Run(key+"/path/trie", func(t *testing.T) {
+		// 	withTrace(t, test.gasLimit(subtest), func(vmconfig vm.Config) error {
+		// 		var result error
+		// 		test.Run(t, subtest, vmconfig, false, rawdb.PathScheme, func(err error, state *StateTestState) {
+		// 			result = st.checkFailure(t, err)
+		// 		})
+		// 		return result
+		// 	})
+		// })
+		// t.Run(key+"/path/snap", func(t *testing.T) {
+		// 	withTrace(t, test.gasLimit(subtest), func(vmconfig vm.Config) error {
+		// 		var result error
+		// 		test.Run(t, subtest, vmconfig, true, rawdb.PathScheme, func(err error, state *StateTestState) {
+		// 			if state.Snapshots != nil && state.StateDB != nil {
+		// 				if _, err := state.Snapshots.Journal(state.StateDB.IntermediateRoot(false)); err != nil {
+		// 					result = err
+		// 					return
+		// 				}
+		// 			}
+		// 			result = st.checkFailure(t, err)
+		// 		})
+		// 		return result
+		// 	})
+		// })
 	}
 }
 
