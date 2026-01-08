@@ -111,7 +111,7 @@ func TestMultipleBlocks(t *testing.T) {
 		wantBaseFee           *uint256.Int
 		ops                   []op
 		txsAfterOps           []*types.Transaction
-		wantMinSenderBalances []uint64 // transformed to uint256.Int
+		wantMinSenderBalances [][]uint64 // transformed to uint256.Int
 	}{
 		{
 			hooks: &hookstest.Stub{
@@ -125,6 +125,9 @@ func TestMultipleBlocks(t *testing.T) {
 					op: Op{
 						Gas:       gas.Gas(params.TxGas),
 						GasFeeCap: *uint256.NewInt(1),
+						Burn: map[common.Address]hook.AccountDebit{
+							eoa: hook.AccountDebit{},
+						},
 					},
 					wantErr: nil,
 				},
@@ -144,6 +147,11 @@ func TestMultipleBlocks(t *testing.T) {
 					},
 					wantErr: nil,
 				},
+			},
+			wantMinSenderBalances: [][]uint64{
+				{startingBalance},
+				/* wantErr != nil so not included */
+				{ /* empty Burn map*/ },
 			},
 		},
 		{
@@ -224,12 +232,16 @@ func TestMultipleBlocks(t *testing.T) {
 					GasPrice: big.NewInt(2),
 				}),
 			},
-			wantMinSenderBalances: []uint64{ // before each tx
-				startingBalance,
-				startingBalance - 2*100_000,
-				startingBalance - 2*100_000 - (2*200_000 + 123_456),
-				startingBalance - 2*100_000 - (2*200_000 + 123_456) - 10*100_000,               // non-dynamic fee
-				startingBalance - 2*100_000 - (2*200_000 + 123_456) - 10*100_000 - 100*100_000, // dynamic fee _not_ reduced
+			wantMinSenderBalances: [][]uint64{
+				{ /* empty Burn map */ },
+				/* wantErr != nil */
+				{importedAmount},
+				// Before each tx:
+				{startingBalance},
+				{startingBalance - 2*100_000},
+				{startingBalance - 2*100_000 - (2*200_000 + 123_456)},
+				{startingBalance - 2*100_000 - (2*200_000 + 123_456) - 10*100_000},               // non-dynamic fee
+				{startingBalance - 2*100_000 - (2*200_000 + 123_456) - 10*100_000 - 100*100_000}, // dynamic fee _not_ reduced
 			},
 		},
 		{
@@ -268,8 +280,12 @@ func TestMultipleBlocks(t *testing.T) {
 		want := &blocks.WorstCaseBounds{
 			MaxBaseFee: block.wantBaseFee,
 		}
-		for _, bal := range block.wantMinSenderBalances {
-			want.MinTxSenderBalances = append(want.MinTxSenderBalances, uint256.NewInt(bal))
+		for _, bals := range block.wantMinSenderBalances {
+			var uBals []*uint256.Int
+			for _, b := range bals {
+				uBals = append(uBals, uint256.NewInt(b))
+			}
+			want.MinOpBurnerBalances = append(want.MinOpBurnerBalances, uBals)
 		}
 		if diff := cmp.Diff(want, got, cmpopts.EquateEmpty()); diff != "" {
 			t.Errorf("FinishBlock() diff (-want +got): \n%s", diff)

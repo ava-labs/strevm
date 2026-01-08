@@ -57,7 +57,7 @@ type State struct {
 	curr                *types.Header
 	rules               params.Rules
 	signer              types.Signer
-	minTxSenderBalances []*uint256.Int
+	minOpBurnerBalances [][]*uint256.Int
 }
 
 var errSettledBlockNotExecuted = errors.New("block marked for settling has not finished execution yet")
@@ -131,7 +131,7 @@ func (s *State) StartBlock(h *types.Header) error {
 	}
 
 	s.baseFee = s.clock.BaseFee()
-	s.minTxSenderBalances = s.minTxSenderBalances[:0] // [State.FinishBlock] returns a clone so we can reuse the alloc here
+	s.minOpBurnerBalances = s.minOpBurnerBalances[:0] // [State.FinishBlock] returns a clone so we can reuse the alloc here
 
 	// expectedParentHash is updated prior to modifying the GasLimit and BaseFee
 	// to ensure that historical block hashes are not modified.
@@ -216,11 +216,9 @@ func (s *State) ApplyTx(tx *types.Transaction) error {
 	if err != nil {
 		return fmt.Errorf("converting transaction to operation: %w", err)
 	}
-	bal := s.db.GetBalance(from) // MUST be before [State.Apply] to mirror [saexec.Executor] check
 	if err := s.Apply(op); err != nil {
 		return err
 	}
-	s.minTxSenderBalances = append(s.minTxSenderBalances, bal)
 	return nil
 }
 
@@ -266,6 +264,8 @@ func (s *State) Apply(o hook.Op) error {
 	if o.GasFeeCap.Lt(s.baseFee) {
 		return core.ErrFeeCapTooLow
 	}
+
+	burnerBalances := make([]*uint256.Int, 0, len(o.Burn))
 	for from, ad := range o.Burn {
 		switch nonce, next := ad.Nonce, s.db.GetNonce(from); {
 		case nonce < next:
@@ -275,10 +275,14 @@ func (s *State) Apply(o hook.Op) error {
 		case next == math.MaxUint64:
 			return core.ErrNonceMax
 		}
+		// MUST be before `o.ApplyTo()` to mirror [saexec.Executor] check
+		burnerBalances = append(burnerBalances, s.db.GetBalance(from))
 	}
+
 	if err := o.ApplyTo(s.db); err != nil {
 		return err
 	}
+	s.minOpBurnerBalances = append(s.minOpBurnerBalances, burnerBalances)
 	s.blockSize += o.Gas
 	return nil
 }
@@ -300,6 +304,6 @@ func (s *State) FinishBlock() (*blocks.WorstCaseBounds, error) {
 	s.qSize += s.blockSize
 	return &blocks.WorstCaseBounds{
 		MaxBaseFee:          s.baseFee,
-		MinTxSenderBalances: slices.Clone(s.minTxSenderBalances),
+		MinOpBurnerBalances: slices.Clone(s.minOpBurnerBalances),
 	}, nil
 }

@@ -16,8 +16,10 @@ import (
 // WorstCaseBounds define the limits of certain values, predicted by the block
 // builder, that a [Block] will encounter when eventually executed.
 type WorstCaseBounds struct {
-	MaxBaseFee          *uint256.Int
-	MinTxSenderBalances []*uint256.Int
+	MaxBaseFee *uint256.Int
+	// Invariant: length of individual slices MUST equal the respective lenth
+	// of the [hook.Op.Burn] map. For transaction-derived Ops, this is always 1.
+	MinOpBurnerBalances [][]*uint256.Int
 }
 
 // SetWorstCaseBounds sets the bounds, which MUST be done before execution.
@@ -59,21 +61,29 @@ func (b *Block) CheckBaseFeeBound(actual *uint256.Int) {
 // execution so no error is returned and execution MUST continue optimistically.
 // Any such log in development will cause tests to fail.
 func (b *Block) CheckSenderBalanceBound(stateDB *state.StateDB, signer types.Signer, tx *types.Transaction) {
+	log := b.log.With(
+		zap.Int("tx_index", stateDB.TxIndex()),
+		zap.Stringer("tx_hash", tx.Hash()),
+	)
+
 	sender, err := types.Sender(signer, tx)
 	if err != nil {
-		b.log.Warn("Unable to recover sender for confirming worst-case balance",
+		log.Warn("Unable to recover sender for confirming worst-case balance",
 			zap.Error(err),
 		)
 		return
 	}
+	minBal := b.bounds.MinOpBurnerBalances[stateDB.TxIndex()]
+	if len(minBal) != 1 {
+		log.Warn("Number of worst-case op-burner balances for tx != 1",
+			zap.Int("num_balances", len(minBal)),
+		)
+		return
+	}
 
-	actual := stateDB.GetBalance(sender)
-	low := b.bounds.MinTxSenderBalances[stateDB.TxIndex()]
-	switch actual.Cmp(low) {
+	switch actual, low := stateDB.GetBalance(sender), minBal[0]; actual.Cmp(low) {
 	case -1:
-		b.log.Error("Actual balance < predicted worst case",
-			zap.Int("tx_index", stateDB.TxIndex()),
-			zap.Stringer("tx_hash", tx.Hash()),
+		log.Error("Actual balance < predicted worst case",
 			zap.Stringer("sender", sender),
 			zap.Stringer("actual", actual),
 			zap.Stringer("predicted", low),

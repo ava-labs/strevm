@@ -182,10 +182,10 @@ func SetUninformativeWorstCaseBounds(b *blocks.Block) {
 	n := len(b.Transactions())
 	wcb := &blocks.WorstCaseBounds{
 		MaxBaseFee:          new(uint256.Int).SetAllOne(),
-		MinTxSenderBalances: make([]*uint256.Int, n),
+		MinOpBurnerBalances: make([][]*uint256.Int, n),
 	}
 	for i := range n {
-		wcb.MinTxSenderBalances[i] = new(uint256.Int)
+		wcb.MinOpBurnerBalances[i] = []*uint256.Int{new(uint256.Int)}
 	}
 	b.SetWorstCaseBounds(wcb)
 }
