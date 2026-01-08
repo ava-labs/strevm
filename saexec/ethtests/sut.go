@@ -9,6 +9,7 @@ import (
 
 	"github.com/ava-labs/avalanchego/utils/logging"
 	"github.com/ava-labs/avalanchego/vms/components/gas"
+	"github.com/ava-labs/libevm/consensus"
 	"github.com/ava-labs/libevm/core"
 	"github.com/ava-labs/libevm/core/rawdb"
 	"github.com/ava-labs/libevm/core/state/snapshot"
@@ -20,7 +21,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/ava-labs/strevm/blocks/blockstest"
-	"github.com/ava-labs/strevm/hook"
 	"github.com/ava-labs/strevm/saetest"
 	"github.com/ava-labs/strevm/saexec"
 )
@@ -39,6 +39,7 @@ type sutOptions struct {
 	genesisSpec    *core.Genesis
 	chainConfig    *params.ChainConfig
 	snapshotConfig *snapshot.Config
+	consensus      consensus.Engine // nil for state tests, set for block tests
 }
 
 type sutOption = options.Option[sutOptions]
@@ -67,14 +68,21 @@ func withSnapshotConfig(snapshotConfig *snapshot.Config) sutOption {
 	})
 }
 
-// HookFactory is a function that creates hooks given the chain, database, chain config, and logger.
-type HookFactory func(chain *blockstest.ChainBuilder, db ethdb.Database, chainConfig *params.ChainConfig, logger *saetest.TBLogger) hook.Points
+// withConsensus sets the consensus engine for block tests.
+// For state tests, don't use this option (or pass nil).
+func withConsensus(engine consensus.Engine) sutOption {
+	return options.Func[sutOptions](func(o *sutOptions) {
+		o.consensus = engine
+	})
+}
 
 // newSUT returns a new SUT. Any >= [logging.Error] on the logger will also
 // cancel the returned context, which is useful when waiting for blocks that
 // can never finish execution because of an error.
-// If hookFactory is nil, default consensus hooks will be created using a default engine.
-func newSUT(tb testing.TB, hookFactory HookFactory, opts ...sutOption) (context.Context, SUT) {
+//
+// For block tests, use withConsensus(engine) option.
+// For state tests, omit the consensus option.
+func newSUT(tb testing.TB, opts ...sutOption) (context.Context, SUT) {
 	tb.Helper()
 
 	// This is specifically set to [logging.Error] to ensure that the warn log in execution queue
@@ -110,10 +118,10 @@ func newSUT(tb testing.TB, hookFactory HookFactory, opts ...sutOption) (context.
 	)
 	chain := blockstest.NewChainBuilder(genesis, blockOpts)
 
-	var hooks hook.Points
-	if hookFactory != nil {
-		hooks = hookFactory(chain, db, chainConfig, logger)
-	}
+	// Create hooks based on whether a consensus engine is provided
+	var reader *readerAdapter
+	reader = newReaderAdapter(chain, db, chainConfig, logger)
+	hooks := newTestHooks(conf.consensus, reader)
 
 	e, err := saexec.New(genesis, chain.GetBlock, chainConfig, db, tdbConfig, *snapshotConfig, hooks, logger)
 	require.NoError(tb, err, "New()")

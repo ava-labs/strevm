@@ -48,7 +48,6 @@ import (
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/core/vm"
 	"github.com/ava-labs/libevm/crypto"
-	"github.com/ava-labs/libevm/ethdb"
 	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/rlp"
 	"github.com/ava-labs/libevm/triedb"
@@ -59,8 +58,6 @@ import (
 	"golang.org/x/crypto/sha3"
 
 	"github.com/ava-labs/strevm/blocks/blockstest"
-	"github.com/ava-labs/strevm/hook"
-	"github.com/ava-labs/strevm/saetest"
 )
 
 // StateTest checks transaction processing without block context.
@@ -306,12 +303,7 @@ func (t *StateTest) RunWithSAE(tb testing.TB, subtest StateSubtest, snapshotter 
 		withGenesisSpec(genesis),
 	}
 
-	// Create hook factory for pre-state hooks
-	hookFactory := func(chain *blockstest.ChainBuilder, db ethdb.Database, chainConfig *params.ChainConfig, logger *saetest.TBLogger) hook.Points {
-		return newPreStateHooks(t.json.Pre)
-	}
-
-	ctx, sut := newSUT(tb, hookFactory, opts...)
+	ctx, sut := newSUT(tb, opts...)
 	genesisBlock := sut.LastExecuted()
 
 	// Get the post state configuration
