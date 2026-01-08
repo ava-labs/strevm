@@ -171,11 +171,6 @@ func (s *State) BaseFee() *uint256.Int {
 	return s.baseFee
 }
 
-// Balance returns the worst-case balance for the account.
-func (s *State) Balance(addr common.Address) *uint256.Int {
-	return s.db.GetBalance(addr)
-}
-
 var errCostOverflow = errors.New("Cost() overflows uint256")
 
 // ApplyTx validates the transaction both intrinsically and in the context of
