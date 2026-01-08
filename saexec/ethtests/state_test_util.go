@@ -490,34 +490,26 @@ func (tx *stTransaction) toTransaction(ps stPostState, baseFee *big.Int, config 
 	valueU256 := uint256.NewInt(0)
 	valueU256.SetFromBig(value)
 
-	// Use local variables for fee fields to avoid mutating the shared tx struct
-	// (which causes data races when tests run in parallel).
-	maxFeePerGas := tx.MaxFeePerGas
-	maxPriorityFeePerGas := tx.MaxPriorityFeePerGas
-	gasPrice := tx.GasPrice
-
 	// If baseFee provided, set gasPrice to effectiveGasPrice.
+	gasPrice := tx.GasPrice
 	if baseFee != nil {
-		if maxFeePerGas == nil {
-			maxFeePerGas = gasPrice
+		if tx.MaxFeePerGas == nil {
+			tx.MaxFeePerGas = gasPrice
 		}
-		if maxFeePerGas == nil {
-			maxFeePerGas = new(big.Int)
+		if tx.MaxFeePerGas == nil {
+			tx.MaxFeePerGas = new(big.Int)
 		}
-		if maxPriorityFeePerGas == nil {
-			maxPriorityFeePerGas = maxFeePerGas
+		if tx.MaxPriorityFeePerGas == nil {
+			tx.MaxPriorityFeePerGas = tx.MaxFeePerGas
 		}
-		gasPrice = math.BigMin(new(big.Int).Add(maxPriorityFeePerGas, baseFee),
-			maxFeePerGas)
+		gasPrice = math.BigMin(new(big.Int).Add(tx.MaxPriorityFeePerGas, baseFee),
+			tx.MaxFeePerGas)
 	}
 	if gasPrice == nil {
 		return nil, errors.New("no gas price provided")
 	}
 
-	// Determine if this is a blob transaction.
-	// Note: We check the original tx fields (not local variables) to determine
-	// the transaction type, since the local variables may have been set above
-	// for gas price calculation purposes only.
+	// Determine if this is a blob transaction
 	switch {
 	case len(tx.BlobVersionedHashes) > 0:
 		var toAddr common.Address
@@ -528,8 +520,8 @@ func (tx *stTransaction) toTransaction(ps stPostState, baseFee *big.Int, config 
 		txData = &types.BlobTx{
 			ChainID:    chainID,
 			Nonce:      tx.Nonce,
-			GasFeeCap:  uint256.MustFromBig(maxFeePerGas),
-			GasTipCap:  uint256.MustFromBig(maxPriorityFeePerGas),
+			GasFeeCap:  uint256.MustFromBig(tx.MaxFeePerGas),
+			GasTipCap:  uint256.MustFromBig(tx.MaxPriorityFeePerGas),
 			Gas:        gasLimit,
 			To:         toAddr,
 			Value:      valueU256,
@@ -542,8 +534,8 @@ func (tx *stTransaction) toTransaction(ps stPostState, baseFee *big.Int, config 
 		txData = &types.DynamicFeeTx{
 			ChainID:    new(big.Int).Set(config.ChainID),
 			Nonce:      tx.Nonce,
-			GasFeeCap:  maxFeePerGas,
-			GasTipCap:  maxPriorityFeePerGas,
+			GasFeeCap:  tx.MaxFeePerGas,
+			GasTipCap:  tx.MaxPriorityFeePerGas,
 			Gas:        gasLimit,
 			To:         to,
 			Value:      value,
@@ -638,25 +630,20 @@ func (tx *stTransaction) toMessage(ps stPostState, baseFee *big.Int) (*core.Mess
 	if tx.AccessLists != nil && ps.Indexes.Data < len(tx.AccessLists) && tx.AccessLists[ps.Indexes.Data] != nil {
 		accessList = *tx.AccessLists[ps.Indexes.Data]
 	}
-	// Use local variables for fee fields to avoid mutating the shared tx struct
-	// (which causes data races when tests run in parallel).
-	maxFeePerGas := tx.MaxFeePerGas
-	maxPriorityFeePerGas := tx.MaxPriorityFeePerGas
-	gasPrice := tx.GasPrice
-
 	// If baseFee provided, set gasPrice to effectiveGasPrice.
+	gasPrice := tx.GasPrice
 	if baseFee != nil {
-		if maxFeePerGas == nil {
-			maxFeePerGas = gasPrice
+		if tx.MaxFeePerGas == nil {
+			tx.MaxFeePerGas = gasPrice
 		}
-		if maxFeePerGas == nil {
-			maxFeePerGas = new(big.Int)
+		if tx.MaxFeePerGas == nil {
+			tx.MaxFeePerGas = new(big.Int)
 		}
-		if maxPriorityFeePerGas == nil {
-			maxPriorityFeePerGas = maxFeePerGas
+		if tx.MaxPriorityFeePerGas == nil {
+			tx.MaxPriorityFeePerGas = tx.MaxFeePerGas
 		}
-		gasPrice = math.BigMin(new(big.Int).Add(maxPriorityFeePerGas, baseFee),
-			maxFeePerGas)
+		gasPrice = math.BigMin(new(big.Int).Add(tx.MaxPriorityFeePerGas, baseFee),
+			tx.MaxFeePerGas)
 	}
 	if gasPrice == nil {
 		return nil, errors.New("no gas price provided")
@@ -669,8 +656,8 @@ func (tx *stTransaction) toMessage(ps stPostState, baseFee *big.Int) (*core.Mess
 		Value:         value,
 		GasLimit:      gasLimit,
 		GasPrice:      gasPrice,
-		GasFeeCap:     maxFeePerGas,
-		GasTipCap:     maxPriorityFeePerGas,
+		GasFeeCap:     tx.MaxFeePerGas,
+		GasTipCap:     tx.MaxPriorityFeePerGas,
 		Data:          data,
 		AccessList:    accessList,
 		BlobHashes:    tx.BlobVersionedHashes,
