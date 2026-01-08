@@ -126,7 +126,7 @@ func TestMultipleBlocks(t *testing.T) {
 						Gas:       gas.Gas(params.TxGas),
 						GasFeeCap: *uint256.NewInt(1),
 						Burn: map[common.Address]hook.AccountDebit{
-							eoa: hook.AccountDebit{},
+							eoa: {},
 						},
 					},
 					wantErr: nil,

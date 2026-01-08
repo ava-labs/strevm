@@ -73,15 +73,15 @@ func (b *Block) CheckSenderBalanceBound(stateDB *state.StateDB, signer types.Sig
 		)
 		return
 	}
-	minBal := b.bounds.MinOpBurnerBalances[stateDB.TxIndex()]
-	if len(minBal) != 1 {
+	minBals := b.bounds.MinOpBurnerBalances[stateDB.TxIndex()]
+	if len(minBals) != 1 {
 		log.Warn("Number of worst-case op-burner balances for tx != 1",
-			zap.Int("num_balances", len(minBal)),
+			zap.Int("num_balances", len(minBals)),
 		)
 		return
 	}
 
-	switch actual, low := stateDB.GetBalance(sender), minBal[0]; actual.Cmp(low) {
+	switch actual, low := stateDB.GetBalance(sender), minBals[0]; actual.Cmp(low) {
 	case -1:
 		log.Error("Actual balance < predicted worst case",
 			zap.Stringer("sender", sender),
