@@ -112,6 +112,18 @@ An example is a chain-head subscription, be it in the same binary or over a webs
 > Although by definition $b_n \in A$ i.f.f. $\Sigma_n \subset S$, in practice it may not be possible to realise side effects atomically.
 > The chosen ordering of settlement then acceptance is for practical reasons as code with access to $b_n$ can typically access $\Sigma_n$ but not vice versa, so inverting the order would provide zero benefit.
 
+#### Polling vs Broadcast
+
+Note that no guarantees exist _within_ a class of side effects with respect to the _same_ block.
+For example, `ChainEvent` and `ChainHeadEvent` are both $X(b_n \in E)$ and MAY therefore be sent in any order for a given block.
+
+However indicators can generally be separated into those that are polled by consumers (e.g. querying a last-executed atomic pointer) and those for which consumers receive a broadcast (e.g. unblocking `blocks.Block.WaitUntilExecuted()`).
+The implementation SHOULD realise polling side effects before sending respective broadcasts; i.e. "atomics before channel closes".
+At the time of writing, this is only guaranteed for `WaitUntilExecuted()` and `WaitUntilSettled()`, which both block until the respective atomic pointers have already been updated.
+
+> [!NOTE]
+> This heuristic does not provide any guarantees of the order of atomic updates nor that the set is itself updated atomically.
+
 #### Examples
 
 1. If `blocks.Block.Executed()` returns `true` then the block's receipts can be read from the database because $M(b_n \in E) \implies D(b_n \in E)$.
@@ -122,3 +134,5 @@ An example is a chain-head subscription, be it in the same binary or over a webs
 Importantly, updating the last-settled pointer, $I(\sigma \in S)$, MAY be delayed because this is a different side effect and doing so would not violate any other guarantees.
 
 4. Persisting the canonical block hash for height $n$, i.e. $D(b_n \in A)$, MUST occur after persisting the `rawdb` "finalized" block hash, i.e. $D(\sigma \in S)$.
+
+5. If `blocks.Block.WaitUntilExecuted()` (broadcast) returns with `nil` error then `saexec.Executor.LastExecuted()` (polling) will return a block at the same or greater height.
