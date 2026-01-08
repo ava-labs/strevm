@@ -53,6 +53,7 @@ import (
 	"github.com/ava-labs/libevm/core/state/snapshot"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/core/vm"
+	"github.com/ava-labs/libevm/ethdb"
 	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/rlp"
 	"github.com/ava-labs/libevm/triedb"
@@ -168,9 +169,9 @@ func (t *BlockTest) Run(tb testing.TB, snapshotter bool, scheme string, tracer v
 	gspec := t.genesis(config)
 	opts = append(opts, withGenesisSpec(gspec))
 
-	// Wrap the original engine within the beacon-engine
+	// Create SUT with consensus hooks factory
 	engine := beacon.New(ethash.NewFaker())
-	ctx, sut := newSUT(tb, engine, opts...)
+	ctx, sut := newSUT(tb, append(opts, withConsensus(engine))...)
 	gblock := sut.LastExecuted()
 	require.Equal(tb, gblock.Hash(), t.json.Genesis.Hash)
 	require.Equal(tb, gblock.PostExecutionStateRoot(), t.json.Genesis.StateRoot)
@@ -288,18 +289,7 @@ func insertWithHeaderBaseFee(tb testing.TB, sut *SUT, bs types.Blocks) {
 		// TODO(cey): This is a hack to set the base fee to the block header base fee.
 		// Instead we should properly modify the test fixtures to apply expected base fee from the gasclock.
 		if baseFee != nil {
-			target := parent.ExecutedByGasTime().Target()
-			desiredExcessGas := desiredExcess(gas.Price(baseFee.Uint64()), target)
-			var grandParent *blocks.Block
-			if parent.NumberU64() != 0 {
-				grandParent = parent.ParentBlock()
-			}
-			fakeParent := blockstest.NewBlock(tb, parent.EthBlock(), grandParent, nil)
-			// Also set the build time to the block time so that we do not fast forward the excess to the block time
-			// during execution.
-			require.NoError(tb, fakeParent.MarkExecuted(sut.DB, gastime.New(b.Time(), target, desiredExcessGas), time.Time{}, baseFee, nil, parent.PostExecutionStateRoot()))
-			require.Equal(tb, baseFee.Uint64(), fakeParent.ExecutedByGasTime().BaseFee().Uint64())
-			parent = fakeParent
+			parent = fakeParentWithBaseFee(tb, sut.DB, parent, b.Time(), baseFee)
 		}
 		wb := blockstest.NewBlock(tb, b, parent, nil)
 		sut.Chain.Insert(wb)
@@ -308,17 +298,36 @@ func insertWithHeaderBaseFee(tb testing.TB, sut *SUT, bs types.Blocks) {
 	}
 }
 
-// desiredTarget calculates the optimal desiredTarget given the
-// desired price.
-func desiredExcess(desiredPrice gas.Price, target gas.Gas) gas.Gas {
-	// This could be solved directly by calculating D * ln(desiredPrice / P)
-	// using floating point math. However, it introduces inaccuracies. So, we
-	// use a binary search to find the closest integer solution.
+// desiredExcess calculates the optimal excess gas given the desired base fee.
+// This could be solved directly by calculating D * ln(desiredPrice / P)
+// using floating point math. However, it introduces inaccuracies. So, we
+// use a binary search to find the closest integer solution.
+func desiredExcess(desiredBaseFee *big.Int, target gas.Gas) gas.Gas {
+	if desiredBaseFee == nil || desiredBaseFee.Sign() == 0 {
+		return 0
+	}
+	desiredPrice := gas.Price(desiredBaseFee.Uint64())
 	return gas.Gas(sort.Search(math.MaxInt32, func(excessGuess int) bool { //nolint:gosec // Known to not overflow
 		tm := gastime.New(0, target, gas.Gas(excessGuess)) //nolint:gosec // Known to not overflow
 		price := tm.Price()
 		return price >= desiredPrice
 	}))
+}
+
+// fakeParentWithBaseFee creates a fake parent block with the desired base fee.
+// This is used in tests to override the gas clock to produce the expected base fee.
+func fakeParentWithBaseFee(tb testing.TB, db ethdb.Database, parent *blocks.Block, blockTime uint64, desiredBaseFee *big.Int) *blocks.Block {
+	tb.Helper()
+	target := parent.ExecutedByGasTime().Target()
+	excess := desiredExcess(desiredBaseFee, target)
+	var grandParent *blocks.Block
+	if parent.NumberU64() != 0 {
+		grandParent = parent.ParentBlock()
+	}
+	fakeParent := blockstest.NewBlock(tb, parent.EthBlock(), grandParent, nil)
+	require.NoError(tb, fakeParent.MarkExecuted(db, gastime.New(blockTime, target, excess), time.Time{}, desiredBaseFee, nil, parent.PostExecutionStateRoot()))
+	require.Equal(tb, desiredBaseFee.Uint64(), fakeParent.ExecutedByGasTime().BaseFee().Uint64())
+	return fakeParent
 }
 
 func validateHeader(h *btHeader, h2 *types.Header) error {

@@ -106,6 +106,6 @@ issues:
   exclude-rules:
     # These files include an upstream (go-ethereum) notice block that we want to
     # keep verbatim; allow them to deviate from the standard short header.
-    - path: ^saexec/ethtests/(block_test|block_test_util|init|init_test)\.go$
+    - path: ^saexec/ethtests/(.*)\.go$
       linters:
         - goheader

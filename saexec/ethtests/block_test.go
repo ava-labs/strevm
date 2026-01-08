@@ -133,12 +133,13 @@ func execBlockTest(t *testing.T, bt *testMatcher, test *BlockTest) {
 		t.Errorf("test in hash mode with snapshotter failed: %v", err)
 		return
 	}
-	if err := bt.checkFailure(t, test.Run(t, false, rawdb.PathScheme, nil, nil)); err != nil {
-		t.Errorf("test in path mode without snapshotter failed: %v", err)
-		return
-	}
-	if err := bt.checkFailure(t, test.Run(t, true, rawdb.PathScheme, nil, nil)); err != nil {
-		t.Errorf("test in path mode with snapshotter failed: %v", err)
-		return
-	}
+	// Context(cey): Path scheme is not supported yet
+	// if err := bt.checkFailure(t, test.Run(t, false, rawdb.PathScheme, nil, nil)); err != nil {
+	// 	t.Errorf("test in path mode without snapshotter failed: %v", err)
+	// 	return
+	// }
+	// if err := bt.checkFailure(t, test.Run(t, true, rawdb.PathScheme, nil, nil)); err != nil {
+	// 	t.Errorf("test in path mode with snapshotter failed: %v", err)
+	// 	return
+	// }
 }

@@ -39,6 +39,7 @@ type sutOptions struct {
 	genesisSpec    *core.Genesis
 	chainConfig    *params.ChainConfig
 	snapshotConfig *snapshot.Config
+	consensus      consensus.Engine // nil for state tests, set for block tests
 }
 
 type sutOption = options.Option[sutOptions]
@@ -67,10 +68,21 @@ func withSnapshotConfig(snapshotConfig *snapshot.Config) sutOption {
 	})
 }
 
+// withConsensus sets the consensus engine for block tests.
+// For state tests, don't use this option (or pass nil).
+func withConsensus(engine consensus.Engine) sutOption {
+	return options.Func[sutOptions](func(o *sutOptions) {
+		o.consensus = engine
+	})
+}
+
 // newSUT returns a new SUT. Any >= [logging.Error] on the logger will also
 // cancel the returned context, which is useful when waiting for blocks that
 // can never finish execution because of an error.
-func newSUT(tb testing.TB, engine consensus.Engine, opts ...sutOption) (context.Context, SUT) {
+//
+// For block tests, use withConsensus(engine) option.
+// For state tests, omit the consensus option.
+func newSUT(tb testing.TB, opts ...sutOption) (context.Context, SUT) {
 	tb.Helper()
 
 	// This is specifically set to [logging.Error] to ensure that the warn log in execution queue
@@ -106,8 +118,10 @@ func newSUT(tb testing.TB, engine consensus.Engine, opts ...sutOption) (context.
 	)
 	chain := blockstest.NewChainBuilder(genesis, blockOpts)
 
+	// Create hooks based on whether a consensus engine is provided
 	reader := newReaderAdapter(chain, db, chainConfig, logger)
-	hooks := newTestConsensusHooks(engine, reader, target)
+	hooks := newTestHooks(conf.consensus, reader)
+
 	e, err := saexec.New(genesis, chain.GetBlock, chainConfig, db, tdbConfig, *snapshotConfig, hooks, logger)
 	require.NoError(tb, err, "New()")
 	tb.Cleanup(func() {
