@@ -58,6 +58,7 @@ type executorOptions struct {
 	vmConfig vm.Config
 }
 
+// WithVMConfig sets the VM configuration options for the EVM Interpreter.
 func WithVMConfig(vmConfig vm.Config) ExecutorOption {
 	return options.Func[executorOptions](func(o *executorOptions) {
 		o.vmConfig = vmConfig

@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2025, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2025-2026, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 //
 // This file is a derived work, based on the go-ethereum library whose original
@@ -31,11 +31,9 @@ import (
 	"bufio"
 	"bytes"
 	"fmt"
-	"math/rand"
 	"path/filepath"
 	"reflect"
 	"regexp"
-	"runtime"
 	"testing"
 
 	"github.com/ava-labs/libevm/common"
@@ -75,6 +73,7 @@ func TestState(t *testing.T) {
 		stateTestDir,
 	} {
 		st.walk(t, dir, func(t *testing.T, name string, test *StateTest) {
+			t.Helper()
 			execStateTest(t, st, test)
 		})
 	}
@@ -86,6 +85,7 @@ func TestLegacyState(t *testing.T) {
 	st := new(testMatcher)
 	initMatcher(st)
 	st.walk(t, legacyStateTestDir, func(t *testing.T, name string, test *StateTest) {
+		t.Helper()
 		execStateTest(t, st, test)
 	})
 }
@@ -107,6 +107,7 @@ func TestExecutionSpecState(t *testing.T) {
 	skippedTestRegexp = append(skippedTestRegexp, `.*blob_txs.*`)
 
 	st.walk(t, executionSpecStateTestDir, func(t *testing.T, name string, test *StateTest) {
+		t.Helper()
 		for _, skippedTestName := range skippedTestRegexp {
 			if regexp.MustCompile(skippedTestName).MatchString(name) {
 				t.Skipf("test %s skipped", name)
@@ -117,61 +118,54 @@ func TestExecutionSpecState(t *testing.T) {
 }
 
 func execStateTest(t *testing.T, st *testMatcher, test *StateTest) {
-	if runtime.GOARCH == "386" && runtime.GOOS == "windows" && rand.Int63()%2 == 0 {
-		t.Skip("test (randomly) skipped on 32-bit windows")
-		return
-	}
+	t.Helper()
 	for _, subtest := range test.Subtests() {
 		subtest := subtest
 		key := fmt.Sprintf("%s/%d", subtest.Fork, subtest.Index)
 
 		t.Run(key+"/hash/trie", func(t *testing.T) {
 			withTrace(t, test.gasLimit(subtest), func(vmconfig vm.Config) error {
-				var result error
-				test.Run(t, subtest, vmconfig, false, rawdb.HashScheme, func(err error, state *StateTestState) {
-					result = st.checkFailure(t, err)
-				})
-				return result
+				err := test.Run(t, subtest, vmconfig, false, rawdb.HashScheme, func(state *StateTestState) {})
+				return st.checkFailure(t, err)
 			})
 		})
 		t.Run(key+"/hash/snap", func(t *testing.T) {
 			withTrace(t, test.gasLimit(subtest), func(vmconfig vm.Config) error {
-				var result error
-				test.Run(t, subtest, vmconfig, true, rawdb.HashScheme, func(err error, state *StateTestState) {
+				var snapErr error
+				err := test.Run(t, subtest, vmconfig, true, rawdb.HashScheme, func(state *StateTestState) {
 					if state.Snapshots != nil && state.StateDB != nil {
 						if _, err := state.Snapshots.Journal(state.StateDB.IntermediateRoot(false)); err != nil {
-							result = err
-							return
+							snapErr = err
 						}
 					}
-					result = st.checkFailure(t, err)
 				})
-				return result
+				if snapErr != nil {
+					return snapErr
+				}
+				return st.checkFailure(t, err)
 			})
 		})
 		// Context(cey): Path scheme is not supported yet
 		// t.Run(key+"/path/trie", func(t *testing.T) {
 		// 	withTrace(t, test.gasLimit(subtest), func(vmconfig vm.Config) error {
-		// 		var result error
-		// 		test.Run(t, subtest, vmconfig, false, rawdb.PathScheme, func(err error, state *StateTestState) {
-		// 			result = st.checkFailure(t, err)
-		// 		})
-		// 		return result
+		// 		err := test.Run(t, subtest, vmconfig, false, rawdb.PathScheme, func(state *StateTestState) {})
+		// 		return st.checkFailure(t, err)
 		// 	})
 		// })
 		// t.Run(key+"/path/snap", func(t *testing.T) {
 		// 	withTrace(t, test.gasLimit(subtest), func(vmconfig vm.Config) error {
-		// 		var result error
-		// 		test.Run(t, subtest, vmconfig, true, rawdb.PathScheme, func(err error, state *StateTestState) {
+		// 		var snapErr error
+		// 		err := test.Run(t, subtest, vmconfig, true, rawdb.PathScheme, func(state *StateTestState) {
 		// 			if state.Snapshots != nil && state.StateDB != nil {
 		// 				if _, err := state.Snapshots.Journal(state.StateDB.IntermediateRoot(false)); err != nil {
-		// 					result = err
-		// 					return
+		// 					snapErr = err
 		// 				}
 		// 			}
-		// 			result = st.checkFailure(t, err)
 		// 		})
-		// 		return result
+		// 		if snapErr != nil {
+		// 			return snapErr
+		// 		}
+		// 		return st.checkFailure(t, err)
 		// 	})
 		// })
 	}
@@ -181,6 +175,7 @@ func execStateTest(t *testing.T, st *testMatcher, test *StateTest) {
 const traceErrorLimit = 400000
 
 func withTrace(t *testing.T, gasLimit uint64, test func(vm.Config) error) {
+	t.Helper()
 	// Use config from command line arguments.
 	config := vm.Config{}
 	err := test(config)
@@ -201,7 +196,10 @@ func withTrace(t *testing.T, gasLimit uint64, test func(vm.Config) error) {
 	if !reflect.DeepEqual(err, err2) {
 		t.Errorf("different error for second run: %v", err2)
 	}
-	w.Flush()
+	err = w.Flush()
+	if err != nil {
+		t.Errorf("failed to flush writer: %v", err)
+	}
 	if buf.Len() == 0 {
 		t.Log("no EVM operation logs generated")
 	} else {

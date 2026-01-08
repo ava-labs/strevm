@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2025, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2025-2026, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 //
 // This file is a derived work, based on the go-ethereum library whose original
@@ -34,13 +34,10 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
-	"sort"
 	"strconv"
 	"strings"
 	"testing"
-	"time"
 
-	"github.com/ava-labs/avalanchego/vms/components/gas"
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/common/hexutil"
 	"github.com/ava-labs/libevm/common/math"
@@ -62,7 +59,6 @@ import (
 	"golang.org/x/crypto/sha3"
 
 	"github.com/ava-labs/strevm/blocks/blockstest"
-	"github.com/ava-labs/strevm/gastime"
 	"github.com/ava-labs/strevm/hook"
 	"github.com/ava-labs/strevm/saetest"
 )
@@ -79,6 +75,7 @@ type StateSubtest struct {
 	Index int
 }
 
+// UnmarshalJSON implements json.Unmarshaler interface.
 func (t *StateTest) UnmarshalJSON(in []byte) error {
 	return json.Unmarshal(in, &t.json)
 }
@@ -215,7 +212,7 @@ func (t *StateTest) checkError(subtest StateSubtest, err error) error {
 }
 
 // Run executes a specific subtest and verifies the post-state and logs
-func (t *StateTest) Run(tb testing.TB, subtest StateSubtest, vmconfig vm.Config, snapshotter bool, scheme string, postCheck func(err error, st *StateTestState)) (result error) {
+func (t *StateTest) Run(tb testing.TB, subtest StateSubtest, vmconfig vm.Config, snapshotter bool, scheme string, postCheck func(st *StateTestState)) error {
 	tb.Helper()
 	expectedError := t.json.Post[subtest.Fork][subtest.Index].ExpectException
 	// TODO(cey): Once we have worst-case execution rules, we can remove skipping tests for expected errors.
@@ -226,7 +223,7 @@ func (t *StateTest) Run(tb testing.TB, subtest StateSubtest, vmconfig vm.Config,
 	st, root, receipts, err := t.RunWithSAE(tb, subtest, snapshotter, scheme)
 	// Invoke the callback at the end of function for further analysis.
 	defer func() {
-		postCheck(result, &st)
+		postCheck(&st)
 	}()
 
 	checkedErr := t.checkError(subtest, err)
@@ -251,7 +248,11 @@ func (t *StateTest) Run(tb testing.TB, subtest StateSubtest, vmconfig vm.Config,
 	for _, receipt := range receipts {
 		logs = append(logs, receipt.Logs...)
 	}
-	if logsHash := rlpHash(logs); logsHash != common.Hash(post.Logs) {
+	logsHash, err := rlpHash(logs)
+	if err != nil {
+		return fmt.Errorf("failed to hash logs: %v", err)
+	}
+	if logsHash != common.Hash(post.Logs) {
 		return fmt.Errorf("post state logs hash mismatch: got %x, want %x", logsHash, post.Logs)
 	}
 	st.StateDB, _ = state.New(root, st.StateDB.Database(), st.Snapshots)
@@ -373,19 +374,14 @@ func (t *StateTest) RunWithSAE(tb testing.TB, subtest StateSubtest, snapshotter 
 		}),
 	)
 
-	// Create SAE block
-	saeBlock := blockstest.NewBlock(tb, ethBlock, genesisBlock, nil)
-
 	// Set up the parent's gas time to match expected base fee if needed
+	saeParent := genesisBlock
 	if baseFee != nil {
-		target := genesisBlock.ExecutedByGasTime().Target()
-		desiredExcessGas := desiredExcessForStateTest(baseFee, target)
-		fakeParent := blockstest.NewBlock(tb, parent, nil, nil)
-		require.NoError(tb, fakeParent.MarkExecuted(sut.DB, gastime.New(ethBlock.Time(), target, desiredExcessGas), time.Time{}, baseFee, nil, genesisBlock.PostExecutionStateRoot()))
-		require.Equal(tb, baseFee.Uint64(), fakeParent.ExecutedByGasTime().BaseFee().Uint64())
-		// Update the SAE block's parent reference
-		saeBlock = blockstest.NewBlock(tb, ethBlock, fakeParent, nil)
+		saeParent = fakeParentWithBaseFee(tb, sut.DB, genesisBlock, ethBlock.Time(), baseFee)
 	}
+
+	// Create SAE block
+	saeBlock := blockstest.NewBlock(tb, ethBlock, saeParent, nil)
 
 	// Insert block into chain and enqueue for execution
 	require.NoError(tb, sut.Enqueue(ctx, saeBlock))
@@ -403,32 +399,12 @@ func (t *StateTest) RunWithSAE(tb testing.TB, subtest StateSubtest, snapshotter 
 
 	st = StateTestState{
 		StateDB: sdb,
-		// CONTEXT(cey): We intentionally don't set TrieDB or Snapshots here because the
-		// SUT owns these resources and will close them in sut.Close(). Setting
-		// them here would cause st.Close() to close them first, making
-		// sut.Close() fail.
 	}
 
 	root = saeBlock.PostExecutionStateRoot()
 	receipts = saeBlock.Receipts()
 
 	return st, root, receipts, nil
-}
-
-// desiredExcessForStateTest calculates the desired excess gas to achieve a specific base fee.
-// This is a helper function similar to desiredExcess in block_test_util.go but simplified for state tests.
-func desiredExcessForStateTest(desiredBaseFee *big.Int, target gas.Gas) gas.Gas {
-	if desiredBaseFee == nil || desiredBaseFee.Sign() == 0 {
-		return 0
-	}
-	// Use a simple approximation: excess = target * ln(desiredPrice / basePrice)
-	// For state tests, we'll use a binary search similar to block_test_util.go
-	desiredPrice := gas.Price(desiredBaseFee.Uint64())
-	return gas.Gas(sort.Search(math.MaxInt32, func(excessGuess int) bool {
-		tm := gastime.New(0, target, gas.Gas(excessGuess))
-		price := tm.Price()
-		return price >= desiredPrice
-	}))
 }
 
 func (t *StateTest) gasLimit(subtest StateSubtest) uint64 {
@@ -596,11 +572,14 @@ func (tx *stTransaction) toTransaction(ps stPostState, baseFee *big.Int, config 
 	return signedTx, nil
 }
 
-func rlpHash(x interface{}) (h common.Hash) {
+func rlpHash(x interface{}) (h common.Hash, err error) {
 	hw := sha3.NewLegacyKeccak256()
-	rlp.Encode(hw, x)
+	err = rlp.Encode(hw, x)
+	if err != nil {
+		return h, err
+	}
 	hw.Sum(h[:0])
-	return h
+	return h, nil
 }
 
 // StateTestState groups all the state database objects together for use in tests.
@@ -608,18 +587,4 @@ type StateTestState struct {
 	StateDB   *state.StateDB
 	TrieDB    *triedb.Database
 	Snapshots *snapshot.Tree
-}
-
-// Close should be called when the state is no longer needed, ie. after running the test.
-func (st *StateTestState) Close() {
-	if st.TrieDB != nil {
-		st.TrieDB.Close()
-		st.TrieDB = nil
-	}
-	if st.Snapshots != nil {
-		// Need to call Disable here to quit the snapshot generator goroutine.
-		st.Snapshots.Disable()
-		st.Snapshots.Release()
-		st.Snapshots = nil
-	}
 }
