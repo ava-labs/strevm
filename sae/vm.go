@@ -165,11 +165,25 @@ func (vm *VM) Init(
 		if err != nil {
 			return fmt.Errorf("newNetwork(...): %v", err)
 		}
-		handler, pullGossiper, pushGossiper, err := newGossipers(snowCtx, network, validatorPeers, vm.metrics, vm.mempool)
-		if err != nil {
-			return fmt.Errorf("newGossipers(...): %v", err)
+
+		systemConfig := gossip.SystemConfig{
+			Log:       snowCtx.Log,
+			Registry:  vm.metrics,
+			Namespace: "gossip",
 		}
-		if err := network.AddHandler(gossipHandlerID, handler); err != nil {
+		systemConfig.SetDefaults()
+		handler, pullGossiper, pushGossiper, err := gossip.NewSystem(
+			snowCtx.NodeID,
+			network,
+			validatorPeers,
+			vm.mempool,
+			txgossip.Marshaller{},
+			systemConfig,
+		)
+		if err != nil {
+			return fmt.Errorf("gossip.NewSystem(...): %v", err)
+		}
+		if err := network.AddHandler(systemConfig.HandlerID, handler); err != nil {
 			return fmt.Errorf("network.AddHandler(...): %v", err)
 		}
 
@@ -180,10 +194,11 @@ func (vm *VM) Init(
 		wg.Add(2)
 		go func() {
 			defer wg.Done()
-			gossip.Every(gossipCtx, snowCtx.Log, pullGossiper, pullRequestPeriod)
+			gossip.Every(gossipCtx, snowCtx.Log, pullGossiper, systemConfig.RequestPeriod)
 		}()
 		go func() {
 			defer wg.Done()
+			const pushGossipPeriod = 100 * time.Millisecond
 			gossip.Every(gossipCtx, snowCtx.Log, pushGossiper, pushGossipPeriod)
 		}()
 
