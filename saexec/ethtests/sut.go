@@ -119,8 +119,7 @@ func newSUT(tb testing.TB, opts ...sutOption) (context.Context, SUT) {
 	chain := blockstest.NewChainBuilder(genesis, blockOpts)
 
 	// Create hooks based on whether a consensus engine is provided
-	var reader *readerAdapter
-	reader = newReaderAdapter(chain, db, chainConfig, logger)
+	reader := newReaderAdapter(chain, db, chainConfig, logger)
 	hooks := newTestHooks(conf.consensus, reader)
 
 	e, err := saexec.New(genesis, chain.GetBlock, chainConfig, db, tdbConfig, *snapshotConfig, hooks, logger)

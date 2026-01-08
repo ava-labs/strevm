@@ -89,31 +89,30 @@ func (t *testHooks) BeforeExecutingBlock(_ params.Rules, statedb *state.StateDB,
 // For block tests: updates total difficulty and calls consensus finalization.
 // For state tests: touches the coinbase address to ensure it exists.
 func (t *testHooks) AfterExecutingBlock(statedb *state.StateDB, b *types.Block, receipts types.Receipts) {
-	if t.consensus != nil {
-		// Block test: update total difficulty and finalize
-		currentNumber := b.NumberU64()
-		currentTd := big.NewInt(0)
-		if currentNumber > 0 {
-			currentTd = t.reader.GetTd(b.ParentHash(), currentNumber-1)
-			if currentTd == nil {
-				currentTd = big.NewInt(0)
-				if t.reader.logger != nil {
-					t.reader.logger.Error("currentTd is nil")
-				}
-			}
-		}
-		newTd := new(big.Int).Add(currentTd, b.Difficulty())
-		t.reader.SetTd(b.Hash(), b.NumberU64(), newTd.Uint64())
-		t.consensus.Finalize(t.reader, b.Header(), statedb, b.Transactions(), b.Uncles(), b.Withdrawals())
+	if t.consensus == nil {
+		// State test: Touch coinbase with 0-value mining reward.
+		// This makes a difference when:
+		// - the coinbase self-destructed, or
+		// - there are only 'bad' transactions which aren't executed, so the
+		//   coinbase gets no txfee and isn't created, thus needs to be touched
+		statedb.AddBalance(b.Coinbase(), new(uint256.Int))
 		return
 	}
-
-	// State test: Touch coinbase with 0-value mining reward.
-	// This makes a difference when:
-	// - the coinbase self-destructed, or
-	// - there are only 'bad' transactions which aren't executed, so the
-	//   coinbase gets no txfee and isn't created, thus needs to be touched
-	statedb.AddBalance(b.Coinbase(), new(uint256.Int))
+	// Block test: update total difficulty and finalize
+	currentNumber := b.NumberU64()
+	currentTd := big.NewInt(0)
+	if currentNumber > 0 {
+		currentTd = t.reader.GetTd(b.ParentHash(), currentNumber-1)
+		if currentTd == nil {
+			currentTd = big.NewInt(0)
+			if t.reader.logger != nil {
+				t.reader.logger.Error("currentTd is nil")
+			}
+		}
+	}
+	newTd := new(big.Int).Add(currentTd, b.Difficulty())
+	t.reader.SetTd(b.Hash(), b.NumberU64(), newTd.Uint64())
+	t.consensus.Finalize(t.reader, b.Header(), statedb, b.Transactions(), b.Uncles(), b.Withdrawals())
 }
 
 // chainContext adapts testHooks to implement core.ChainContext for EVM creation.
