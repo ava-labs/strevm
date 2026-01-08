@@ -217,7 +217,7 @@ func (t *StateTest) checkError(subtest StateSubtest, err error) error {
 // Run executes a specific subtest and verifies the post-state and logs
 func (t *StateTest) Run(tb testing.TB, subtest StateSubtest, vmconfig vm.Config, snapshotter bool, scheme string, postCheck func(err error, st *StateTestState)) (result error) {
 	tb.Helper()
-	st, root, err := t.RunWithSAE(tb, subtest, snapshotter, scheme)
+	st, root, receipts, err := t.RunWithSAE(tb, subtest, snapshotter, scheme)
 	// Invoke the callback at the end of function for further analysis.
 	defer func() {
 		postCheck(result, &st)
@@ -239,8 +239,14 @@ func (t *StateTest) Run(tb testing.TB, subtest StateSubtest, vmconfig vm.Config,
 	if root != common.Hash(post.Root) {
 		return fmt.Errorf("post state root mismatch: got %x, want %x", root, post.Root)
 	}
-	if logs := rlpHash(st.StateDB.Logs()); logs != common.Hash(post.Logs) {
-		return fmt.Errorf("post state logs hash mismatch: got %x, want %x", logs, post.Logs)
+	// Collect logs from receipts for hash comparison. Logs are transient data
+	// stored in memory during execution, not persisted in the state trie.
+	var logs []*types.Log
+	for _, receipt := range receipts {
+		logs = append(logs, receipt.Logs...)
+	}
+	if logsHash := rlpHash(logs); logsHash != common.Hash(post.Logs) {
+		return fmt.Errorf("post state logs hash mismatch: got %x, want %x", logsHash, post.Logs)
 	}
 	st.StateDB, _ = state.New(root, st.StateDB.Database(), st.Snapshots)
 	return nil
@@ -249,12 +255,12 @@ func (t *StateTest) Run(tb testing.TB, subtest StateSubtest, vmconfig vm.Config,
 // RunWithSAE executes a specific subtest using the SAE executor and verifies the post-state and logs.
 // This method uses the saexec.Executor to execute the transaction within a block, which tests the
 // SAE execution path instead of direct EVM execution.
-func (t *StateTest) RunWithSAE(tb testing.TB, subtest StateSubtest, snapshotter bool, scheme string) (st StateTestState, root common.Hash, err error) {
+func (t *StateTest) RunWithSAE(tb testing.TB, subtest StateSubtest, snapshotter bool, scheme string) (st StateTestState, root common.Hash, receipts types.Receipts, err error) {
 	tb.Helper()
 
 	config, _, err := GetChainConfig(subtest.Fork)
 	if err != nil {
-		return st, root, UnsupportedForkError{subtest.Fork}
+		return st, root, nil, UnsupportedForkError{subtest.Fork}
 	}
 
 	// Configure trie database configuration
@@ -318,12 +324,12 @@ func (t *StateTest) RunWithSAE(tb testing.TB, subtest StateSubtest, snapshotter 
 	// Convert transaction from state test format to signed transaction
 	tx, err := t.json.Tx.toTransaction(post, baseFee, config)
 	if err != nil {
-		return st, root, err
+		return st, root, nil, err
 	}
 
 	// Check blob gas limits
 	if len(tx.BlobHashes())*params.BlobTxBlobGasPerBlob > params.MaxBlobGasPerBlock {
-		return st, root, errors.New("blob gas exceeds maximum")
+		return st, root, nil, errors.New("blob gas exceeds maximum")
 	}
 
 	// Try to recover tx with current signer
@@ -331,10 +337,10 @@ func (t *StateTest) RunWithSAE(tb testing.TB, subtest StateSubtest, snapshotter 
 		var ttx types.Transaction
 		err := ttx.UnmarshalBinary(post.TxBytes)
 		if err != nil {
-			return st, root, err
+			return st, root, nil, err
 		}
 		if _, err := types.Sender(types.LatestSigner(config), &ttx); err != nil {
-			return st, root, err
+			return st, root, nil, err
 		}
 	}
 
@@ -383,7 +389,7 @@ func (t *StateTest) RunWithSAE(tb testing.TB, subtest StateSubtest, snapshotter 
 	execErr := saeBlock.WaitUntilExecuted(ctx)
 
 	if execErr != nil {
-		return st, root, execErr
+		return st, root, nil, execErr
 	}
 
 	sdb, err := state.New(saeBlock.PostExecutionStateRoot(), sut.StateCache(), sut.Snapshots())
@@ -398,8 +404,9 @@ func (t *StateTest) RunWithSAE(tb testing.TB, subtest StateSubtest, snapshotter 
 	}
 
 	root = saeBlock.PostExecutionStateRoot()
+	receipts = saeBlock.Receipts()
 
-	return st, root, nil
+	return st, root, receipts, nil
 }
 
 // desiredExcessForStateTest calculates the desired excess gas to achieve a specific base fee.
