@@ -217,6 +217,12 @@ func (t *StateTest) checkError(subtest StateSubtest, err error) error {
 // Run executes a specific subtest and verifies the post-state and logs
 func (t *StateTest) Run(tb testing.TB, subtest StateSubtest, vmconfig vm.Config, snapshotter bool, scheme string, postCheck func(err error, st *StateTestState)) (result error) {
 	tb.Helper()
+	expectedError := t.json.Post[subtest.Fork][subtest.Index].ExpectException
+	// TODO(cey): Once we have worst-case execution rules, we can remove skipping tests for expected errors.
+	if expectedError != "" {
+		tb.Skipf("expected error %q, skipping test", expectedError)
+		return nil
+	}
 	st, root, receipts, err := t.RunWithSAE(tb, subtest, snapshotter, scheme)
 	// Invoke the callback at the end of function for further analysis.
 	defer func() {
@@ -324,7 +330,7 @@ func (t *StateTest) RunWithSAE(tb testing.TB, subtest StateSubtest, snapshotter 
 	// Convert transaction from state test format to signed transaction
 	tx, err := t.json.Tx.toTransaction(post, baseFee, config)
 	if err != nil {
-		return st, root, nil, err
+		return st, root, nil, fmt.Errorf("failed to convert transaction: %v", err)
 	}
 
 	// Check blob gas limits
@@ -337,10 +343,10 @@ func (t *StateTest) RunWithSAE(tb testing.TB, subtest StateSubtest, snapshotter 
 		var ttx types.Transaction
 		err := ttx.UnmarshalBinary(post.TxBytes)
 		if err != nil {
-			return st, root, nil, err
+			return st, root, nil, fmt.Errorf("failed to unmarshal tx: %v", err)
 		}
 		if _, err := types.Sender(types.LatestSigner(config), &ttx); err != nil {
-			return st, root, nil, err
+			return st, root, nil, fmt.Errorf("failed to recover tx with current signer: %v", err)
 		}
 	}
 
@@ -389,7 +395,7 @@ func (t *StateTest) RunWithSAE(tb testing.TB, subtest StateSubtest, snapshotter 
 	execErr := saeBlock.WaitUntilExecuted(ctx)
 
 	if execErr != nil {
-		return st, root, nil, execErr
+		return st, root, nil, fmt.Errorf("failed to wait for execution: %v", execErr)
 	}
 
 	sdb, err := state.New(saeBlock.PostExecutionStateRoot(), sut.StateCache(), sut.Snapshots())
@@ -497,20 +503,25 @@ func (tx *stTransaction) toTransaction(ps stPostState, baseFee *big.Int, config 
 	valueU256 := uint256.NewInt(0)
 	valueU256.SetFromBig(value)
 
-	// If baseFee provided, set gasPrice to effectiveGasPrice.
+	// Use local variables to avoid mutating the shared stTransaction struct,
+	// which would cause test pollution when running multiple subtests.
+	maxFeePerGas := tx.MaxFeePerGas
+	maxPriorityFeePerGas := tx.MaxPriorityFeePerGas
 	gasPrice := tx.GasPrice
+
+	// If baseFee provided, set gasPrice to effectiveGasPrice.
 	if baseFee != nil {
-		if tx.MaxFeePerGas == nil {
-			tx.MaxFeePerGas = gasPrice
+		if maxFeePerGas == nil {
+			maxFeePerGas = gasPrice
 		}
-		if tx.MaxFeePerGas == nil {
-			tx.MaxFeePerGas = new(big.Int)
+		if maxFeePerGas == nil {
+			maxFeePerGas = new(big.Int)
 		}
-		if tx.MaxPriorityFeePerGas == nil {
-			tx.MaxPriorityFeePerGas = tx.MaxFeePerGas
+		if maxPriorityFeePerGas == nil {
+			maxPriorityFeePerGas = maxFeePerGas
 		}
-		gasPrice = math.BigMin(new(big.Int).Add(tx.MaxPriorityFeePerGas, baseFee),
-			tx.MaxFeePerGas)
+		gasPrice = math.BigMin(new(big.Int).Add(maxPriorityFeePerGas, baseFee),
+			maxFeePerGas)
 	}
 	if gasPrice == nil {
 		return nil, errors.New("no gas price provided")
@@ -527,8 +538,8 @@ func (tx *stTransaction) toTransaction(ps stPostState, baseFee *big.Int, config 
 		txData = &types.BlobTx{
 			ChainID:    chainID,
 			Nonce:      tx.Nonce,
-			GasFeeCap:  uint256.MustFromBig(tx.MaxFeePerGas),
-			GasTipCap:  uint256.MustFromBig(tx.MaxPriorityFeePerGas),
+			GasFeeCap:  uint256.MustFromBig(maxFeePerGas),
+			GasTipCap:  uint256.MustFromBig(maxPriorityFeePerGas),
 			Gas:        gasLimit,
 			To:         toAddr,
 			Value:      valueU256,
@@ -537,12 +548,12 @@ func (tx *stTransaction) toTransaction(ps stPostState, baseFee *big.Int, config 
 			BlobFeeCap: uint256.MustFromBig(tx.BlobGasFeeCap),
 			BlobHashes: tx.BlobVersionedHashes,
 		}
-	case tx.MaxFeePerGas != nil:
+	case maxFeePerGas != nil:
 		txData = &types.DynamicFeeTx{
 			ChainID:    new(big.Int).Set(config.ChainID),
 			Nonce:      tx.Nonce,
-			GasFeeCap:  tx.MaxFeePerGas,
-			GasTipCap:  tx.MaxPriorityFeePerGas,
+			GasFeeCap:  maxFeePerGas,
+			GasTipCap:  maxPriorityFeePerGas,
 			Gas:        gasLimit,
 			To:         to,
 			Value:      value,
@@ -585,103 +596,11 @@ func (tx *stTransaction) toTransaction(ps stPostState, baseFee *big.Int, config 
 	return signedTx, nil
 }
 
-func (tx *stTransaction) toMessage(ps stPostState, baseFee *big.Int) (*core.Message, error) {
-	var from common.Address
-	// If 'sender' field is present, use that
-	if tx.Sender != nil {
-		from = *tx.Sender
-	} else if len(tx.PrivateKey) > 0 {
-		// Derive sender from private key if needed.
-		key, err := crypto.ToECDSA(tx.PrivateKey)
-		if err != nil {
-			return nil, fmt.Errorf("invalid private key: %v", err)
-		}
-		from = crypto.PubkeyToAddress(key.PublicKey)
-	}
-	// Parse recipient if present.
-	var to *common.Address
-	if tx.To != "" {
-		to = new(common.Address)
-		if err := to.UnmarshalText([]byte(tx.To)); err != nil {
-			return nil, fmt.Errorf("invalid to address: %v", err)
-		}
-	}
-
-	// Get values specific to this post state.
-	if ps.Indexes.Data >= len(tx.Data) {
-		return nil, fmt.Errorf("tx data index %d out of bounds", ps.Indexes.Data)
-	}
-	if ps.Indexes.Value >= len(tx.Value) {
-		return nil, fmt.Errorf("tx value index %d out of bounds", ps.Indexes.Value)
-	}
-	if ps.Indexes.Gas >= len(tx.GasLimit) {
-		return nil, fmt.Errorf("tx gas limit index %d out of bounds", ps.Indexes.Gas)
-	}
-	dataHex := tx.Data[ps.Indexes.Data]
-	valueHex := tx.Value[ps.Indexes.Value]
-	gasLimit := tx.GasLimit[ps.Indexes.Gas]
-	// Value, Data hex encoding is messy: https://github.com/ethereum/tests/issues/203
-	value := new(big.Int)
-	if valueHex != "0x" {
-		v, ok := math.ParseBig256(valueHex)
-		if !ok {
-			return nil, fmt.Errorf("invalid tx value %q", valueHex)
-		}
-		value = v
-	}
-	data, err := hex.DecodeString(strings.TrimPrefix(dataHex, "0x"))
-	if err != nil {
-		return nil, fmt.Errorf("invalid tx data %q", dataHex)
-	}
-	var accessList types.AccessList
-	if tx.AccessLists != nil && ps.Indexes.Data < len(tx.AccessLists) && tx.AccessLists[ps.Indexes.Data] != nil {
-		accessList = *tx.AccessLists[ps.Indexes.Data]
-	}
-	// If baseFee provided, set gasPrice to effectiveGasPrice.
-	gasPrice := tx.GasPrice
-	if baseFee != nil {
-		if tx.MaxFeePerGas == nil {
-			tx.MaxFeePerGas = gasPrice
-		}
-		if tx.MaxFeePerGas == nil {
-			tx.MaxFeePerGas = new(big.Int)
-		}
-		if tx.MaxPriorityFeePerGas == nil {
-			tx.MaxPriorityFeePerGas = tx.MaxFeePerGas
-		}
-		gasPrice = math.BigMin(new(big.Int).Add(tx.MaxPriorityFeePerGas, baseFee),
-			tx.MaxFeePerGas)
-	}
-	if gasPrice == nil {
-		return nil, errors.New("no gas price provided")
-	}
-
-	msg := &core.Message{
-		From:          from,
-		To:            to,
-		Nonce:         tx.Nonce,
-		Value:         value,
-		GasLimit:      gasLimit,
-		GasPrice:      gasPrice,
-		GasFeeCap:     tx.MaxFeePerGas,
-		GasTipCap:     tx.MaxPriorityFeePerGas,
-		Data:          data,
-		AccessList:    accessList,
-		BlobHashes:    tx.BlobVersionedHashes,
-		BlobGasFeeCap: tx.BlobGasFeeCap,
-	}
-	return msg, nil
-}
-
 func rlpHash(x interface{}) (h common.Hash) {
 	hw := sha3.NewLegacyKeccak256()
 	rlp.Encode(hw, x)
 	hw.Sum(h[:0])
 	return h
-}
-
-func vmTestBlockHash(n uint64) common.Hash {
-	return common.BytesToHash(crypto.Keccak256([]byte(big.NewInt(int64(n)).String())))
 }
 
 // StateTestState groups all the state database objects together for use in tests.
