@@ -403,7 +403,69 @@ func TestCmpUnix(t *testing.T) {
 	for _, tt := range tests {
 		tt.tm.Tick(tt.tick)
 		if got := tt.tm.CompareUnix(tt.cmpAgainst); got != tt.want {
-			t.Errorf("Time{%d + %d/%d}.CmpUnix(%d) got %d; want %d", tt.tm.Unix(), tt.tm.fraction, tt.tm.hertz, tt.cmpAgainst, got, tt.want)
+			t.Errorf("Time{%s}.CmpUnix(%d) got %d; want %d", tt.tm.String(), tt.cmpAgainst, got, tt.want)
+		}
+	}
+}
+
+func TestCompareDifferentRates(t *testing.T) {
+	fromFrac := func(num, denom uint64) *Time[uint64] {
+		// All comparisons are targeting fractional differences so we want the
+		// Unix seconds to be equal, but the actual value is irrelevant.
+		tm := New(42, denom)
+		tm.Tick(num)
+		return tm
+	}
+
+	tests := []struct {
+		tm, u *Time[uint64]
+		want  int
+	}{
+		{
+			tm:   fromFrac(0, 1e6),
+			u:    fromFrac(0, 2e6),
+			want: 0,
+		},
+		{
+			tm:   fromFrac(5, 10),
+			u:    fromFrac(10, 20),
+			want: 0,
+		},
+		{
+			tm:   fromFrac(3, 7),
+			u:    fromFrac(4, 8),
+			want: -1,
+		},
+		{
+			tm:   fromFrac(1<<62, 1<<63),
+			u:    fromFrac(1, 2),
+			want: 0,
+		},
+		{
+			tm:   fromFrac(math.MaxUint64/2, math.MaxUint64),
+			u:    fromFrac(math.MaxUint64/2+1, math.MaxUint64),
+			want: -1,
+		},
+		{
+			tm:   fromFrac(1<<61+1, 1<<62),
+			u:    fromFrac(1<<62, 1<<63),
+			want: 1,
+		},
+		{
+			tm:   fromFrac(math.MaxUint64-1, math.MaxUint64),
+			u:    fromFrac(1, math.MaxUint64-1),
+			want: 1,
+		},
+	}
+
+	for _, tt := range tests {
+		a, b := tt.tm, tt.u
+		want := tt.want
+
+		for range 2 {
+			assert.Equalf(t, want, a.Compare(b), "Time{%s}.Compare(%s)", a.String(), b.String())
+			a, b = b, a
+			want = -want
 		}
 	}
 }

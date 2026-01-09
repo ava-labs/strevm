@@ -58,6 +58,15 @@ func New[D Duration](unixSeconds uint64, hertz D) *Time[D] {
 	}
 }
 
+// Of converts the time at nanosecond resolution. [time.Time.Unix] MUST be
+// non-negative.
+func Of[D Duration](t time.Time) *Time[D] {
+	const hz = time.Second / time.Nanosecond
+	tm := New(uint64(t.Unix()), D(hz)) //nolint:gosec // Known to be non-negative
+	tm.Tick(D(t.Nanosecond()))
+	return tm
+}
+
 // Unix returns tm as a Unix timestamp.
 func (tm *Time[D]) Unix() uint64 {
 	return tm.seconds
@@ -74,6 +83,24 @@ type FractionalSecond[D Duration] struct {
 // [Time.Rate].
 func (tm *Time[D]) Fraction() FractionalSecond[D] {
 	return FractionalSecond[D]{tm.fraction, tm.hertz}
+}
+
+// Compare returns
+//
+//	-1 if f < g
+//	 0 if f == g
+//	+1 if f > g.
+func (f FractionalSecond[D]) Compare(g FractionalSecond[D]) int {
+	if f.Denominator == g.Denominator {
+		return cmp.Compare(f.Numerator, g.Numerator)
+	}
+	// Cross-multiplication of non-negative components maintains order.
+	fHi, fLo := bits.Mul64(uint64(f.Numerator), uint64(g.Denominator))
+	gHi, gLo := bits.Mul64(uint64(g.Numerator), uint64(f.Denominator))
+	if c := cmp.Compare(fHi, gHi); c != 0 {
+		return c
+	}
+	return cmp.Compare(fLo, gLo)
 }
 
 // Rate returns the proxy duration required for the passage of one second.
@@ -196,18 +223,29 @@ func (tm *Time[D]) scale(val, newRate D) (scaled D, truncated FractionalSecond[D
 	return scaled, FractionalSecond[D]{Numerator: trunc, Denominator: tm.hertz}, nil
 }
 
+// Sub returns a new [Time], `s` seconds earlier. Rate invariants are NOT copied
+// and no underflow protection is provided.
+func (tm *Time[D]) Sub(s uint64) *Time[D] {
+	return &Time[D]{
+		seconds:  tm.seconds - s,
+		fraction: tm.fraction,
+		hertz:    tm.hertz,
+	}
+}
+
 // Compare returns
 //
 //	-1 if tm is before u
 //	 0 if tm and u represent the same instant
 //	+1 if tm is after u.
 //
-// Results are undefined if [Time.Rate] is different for the two instants.
+// The original implementation of Compare required that both instants had the
+// same [Time.Rate] but this is no longer necessary.
 func (tm *Time[D]) Compare(u *Time[D]) int {
 	if c := cmp.Compare(tm.seconds, u.seconds); c != 0 {
 		return c
 	}
-	return cmp.Compare(tm.fraction, u.fraction)
+	return tm.Fraction().Compare(u.Fraction())
 }
 
 // CompareUnix is equivalent to [Time.Compare] against a zero-fractional-second
@@ -215,7 +253,10 @@ func (tm *Time[D]) Compare(u *Time[D]) int {
 // `tm` has the same [Time.Unix] as `sec` but non-zero [Time.Fraction] then
 // CompareUnix will return 1.
 func (tm *Time[D]) CompareUnix(sec uint64) int {
-	return tm.Compare(&Time[D]{seconds: sec})
+	return tm.Compare(&Time[D]{
+		seconds: sec,
+		hertz:   tm.hertz,
+	})
 }
 
 // AsTime converts the proxy time to a standard [time.Time] in UTC. AsTime is

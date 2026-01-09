@@ -14,9 +14,12 @@ import (
 	"sync/atomic"
 
 	"github.com/ava-labs/avalanchego/utils/logging"
+	"github.com/ava-labs/avalanchego/vms/components/gas"
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core/types"
 	"go.uber.org/zap"
+
+	"github.com/ava-labs/strevm/proxytime"
 )
 
 // A Block extends a [types.Block] to track SAE-defined concepts of async
@@ -45,7 +48,7 @@ type Block struct {
 	// execution is yet to commence. For more details, see
 	// [Block.SetInterimExecutionTime for setting and [LastToSettleAt] for
 	// usage.
-	executionExceededSecond atomic.Pointer[uint64]
+	interimExecution chan *proxytime.Time[gas.Gas] // single-value buffer in lieu of lock
 
 	executed chan struct{} // closed after `execution` is set
 	settled  chan struct{} // closed after `ancestry` is cleared
@@ -70,10 +73,12 @@ func InMemoryBlockCount() int64 {
 // Block.
 func New(eth *types.Block, parent, lastSettled *Block, log logging.Logger) (*Block, error) {
 	b := &Block{
-		b:        eth,
-		executed: make(chan struct{}),
-		settled:  make(chan struct{}),
+		b:                eth,
+		executed:         make(chan struct{}),
+		settled:          make(chan struct{}),
+		interimExecution: make(chan *proxytime.Time[gas.Gas], 1),
 	}
+	b.interimExecution <- nil
 
 	inMemoryBlockCount.Add(1)
 	runtime.AddCleanup(b, func(struct{}) {

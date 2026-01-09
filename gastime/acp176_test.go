@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/ava-labs/strevm/hook/hookstest"
+	"github.com/ava-labs/strevm/proxytime"
 )
 
 // TestTargetUpdateTiming verifies that the gas target is modified in AfterBlock
@@ -120,8 +121,12 @@ func FuzzWorstCasePrice(f *testing.F) {
 				Time: block.time,
 			}
 			hook := &hookstest.Stub{
-				Target:        block.target,
-				SubSecondTime: block.timeFrac,
+				Target: block.target,
+				Now: func() *proxytime.Time[gas.Gas] {
+					tm := proxytime.New(block.time, SafeRateOfTarget(block.target))
+					tm.Tick(block.timeFrac)
+					return tm
+				},
 			}
 
 			worstcase.BeforeBlock(hook, header)

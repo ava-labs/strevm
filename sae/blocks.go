@@ -12,6 +12,7 @@ import (
 	"github.com/ava-labs/avalanchego/database"
 	"github.com/ava-labs/avalanchego/ids"
 	"github.com/ava-labs/avalanchego/snow/engine/snowman/block"
+	"github.com/ava-labs/avalanchego/vms/components/gas"
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core"
 	"github.com/ava-labs/libevm/core/txpool"
@@ -21,8 +22,10 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/ava-labs/strevm/blocks"
+	"github.com/ava-labs/strevm/gastime"
 	"github.com/ava-labs/strevm/hook"
 	saeparams "github.com/ava-labs/strevm/params"
+	"github.com/ava-labs/strevm/proxytime"
 	"github.com/ava-labs/strevm/txgossip"
 	"github.com/ava-labs/strevm/worstcase"
 )
@@ -106,23 +109,31 @@ func (vm *VM) buildBlock(
 		)
 	}
 
+	// Even though we need a [proxytime.Time] value, we only have a gas target
+	// and not a rate. We therefore use [gastime] for construction as it is the
+	// source of truth for target-to-rate conversion.
+	bTime := gastime.OfBlock(vm.hooks, hdr, parent.Header(), 0).Time
+	// If `parent` is the genesis block then the notion of a grandparent is
+	// undefined, so we have to construct its time ourselves.
+	pTime := proxytime.New(parent.BuildTime(), bTime.Rate())
+	pTime.Tick(vm.hooks.SubSecondBlockTime(bTime.Rate(), parent.Header()))
+
 	// It is allowed for [hook.Points] to further constrain the allowed block
 	// times. However, every block MUST at least satisfy these basic sanity
 	// checks.
-	if hdr.Time < saeparams.TauSeconds {
+	if bTime.CompareUnix(saeparams.TauSeconds) < 0 {
 		return nil, fmt.Errorf("%w: %d < %d", errBlockTimeUnderMinimum, hdr.Time, saeparams.TauSeconds)
 	}
-	if parentTime := parent.BuildTime(); hdr.Time < parentTime {
-		return nil, fmt.Errorf("%w: %d < %d", errBlockTimeBeforeParent, hdr.Time, parentTime)
+	if bTime.Compare(pTime) < 0 {
+		return nil, fmt.Errorf("%w: %s < %s", errBlockTimeBeforeParent, bTime.String(), pTime.String())
 	}
-	if maxTime := unix(vm.config.Now().Add(maxFutureBlockTime)); hdr.Time > maxTime {
+	maxTime := proxytime.Of[gas.Gas](vm.config.Now().Add(maxBlockFutureSeconds))
+	if bTime.Compare(maxTime) > 0 {
 		return nil, fmt.Errorf("%w: %d > %d", errBlockTimeAfterMaximum, hdr.Time, maxTime)
 	}
 
-	// TODO(StephenButtolph) settlement logic needs to support sub-second block
-	// times. Tracked in https://github.com/ava-labs/strevm/issues/49
-	settleAt := hdr.Time - saeparams.TauSeconds
-	lastSettled, ok, err := blocks.LastToSettleAt(settleAt, parent)
+	settleAt := bTime.Sub(saeparams.TauSeconds) // underflow protected by above check of `hdr.Time`
+	lastSettled, ok, err := blocks.LastToSettleAt(vm.hooks, settleAt, parent)
 	if err != nil {
 		return nil, err
 	}

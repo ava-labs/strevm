@@ -8,8 +8,10 @@ import (
 	"math"
 
 	"github.com/ava-labs/avalanchego/vms/components/gas"
+	"github.com/ava-labs/libevm/core/types"
 	"github.com/holiman/uint256"
 
+	"github.com/ava-labs/strevm/hook"
 	"github.com/ava-labs/strevm/intmath"
 	"github.com/ava-labs/strevm/proxytime"
 )
@@ -51,8 +53,28 @@ func (tm *Time) establishInvariants() {
 // `target` * [TargetToRate] units of [gas.Gas] is equivalent to a tick of 1
 // second. Targets are clamped to [MaxTarget].
 func New(unixSeconds uint64, target, startingExcess gas.Gas) *Time {
+	return newT(unixSeconds, 0, target, startingExcess)
+}
+
+// OfBlock is equivalent to [New] except that it derives the Unix timestamp and
+// gas target from the headers of a block and its parent. The constructed [Time]
+// derives its [proxytime.FractionalSecond] from the sub-second block time
+// provided by the hooks.
+func OfBlock(hooks hook.Points, hdr, parent *types.Header, startingExcess gas.Gas) *Time {
+	target := hooks.GasTargetAfter(parent)
+	return newT(
+		hdr.Time,
+		hooks.SubSecondBlockTime(SafeRateOfTarget(target), hdr),
+		target,
+		startingExcess,
+	)
+}
+
+func newT(unixSeconds uint64, frac, target, startingExcess gas.Gas) *Time {
 	target = clampTarget(target)
-	return makeTime(proxytime.New(unixSeconds, rateOf(target)), target, startingExcess)
+	tm := proxytime.New(unixSeconds, rateOf(target))
+	tm.Tick(frac)
+	return makeTime(tm, target, startingExcess)
 }
 
 // TargetToRate is the ratio between [Time.Target] and [proxytime.Time.Rate].
@@ -72,6 +94,13 @@ const MaxTarget = gas.Gas(math.MaxUint64 / TargetToRate)
 func rateOf(target gas.Gas) gas.Gas { return target * TargetToRate }
 func clampTarget(t gas.Gas) gas.Gas { return min(t, MaxTarget) }
 func roundRate(r gas.Gas) gas.Gas   { return (r / TargetToRate) * TargetToRate }
+
+// SafeRateOfTarget returns the corresponding rate for the given gas target,
+// protecting against overflow. It is equivalent to the product of
+// [TargetToRate] and the minimum of [MaxTarget] and the argument.
+func SafeRateOfTarget(target gas.Gas) gas.Gas {
+	return rateOf(clampTarget(target))
+}
 
 // Clone returns a deep copy of the time.
 func (tm *Time) Clone() *Time {

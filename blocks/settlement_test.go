@@ -18,6 +18,9 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/ava-labs/strevm/gastime"
+	"github.com/ava-labs/strevm/hook"
+	"github.com/ava-labs/strevm/hook/hookstest"
+	"github.com/ava-labs/strevm/params"
 	"github.com/ava-labs/strevm/proxytime"
 	"github.com/ava-labs/strevm/saetest"
 )
@@ -25,7 +28,8 @@ import (
 //nolint:testableexamples // Output is meaningless
 func ExampleRange() {
 	parent := blockBuildingPreference()
-	settle, ok, err := LastToSettleAt(uint64(time.Now().Unix()), parent) //nolint:gosec // Time won't overflow for quite a while
+	now := proxytime.Of[gas.Gas](time.Now())
+	settle, ok, err := LastToSettleAt(vmHooks(), now.Sub(params.TauSeconds), parent)
 	if err != nil {
 		// Due to a malformed input to block verification.
 		return // err
@@ -42,8 +46,9 @@ func ExampleRange() {
 	_ = Range(settle, parent)
 }
 
-// blockBuildingPreference exists only to allow examples to build.
+// blockBuildingPreference and vmHooks exist only to allow examples to build.
 func blockBuildingPreference() *Block { return nil }
+func vmHooks() hook.Points            { return nil }
 
 func TestSettlementInvariants(t *testing.T) {
 	parent := newBlock(t, newEthBlock(5, 5, nil), nil, nil)
@@ -265,19 +270,6 @@ func TestLastToSettleAt(t *testing.T) {
 		"Block 9 MUST remain unexecuted", // exercises lagging-execution logic when building on 9
 	)
 
-	for i, b := range blocks {
-		// Setting interim execution time isn't required for the algorithm to
-		// work as it just allows [LastToSettleAt] to return definitive results
-		// earlier in execution. It does, however, risk an edge-case error for
-		// blocks that complete execution on an exact second boundary so needs
-		// to be tested; see the [Block.SetInterimExecutionTime] implementation
-		// for details.
-		if i%2 == 0 || !b.Executed() {
-			continue
-		}
-		b.SetInterimExecutionTime(b.ExecutedByGasTime().Time)
-	}
-
 	type testCase struct {
 		name     string
 		settleAt uint64
@@ -358,9 +350,17 @@ func TestLastToSettleAt(t *testing.T) {
 		})
 	}
 
+	hooks := &hookstest.Stub{
+		Target: 1e6,
+	}
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, gotOK, err := LastToSettleAt(tt.settleAt, tt.parent)
+			// Since we only have a target and not a rate, it's better to use
+			// [gastime.New] and then extract the [proxytime.Time] as this will
+			// always set the rate properly.
+			settleAt := gastime.New(tt.settleAt, hooks.GasTargetAfter(tt.parent.Header()), 0).Time
+			got, gotOK, err := LastToSettleAt(hooks, settleAt, tt.parent)
 			if err != nil || gotOK != tt.wantOK {
 				t.Fatalf("LastToSettleAt(%d, [parent height %d]) got (_, %t, %v); want (_, %t, nil)", tt.settleAt, tt.parent.Height(), gotOK, err, tt.wantOK)
 			}

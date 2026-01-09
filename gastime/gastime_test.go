@@ -6,14 +6,18 @@ package gastime
 import (
 	"fmt"
 	"math"
+	"math/big"
 	"testing"
 
 	"github.com/ava-labs/avalanchego/vms/components/gas"
+	"github.com/ava-labs/libevm/common"
+	"github.com/ava-labs/libevm/core/types"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/ava-labs/strevm/hook/hookstest"
 	"github.com/ava-labs/strevm/intmath"
 	"github.com/ava-labs/strevm/proxytime"
 )
@@ -323,4 +327,56 @@ func TestTargetClamping(t *testing.T) {
 		assert.Equalf(t, tt.want, tm.Target(), "%T.Target() after setting to %#x", tm, tt.setTo)
 		assert.Equalf(t, tm.Target()*TargetToRate, tm.Rate(), "%T.Rate() == %d * %[1]T.Target()", tm, TargetToRate)
 	}
+}
+
+type hooks struct {
+	hookstest.Stub
+	gasTargetAfter map[common.Hash]gas.Gas
+}
+
+func (h *hooks) GasTargetAfter(hdr *types.Header) gas.Gas {
+	return h.gasTargetAfter[hdr.Hash()]
+}
+
+func TestOfBlock(t *testing.T) {
+	// The internals of [OfBlock] are identical to those of [New] so we don't
+	// need multiple test cases, only to demonstrate plumbing of arguments.
+
+	const (
+		unix   = 42
+		frac   = 12_345
+		target = 1_000_000
+		excess = 98_765
+	)
+	rate := SafeRateOfTarget(target)
+
+	parent := &types.Header{
+		Number: big.NewInt(0),
+	}
+	hook := &hooks{
+		Stub: hookstest.Stub{
+			Now: func() *proxytime.Time[gas.Gas] {
+				tm := proxytime.New(unix, rate)
+				tm.Tick(frac)
+				return tm
+			},
+		},
+		gasTargetAfter: map[common.Hash]gas.Gas{
+			parent.Hash(): target,
+		},
+	}
+	hdr := hook.BuildHeader(parent)
+	got := OfBlock(hook, hdr, parent, excess)
+
+	want := state{
+		UnixTime: unix,
+		ConsumedThisSecond: proxytime.FractionalSecond[gas.Gas]{
+			Numerator:   frac,
+			Denominator: rate,
+		},
+		Rate:   rate,
+		Target: target,
+		Excess: excess,
+	}
+	got.requireState(t, "OfBlock()", want, cmpopts.IgnoreFields(state{}, "Price"))
 }

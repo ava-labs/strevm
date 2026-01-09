@@ -27,13 +27,15 @@ import (
 
 // SetInterimExecutionTime is expected to be called during execution of b's
 // transactions, with the highest-known gas time. This MAY be at any resolution
-// but MUST be monotonic.
+// but MUST be monotonic. Every call MUST provide a time at the same gas rate.
 func (b *Block) SetInterimExecutionTime(t *proxytime.Time[gas.Gas]) {
-	sec := t.Unix()
-	if t.Fraction().Numerator == 0 {
-		sec--
+	et := <-b.interimExecution
+	if et == nil {
+		et = t.Clone()
+	} else {
+		et.FastForwardTo(t.Unix(), t.Fraction().Numerator)
 	}
-	b.executionExceededSecond.Store(&sec)
+	b.interimExecution <- et
 }
 
 type executionResults struct {

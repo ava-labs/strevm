@@ -20,6 +20,7 @@ import (
 	"github.com/ava-labs/avalanchego/snow/snowtest"
 	"github.com/ava-labs/avalanchego/utils/logging"
 	"github.com/ava-labs/avalanchego/utils/set"
+	"github.com/ava-labs/avalanchego/vms/components/gas"
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core/rawdb"
 	"github.com/ava-labs/libevm/core/state"
@@ -40,8 +41,10 @@ import (
 	"github.com/ava-labs/strevm/adaptor"
 	"github.com/ava-labs/strevm/blocks"
 	"github.com/ava-labs/strevm/blocks/blockstest"
+	"github.com/ava-labs/strevm/gastime"
 	"github.com/ava-labs/strevm/hook/hookstest"
 	saeparams "github.com/ava-labs/strevm/params"
+	"github.com/ava-labs/strevm/proxytime"
 	"github.com/ava-labs/strevm/saetest"
 )
 
@@ -68,6 +71,7 @@ type SUT struct {
 	genesis *blocks.Block
 	wallet  *saetest.Wallet
 	db      ethdb.Database
+	hooks   *hookstest.Stub
 }
 
 type (
@@ -91,6 +95,7 @@ func newSUT(tb testing.TB, numAccounts uint, opts ...sutOption) (context.Context
 		},
 		hooks: &hookstest.Stub{
 			Target: 100e6,
+			TB:     tb,
 		},
 		genesisOptions: []blockstest.GenesisOption{
 			blockstest.WithTimestamp(saeparams.TauSeconds),
@@ -137,6 +142,7 @@ func newSUT(tb testing.TB, numAccounts uint, opts ...sutOption) (context.Context
 		genesis:   genesis,
 		wallet:    wallet,
 		db:        db,
+		hooks:     conf.hooks,
 	}
 }
 
@@ -148,21 +154,20 @@ func (s *SUT) CallContext(ctx context.Context, result any, method string, args .
 }
 
 // stubbedTime returns an option to configure a new SUT's "now" function along
-// with a function to set the time.
+// with a function to set the time at nanosecond resolution.
 func stubbedTime() (_ sutOption, setTime func(time.Time)) {
 	var now time.Time
 	set := func(n time.Time) {
 		now = n
 	}
 	opt := options.Func[sutConfig](func(c *sutConfig) {
-		// TODO(StephenButtolph) unify the time functions provided in the config
-		// and the hooks.
-		c.vmConfig.Now = func() time.Time {
+		get := func() time.Time {
 			return now
 		}
-		c.hooks.Now = func() uint64 {
-			return unix(now)
-		}
+		// TODO(StephenButtolph) unify the time functions provided in the config
+		// and the hooks.
+		c.vmConfig.Now = get
+		c.hooks.Now = hookstest.NowFunc(get)
 	})
 
 	return opt, set
@@ -548,12 +553,21 @@ func TestSemanticBlockChecks(t *testing.T) {
 				tt.time = now
 			}
 
+			// As we need to arbitrarily control the parent hash we can't use
+			// the stub hooks' BuildHeader() method, and must therefore set the
+			// sub-second time manually.
+			hdr := &types.Header{
+				ParentHash: tt.parentHash,
+				Number:     new(big.Int).SetUint64(height),
+				Time:       tt.time,
+			}
+			hookstest.SetSubSecondBlockTime(t, hdr, proxytime.FractionalSecond[gas.Gas]{
+				Numerator:   0,
+				Denominator: gastime.SafeRateOfTarget(sut.hooks.Target),
+			})
+
 			ethB := types.NewBlock(
-				&types.Header{
-					ParentHash: tt.parentHash,
-					Number:     new(big.Int).SetUint64(height),
-					Time:       tt.time,
-				},
+				hdr,
 				nil, // txs
 				nil, // uncles
 				tt.receipts,
