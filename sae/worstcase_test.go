@@ -41,6 +41,7 @@ var worstCaseFuzzFlags struct {
 	maxNewTxsPerBlock uint
 	maxGasLimit       uint64
 	maxTxValue        uint64
+	rngSeed           uint64
 }
 
 func createWorstCaseFuzzFlags(set *flag.FlagSet) {
@@ -56,6 +57,7 @@ func createWorstCaseFuzzFlags(set *flag.FlagSet) {
 	set.UintVar(&fs.maxNewTxsPerBlock, name("max_new_txs"), 100, "Maximum number of new transactions to send before building each block (uniform distribution)")
 	set.Uint64Var(&fs.maxGasLimit, name("max_gas_limit"), 60e6, "Maximum gas limit per transaction (uniform distribution)")
 	set.Uint64Var(&fs.maxTxValue, name("max_tx_value"), params.Ether/1000, "Maximum tx value to send per transaction (uniform distribution)")
+	set.Uint64Var(&fs.rngSeed, name("rng_seed"), 0, "Seed for random-number generator; ignored if zero")
 }
 
 //nolint:tparallel // Why should we call t.Parallel at the top level by default?
@@ -178,7 +180,12 @@ func TestWorstCase(t *testing.T) {
 			addrs = append(addrs, guzzle)
 			guzzlerIdx := numEOAs
 
-			seed := rand.Uint64() //nolint:gosec // Not for security
+			var seed uint64
+			if flags.rngSeed != 0 {
+				seed = flags.rngSeed
+			} else {
+				seed = rand.Uint64() //nolint:gosec // Not for security
+			}
 			t.Logf("RNG seed: %d", seed)
 			rng := rand.New(rand.NewPCG(0, seed)) //nolint:gosec // Allow for reproducibility
 
