@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"sync/atomic"
 
 	"github.com/ava-labs/avalanchego/vms/components/gas"
 	"go.uber.org/zap"
@@ -26,12 +27,20 @@ var (
 	errBlockAncestryChanged = errors.New("block ancestry changed during settlement")
 )
 
-// MarkSettled marks the block as having been settled. This function MUST NOT
-// be called more than once.
+// MarkSettled marks the block as having been settled. This function MUST NOT be
+// called more than once. The atomic pointer to the last-settled block is
+// updated before [Block.WaitUntilSettled] returns.
 //
 // After a call to MarkSettled, future calls to [Block.ParentBlock] and
 // [Block.LastSettled] will return nil.
-func (b *Block) MarkSettled() error {
+func (b *Block) MarkSettled(lastSettled *atomic.Pointer[Block]) error {
+	if lastSettled == nil {
+		return errors.New("atomic pointer to last-settled block MUST NOT be nil")
+	}
+	return b.markSettled(lastSettled)
+}
+
+func (b *Block) markSettled(lastSettled *atomic.Pointer[Block]) error {
 	a := b.ancestry.Load()
 	if a == nil {
 		b.log.Error(errBlockResettled.Error())
@@ -42,6 +51,10 @@ func (b *Block) MarkSettled() error {
 		// We have to return something to keen the compiler happy, even though we
 		// expect the Fatal to be, well, fatal.
 		return errBlockAncestryChanged
+	}
+
+	if lastSettled != nil {
+		lastSettled.Store(b)
 	}
 	close(b.settled)
 	return nil
@@ -60,7 +73,7 @@ func (b *Block) MarkSettled() error {
 // otherwise be considered identical.
 func (b *Block) MarkSynchronous() error {
 	b.synchronous = true
-	return b.MarkSettled()
+	return b.markSettled(nil)
 }
 
 // WaitUntilSettled blocks until either [Block.MarkSettled] is called or the
