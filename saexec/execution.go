@@ -170,7 +170,9 @@ func (e *Executor) execute(b *blocks.Block, logger logging.Logger) error {
 		receipts[ti] = receipt
 	}
 
+	numTxs := len(b.Transactions())
 	for i, o := range e.hooks.EndOfBlockOps(b.EthBlock()) {
+		b.CheckOpBurnerBalanceBounds(stateDB, numTxs+i, o)
 		blockGasConsumed += o.Gas
 		perTxClock.Tick(o.Gas)
 		b.SetInterimExecutionTime(perTxClock)

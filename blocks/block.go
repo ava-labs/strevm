@@ -87,8 +87,8 @@ func New(eth *types.Block, parent, lastSettled *Block, log logging.Logger) (*Blo
 		return nil, err
 	}
 	b.log = log.With(
-		zap.Uint64("height", b.Height()),
-		zap.Stringer("hash", b.Hash()),
+		zap.Uint64("block_height", b.Height()),
+		zap.Stringer("block_hash", b.Hash()),
 	)
 	return b, nil
 }
