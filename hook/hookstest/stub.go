@@ -112,7 +112,7 @@ func (s *Stub) SubSecondBlockTime(rate gas.Gas, hdr *types.Header) gas.Gas {
 	if frac.Denominator == rate {
 		return frac.Numerator
 	}
-	num, _, _ := intmath.MulDiv(frac.Numerator, rate, frac.Denominator) //nolint:errcheck // Guaranteed to not overflow because frac < 1 by definition
+	num, _, _ := intmath.MulDiv(frac.Numerator, rate, frac.Denominator) // Guaranteed to not overflow because frac < 1 by definition
 	return num
 }
 
