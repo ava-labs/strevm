@@ -104,7 +104,7 @@ func newSUT(tb testing.TB, numAccounts uint, opts ...sutOption) (context.Context
 		hooks: &hookstest.Stub{
 			Target: 100e6,
 		},
-		logLevel: logging.Warn,
+		logLevel: logging.Debug,
 		alloc:    saetest.MaxAllocFor(wallet.Addresses()...),
 		genesisOptions: []blockstest.GenesisOption{
 			blockstest.WithTimestamp(saeparams.TauSeconds),
