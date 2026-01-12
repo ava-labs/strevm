@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"math"
 	"math/big"
+	"slices"
 
 	"github.com/ava-labs/avalanchego/vms/components/gas"
 	"github.com/ava-labs/libevm/common"
@@ -52,10 +53,11 @@ type State struct {
 
 	qSize, blockSize, maxBlockSize gas.Gas
 
-	baseFee *uint256.Int
-	curr    *types.Header
-	rules   params.Rules
-	signer  types.Signer
+	baseFee             *uint256.Int
+	curr                *types.Header
+	rules               params.Rules
+	signer              types.Signer
+	minOpBurnerBalances []map[common.Address]*uint256.Int
 }
 
 var errSettledBlockNotExecuted = errors.New("block marked for settling has not finished execution yet")
@@ -96,7 +98,11 @@ const (
 
 var (
 	errNonConsecutiveBlocks = errors.New("non-consecutive blocks")
-	errQueueFull            = errors.New("queue exceeds gas threshold for new block")
+	// ErrQueueFull is returned by [State.StartBlock] if the queue is not able
+	// to accept new blocks. This can be rectified by building a block at a
+	// later time such that additional blocks are settled and the queue is
+	// sufficiently drained.
+	ErrQueueFull = errors.New("queue exceeds gas threshold for new block")
 )
 
 // StartBlock updates the worst-case state to the beginning of the provided
@@ -106,7 +112,7 @@ var (
 // be set. However, all other fields should be populated and
 // [types.Header.ParentHash] must match the previous block's hash.
 //
-// If the queue is too full to accept another block, an error is returned.
+// If the queue is too full to accept another block, [ErrQueueFull] is returned.
 func (s *State) StartBlock(h *types.Header) error {
 	if h.ParentHash != s.expectedParentHash {
 		return fmt.Errorf("%w: expected parent hash of %s but was %s",
@@ -121,10 +127,12 @@ func (s *State) StartBlock(h *types.Header) error {
 
 	s.maxBlockSize = safeMaxBlockSize(s.clock)
 	if maxOpenQSize := maxFullBlocksInOpenQueue * s.maxBlockSize; s.qSize > maxOpenQSize {
-		return fmt.Errorf("%w: current size %d exceeds maximum size for accepting new blocks %d", errQueueFull, s.qSize, maxOpenQSize)
+		return fmt.Errorf("%w: current size %d exceeds maximum size for accepting new blocks %d", ErrQueueFull, s.qSize, maxOpenQSize)
 	}
 
 	s.baseFee = s.clock.BaseFee()
+	clear(s.minOpBurnerBalances) // [State.FinishBlock] returns a clone so we can reuse the alloc here
+	s.minOpBurnerBalances = s.minOpBurnerBalances[:0]
 
 	// expectedParentHash is updated prior to modifying the GasLimit and BaseFee
 	// to ensure that historical block hashes are not modified.
@@ -232,7 +240,7 @@ func txToOp(from common.Address, tx *types.Transaction) (hook.Op, error) {
 				Amount: amount,
 			},
 		},
-		// To MUST NOT be populated here because this transaction may revert.
+		// Mint MUST NOT be populated here because this transaction may revert.
 	}, nil
 }
 
@@ -254,6 +262,8 @@ func (s *State) Apply(o hook.Op) error {
 	if o.GasFeeCap.Lt(s.baseFee) {
 		return core.ErrFeeCapTooLow
 	}
+
+	burnerBalances := make(map[common.Address]*uint256.Int, len(o.Burn))
 	for from, ad := range o.Burn {
 		switch nonce, next := ad.Nonce, s.db.GetNonce(from); {
 		case nonce < next:
@@ -263,10 +273,14 @@ func (s *State) Apply(o hook.Op) error {
 		case next == math.MaxUint64:
 			return core.ErrNonceMax
 		}
+		// MUST be before `o.ApplyTo()` to mirror [saexec.Executor] check
+		burnerBalances[from] = s.db.GetBalance(from)
 	}
+
 	if err := o.ApplyTo(s.db); err != nil {
 		return err
 	}
+	s.minOpBurnerBalances = append(s.minOpBurnerBalances, burnerBalances)
 	s.blockSize += o.Gas
 	return nil
 }
@@ -277,10 +291,17 @@ func (s *State) GasUsed() uint64 {
 }
 
 // FinishBlock advances the [gastime.Time] in preparation for the next block.
-func (s *State) FinishBlock() error {
+//
+// The returned bounds assume that every non-nil error from [State.ApplyTx]
+// resulted in said transaction being included, which is reflected in the
+// indexing of tx-sender balances.
+func (s *State) FinishBlock() (*blocks.WorstCaseBounds, error) {
 	if err := s.clock.AfterBlock(s.blockSize, s.hooks, s.curr); err != nil {
-		return fmt.Errorf("finishing block gas time update: %w", err)
+		return nil, fmt.Errorf("finishing block gas time update: %w", err)
 	}
 	s.qSize += s.blockSize
-	return nil
+	return &blocks.WorstCaseBounds{
+		MaxBaseFee:          s.baseFee,
+		MinOpBurnerBalances: slices.Clone(s.minOpBurnerBalances),
+	}, nil
 }

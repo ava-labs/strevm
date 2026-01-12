@@ -111,15 +111,24 @@ func (e *Executor) execute(b *blocks.Block, logger logging.Logger) error {
 		return fmt.Errorf("before-block hook: %v", err)
 	}
 
+	baseFee := gasClock.BaseFee()
+	b.CheckBaseFeeBound(baseFee)
 	header := types.CopyHeader(b.Header())
-	header.BaseFee = gasClock.BaseFee().ToBig()
+	header.BaseFee = baseFee.ToBig()
 
 	gasPool := core.GasPool(math.MaxUint64) // required by geth but irrelevant so max it out
 	var blockGasConsumed gas.Gas
 
+	signer := types.MakeSigner(e.chainConfig, b.Number(), b.BuildTime())
 	receipts := make(types.Receipts, len(b.Transactions()))
 	for ti, tx := range b.Transactions() {
 		stateDB.SetTxContext(tx.Hash(), ti)
+		b.CheckSenderBalanceBound(stateDB, signer, tx)
+
+		logger = logger.With(
+			zap.Int("tx_index", ti),
+			zap.Stringer("tx_hash", tx.Hash()),
+		)
 
 		receipt, err := core.ApplyTransaction(
 			e.chainConfig,
@@ -135,8 +144,6 @@ func (e *Executor) execute(b *blocks.Block, logger logging.Logger) error {
 		if err != nil {
 			logger.Fatal(
 				"Transaction execution errored (not reverted); see emergency playbook",
-				zap.Int("tx_index", ti),
-				zap.Stringer("tx_hash", tx.Hash()),
 				zap.String("playbook", "https://github.com/ava-labs/strevm/issues/28"),
 				zap.Error(err),
 			)
@@ -163,7 +170,9 @@ func (e *Executor) execute(b *blocks.Block, logger logging.Logger) error {
 		receipts[ti] = receipt
 	}
 
+	numTxs := len(b.Transactions())
 	for i, o := range e.hooks.EndOfBlockOps(b.EthBlock()) {
+		b.CheckOpBurnerBalanceBounds(stateDB, numTxs+i, o)
 		blockGasConsumed += o.Gas
 		perTxClock.Tick(o.Gas)
 		b.SetInterimExecutionTime(perTxClock)
