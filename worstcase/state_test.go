@@ -199,6 +199,15 @@ func TestMultipleBlocks(t *testing.T) {
 					wantErr: nil,
 				},
 			},
+			wantMinSenderBalances: []map[common.Address]uint64{
+				{ /* empty Burn map */ },
+				/* wantErr != nil */
+				{eoaNoBalance: importedAmount},
+			},
+		},
+		{
+			wantGasLimit: initialMaxBlockSize,
+			wantBaseFee:  uint256.NewInt(2),
 			txsAfterOps: []*types.Transaction{
 				wallet.SetNonceAndSign(t, 0, &types.LegacyTx{
 					To:       &common.Address{},
@@ -212,15 +221,15 @@ func TestMultipleBlocks(t *testing.T) {
 					Value:    big.NewInt(123_456),
 				}),
 				wallet.SetNonceAndSign(t, 0, &types.LegacyTx{
-					To:  nil,
-					Gas: 100_000,
-					// TODO(arr4n) do we want to be more lenient for dynamic-fee
-					// txs since we know the worst-case base fee?
+					To:       nil,
+					Gas:      100_000,
 					GasPrice: big.NewInt(10), // charged in full
 				}),
 				wallet.SetNonceAndSign(t, 0, &types.DynamicFeeTx{
-					To:        &common.Address{},
-					Gas:       100_000,
+					To:  &common.Address{},
+					Gas: 100_000,
+					// TODO(arr4n) do we want to be more lenient for dynamic-fee
+					// txs since we know the worst-case base fee?
 					GasFeeCap: big.NewInt(100),
 				}),
 				wallet.SetNonceAndSign(t, 0, &types.LegacyTx{
@@ -233,15 +242,12 @@ func TestMultipleBlocks(t *testing.T) {
 				}),
 			},
 			wantMinSenderBalances: []map[common.Address]uint64{
-				{ /* empty Burn map */ },
-				/* wantErr != nil */
-				{eoaNoBalance: importedAmount},
 				// Before each tx:
 				{eoaViaTx: startingBalance},
 				{eoaViaTx: startingBalance - 2*100_000},
 				{eoaViaTx: startingBalance - 2*100_000 - (2*200_000 + 123_456)},
 				{eoaViaTx: startingBalance - 2*100_000 - (2*200_000 + 123_456) - 10*100_000},               // non-dynamic fee
-				{eoaViaTx: startingBalance - 2*100_000 - (2*200_000 + 123_456) - 10*100_000 - 100*100_000}, // dynamic fee _not_ reduced
+				{eoaViaTx: startingBalance - 2*100_000 - (2*200_000 + 123_456) - 10*100_000 - 100*100_000}, // dynamic fee _not_ reduced (https://github.com/ava-labs/strevm/issues/74)
 			},
 		},
 		{
