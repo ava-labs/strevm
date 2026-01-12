@@ -17,6 +17,7 @@ import (
 
 	"github.com/ava-labs/avalanchego/utils/logging"
 	"github.com/ava-labs/avalanchego/vms/components/gas"
+	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core"
 	"github.com/ava-labs/libevm/core/state"
 	"github.com/ava-labs/libevm/core/types"
@@ -24,6 +25,7 @@ import (
 	"github.com/ava-labs/libevm/libevm/options"
 	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/triedb"
+	"github.com/holiman/uint256"
 	"github.com/stretchr/testify/require"
 
 	"github.com/ava-labs/strevm/blocks"
@@ -171,4 +173,23 @@ func WithGasExcess(excess gas.Gas) GenesisOption {
 	return options.Func[genesisConfig](func(gc *genesisConfig) {
 		gc.gasExcess = excess
 	})
+}
+
+// SetUninformativeWorstCaseBounds calls [blocks.Block.SetWorstCaseBounds] with
+// a base fee of 2^256-1 and tx-sender balances of zero. These are guaranteed to
+// pass the checks and never result in error logs, and MUST NOT be used in full
+// integration tests.
+func SetUninformativeWorstCaseBounds(tb testing.TB, signer types.Signer, b *blocks.Block) {
+	tb.Helper()
+	wcb := &blocks.WorstCaseBounds{
+		MaxBaseFee: new(uint256.Int).SetAllOne(),
+	}
+	for _, tx := range b.Transactions() {
+		burner, err := types.Sender(signer, tx)
+		require.NoError(tb, err, "types.Sender(..., %v): %v", tx.Hash(), err)
+		wcb.MinOpBurnerBalances = append(wcb.MinOpBurnerBalances, map[common.Address]*uint256.Int{
+			burner: new(uint256.Int),
+		})
+	}
+	b.SetWorstCaseBounds(wcb)
 }
