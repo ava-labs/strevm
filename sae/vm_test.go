@@ -135,7 +135,6 @@ func newSUT(tb testing.TB, numAccounts uint, opts ...sutOption) (context.Context
 
 	logger := saetest.NewTBLogger(tb, conf.logLevel)
 	ctx := logger.CancelOnError(tb.Context())
-
 	snowCtx := snowtest.Context(tb, chainID)
 	snowCtx.Log = logger
 
