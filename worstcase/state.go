@@ -131,7 +131,8 @@ func (s *State) StartBlock(h *types.Header) error {
 	}
 
 	s.baseFee = s.clock.BaseFee()
-	s.minOpBurnerBalances = s.minOpBurnerBalances[:0] // [State.FinishBlock] returns a clone so we can reuse the alloc here
+	clear(s.minOpBurnerBalances) // [State.FinishBlock] returns a clone so we can reuse the alloc here
+	s.minOpBurnerBalances = s.minOpBurnerBalances[:0]
 
 	// expectedParentHash is updated prior to modifying the GasLimit and BaseFee
 	// to ensure that historical block hashes are not modified.
