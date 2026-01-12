@@ -5,7 +5,10 @@ package blocks
 
 import (
 	"fmt"
+	"maps"
+	"slices"
 
+	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core/state"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/trie"
@@ -17,9 +20,10 @@ import (
 // builder, that a [Block] will encounter when eventually executed.
 type WorstCaseBounds struct {
 	MaxBaseFee *uint256.Int
-	// Invariant: length of individual slices MUST equal the respective lenth
-	// of the [hook.Op.Burn] map. For transaction-derived Ops, this is always 1.
-	MinOpBurnerBalances [][]*uint256.Int
+	// Invariant: keys of individual maps MUST be identical to those of the
+	// respective [hook.Op.Burn] map. For transaction-derived Ops, there is
+	// always 1 entry.
+	MinOpBurnerBalances []map[common.Address]*uint256.Int
 }
 
 // SetWorstCaseBounds sets the bounds, which MUST be done before execution.
@@ -80,8 +84,16 @@ func (b *Block) CheckSenderBalanceBound(stateDB *state.StateDB, signer types.Sig
 		)
 		return
 	}
+	low, ok := minBals[sender]
+	if !ok {
+		log.Warn("Transaction sender not in worst-case op-burner balances",
+			zap.Stringer("sender", sender),
+			zap.Stringers("op_burners", slices.Collect(maps.Keys(minBals))),
+		)
+		return
+	}
 
-	switch actual, low := stateDB.GetBalance(sender), minBals[0]; actual.Cmp(low) {
+	switch actual := stateDB.GetBalance(sender); actual.Cmp(low) {
 	case -1:
 		log.Error("Actual balance < predicted worst case",
 			zap.Stringer("sender", sender),

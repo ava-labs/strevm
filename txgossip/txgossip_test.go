@@ -76,7 +76,7 @@ func newSUT(t *testing.T, numAccounts uint) SUT {
 
 	db := rawdb.NewMemoryDatabase()
 	genesis := blockstest.NewGenesis(t, db, config, saetest.MaxAllocFor(wallet.Addresses()...))
-	chain := blockstest.NewChainBuilder(genesis)
+	chain := blockstest.NewChainBuilder(config, genesis)
 
 	exec, err := saexec.New(genesis, chain.GetBlock, config, db, nil, &hookstest.Stub{Target: 1e6}, logger)
 	require.NoError(t, err, "saexec.New()")

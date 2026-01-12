@@ -57,7 +57,7 @@ type State struct {
 	curr                *types.Header
 	rules               params.Rules
 	signer              types.Signer
-	minOpBurnerBalances [][]*uint256.Int
+	minOpBurnerBalances []map[common.Address]*uint256.Int
 }
 
 var errSettledBlockNotExecuted = errors.New("block marked for settling has not finished execution yet")
@@ -262,7 +262,7 @@ func (s *State) Apply(o hook.Op) error {
 		return core.ErrFeeCapTooLow
 	}
 
-	burnerBalances := make([]*uint256.Int, 0, len(o.Burn))
+	burnerBalances := make(map[common.Address]*uint256.Int, len(o.Burn))
 	for from, ad := range o.Burn {
 		switch nonce, next := ad.Nonce, s.db.GetNonce(from); {
 		case nonce < next:
@@ -273,7 +273,7 @@ func (s *State) Apply(o hook.Op) error {
 			return core.ErrNonceMax
 		}
 		// MUST be before `o.ApplyTo()` to mirror [saexec.Executor] check
-		burnerBalances = append(burnerBalances, s.db.GetBalance(from))
+		burnerBalances[from] = s.db.GetBalance(from)
 	}
 
 	if err := o.ApplyTo(s.db); err != nil {

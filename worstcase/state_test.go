@@ -111,7 +111,7 @@ func TestMultipleBlocks(t *testing.T) {
 		wantBaseFee           *uint256.Int
 		ops                   []op
 		txsAfterOps           []*types.Transaction
-		wantMinSenderBalances [][]uint64 // transformed to uint256.Int
+		wantMinSenderBalances []map[common.Address]uint64 // transformed to uint256.Int
 	}{
 		{
 			hooks: &hookstest.Stub{
@@ -148,8 +148,8 @@ func TestMultipleBlocks(t *testing.T) {
 					wantErr: nil,
 				},
 			},
-			wantMinSenderBalances: [][]uint64{
-				{startingBalance},
+			wantMinSenderBalances: []map[common.Address]uint64{
+				{eoa: startingBalance},
 				/* wantErr != nil so not included */
 				{ /* empty Burn map*/ },
 			},
@@ -232,16 +232,16 @@ func TestMultipleBlocks(t *testing.T) {
 					GasPrice: big.NewInt(2),
 				}),
 			},
-			wantMinSenderBalances: [][]uint64{
+			wantMinSenderBalances: []map[common.Address]uint64{
 				{ /* empty Burn map */ },
 				/* wantErr != nil */
-				{importedAmount},
+				{eoaNoBalance: importedAmount},
 				// Before each tx:
-				{startingBalance},
-				{startingBalance - 2*100_000},
-				{startingBalance - 2*100_000 - (2*200_000 + 123_456)},
-				{startingBalance - 2*100_000 - (2*200_000 + 123_456) - 10*100_000},               // non-dynamic fee
-				{startingBalance - 2*100_000 - (2*200_000 + 123_456) - 10*100_000 - 100*100_000}, // dynamic fee _not_ reduced
+				{eoaViaTx: startingBalance},
+				{eoaViaTx: startingBalance - 2*100_000},
+				{eoaViaTx: startingBalance - 2*100_000 - (2*200_000 + 123_456)},
+				{eoaViaTx: startingBalance - 2*100_000 - (2*200_000 + 123_456) - 10*100_000},               // non-dynamic fee
+				{eoaViaTx: startingBalance - 2*100_000 - (2*200_000 + 123_456) - 10*100_000 - 100*100_000}, // dynamic fee _not_ reduced
 			},
 		},
 		{
@@ -281,9 +281,9 @@ func TestMultipleBlocks(t *testing.T) {
 			MaxBaseFee: block.wantBaseFee,
 		}
 		for _, bals := range block.wantMinSenderBalances {
-			var uBals []*uint256.Int
-			for _, b := range bals {
-				uBals = append(uBals, uint256.NewInt(b))
+			uBals := make(map[common.Address]*uint256.Int)
+			for addr, b := range bals {
+				uBals[addr] = uint256.NewInt(b)
 			}
 			want.MinOpBurnerBalances = append(want.MinOpBurnerBalances, uBals)
 		}

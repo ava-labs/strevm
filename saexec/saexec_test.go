@@ -85,7 +85,7 @@ func newSUT(tb testing.TB, hooks *saehookstest.Stub) (context.Context, SUT) {
 	opts := blockstest.WithBlockOptions(
 		blockstest.WithLogger(logger),
 	)
-	chain := blockstest.NewChainBuilder(genesis, opts)
+	chain := blockstest.NewChainBuilder(config, genesis, opts)
 
 	e, err := New(genesis, chain.GetBlock, config, db, tdbConfig, hooks, logger)
 	require.NoError(tb, err, "New()")
