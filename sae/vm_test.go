@@ -93,8 +93,7 @@ func newSUT(tb testing.TB, numAccounts uint, opts ...sutOption) (context.Context
 	mempoolConf := legacypool.DefaultConfig // copies
 	mempoolConf.Journal = "/dev/null"
 
-	signer := types.LatestSigner(saetest.ChainConfig())
-	wallet := saetest.NewUNSAFEWallet(tb, numAccounts, signer)
+	keys := saetest.NewUNSAFEKeyChain(tb, numAccounts)
 
 	conf := options.ApplyTo(&sutConfig{
 		vmConfig: Config{
@@ -105,22 +104,11 @@ func newSUT(tb testing.TB, numAccounts uint, opts ...sutOption) (context.Context
 			Target: 100e6,
 		},
 		logLevel: logging.Debug,
-		alloc:    saetest.MaxAllocFor(wallet.Addresses()...),
+		alloc:    saetest.MaxAllocFor(keys.Addresses()...),
 		genesisOptions: []blockstest.GenesisOption{
 			blockstest.WithTimestamp(saeparams.TauSeconds),
 		},
 	}, opts...)
-
-	// If the options updated the ChainConfig it could require a new signer.
-	// This is unavoidable because we need the wallet earlier, to determine the
-	// addresses for the alloc.
-	//
-	// TODO(arr4n) abstract a keychain (responsible for private keys) from the
-	// wallet (responsible for nonce management).
-	if s := types.LatestSigner(conf.chainConfig); !s.Equal(signer) {
-		signer = s //nolint:ineffassign // Protect against future changes that may use `signer` later
-		wallet.SetSigner(s)
-	}
 
 	vm := NewVM(conf.vmConfig)
 	snow := adaptor.Convert(&SinceGenesis{VM: vm})
@@ -156,9 +144,12 @@ func newSUT(tb testing.TB, numAccounts uint, opts ...sutOption) (context.Context
 		rpcClient: rpcClient,
 		rawVM:     vm,
 		genesis:   genesis,
-		wallet:    wallet,
-		db:        db,
-		logger:    logger,
+		wallet: saetest.NewWalletWithKeyChain(
+			keys,
+			types.LatestSigner(conf.chainConfig),
+		),
+		db:     db,
+		logger: logger,
 	}
 }
 
