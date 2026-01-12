@@ -176,7 +176,7 @@ func (vm *VM) buildBlock(
 				return nil, fmt.Errorf("applying op at end of block %d to worst-case state: %v", b.Height(), err)
 			}
 		}
-		if err := state.FinishBlock(); err != nil {
+		if _, err := state.FinishBlock(); err != nil {
 			log.Warn("Could not finish historical worst-case calculation",
 				zap.Error(err),
 			)
@@ -186,10 +186,16 @@ func (vm *VM) buildBlock(
 
 	hdr.Root = lastSettled.PostExecutionStateRoot()
 	if err := state.StartBlock(hdr); err != nil {
-		log.Warn("Could not start worst-case block calculation",
+		// A full queue is a normal mode of operation (backpressure working as
+		// intended) so should not be a warning.
+		logTo := log.Warn
+		if errors.Is(err, worstcase.ErrQueueFull) {
+			logTo = log.Debug
+		}
+		logTo("Could not start worst-case block calculation",
 			zap.Error(err),
 		)
-		return nil, fmt.Errorf("starting worst-case state for new block: %v", err)
+		return nil, fmt.Errorf("starting worst-case state for new block: %w", err)
 	}
 
 	hdr.GasLimit = state.GasLimit()
@@ -207,23 +213,26 @@ func (vm *VM) buildBlock(
 		if remainingGas := state.GasLimit() - state.GasUsed(); remainingGas < params.TxGas {
 			break
 		}
+		log = log.With(
+			zap.Stringer("tx_hash", ltx.Hash),
+			zap.Int("tx_index", len(included)),
+			zap.Stringer("sender", ltx.Sender),
+		)
 
 		tx, ok := ltx.Resolve()
 		if !ok {
-			log.Debug("Could not resolve lazy transaction",
-				zap.Stringer("tx_hash", ltx.Hash),
-			)
+			log.Debug("Could not resolve lazy transaction")
 			continue
 		}
 
+		// The [saexec.Executor] checks the worst-case balance before tx
+		// execution so we MUST record it at the equivalent point, before
+		// ApplyTx().
 		if err := state.ApplyTx(tx); err != nil {
-			log.Debug("Could not apply transaction",
-				zap.Int("tx_index", len(included)),
-				zap.Stringer("tx_hash", ltx.Hash),
-				zap.Error(err),
-			)
+			log.Debug("Could not apply transaction", zap.Error(err))
 			continue
 		}
+		log.Trace("Including transaction")
 		included = append(included, tx)
 	}
 
@@ -231,9 +240,8 @@ func (vm *VM) buildBlock(
 	// that [hook.Op.Gas] can be included?
 	hdr.GasUsed = state.GasUsed()
 
-	// Although we never interact with the worst-case state after this point, we
-	// still mark the block as finished to align with normal execution.
-	if err := state.FinishBlock(); err != nil {
+	bounds, err := state.FinishBlock()
+	if err != nil {
 		log.Warn("Could not finish worst-case block calculation",
 			zap.Error(err),
 		)
@@ -251,7 +259,12 @@ func (vm *VM) buildBlock(
 		included,
 		receipts,
 	)
-	return vm.newBlock(ethB, parent, lastSettled)
+	b, err := vm.newBlock(ethB, parent, lastSettled)
+	if err != nil {
+		return nil, err
+	}
+	b.SetWorstCaseBounds(bounds)
+	return b, nil
 }
 
 var (
@@ -328,6 +341,7 @@ func (vm *VM) VerifyBlock(ctx context.Context, bCtx *block.Context, b *blocks.Bl
 	if err := b.CopyAncestorsFrom(rebuilt); err != nil {
 		return err
 	}
+	b.SetWorstCaseBounds(rebuilt.WorstCaseBounds())
 
 	vm.blocks.Store(b.Hash(), b)
 	return nil
