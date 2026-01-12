@@ -216,10 +216,7 @@ func (s *State) ApplyTx(tx *types.Transaction) error {
 	if err != nil {
 		return fmt.Errorf("converting transaction to operation: %w", err)
 	}
-	if err := s.Apply(op); err != nil {
-		return err
-	}
-	return nil
+	return s.Apply(op)
 }
 
 func txToOp(from common.Address, tx *types.Transaction) (hook.Op, error) {
