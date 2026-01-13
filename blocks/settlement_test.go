@@ -6,6 +6,7 @@ package blocks
 import (
 	"context"
 	"fmt"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -70,9 +71,11 @@ func TestSettlementInvariants(t *testing.T) {
 		t.FailNow()
 	}
 
-	require.NoError(t, b.MarkSettled(), "first call to MarkSettled()")
+	var lastSettledPtr atomic.Pointer[Block]
+	require.NoError(t, b.MarkSettled(&lastSettledPtr), "first call to MarkSettled()")
 
 	t.Run("after_MarkSettled", func(t *testing.T) {
+		assert.Equal(t, b, lastSettledPtr.Load(), "Atomic pointer to last-settled block")
 		require.True(t, b.Settled(), "Settled()")
 		assert.NoError(t, b.WaitUntilSettled(context.Background()), "WaitUntilSettled()")
 		assert.NoError(t, b.CheckInvariants(Settled), "CheckInvariants(Settled)")
@@ -88,7 +91,7 @@ func TestSettlementInvariants(t *testing.T) {
 		assertNumErrorLogs(t, 1)
 		assert.Nil(t, b.LastSettled(), "LastSettled()")
 		assertNumErrorLogs(t, 2)
-		assert.ErrorIs(t, b.MarkSettled(), errBlockResettled, "second call to MarkSettled()")
+		assert.ErrorIs(t, b.MarkSettled(&lastSettledPtr), errBlockResettled, "second call to MarkSettled()")
 		assertNumErrorLogs(t, 3)
 		if t.Failed() {
 			t.FailNow()

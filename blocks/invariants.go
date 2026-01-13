@@ -5,10 +5,130 @@ package blocks
 
 import (
 	"fmt"
+	"maps"
+	"slices"
 
+	"github.com/ava-labs/avalanchego/utils/logging"
+	"github.com/ava-labs/libevm/common"
+	"github.com/ava-labs/libevm/core/state"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/trie"
+	"github.com/holiman/uint256"
+	"go.uber.org/zap"
+
+	"github.com/ava-labs/strevm/hook"
 )
+
+// WorstCaseBounds define the limits of certain values, predicted by the block
+// builder, that a [Block] will encounter when eventually executed.
+type WorstCaseBounds struct {
+	MaxBaseFee *uint256.Int
+	// Invariant: keys of individual maps MUST be identical to those of the
+	// respective [hook.Op.Burn] map. For transaction-derived Ops, there is
+	// always 1 entry.
+	MinOpBurnerBalances []map[common.Address]*uint256.Int
+}
+
+// SetWorstCaseBounds sets the bounds, which MUST be done before execution.
+func (b *Block) SetWorstCaseBounds(lim *WorstCaseBounds) {
+	b.bounds = lim
+}
+
+// WorstCaseBounds returns the argument passed to [Block.SetWorstCaseBounds].
+func (b *Block) WorstCaseBounds() *WorstCaseBounds {
+	return b.bounds
+}
+
+// CheckBaseFeeBound logs at ERROR if the `actual` base fee is greater than the
+// predicted upper bound passed to [Block.SetWorstCaseBounds].
+//
+// Such a violation, while potentially critical, might not result in failed
+// execution so no error is returned and execution MUST continue optimistically.
+// Any such log in development will cause tests to fail.
+func (b *Block) CheckBaseFeeBound(actual *uint256.Int) {
+	switch actual.Cmp(b.bounds.MaxBaseFee) {
+	case 1:
+		b.log.Error("Actual base fee > predicted worst case",
+			zap.Stringer("actual", actual),
+			zap.Stringer("predicted", b.bounds.MaxBaseFee),
+		)
+
+	case 0: // Coverage visualisation
+		_ = 0
+	case -1:
+		_ = 0
+	}
+}
+
+// CheckSenderBalanceBound logs at ERROR if the balance of the `tx` sender is
+// less than the predicted lower bound passed to [Block.SetWorstCaseBounds].
+// [state.StateDB.SetTxContext] MUST have already been called.
+//
+// Such a violation, while potentially critical, might not result in failed
+// execution so no error is returned and execution MUST continue optimistically.
+// Any such log in development will cause tests to fail.
+func (b *Block) CheckSenderBalanceBound(stateDB *state.StateDB, signer types.Signer, tx *types.Transaction) {
+	log := b.log.With(
+		zap.Int("tx_index", stateDB.TxIndex()),
+		zap.Stringer("tx_hash", tx.Hash()),
+	)
+	sender, err := types.Sender(signer, tx)
+	if err != nil {
+		log.Warn("Unable to recover sender for confirming worst-case balance",
+			zap.Error(err),
+		)
+		return
+	}
+	b.checkBalanceBounds(log, stateDB, stateDB.TxIndex(), sender)
+}
+
+// CheckOpBurnerBalanceBounds is equivalent to [Block.CheckSenderBalanceBound],
+// performed for every address in [hook.Op.Burn] instead of only for a single
+// transaction sender.
+//
+// For the purposes of calculating the Op's index in the block, a
+// [types.Transaction] is also considered to be an Op.
+func (b *Block) CheckOpBurnerBalanceBounds(stateDB *state.StateDB, opIndexInBlock int, op hook.Op) {
+	log := b.log.With(
+		zap.Int("op_index_in_block", opIndexInBlock),
+		zap.Stringer("op_id", op.ID),
+	)
+	b.checkBalanceBounds(log, stateDB, opIndexInBlock, slices.Collect(maps.Keys(op.Burn))...)
+}
+
+func (b *Block) checkBalanceBounds(log logging.Logger, stateDB *state.StateDB, opIndexInBlock int, accounts ...common.Address) {
+	minBals := b.bounds.MinOpBurnerBalances[opIndexInBlock]
+	if len(minBals) != len(accounts) {
+		log.Warn("Incorrect number of worst-case op-burner balances",
+			zap.Int("min_balance_bounds", len(minBals)),
+			zap.Int("accounts_to_check", len(accounts)),
+		)
+	}
+
+	for _, addr := range accounts {
+		low, ok := minBals[addr]
+		if !ok {
+			log.Warn("Op burner (transaction sender) not in worst-case op-burner balances",
+				zap.Stringer("burner", addr),
+				zap.Stringers("op_burners", slices.Collect(maps.Keys(minBals))),
+			)
+			continue
+		}
+		switch actual := stateDB.GetBalance(addr); actual.Cmp(low) {
+		case -1:
+			log.Error("Actual balance < predicted worst case",
+				zap.Stringer("burner_or_sender", addr),
+				zap.Stringer("actual", actual),
+				zap.Stringer("predicted", low),
+			)
+
+		case 0: // Coverage visualisation
+			_ = 0
+		case 1:
+			_ = 0
+		}
+	}
+}
 
 // A LifeCycleStage defines the progression of a block from acceptance through
 // to settlement.

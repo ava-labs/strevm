@@ -262,16 +262,21 @@ func newNetAPI(peers *p2p.Peers, chainID uint64) *netAPI {
 	}
 }
 
-func (s *netAPI) Version() string {
-	return s.chainID
-}
-
 func (s *netAPI) Listening() bool {
 	return true // The node is always listening for p2p connections.
 }
 
 func (s *netAPI) PeerCount() hexutil.Uint {
-	return hexutil.Uint(s.peers.Len()) //nolint:gosec // Peer count will not overflow
+	c := s.peers.Len()
+	if c <= 0 {
+		return 0
+	}
+	// Peers includes ourself, so we subtract one.
+	return hexutil.Uint(c) - 1
+}
+
+func (s *netAPI) Version() string {
+	return s.chainID
 }
 
 var (
