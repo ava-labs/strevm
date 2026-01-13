@@ -91,9 +91,6 @@ func (tm *Time[D]) Fraction() FractionalSecond[D] {
 //	 0 if f == g
 //	+1 if f > g.
 func (f FractionalSecond[D]) Compare(g FractionalSecond[D]) int {
-	if f.Denominator == g.Denominator {
-		return cmp.Compare(f.Numerator, g.Numerator)
-	}
 	// Cross-multiplication of non-negative components maintains order.
 	fHi, fLo := bits.Mul64(uint64(f.Numerator), uint64(g.Denominator))
 	gHi, gLo := bits.Mul64(uint64(g.Numerator), uint64(f.Denominator))
