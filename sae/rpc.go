@@ -105,10 +105,6 @@ func newNetAPI(peers *p2p.Peers, chainID uint64) *netAPI {
 	}
 }
 
-func (s *netAPI) Version() string {
-	return s.chainID
-}
-
 func (s *netAPI) Listening() bool {
 	return true // The node is always listening for p2p connections.
 }
@@ -120,6 +116,10 @@ func (s *netAPI) PeerCount() hexutil.Uint {
 	}
 	// Peers includes ourself, so we subtract one.
 	return hexutil.Uint(c - 1) //nolint:gosec // Checked above
+}
+
+func (s *netAPI) Version() string {
+	return s.chainID
 }
 
 type ethAPIBackend struct {
