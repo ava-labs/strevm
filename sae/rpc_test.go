@@ -61,7 +61,7 @@ func TestNetNamespace(t *testing.T) {
 		numValidators    = 1
 		numNonValidators = 2
 	)
-	n := newNetworkSUT(t, numValidators, numNonValidators)
+	n := newNetworkedSUTs(t, numValidators, numNonValidators)
 	for _, sut := range n.validators {
 		testRPCMethodsWithPeers(sut, numValidators+numNonValidators-1)
 	}
