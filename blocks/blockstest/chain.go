@@ -87,7 +87,7 @@ func (cb *ChainBuilder) NewBlock(tb testing.TB, txs []*types.Transaction, opts .
 	return b
 }
 
-// Insert adds a block to the chain.
+// Insert sets the block's invariants and adds it to the chain.
 func (cb *ChainBuilder) Insert(tb testing.TB, block *blocks.Block) {
 	tb.Helper()
 	signer := types.MakeSigner(cb.config, block.Number(), block.BuildTime())
@@ -95,6 +95,7 @@ func (cb *ChainBuilder) Insert(tb testing.TB, block *blocks.Block) {
 	cb.insert(block)
 }
 
+// insert adds a block to the chain.
 func (cb *ChainBuilder) insert(block *blocks.Block) {
 	cb.chain = append(cb.chain, block)
 	cb.blocksByHash.Store(block.Hash(), block)
