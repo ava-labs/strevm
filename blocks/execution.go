@@ -30,13 +30,15 @@ import (
 // transactions, with the highest-known gas time. This MAY be at any resolution
 // but MUST be monotonic. Every call MUST provide a time at the same gas rate.
 func (b *Block) SetInterimExecutionTime(t *proxytime.Time[gas.Gas]) {
-	et := <-b.interimExecution
-	if et == nil {
-		et = t.Clone()
+	e := &b.interimExecution
+	e.Lock()
+	defer e.Unlock()
+
+	if e.Time == nil {
+		e.Time = t.Clone()
 	} else {
-		et.FastForwardTo(t.Unix(), t.Fraction().Numerator)
+		e.FastForwardTo(t.Unix(), t.Fraction().Numerator)
 	}
-	b.interimExecution <- et
 }
 
 type executionResults struct {

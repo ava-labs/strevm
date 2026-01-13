@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"math/big"
 	"runtime"
+	"sync"
 	"sync/atomic"
 
 	"github.com/ava-labs/avalanchego/utils/logging"
@@ -51,7 +52,10 @@ type Block struct {
 	// execution is yet to commence. For more details, see
 	// [Block.SetInterimExecutionTime for setting and [LastToSettleAt] for
 	// usage.
-	interimExecution chan *proxytime.Time[gas.Gas] // single-value buffer in lieu of lock
+	interimExecution struct {
+		sync.RWMutex
+		*proxytime.Time[gas.Gas]
+	}
 
 	executed chan struct{} // closed after `execution` is set
 	settled  chan struct{} // closed after `ancestry` is cleared
@@ -76,12 +80,10 @@ func InMemoryBlockCount() int64 {
 // Block.
 func New(eth *types.Block, parent, lastSettled *Block, log logging.Logger) (*Block, error) {
 	b := &Block{
-		b:                eth,
-		executed:         make(chan struct{}),
-		settled:          make(chan struct{}),
-		interimExecution: make(chan *proxytime.Time[gas.Gas], 1),
+		b:        eth,
+		executed: make(chan struct{}),
+		settled:  make(chan struct{}),
 	}
-	b.interimExecution <- nil
 
 	inMemoryBlockCount.Add(1)
 	runtime.AddCleanup(b, func(struct{}) {

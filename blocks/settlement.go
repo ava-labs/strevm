@@ -252,9 +252,11 @@ func LastToSettleAt(hooks hook.Points, settleAt *proxytime.Time[gas.Gas], parent
 			}
 		}
 		{
-			et := <-block.interimExecution
-			passed := et != nil && et.Compare(settleAt) > 0
-			block.interimExecution <- et
+			e := &block.interimExecution
+			e.RLock()
+			passed := e.Time != nil && e.Compare(settleAt) > 0
+			e.RUnlock()
+
 			if passed {
 				known = true
 				continue
