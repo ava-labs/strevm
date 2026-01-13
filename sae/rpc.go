@@ -115,7 +115,7 @@ func (s *netAPI) PeerCount() hexutil.Uint {
 		return 0
 	}
 	// Peers includes ourself, so we subtract one.
-	return hexutil.Uint(c - 1) //nolint:gosec // Checked above
+	return hexutil.Uint(c) - 1
 }
 
 func (s *netAPI) Version() string {
