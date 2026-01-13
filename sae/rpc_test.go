@@ -5,6 +5,7 @@ package sae
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/ava-labs/avalanchego/version"
@@ -13,6 +14,8 @@ import (
 	"github.com/ava-labs/libevm/crypto"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/ava-labs/strevm/saetest"
 )
 
 func TestSubscriptions(t *testing.T) {
@@ -39,6 +42,32 @@ func TestWeb3Namespace(t *testing.T) {
 		want                   = hexutil.Bytes(crypto.Keccak256(preImage))
 	)
 	testRPCMethod(ctx, t, sut, "web3_sha3", want, preImage)
+}
+
+func TestNetNamespace(t *testing.T) {
+	testRPCMethodsWithPeers := func(sut *SUT, c hexutil.Uint) {
+		t.Helper()
+
+		ctx := sut.context(t)
+		testRPCMethod(ctx, t, sut, "net_version", fmt.Sprintf("%d", saetest.ChainConfig().ChainID.Uint64()))
+		testRPCMethod(ctx, t, sut, "net_listening", true)
+		testRPCMethod(ctx, t, sut, "net_peerCount", c)
+	}
+
+	_, sut := newSUT(t, 1) // No peers
+	testRPCMethodsWithPeers(sut, 0)
+
+	const (
+		numValidators    = 1
+		numNonValidators = 2
+	)
+	n := newNetworkSUT(t, numValidators, numNonValidators)
+	for _, sut := range n.validators {
+		testRPCMethodsWithPeers(sut, numValidators+numNonValidators-1)
+	}
+	for _, sut := range n.nonValidators {
+		testRPCMethodsWithPeers(sut, numValidators)
+	}
 }
 
 func testRPCMethod[T any](ctx context.Context, t *testing.T, sut *SUT, method string, want T, args ...any) {

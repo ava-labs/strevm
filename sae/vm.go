@@ -40,6 +40,7 @@ import (
 // provide a last-synchronous block, which MAY be the genesis.
 type VM struct {
 	*p2p.Network
+	peers *p2p.Peers
 
 	config  Config
 	snowCtx *snow.Context
@@ -161,7 +162,7 @@ func (vm *VM) Init(
 	}
 
 	{ // ==========  P2P Gossip  ==========
-		network, validatorPeers, err := newNetwork(snowCtx, sender, vm.metrics)
+		network, peers, validatorPeers, err := newNetwork(snowCtx, sender, vm.metrics)
 		if err != nil {
 			return fmt.Errorf("newNetwork(...): %v", err)
 		}
@@ -203,6 +204,7 @@ func (vm *VM) Init(
 		}()
 
 		vm.Network = network
+		vm.peers = peers
 		vm.mempool.RegisterPushGossiper(pushGossiper)
 		vm.toClose = append(vm.toClose, func() error {
 			cancel()

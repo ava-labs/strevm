@@ -19,9 +19,11 @@ func newNetwork(
 	reg *prometheus.Registry,
 ) (
 	*p2p.Network,
+	*p2p.Peers,
 	*p2p.Validators,
 	error,
 ) {
+	peers := &p2p.Peers{}
 	const maxValidatorSetStaleness = time.Minute
 	validatorPeers := p2p.NewValidators(
 		snowCtx.Log,
@@ -35,10 +37,11 @@ func newNetwork(
 		sender,
 		reg,
 		namespace,
+		peers,
 		validatorPeers,
 	)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
-	return network, validatorPeers, nil
+	return network, peers, validatorPeers, nil
 }

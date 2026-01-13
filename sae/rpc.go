@@ -8,8 +8,10 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"strconv"
 	"sync"
 
+	"github.com/ava-labs/avalanchego/network/p2p"
 	"github.com/ava-labs/avalanchego/version"
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/common/hexutil"
@@ -53,6 +55,11 @@ func (vm *VM) ethRPCServer() (*rpc.Server, error) {
 		// - web3_clientVersion
 		// - web3_sha3
 		{"web3", newWeb3API()},
+		// Standard Ethereum node APIs:
+		// - net_listening
+		// - net_peerCount
+		// - net_version
+		{"net", newNetAPI(vm.peers, vm.exec.ChainConfig().ChainID.Uint64())},
 
 		{"eth", ethapi.NewBlockChainAPI(b)},
 		{"eth", ethapi.NewTransactionAPI(b, new(ethapi.AddrLocker))},
@@ -83,6 +90,36 @@ func (w *web3API) ClientVersion() string {
 
 func (*web3API) Sha3(input hexutil.Bytes) hexutil.Bytes {
 	return crypto.Keccak256(input)
+}
+
+// netAPI offers the `net` RPCs.
+type netAPI struct {
+	peers   *p2p.Peers
+	chainID string
+}
+
+func newNetAPI(peers *p2p.Peers, chainID uint64) *netAPI {
+	return &netAPI{
+		peers:   peers,
+		chainID: strconv.FormatUint(chainID, 10),
+	}
+}
+
+func (s *netAPI) Version() string {
+	return s.chainID
+}
+
+func (s *netAPI) Listening() bool {
+	return true // The node is always listening for p2p connections.
+}
+
+func (s *netAPI) PeerCount() hexutil.Uint {
+	c := s.peers.Len()
+	if c <= 0 {
+		return 0
+	}
+	// Peers includes ourself, so we subtract one.
+	return hexutil.Uint(c - 1) //nolint:gosec // Checked above
 }
 
 type ethAPIBackend struct {
