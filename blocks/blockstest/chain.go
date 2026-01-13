@@ -30,11 +30,9 @@ type ChainBuilder struct {
 // NewChainBuilder returns a new ChainBuilder starting from the provided block,
 // which MUST NOT be nil.
 func NewChainBuilder(genesis *blocks.Block, defaultOpts ...ChainOption) *ChainBuilder {
-	c := &ChainBuilder{
-		chain: []*blocks.Block{genesis},
-	}
+	c := &ChainBuilder{}
 	c.SetDefaultOptions(defaultOpts...)
-	c.blocksByHash.Store(genesis.Hash(), genesis)
+	c.Insert(genesis)
 	return c
 }
 
@@ -79,8 +77,7 @@ func (cb *ChainBuilder) NewBlock(tb testing.TB, txs []*types.Transaction, opts .
 	last := cb.Last()
 	eth := NewEthBlock(last.EthBlock(), txs, allOpts.eth...)
 	b := NewBlock(tb, eth, last, nil, allOpts.sae...) // TODO(arr4n) support last-settled blocks
-	cb.chain = append(cb.chain, b)
-	cb.blocksByHash.Store(b.Hash(), b)
+	cb.Insert(b)
 
 	return b
 }
