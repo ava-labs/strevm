@@ -45,12 +45,12 @@ func TestWeb3Namespace(t *testing.T) {
 }
 
 func TestNetNamespace(t *testing.T) {
-	testRPCMethodsWithPeers := func(sut *SUT, c hexutil.Uint) {
+	testRPCMethodsWithPeers := func(sut *SUT, wantPeerCount hexutil.Uint) {
 		t.Helper()
 
 		ctx := sut.context(t)
 		testRPCMethod(ctx, t, sut, "net_listening", true)
-		testRPCMethod(ctx, t, sut, "net_peerCount", c)
+		testRPCMethod(ctx, t, sut, "net_peerCount", wantPeerCount)
 		testRPCMethod(ctx, t, sut, "net_version", fmt.Sprintf("%d", saetest.ChainConfig().ChainID.Uint64()))
 	}
 
