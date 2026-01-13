@@ -107,16 +107,13 @@ func NewGenesis(tb testing.TB, db ethdb.Database, config *params.ChainConfig, al
 	tb.Helper()
 	conf := &genesisConfig{
 		gasTarget: math.MaxUint64,
+		genesisSpec: &core.Genesis{
+			Config: config,
+			Alloc:  alloc,
+		},
 	}
 	options.ApplyTo(conf, opts...)
 	gen := conf.genesisSpec
-	if gen == nil {
-		gen = &core.Genesis{
-			Config:    config,
-			Timestamp: conf.timestamp,
-			Alloc:     alloc,
-		}
-	}
 
 	tdb := state.NewDatabaseWithConfig(db, conf.tdbConfig).TrieDB()
 	_, _, err := core.SetupGenesisBlock(db, tdb, gen)
@@ -130,7 +127,6 @@ func NewGenesis(tb testing.TB, db ethdb.Database, config *params.ChainConfig, al
 
 type genesisConfig struct {
 	tdbConfig   *triedb.Config
-	timestamp   uint64
 	gasTarget   gas.Gas
 	gasExcess   gas.Gas
 	genesisSpec *core.Genesis
@@ -156,7 +152,7 @@ func WithGenesisSpec(gen *core.Genesis) GenesisOption {
 // WithTimestamp overrides the timestamp used by [NewGenesis].
 func WithTimestamp(timestamp uint64) GenesisOption {
 	return options.Func[genesisConfig](func(gc *genesisConfig) {
-		gc.timestamp = timestamp
+		gc.genesisSpec.Timestamp = timestamp
 	})
 }
 
