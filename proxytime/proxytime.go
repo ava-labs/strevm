@@ -236,8 +236,7 @@ func (tm *Time[D]) Sub(s uint64) *Time[D] {
 //	 0 if tm and u represent the same instant
 //	+1 if tm is after u.
 //
-// The original implementation of Compare required that both instants had the
-// same [Time.Rate] but this is no longer necessary.
+// The two instants MAY have a different [Time.Rate].
 func (tm *Time[D]) Compare(u *Time[D]) int {
 	if c := cmp.Compare(tm.seconds, u.seconds); c != 0 {
 		return c
