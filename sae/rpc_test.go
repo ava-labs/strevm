@@ -49,9 +49,9 @@ func TestNetNamespace(t *testing.T) {
 		t.Helper()
 
 		ctx := sut.context(t)
-		testRPCMethod(ctx, t, sut, "net_version", fmt.Sprintf("%d", saetest.ChainConfig().ChainID.Uint64()))
 		testRPCMethod(ctx, t, sut, "net_listening", true)
 		testRPCMethod(ctx, t, sut, "net_peerCount", c)
+		testRPCMethod(ctx, t, sut, "net_version", fmt.Sprintf("%d", saetest.ChainConfig().ChainID.Uint64()))
 	}
 
 	_, sut := newSUT(t, 1) // No peers
