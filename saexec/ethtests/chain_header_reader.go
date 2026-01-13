@@ -52,11 +52,7 @@ func (r *readerAdapter) CurrentHeader() *types.Header {
 }
 
 func (r *readerAdapter) GetHeaderByHash(hash common.Hash) *types.Header {
-	number, ok := r.chain.GetNumberByHash(hash)
-	if !ok {
-		return nil
-	}
-	b, ok := r.chain.GetBlock(hash, number)
+	b, ok := r.chain.BlockByHash(hash)
 	if !ok {
 		return nil
 	}
@@ -64,11 +60,7 @@ func (r *readerAdapter) GetHeaderByHash(hash common.Hash) *types.Header {
 }
 
 func (r *readerAdapter) GetHeaderByNumber(number uint64) *types.Header {
-	hash, ok := r.chain.GetHashAtHeight(number)
-	if !ok {
-		return nil
-	}
-	b, ok := r.chain.GetBlock(hash, number)
+	b, ok := r.chain.BlockByNumber(number)
 	if !ok {
 		return nil
 	}

@@ -119,22 +119,22 @@ func (cb *ChainBuilder) GetBlock(h common.Hash, num uint64) (*blocks.Block, bool
 	return b, true
 }
 
-// GetHashAtHeight returns the hash of the block at the given height, and a flag indicating if it was found.
+// BlockByNumber returns the block at the given height, and a flag indicating if it was found.
 // If the height is greater than the number of blocks in the chain, it returns an empty hash and false.
-func (cb *ChainBuilder) GetHashAtHeight(num uint64) (common.Hash, bool) {
+func (cb *ChainBuilder) BlockByNumber(num uint64) (*blocks.Block, bool) {
 	if num >= uint64(len(cb.chain)) {
-		return common.Hash{}, false
+		return nil, false
 	}
 	block := cb.chain[num]
-	return block.Hash(), block != nil && block.NumberU64() == num
+	return block, true
 }
 
-// GetNumberByHash returns the number of the block with the given hash, and a flag indicating if it was found.
-func (cb *ChainBuilder) GetNumberByHash(h common.Hash) (uint64, bool) {
+// BlockByHash returns the block with the given hash, and a flag indicating if it was found.
+func (cb *ChainBuilder) BlockByHash(h common.Hash) (*blocks.Block, bool) {
 	ifc, _ := cb.blocksByHash.Load(h)
 	b, ok := ifc.(*blocks.Block)
 	if !ok {
-		return 0, false
+		return nil, false
 	}
-	return b.NumberU64(), true
+	return b, true
 }

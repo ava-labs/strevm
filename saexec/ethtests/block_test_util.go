@@ -400,15 +400,11 @@ func (t *BlockTest) validateImportedHeaders(cb *blockstest.ChainBuilder, validBl
 	lastBlock := cb.Last()
 	lastNumber := lastBlock.NumberU64()
 	for blockNumber := lastNumber; blockNumber > 0; blockNumber-- {
-		blockHash, ok := cb.GetHashAtHeight(blockNumber)
+		block, ok := cb.BlockByNumber(blockNumber)
 		if !ok {
 			return fmt.Errorf("block at height %d not found", blockNumber)
 		}
-		b, ok := cb.GetBlock(blockHash, blockNumber)
-		if !ok {
-			return fmt.Errorf("block %x at height %d not found", blockHash, blockNumber)
-		}
-		if err := validateHeader(bmap[b.Hash()].BlockHeader, b.Header()); err != nil {
+		if err := validateHeader(bmap[block.Hash()].BlockHeader, block.Header()); err != nil {
 			return fmt.Errorf("imported block header validation failed: %v", err)
 		}
 	}
