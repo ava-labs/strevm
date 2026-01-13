@@ -99,7 +99,12 @@ func newSUT(tb testing.TB, engine consensus.Engine, opts ...sutOption) (context.
 	}
 
 	target := gas.Gas(1e6)
-	genesis := blockstest.NewGenesis(tb, db, chainConfig, alloc, blockstest.WithGenesisSpec(conf.genesisSpec), blockstest.WithTrieDBConfig(tdbConfig), blockstest.WithGasTarget(target))
+	genesisOpts := []blockstest.GenesisOption{blockstest.WithTrieDBConfig(tdbConfig), blockstest.WithGasTarget(target)}
+	if conf.genesisSpec != nil {
+		genesisOpts = append(genesisOpts, blockstest.WithGenesisSpec(conf.genesisSpec))
+	}
+
+	genesis := blockstest.NewGenesis(tb, db, chainConfig, alloc, genesisOpts...)
 
 	blockOpts := blockstest.WithBlockOptions(
 		blockstest.WithLogger(logger),
