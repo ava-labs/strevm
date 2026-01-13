@@ -689,7 +689,9 @@ func newNetworkedSUTs(tb testing.TB, numValidators, numNonValidators int) *netwo
 		sender.SendAppRequestF = func(ctx context.Context, to set.Set[ids.NodeID], requestID uint32, msg []byte) error {
 			go func() {
 				for peerID := range to {
-					require.Contains(tb, peers, peerID, "unknown peer in SendAppRequest")
+					if !assert.Contains(tb, peers, peerID, "unknown peer in SendAppRequest") {
+						continue
+					}
 					assert.NoErrorf(tb, peers[peerID].AppRequest(ctx, selfID, requestID, mockable.MaxTime, msg), "AppRequestFailed(ctx, %s, ...)", peerID)
 				}
 			}()
@@ -697,18 +699,22 @@ func newNetworkedSUTs(tb testing.TB, numValidators, numNonValidators int) *netwo
 		}
 		sender.SendAppResponseF = func(ctx context.Context, peerID ids.NodeID, requestID uint32, msg []byte) error {
 			go func() {
-				require.Contains(tb, peers, peerID, "unknown peer in SendAppResponse")
+				if !assert.Contains(tb, peers, peerID, "unknown peer in SendAppResponse") {
+					return
+				}
 				assert.NoErrorf(tb, peers[peerID].AppResponse(ctx, selfID, requestID, msg), "AppResponse(ctx, %s, ...)", peerID)
 			}()
 			return nil
 		}
 		sender.SendAppErrorF = func(ctx context.Context, peerID ids.NodeID, requestID uint32, code int32, msg string) error {
 			go func() {
+				if !assert.Contains(tb, peers, peerID, "unknown peer in SendAppError") {
+					return
+				}
 				appErr := &snowcommon.AppError{
 					Code:    code,
 					Message: msg,
 				}
-				require.Contains(tb, peers, peerID, "unknown peer in SendAppError")
 				assert.NoErrorf(tb, peers[peerID].AppRequestFailed(ctx, selfID, requestID, appErr), "AppRequestFailed(ctx, %s, ...)", peerID)
 			}()
 			return nil
@@ -717,7 +723,9 @@ func newNetworkedSUTs(tb testing.TB, numValidators, numNonValidators int) *netwo
 			go func() {
 				var sent set.Set[ids.NodeID]
 				for peerID := range to.NodeIDs {
-					require.Contains(tb, peers, peerID, "unknown peer in SendAppGossip")
+					if !assert.Contains(tb, peers, peerID, "unknown peer in SendAppGossip") {
+						return
+					}
 					assert.NoErrorf(tb, peers[peerID].AppGossip(ctx, selfID, msg), "AppGossip(ctx, %s, ...)", peerID)
 					sent.Add(peerID)
 				}
