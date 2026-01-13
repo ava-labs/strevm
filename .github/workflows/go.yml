@@ -19,7 +19,7 @@ jobs:
   # what gates PRs.
   go:
     runs-on: ubuntu-latest
-    needs: [go_test, go_generate, go_tidy, require_fuzz_corpus]
+    needs: [go_test, go_spec_tests, go_generate, go_tidy, require_fuzz_corpus]
     # TODO(arr4n) investigate why setup-go wasn't properly caching fuzz corpora
     # and then reinstate a go_fuzz job that extends them.
     steps:
@@ -27,6 +27,16 @@ jobs:
 
   # TODO(cey): we should only run -short tests in PRs and then run the full tests in main.
   go_test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: "go.mod"
+      - run: go test ./...
+
+  go_spec_tests:
     runs-on: ubuntu-latest
     env:
       EXECUTION_SPEC_TESTS_VERSION: v2.1.0
@@ -46,7 +56,7 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version-file: "go.mod"
-      - run: go test -short ./...
+      - run: go test -short ./saexec/ethtests/...
 
   go_generate:
     env:
