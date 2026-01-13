@@ -37,7 +37,7 @@ func NewChainBuilder(config *params.ChainConfig, genesis *blocks.Block, defaultO
 		chain:  []*blocks.Block{},
 	}
 	c.SetDefaultOptions(defaultOpts...)
-	c.Insert(genesis)
+	c.insert(genesis)
 	return c
 }
 
@@ -82,15 +82,20 @@ func (cb *ChainBuilder) NewBlock(tb testing.TB, txs []*types.Transaction, opts .
 	last := cb.Last()
 	eth := NewEthBlock(last.EthBlock(), txs, allOpts.eth...)
 	b := NewBlock(tb, eth, last, nil, allOpts.sae...) // TODO(arr4n) support last-settled blocks
-	signer := types.MakeSigner(cb.config, b.Number(), b.BuildTime())
-	SetUninformativeWorstCaseBounds(tb, signer, b)
 
-	cb.Insert(b)
+	cb.Insert(tb, b)
 	return b
 }
 
 // Insert adds a block to the chain.
-func (cb *ChainBuilder) Insert(block *blocks.Block) {
+func (cb *ChainBuilder) Insert(tb testing.TB, block *blocks.Block) {
+	tb.Helper()
+	signer := types.MakeSigner(cb.config, block.Number(), block.BuildTime())
+	SetUninformativeWorstCaseBounds(tb, signer, block)
+	cb.insert(block)
+}
+
+func (cb *ChainBuilder) insert(block *blocks.Block) {
 	cb.chain = append(cb.chain, block)
 	cb.blocksByHash.Store(block.Hash(), block)
 }

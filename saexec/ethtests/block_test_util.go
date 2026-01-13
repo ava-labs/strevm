@@ -289,7 +289,7 @@ func insertWithHeaderBaseFee(tb testing.TB, sut *SUT, bs types.Blocks) {
 		} else {
 			wb = blockstest.NewBlock(tb, b, parent, nil)
 		}
-		sut.Chain.Insert(wb)
+		sut.Chain.Insert(tb, wb)
 		require.NoError(tb, sut.Enqueue(tb.Context(), wb))
 		require.NoError(tb, wb.WaitUntilExecuted(tb.Context()))
 	}
