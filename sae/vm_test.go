@@ -678,7 +678,7 @@ func newNetworkedSUTs(tb testing.TB, numValidators, numNonValidators int) *netwo
 
 		// Non-validators do not connect to other non-validators.
 		var nonValidatorPeers map[ids.NodeID]*SUT
-		if _, ok := validatorNodes[selfID]; !ok {
+		if _, ok := validatorNodes[selfID]; ok {
 			nonValidatorPeers = nonValidatorNodes
 		}
 		maps.Copy(peers, nonValidatorPeers)
