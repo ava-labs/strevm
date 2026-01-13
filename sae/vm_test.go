@@ -211,6 +211,10 @@ func withGenesisOpts(opts ...blockstest.GenesisOption) sutOption {
 	})
 }
 
+func (s *SUT) nodeID() ids.NodeID {
+	return s.rawVM.snowCtx.NodeID
+}
+
 // context returns a [context.Context], derived from the [testing.TB], that is
 // cancelled if the SUT's default logger receives a log at [logging.Error] or
 // higher.
@@ -613,31 +617,31 @@ func TestSemanticBlockChecks(t *testing.T) {
 	}
 }
 
-type networkSUT struct {
+type networkedSUTs struct {
 	validators    []*SUT
 	nonValidators []*SUT
 }
 
-// newNetworkSUT creates a network of SUTs with the specified number of
+// newNetworkedSUTs creates a network of SUTs with the specified number of
 // validators and non-validators.
 //
 // Like in production, all nodes are connected to all validators and mark
 // themselves as connected. While non-validators can connect to other
 // non-validators, they do not generally attempt to do so in production, so this
 // function does not connect them to each other.
-func newNetworkSUT(tb testing.TB, numValidators, numNonValidators int) *networkSUT {
+func newNetworkedSUTs(tb testing.TB, numValidators, numNonValidators int) *networkedSUTs {
 	tb.Helper()
 
 	const numAccounts = 1
 	validatorNodes := make(map[ids.NodeID]*SUT, numValidators)
 	for range numValidators {
 		_, sut := newSUT(tb, numAccounts)
-		validatorNodes[sut.rawVM.snowCtx.NodeID] = sut
+		validatorNodes[sut.nodeID()] = sut
 	}
 	nonValidatorNodes := make(map[ids.NodeID]*SUT, numNonValidators)
 	for range numNonValidators {
 		_, sut := newSUT(tb, numAccounts)
-		nonValidatorNodes[sut.rawVM.snowCtx.NodeID] = sut
+		nonValidatorNodes[sut.nodeID()] = sut
 	}
 	allNodes := make(map[ids.NodeID]*SUT, numValidators+numNonValidators)
 	maps.Copy(allNodes, validatorNodes)
@@ -652,30 +656,29 @@ func newNetworkSUT(tb testing.TB, numValidators, numNonValidators int) *networkS
 		}
 	}
 
-	validatorSet := make(map[ids.NodeID]*validators.GetValidatorOutput)
-	for _, sut := range validatorNodes {
-		nodeID := sut.rawVM.snowCtx.NodeID
-		validatorSet[nodeID] = &validators.GetValidatorOutput{
-			NodeID:    nodeID,
-			PublicKey: sut.rawVM.snowCtx.PublicKey,
-			Weight:    1,
+	for _, sut := range allNodes {
+		sut.validators.GetValidatorSetF = func(context.Context, uint64, ids.ID) (map[ids.NodeID]*validators.GetValidatorOutput, error) {
+			validatorSet := make(map[ids.NodeID]*validators.GetValidatorOutput, len(validatorNodes))
+			for _, sut := range validatorNodes {
+				nodeID := sut.nodeID()
+				validatorSet[nodeID] = &validators.GetValidatorOutput{
+					NodeID:    nodeID,
+					PublicKey: sut.rawVM.snowCtx.PublicKey,
+					Weight:    1,
+				}
+			}
+			return validatorSet, nil
 		}
 	}
-	getValidatorSetF := func(context.Context, uint64, ids.ID) (map[ids.NodeID]*validators.GetValidatorOutput, error) {
-		return validatorSet, nil
-	}
-	for _, sut := range allNodes {
-		sut.validators.GetValidatorSetF = getValidatorSetF
-	}
 
-	for nodeID, sut := range allNodes {
+	for selfID, sut := range allNodes {
 		peers := make(map[ids.NodeID]*SUT, len(allNodes))
-		peers[nodeID] = sut // self-registration
+		peers[selfID] = sut
 		maps.Copy(peers, validatorNodes)
 
 		// Non-validators do not connect to other non-validators.
 		var nonValidatorPeers map[ids.NodeID]*SUT
-		if _, isValidator := validatorNodes[nodeID]; isValidator {
+		if _, ok := validatorNodes[selfID]; !ok {
 			nonValidatorPeers = nonValidatorNodes
 		}
 		maps.Copy(peers, nonValidatorPeers)
@@ -683,63 +686,41 @@ func newNetworkSUT(tb testing.TB, numValidators, numNonValidators int) *networkS
 		// All messages are delivered in a new goroutine to prevent re-entrant
 		// calls, which would result in a deadlock.
 		sender := sut.sender
-		sender.SendAppRequestF = func(ctx context.Context, s set.Set[ids.NodeID], r uint32, b []byte) error {
+		sender.SendAppRequestF = func(ctx context.Context, to set.Set[ids.NodeID], requestID uint32, msg []byte) error {
 			go func() {
-				tb.Helper()
-
-				for peerID := range s {
-					if peer, ok := peers[peerID]; ok {
-						assert.NoErrorf(tb, peer.AppRequest(ctx, nodeID, r, mockable.MaxTime, b), "sending request to %s", peerID)
-					} else {
-						assert.NoErrorf(tb, sut.AppRequestFailed(ctx, peerID, r, snowcommon.ErrTimeout), "sending request failed to %s", peerID)
-					}
+				for peerID := range to {
+					require.Contains(tb, peers, peerID, "unknown peer in SendAppRequest")
+					assert.NoErrorf(tb, peers[peerID].AppRequest(ctx, selfID, requestID, mockable.MaxTime, msg), "AppRequestFailed(ctx, %s, ...)", peerID)
 				}
 			}()
 			return nil
 		}
-		sender.SendAppResponseF = func(ctx context.Context, peerID ids.NodeID, r uint32, b []byte) error {
+		sender.SendAppResponseF = func(ctx context.Context, peerID ids.NodeID, requestID uint32, msg []byte) error {
 			go func() {
-				tb.Helper()
-
-				assert.Contains(tb, peers, peerID, "unknown peer in SendAppResponse")
-				peer, ok := peers[peerID]
-				if !ok {
-					return
-				}
-
-				assert.NoErrorf(tb, peer.AppResponse(ctx, nodeID, r, b), "sending response to %s", peerID)
+				require.Contains(tb, peers, peerID, "unknown peer in SendAppResponse")
+				assert.NoErrorf(tb, peers[peerID].AppResponse(ctx, selfID, requestID, msg), "AppResponse(ctx, %s, ...)", peerID)
 			}()
-
 			return nil
 		}
-		sender.SendAppErrorF = func(ctx context.Context, peerID ids.NodeID, r uint32, code int32, msg string) error {
+		sender.SendAppErrorF = func(ctx context.Context, peerID ids.NodeID, requestID uint32, code int32, msg string) error {
 			go func() {
-				tb.Helper()
-				assert.Contains(tb, peers, peerID, "unknown peer in SendAppError")
-				peer, ok := peers[peerID]
-				if !ok {
-					return
-				}
-
 				appErr := &snowcommon.AppError{
 					Code:    code,
 					Message: msg,
 				}
-				assert.NoErrorf(tb, peer.AppRequestFailed(ctx, nodeID, r, appErr), "sending error to %s", peerID)
+				require.Contains(tb, peers, peerID, "unknown peer in SendAppError")
+				assert.NoErrorf(tb, peers[peerID].AppRequestFailed(ctx, selfID, requestID, appErr), "AppRequestFailed(ctx, %s, ...)", peerID)
 			}()
 			return nil
 		}
-		sender.SendAppGossipF = func(ctx context.Context, c snowcommon.SendConfig, b []byte) error {
+		sender.SendAppGossipF = func(ctx context.Context, to snowcommon.SendConfig, msg []byte) error {
 			go func() {
-				tb.Helper()
-
-				for peerID := range c.NodeIDs {
-					if peer, ok := peers[peerID]; ok {
-						assert.NoErrorf(tb, peer.AppGossip(ctx, nodeID, b), "sending gossip to %s", peerID)
-					}
-				}
 				var sent set.Set[ids.NodeID]
-				sent.Union(c.NodeIDs)
+				for peerID := range to.NodeIDs {
+					require.Contains(tb, peers, peerID, "unknown peer in SendAppGossip")
+					assert.NoErrorf(tb, peers[peerID].AppGossip(ctx, selfID, msg), "AppGossip(ctx, %s, ...)", peerID)
+					sent.Add(peerID)
+				}
 
 				send := func(peers map[ids.NodeID]*SUT, count int) error {
 					for peerID, peer := range peers {
@@ -749,7 +730,7 @@ func newNetworkSUT(tb testing.TB, numValidators, numNonValidators int) *networkS
 						if sent.Contains(peerID) {
 							continue
 						}
-						if err := peer.AppGossip(ctx, nodeID, b); err != nil {
+						if err := peer.AppGossip(ctx, selfID, msg); err != nil {
 							return err
 						}
 
@@ -759,9 +740,9 @@ func newNetworkSUT(tb testing.TB, numValidators, numNonValidators int) *networkS
 					return nil
 				}
 
-				assert.NoError(tb, send(validatorNodes, c.Validators), "sending to validators")
-				assert.NoError(tb, send(nonValidatorPeers, c.NonValidators), "sending to non-validators")
-				assert.NoError(tb, send(peers, c.Peers), "sending to peers")
+				assert.NoError(tb, send(validatorNodes, to.Validators), "sending to validators")
+				assert.NoError(tb, send(nonValidatorPeers, to.NonValidators), "sending to non-validators")
+				assert.NoError(tb, send(peers, to.Peers), "sending to peers")
 			}()
 			return nil
 		}
@@ -775,7 +756,7 @@ func newNetworkSUT(tb testing.TB, numValidators, numNonValidators int) *networkS
 		}()
 	}
 
-	return &networkSUT{
+	return &networkedSUTs{
 		validators:    slices.Collect(maps.Values(validatorNodes)),
 		nonValidators: slices.Collect(maps.Values(nonValidatorNodes)),
 	}
@@ -786,21 +767,25 @@ func requireReceiveTx(tb testing.TB, nodes []*SUT, txHash common.Hash) {
 	for _, sut := range nodes {
 		assert.Eventuallyf(tb, func() bool {
 			return sut.rawVM.mempool.Has(ids.ID(txHash))
-		}, 5*time.Second, 100*time.Millisecond, "tx %x not gossiped to node %s", txHash, sut.rawVM.snowCtx.NodeID)
+		}, 5*time.Second, 100*time.Millisecond, "tx %x not gossiped to node %s", txHash, sut.nodeID())
 	}
-	require.False(tb, tb.Failed())
+	if tb.Failed() {
+		tb.FailNow()
+	}
 }
 
 func requireNotReceiveTx(tb testing.TB, nodes []*SUT, txHash common.Hash) {
 	tb.Helper()
 	for _, sut := range nodes {
-		assert.False(tb, sut.rawVM.mempool.Has(ids.ID(txHash)), "tx %x was gossiped to node %s", txHash, sut.rawVM.snowCtx.NodeID)
+		assert.False(tb, sut.rawVM.mempool.Has(ids.ID(txHash)), "tx %x was gossiped to node %s", txHash, sut.nodeID())
 	}
-	require.False(tb, tb.Failed())
+	if tb.Failed() {
+		tb.FailNow()
+	}
 }
 
 func TestGossip(t *testing.T) {
-	n := newNetworkSUT(t, 2, 2)
+	n := newNetworkedSUTs(t, 2, 2)
 
 	api := n.nonValidators[0]
 	tx := api.wallet.SetNonceAndSign(t, 0, &types.DynamicFeeTx{
