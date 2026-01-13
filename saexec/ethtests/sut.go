@@ -109,7 +109,7 @@ func newSUT(tb testing.TB, engine consensus.Engine, opts ...sutOption) (context.
 	blockOpts := blockstest.WithBlockOptions(
 		blockstest.WithLogger(logger),
 	)
-	chain := blockstest.NewChainBuilder(genesis, blockOpts)
+	chain := blockstest.NewChainBuilder(chainConfig, genesis, blockOpts)
 
 	reader := newReaderAdapter(chain, db, chainConfig, logger)
 	hooks := newTestConsensusHooks(engine, reader, target)

@@ -15,12 +15,14 @@ import (
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/libevm/options"
+	"github.com/ava-labs/libevm/params"
 
 	"github.com/ava-labs/strevm/blocks"
 )
 
 // A ChainBuilder builds a chain of blocks, maintaining necessary invariants.
 type ChainBuilder struct {
+	config       *params.ChainConfig
 	chain        []*blocks.Block
 	blocksByHash sync.Map
 
@@ -29,8 +31,11 @@ type ChainBuilder struct {
 
 // NewChainBuilder returns a new ChainBuilder starting from the provided block,
 // which MUST NOT be nil.
-func NewChainBuilder(genesis *blocks.Block, defaultOpts ...ChainOption) *ChainBuilder {
-	c := &ChainBuilder{}
+func NewChainBuilder(config *params.ChainConfig, genesis *blocks.Block, defaultOpts ...ChainOption) *ChainBuilder {
+	c := &ChainBuilder{
+		config: config,
+		chain:  []*blocks.Block{},
+	}
 	c.SetDefaultOptions(defaultOpts...)
 	c.Insert(genesis)
 	return c
@@ -77,8 +82,10 @@ func (cb *ChainBuilder) NewBlock(tb testing.TB, txs []*types.Transaction, opts .
 	last := cb.Last()
 	eth := NewEthBlock(last.EthBlock(), txs, allOpts.eth...)
 	b := NewBlock(tb, eth, last, nil, allOpts.sae...) // TODO(arr4n) support last-settled blocks
-	cb.Insert(b)
+	signer := types.MakeSigner(cb.config, b.Number(), b.BuildTime())
+	SetUninformativeWorstCaseBounds(tb, signer, b)
 
+	cb.Insert(b)
 	return b
 }
 

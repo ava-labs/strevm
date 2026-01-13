@@ -77,7 +77,7 @@ func newSUT(t *testing.T, numAccounts uint) SUT {
 
 	db := rawdb.NewMemoryDatabase()
 	genesis := blockstest.NewGenesis(t, db, config, saetest.MaxAllocFor(wallet.Addresses()...))
-	chain := blockstest.NewChainBuilder(genesis)
+	chain := blockstest.NewChainBuilder(config, genesis)
 
 	snapshotConfig := snapshot.Config{CacheSize: 128, AsyncBuild: true}
 

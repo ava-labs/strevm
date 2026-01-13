@@ -85,7 +85,7 @@ func newSUT(tb testing.TB, hooks *saehookstest.Stub) (context.Context, SUT) {
 	opts := blockstest.WithBlockOptions(
 		blockstest.WithLogger(logger),
 	)
-	chain := blockstest.NewChainBuilder(genesis, opts)
+	chain := blockstest.NewChainBuilder(config, genesis, opts)
 	snapshotConfig := snapshot.Config{CacheSize: 128, AsyncBuild: true}
 	e, err := New(genesis, chain.GetBlock, config, db, tdbConfig, snapshotConfig, hooks, logger)
 	require.NoError(tb, err, "New()")
@@ -371,6 +371,15 @@ func TestEndOfBlockOps(t *testing.T) {
 		},
 	}
 	b := sut.chain.NewBlock(t, nil)
+
+	// The [blockstest.ChainBuilder] isn't aware of non-tx ops so doesn't
+	// populate burner balance bounds.
+	lim := b.WorstCaseBounds()
+	lim.MinOpBurnerBalances = append(lim.MinOpBurnerBalances, []map[common.Address]*uint256.Int{
+		{exportEOA: new(uint256.Int).SetAllOne()},
+		{},
+	}...)
+	b.SetWorstCaseBounds(lim)
 
 	e := sut.Executor
 	require.NoError(t, e.Enqueue(ctx, b), "Enqueue()")
