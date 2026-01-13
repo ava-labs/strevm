@@ -692,7 +692,7 @@ func newNetworkedSUTs(tb testing.TB, numValidators, numNonValidators int) *netwo
 					if !assert.Contains(tb, peers, peerID, "unknown peer in SendAppRequest") {
 						continue
 					}
-					assert.NoErrorf(tb, peers[peerID].AppRequest(ctx, selfID, requestID, mockable.MaxTime, msg), "AppRequestFailed(ctx, %s, ...)", peerID)
+					assert.NoErrorf(tb, peers[peerID].AppRequest(ctx, selfID, requestID, mockable.MaxTime, msg), "AppRequest(ctx, %s, ...)", peerID)
 				}
 			}()
 			return nil
