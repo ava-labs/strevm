@@ -11,6 +11,7 @@ import (
 	"math"
 	"math/big"
 	"slices"
+	"sort"
 	"testing"
 	"time"
 
@@ -171,4 +172,45 @@ func WithGasExcess(excess gas.Gas) GenesisOption {
 	return options.Func[genesisConfig](func(gc *genesisConfig) {
 		gc.gasExcess = excess
 	})
+}
+
+// WithFakeBaseFee creates a new block wrapping the given eth block with a fake
+// parent that has its gastime adjusted to produce the desired base fee.
+// Upon execution of the resulting block, the fake parent will have its base fee
+// set to the desired base fee, thus overriding the base fee mechanism.
+// This is useful for tests that need to override the base fee mechanism.
+//
+// The fake parent is marked as executed with the gastime configured to yield
+// the specified base fee. The build time is set to match the block time to
+// prevent fast-forwarding the excess during execution.
+func WithFakeBaseFee(tb testing.TB, db ethdb.Database, parent *blocks.Block, eth *types.Block, baseFee *big.Int) *blocks.Block {
+	tb.Helper()
+
+	target := parent.ExecutedByGasTime().Target()
+	desiredExcessGas := desiredExcess(gas.Price(baseFee.Uint64()), target)
+
+	var grandParent *blocks.Block
+	if parent.NumberU64() != 0 {
+		grandParent = parent.ParentBlock()
+	}
+
+	fakeParent := NewBlock(tb, parent.EthBlock(), grandParent, nil)
+	// Set the build time to the block time so that we do not fast forward
+	// the excess to the block time during execution.
+	require.NoError(tb, fakeParent.MarkExecuted(db, gastime.New(eth.Time(), target, desiredExcessGas), time.Time{}, baseFee, nil, parent.PostExecutionStateRoot()))
+	require.Equal(tb, baseFee.Uint64(), fakeParent.ExecutedByGasTime().BaseFee().Uint64())
+
+	return NewBlock(tb, eth, fakeParent, nil)
+}
+
+// desiredExcess calculates the excess gas needed to produce the desired price.
+func desiredExcess(desiredPrice gas.Price, target gas.Gas) gas.Gas {
+	// This could be solved directly by calculating D * ln(desiredPrice / P)
+	// using floating point math. However, it introduces inaccuracies. So, we
+	// use a binary search to find the closest integer solution.
+	return gas.Gas(sort.Search(math.MaxInt32, func(excessGuess int) bool { //nolint:gosec // Known to not overflow
+		tm := gastime.New(0, target, gas.Gas(excessGuess)) //nolint:gosec // Known to not overflow
+		price := tm.Price()
+		return price >= desiredPrice
+	}))
 }

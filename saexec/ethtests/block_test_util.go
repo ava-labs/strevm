@@ -37,11 +37,8 @@ import (
 	"math/big"
 	"os"
 	"reflect"
-	"sort"
 	"testing"
-	"time"
 
-	"github.com/ava-labs/avalanchego/vms/components/gas"
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/common/hexutil"
 	"github.com/ava-labs/libevm/common/math"
@@ -62,7 +59,6 @@ import (
 
 	"github.com/ava-labs/strevm/blocks"
 	"github.com/ava-labs/strevm/blocks/blockstest"
-	"github.com/ava-labs/strevm/gastime"
 )
 
 // A BlockTest checks handling of entire blocks.
@@ -287,38 +283,16 @@ func insertWithHeaderBaseFee(tb testing.TB, sut *SUT, bs types.Blocks) {
 		baseFee := b.BaseFee()
 		// TODO(cey): This is a hack to set the base fee to the block header base fee.
 		// Instead we should properly modify the test fixtures to apply expected base fee from the gasclock.
+		var wb *blocks.Block
 		if baseFee != nil {
-			target := parent.ExecutedByGasTime().Target()
-			desiredExcessGas := desiredExcess(gas.Price(baseFee.Uint64()), target)
-			var grandParent *blocks.Block
-			if parent.NumberU64() != 0 {
-				grandParent = parent.ParentBlock()
-			}
-			fakeParent := blockstest.NewBlock(tb, parent.EthBlock(), grandParent, nil)
-			// Also set the build time to the block time so that we do not fast forward the excess to the block time
-			// during execution.
-			require.NoError(tb, fakeParent.MarkExecuted(sut.DB, gastime.New(b.Time(), target, desiredExcessGas), time.Time{}, baseFee, nil, parent.PostExecutionStateRoot()))
-			require.Equal(tb, baseFee.Uint64(), fakeParent.ExecutedByGasTime().BaseFee().Uint64())
-			parent = fakeParent
+			wb = blockstest.WithFakeBaseFee(tb, sut.DB, parent, b, baseFee)
+		} else {
+			wb = blockstest.NewBlock(tb, b, parent, nil)
 		}
-		wb := blockstest.NewBlock(tb, b, parent, nil)
 		sut.Chain.Insert(wb)
 		require.NoError(tb, sut.Enqueue(tb.Context(), wb))
 		require.NoError(tb, wb.WaitUntilExecuted(tb.Context()))
 	}
-}
-
-// desiredTarget calculates the optimal desiredTarget given the
-// desired price.
-func desiredExcess(desiredPrice gas.Price, target gas.Gas) gas.Gas {
-	// This could be solved directly by calculating D * ln(desiredPrice / P)
-	// using floating point math. However, it introduces inaccuracies. So, we
-	// use a binary search to find the closest integer solution.
-	return gas.Gas(sort.Search(math.MaxInt32, func(excessGuess int) bool { //nolint:gosec // Known to not overflow
-		tm := gastime.New(0, target, gas.Gas(excessGuess)) //nolint:gosec // Known to not overflow
-		price := tm.Price()
-		return price >= desiredPrice
-	}))
 }
 
 func validateHeader(h *btHeader, h2 *types.Header) error {
