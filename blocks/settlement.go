@@ -9,8 +9,10 @@ import (
 	"fmt"
 	"slices"
 	"sync/atomic"
+	"time"
 
 	"github.com/ava-labs/avalanchego/vms/components/gas"
+	"github.com/ava-labs/libevm/ethdb"
 	"go.uber.org/zap"
 
 	"github.com/ava-labs/strevm/gastime"
@@ -60,10 +62,13 @@ func (b *Block) markSettled(lastSettled *atomic.Pointer[Block]) error {
 	return nil
 }
 
-// MarkSynchronous is a special case of [Block.MarkSettled], reserved for the
-// last pre-SAE block, which MAY be the genesis block. These are, by definition,
-// self-settling so require special treatment as such behaviour is impossible
-// under SAE rules.
+// MarkSynchronous combines [Block.MarkExecuted] and [Block.MarkSettled], and is
+// reserved for the last pre-SAE block, which MAY be the genesis block. These
+// blocks are, by definition, self-settling so require special treatment as such
+// behaviour is impossible under SAE rules.
+//
+// Arguments required by [Block.MarkExecuted] but not accepted by
+// MarkSynchronous are derived from the block to maintain invariants.
 //
 // MarkSynchronous and [Block.Synchronous] are not safe for concurrent use. This
 // method MUST therefore be called *before* instantiating the SAE VM.
@@ -71,7 +76,16 @@ func (b *Block) markSettled(lastSettled *atomic.Pointer[Block]) error {
 // Wherever MarkSynchronous results in different behaviour to
 // [Block.MarkSettled], the respective methods are documented as such. They can
 // otherwise be considered identical.
-func (b *Block) MarkSynchronous() error {
+func (b *Block) MarkSynchronous(db ethdb.Database, gasTargetOfBlock, excessAfter gas.Gas) error {
+	gt := gastime.New(b.BuildTime(), gasTargetOfBlock, excessAfter)
+	ethB := b.EthBlock()
+	// Receipts of a synchronous block have already been "settled" by the block
+	// itself. As the only reason to include receipts here is for later
+	// settlement in another block, there is no need to pass anything meaningful
+	// as it would also require them to be received by MarkSynchronous.
+	if err := b.MarkExecuted(db, gt, time.Time{}, ethB.BaseFee(), nil /*receipts*/, ethB.Root(), new(atomic.Pointer[Block])); err != nil {
+		return err
+	}
 	b.synchronous = true
 	return b.markSettled(nil)
 }

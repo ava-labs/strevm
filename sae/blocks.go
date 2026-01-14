@@ -68,7 +68,7 @@ func (vm *VM) BuildBlock(ctx context.Context, bCtx *block.Context) (*blocks.Bloc
 		bCtx,
 		vm.preference.Load(),
 		vm.mempool.TransactionsByPriority,
-		vm.hooks,
+		vm.config.Hooks,
 	)
 }
 
@@ -107,8 +107,8 @@ func (vm *VM) buildBlock(
 		)
 	}
 
-	bTime := hook.BlockTime(vm.hooks, hdr)
-	pTime := hook.BlockTime(vm.hooks, parent.Header())
+	bTime := hook.BlockTime(vm.config.Hooks, hdr)
+	pTime := hook.BlockTime(vm.config.Hooks, parent.Header())
 
 	// It is allowed for [hook.Points] to further constrain the allowed block
 	// times. However, every block MUST at least satisfy these basic sanity
@@ -128,8 +128,8 @@ func (vm *VM) buildBlock(
 	// and not a rate. We therefore use [gastime] for construction as it is the
 	// source of truth for target-to-rate conversion. Underflow of Sub() is
 	// prevented by the above check.
-	settleAt := gastime.OfBlock(vm.hooks, hdr, parent.Header(), 0).Sub(saeparams.TauSeconds)
-	lastSettled, ok, err := blocks.LastToSettleAt(vm.hooks, settleAt, parent)
+	settleAt := gastime.OfBlock(vm.config.Hooks, hdr, parent.Header(), 0).Sub(saeparams.TauSeconds)
+	lastSettled, ok, err := blocks.LastToSettleAt(vm.config.Hooks, settleAt, parent)
 	if err != nil {
 		return nil, err
 	}
@@ -143,7 +143,7 @@ func (vm *VM) buildBlock(
 		zap.Stringer("last_settled_hash", lastSettled.Hash()),
 	)
 
-	state, err := worstcase.NewState(vm.hooks, vm.exec.ChainConfig(), vm.exec.StateCache(), lastSettled)
+	state, err := worstcase.NewState(vm.config.Hooks, vm.exec.ChainConfig(), vm.exec.StateCache(), lastSettled)
 	if err != nil {
 		log.Warn("Worst-case state not able to be created",
 			zap.Error(err),
@@ -173,7 +173,7 @@ func (vm *VM) buildBlock(
 				return nil, fmt.Errorf("applying tx %#x in block %d to worst-case state: %v", tx.Hash(), b.Height(), err)
 			}
 		}
-		for i, op := range vm.hooks.EndOfBlockOps(b.EthBlock()) {
+		for i, op := range vm.config.Hooks.EndOfBlockOps(b.EthBlock()) {
 			if err := state.Apply(op); err != nil {
 				log.Warn("Could not apply op during historical worst-case calculation",
 					zap.Int("op_index", i),
@@ -334,7 +334,7 @@ func (vm *VM) VerifyBlock(ctx context.Context, bCtx *block.Context, b *blocks.Bl
 		bCtx,
 		parent,
 		func(f txpool.PendingFilter) []*txgossip.LazyTransaction { return txs },
-		vm.hooks.BlockRebuilderFrom(b.EthBlock()),
+		vm.config.Hooks.BlockRebuilderFrom(b.EthBlock()),
 	)
 	if err != nil {
 		return err

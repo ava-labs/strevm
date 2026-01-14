@@ -9,6 +9,7 @@ import (
 
 	"github.com/ava-labs/avalanchego/utils/logging"
 	"github.com/ava-labs/libevm/core/types"
+	"github.com/ava-labs/libevm/ethdb"
 	"github.com/google/go-cmp/cmp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -18,8 +19,9 @@ import (
 
 func newEthBlock(num, time uint64, parent *types.Block) *types.Block {
 	hdr := &types.Header{
-		Number: new(big.Int).SetUint64(num),
-		Time:   time,
+		Number:  new(big.Int).SetUint64(num),
+		Time:    time,
+		BaseFee: big.NewInt(0),
 	}
 	if parent != nil {
 		hdr.ParentHash = parent.Hash()
@@ -34,7 +36,7 @@ func newBlock(tb testing.TB, eth *types.Block, parent, lastSettled *Block) *Bloc
 	return b
 }
 
-func newChain(tb testing.TB, startHeight, total uint64, lastSettledAtHeight map[uint64]uint64) []*Block {
+func newChain(tb testing.TB, db ethdb.Database, startHeight, total uint64, lastSettledAtHeight map[uint64]uint64) []*Block {
 	tb.Helper()
 
 	var (
@@ -65,7 +67,9 @@ func newChain(tb testing.TB, startHeight, total uint64, lastSettledAtHeight map[
 		byNum[n] = b
 		blocks = append(blocks, b)
 		if synchronous {
-			require.NoError(tb, b.MarkSynchronous(), "MarkSynchronous()")
+			// The target and excess are irrelevant for the purposes of
+			// [newChain].
+			require.NoError(tb, b.MarkSynchronous(db, 1, 0), "MarkSynchronous()")
 		}
 
 		parent = byNum[n]

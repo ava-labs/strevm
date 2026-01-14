@@ -44,7 +44,6 @@ type VM struct {
 
 	config  Config
 	snowCtx *snow.Context
-	hooks   hook.Points
 	metrics *prometheus.Registry
 
 	db     ethdb.Database
@@ -65,7 +64,9 @@ type VM struct {
 
 // A Config configures construction of a new [VM].
 type Config struct {
+	Hooks         hook.Points
 	MempoolConfig legacypool.Config
+	TrieDBConfig  *triedb.Config
 
 	Now func() time.Time // defaults to [time.Now] if nil
 }
@@ -73,30 +74,25 @@ type Config struct {
 // NewVM returns a new [VM] on which the [VM.Init] method MUST be called before
 // other use. This deferment allows the [VM] to be constructed before
 // `Initialize` has been called on the harness.
-func NewVM(c Config) *VM {
+func NewVM(
+	c Config,
+	snowCtx *snow.Context,
+	chainConfig *params.ChainConfig,
+	db ethdb.Database,
+	lastSynchronous *blocks.Block,
+	sender snowcommon.AppSender,
+) (*VM, error) {
 	if c.Now == nil {
 		c.Now = time.Now
 	}
-	return &VM{
-		config: c,
-		blocks: newSMap[common.Hash, *blocks.Block](),
-	}
-}
 
-// Init initializes the [VM], similarly to the `Initialize` method of
-// [snowcommon.VM].
-func (vm *VM) Init(
-	snowCtx *snow.Context,
-	hooks hook.Points,
-	chainConfig *params.ChainConfig,
-	db ethdb.Database,
-	triedbConfig *triedb.Config,
-	lastSynchronous *blocks.Block,
-	sender snowcommon.AppSender,
-) error {
-	vm.snowCtx = snowCtx
-	vm.hooks = hooks
-	vm.db = db
+	vm := &VM{
+		config:  c,
+		snowCtx: snowCtx,
+		metrics: prometheus.NewRegistry(),
+		db:      db,
+		blocks:  newSMap[common.Hash, *blocks.Block](),
+	}
 	vm.blocks.Store(lastSynchronous.Hash(), lastSynchronous)
 
 	// Disk
@@ -115,9 +111,8 @@ func (vm *VM) Init(
 		ptr.Store(lastSynchronous)
 	}
 
-	vm.metrics = prometheus.NewRegistry()
 	if err := snowCtx.Metrics.Register("sae", vm.metrics); err != nil {
-		return err
+		return nil, err
 	}
 
 	{ // ==========  Executor  ==========
@@ -126,12 +121,12 @@ func (vm *VM) Init(
 			vm.blockSource,
 			chainConfig,
 			db,
-			triedbConfig,
-			hooks,
+			vm.config.TrieDBConfig,
+			vm.config.Hooks,
 			snowCtx.Log,
 		)
 		if err != nil {
-			return fmt.Errorf("saexec.New(...): %v", err)
+			return nil, fmt.Errorf("saexec.New(...): %v", err)
 		}
 		vm.exec = exec
 		vm.toClose = append(vm.toClose, exec.Close)
@@ -144,18 +139,18 @@ func (vm *VM) Init(
 		}
 		txPool, err := txpool.New(0, bc, pools)
 		if err != nil {
-			return fmt.Errorf("txpool.New(...): %v", err)
+			return nil, fmt.Errorf("txpool.New(...): %v", err)
 		}
 		vm.toClose = append(vm.toClose, txPool.Close)
 
 		metrics, err := bloom.NewMetrics("mempool", vm.metrics)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		conf := gossip.BloomSetConfig{Metrics: metrics}
 		pool, err := txgossip.NewSet(snowCtx.Log, txPool, conf)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		vm.mempool = pool
 		vm.signalNewTxsToEngine()
@@ -164,7 +159,7 @@ func (vm *VM) Init(
 	{ // ==========  P2P Gossip  ==========
 		network, peers, validatorPeers, err := newNetwork(snowCtx, sender, vm.metrics)
 		if err != nil {
-			return fmt.Errorf("newNetwork(...): %v", err)
+			return nil, fmt.Errorf("newNetwork(...): %v", err)
 		}
 
 		const pullGossipPeriod = time.Second
@@ -182,10 +177,10 @@ func (vm *VM) Init(
 			},
 		)
 		if err != nil {
-			return fmt.Errorf("gossip.NewSystem(...): %v", err)
+			return nil, fmt.Errorf("gossip.NewSystem(...): %v", err)
 		}
 		if err := network.AddHandler(p2p.TxGossipHandlerID, handler); err != nil {
-			return fmt.Errorf("network.AddHandler(...): %v", err)
+			return nil, fmt.Errorf("network.AddHandler(...): %v", err)
 		}
 
 		var (
@@ -213,7 +208,7 @@ func (vm *VM) Init(
 		})
 	}
 
-	return nil
+	return vm, nil
 }
 
 // signalNewTxsToEngine subscribes to the [txpool.TxPool] to unblock
