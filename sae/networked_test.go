@@ -28,7 +28,7 @@ type networkedSUTs struct {
 // validators and non-validators.
 //
 // Like in production, all nodes are connected to all validators and mark
-// themselves as connected. While non-validators can connect to other
+// themselves as connected. Although non-validators can connect to other
 // non-validators, they do not generally attempt to do so in production, so this
 // function does not connect them to each other.
 func newNetworkedSUTs(tb testing.TB, numValidators, numNonValidators int) *networkedSUTs {
@@ -65,7 +65,7 @@ func newNetworkedSUTs(tb testing.TB, numValidators, numNonValidators int) *netwo
 		s.SendAppGossipF = node.SendAppGossip
 
 		// Connect all the peers _after_ setting up the sender functions.
-		defer node.connectToPeers(tb)
+		defer node.markConnectedToPeers(tb)
 	}
 	return net
 }
@@ -93,6 +93,8 @@ func (net *networkedSUTs) allNonValidators() []*SUT {
 	return slices.Collect(maps.Values(net.nonValidators))
 }
 
+// getValidatorSet implements the [validators.State.GetValidatorSet] method,
+// returning all validators in the network, each with weight 1.
 func (net *networkedSUTs) getValidatorSet(context.Context, uint64, ids.ID) (map[ids.NodeID]*validators.GetValidatorOutput, error) {
 	vs := make(map[ids.NodeID]*validators.GetValidatorOutput)
 	for id, sut := range net.validators {
@@ -115,6 +117,8 @@ func (net *networkedSUTs) sutByID(tb testing.TB, id ids.NodeID) *SUT {
 	return sut
 }
 
+// A node couples an [SUT] with all of its peers as defined by a [networkedSUTs]
+// instance.
 type node struct {
 	*SUT
 	tb    testing.TB
@@ -141,6 +145,9 @@ func (net *networkedSUTs) node(tb testing.TB, selfID ids.NodeID) *node {
 	return n
 }
 
+// peer returns the [SUT] with the given ID, asserting that it is in fact a peer
+// of the current node. Requests for non-peer IDs will therefore result in a
+// test failure but will allow the call site to continue if desired.
 func (n *node) peer(id ids.NodeID, when string) (*SUT, bool) {
 	if !assert.Containsf(n.tb, n.peers.all, id, "unknown peer %s in %s", id, when) {
 		return nil, false
@@ -231,7 +238,7 @@ func (n *node) SendAppGossip(ctx context.Context, to common.SendConfig, msg []by
 	return nil
 }
 
-func (n *node) connectToPeers(tb testing.TB) {
+func (n *node) markConnectedToPeers(tb testing.TB) {
 	tb.Helper()
 	for peerID := range n.peers.all {
 		require.NoErrorf(tb, n.Connected(tb.Context(), peerID, version.Current), "%T.Connected(%s)", n.SUT, peerID)
