@@ -59,10 +59,10 @@ func newNetworkedSUTs(tb testing.TB, numValidators, numNonValidators int) *netwo
 
 		s := sut.sender
 		node := net.node(tb, selfID)
-		s.SendAppRequestF = node.sendAppRequest
-		s.SendAppResponseF = node.sendAppResponse
-		s.SendAppErrorF = node.sendAppError
-		s.SendAppGossipF = node.sendAppGossip
+		s.SendAppRequestF = node.SendAppRequest
+		s.SendAppResponseF = node.SendAppResponse
+		s.SendAppErrorF = node.SendAppError
+		s.SendAppGossipF = node.SendAppGossip
 
 		// Connect all the peers _after_ setting up the sender functions.
 		defer node.connectToPeers(tb)
@@ -148,10 +148,14 @@ func (n *node) peer(id ids.NodeID, when string) (*SUT, bool) {
 	return n.peers.all[id], true
 }
 
-// All Send* method implementations deliver message in a new goroutine to
-// prevent re-entrant calls, which would result in a deadlock.
+// Although [node] implements the [common.AppSender] interface, this is only to
+// have local confirmation of matching signatures. Methods are actually accessed
+// via [enginetest.Sender]s in the same goroutine. As a result, they deliver
+// every message in a new goroutine to prevent re-entrant calls, which would
+// result in a deadlock.
+var _ common.AppSender = (*node)(nil)
 
-func (n *node) sendAppRequest(ctx context.Context, to set.Set[ids.NodeID], requestID uint32, msg []byte) error {
+func (n *node) SendAppRequest(ctx context.Context, to set.Set[ids.NodeID], requestID uint32, msg []byte) error {
 	go func() {
 		for peerID := range to {
 			p, ok := n.peer(peerID, "SendAppRequest")
@@ -164,7 +168,7 @@ func (n *node) sendAppRequest(ctx context.Context, to set.Set[ids.NodeID], reque
 	return nil
 }
 
-func (n *node) sendAppResponse(ctx context.Context, peerID ids.NodeID, requestID uint32, msg []byte) error {
+func (n *node) SendAppResponse(ctx context.Context, peerID ids.NodeID, requestID uint32, msg []byte) error {
 	go func() {
 		p, ok := n.peer(peerID, "SendAppResponse")
 		if !ok {
@@ -175,7 +179,7 @@ func (n *node) sendAppResponse(ctx context.Context, peerID ids.NodeID, requestID
 	return nil
 }
 
-func (n *node) sendAppError(ctx context.Context, peerID ids.NodeID, requestID uint32, code int32, msg string) error {
+func (n *node) SendAppError(ctx context.Context, peerID ids.NodeID, requestID uint32, code int32, msg string) error {
 	go func() {
 		p, ok := n.peer(peerID, "SendAppError")
 		if !ok {
@@ -190,7 +194,7 @@ func (n *node) sendAppError(ctx context.Context, peerID ids.NodeID, requestID ui
 	return nil
 }
 
-func (n *node) sendAppGossip(ctx context.Context, to common.SendConfig, msg []byte) error {
+func (n *node) SendAppGossip(ctx context.Context, to common.SendConfig, msg []byte) error {
 	go func() {
 		var sent set.Set[ids.NodeID]
 		for peerID := range to.NodeIDs {
