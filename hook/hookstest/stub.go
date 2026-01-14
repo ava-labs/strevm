@@ -7,7 +7,6 @@ package hookstest
 import (
 	"encoding/binary"
 	"math/big"
-	"testing"
 	"time"
 
 	"github.com/ava-labs/avalanchego/vms/components/gas"
@@ -25,7 +24,6 @@ type Stub struct {
 	Now    func() time.Time
 	Target gas.Gas
 	Ops    []hook.Op
-	TB     testing.TB
 }
 
 var _ hook.Points = (*Stub)(nil)

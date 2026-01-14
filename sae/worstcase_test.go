@@ -21,7 +21,6 @@ import (
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/core/vm"
 	"github.com/ava-labs/libevm/libevm"
-	"github.com/ava-labs/libevm/libevm/hookstest"
 	"github.com/ava-labs/libevm/libevm/options"
 	"github.com/ava-labs/libevm/params"
 	"github.com/holiman/uint256"
@@ -60,45 +59,67 @@ func createWorstCaseFuzzFlags(set *flag.FlagSet) {
 	set.Uint64Var(&fs.rngSeed, name("rng_seed"), 0, "Seed for random-number generator; ignored if zero")
 }
 
+type guzzler struct {
+	params.NOOPHooks `json:"-"`
+	Addr             common.Address `json:"guzzler_address"`
+}
+
+func (*guzzler) register(tb testing.TB) params.ExtraPayloads[*guzzler, *guzzler] {
+	tb.Helper()
+	tb.Cleanup(params.TestOnlyClearRegisteredExtras)
+	return params.RegisterExtras(params.Extras[*guzzler, *guzzler]{
+		NewRules: func(_ *params.ChainConfig, _ *params.Rules, g *guzzler, _ *big.Int, _ bool, _ uint64) *guzzler {
+			return g
+		},
+	})
+}
+
+func (g *guzzler) ActivePrecompiles(active []common.Address) []common.Address {
+	return append(active, g.Addr)
+}
+
+func (g *guzzler) PrecompileOverride(a common.Address) (libevm.PrecompiledContract, bool) {
+	if a != g.Addr {
+		return nil, false
+	}
+	return vm.NewStatefulPrecompile(g.guzzle), true
+}
+
+func (g *guzzler) guzzle(env vm.PrecompileEnvironment, input []byte) ([]byte, error) {
+	switch len(input) {
+	case 0:
+		env.UseGas(env.Gas())
+	case 8:
+		// We don't know the intrinsic gas that has already been spent, so
+		// intepreting the calldata as the amount of gas to consume in total
+		// would be impossible without some ugly closures.
+		keep := binary.BigEndian.Uint64(input)
+		use := intmath.BoundedSubtract(env.Gas(), keep, 0)
+		env.UseGas(use)
+	default:
+		panic("bad test setup; calldata MUST be empty or an 8-byte slice")
+	}
+	return nil, nil
+}
+
 //nolint:tparallel // Why should we call t.Parallel at the top level by default?
 func TestWorstCase(t *testing.T) {
 	flags := worstCaseFuzzFlags
 	t.Logf("Flags: %+v", flags)
 
-	guzzler := vm.NewStatefulPrecompile(func(env vm.PrecompileEnvironment, input []byte) ([]byte, error) {
-		switch len(input) {
-		case 0:
-			env.UseGas(env.Gas())
-		case 8:
-			// We don't know the intrinsic gas that has already been spent, so
-			// intepreting the calldata as the amount of gas to consume in total
-			// would be impossible without some ugly closures.
-			keep := binary.BigEndian.Uint64(input)
-			use := intmath.BoundedSubtract(env.Gas(), keep, 0)
-			env.UseGas(use)
-		default:
-			panic("bad test setup; calldata MUST be empty or an 8-byte slice")
-		}
-		return nil, nil
-	})
 	guzzle := common.Address{'g', 'u', 'z', 'z', 'l', 'e'}
-
-	evmHooks := &hookstest.Stub{
-		PrecompileOverrides: map[common.Address]libevm.PrecompiledContract{
-			guzzle: guzzler,
-		},
-	}
-	extras := evmHooks.Register(t)
+	g := &guzzler{Addr: guzzle}
+	extras := g.register(t)
 
 	sutOpt := options.Func[sutConfig](func(c *sutConfig) {
 		// Avoid polluting a global [params.ChainConfig] with our hooks.
-		config := *c.chainConfig
-		c.chainConfig = &config
-		extras.ChainConfig.Set(c.chainConfig, evmHooks)
+		config := *c.genesis.Config
+		c.genesis.Config = &config
+		extras.ChainConfig.Set(&config, g)
 
 		c.logLevel = logging.Warn
 
-		for _, acc := range c.alloc {
+		for _, acc := range c.genesis.Alloc {
 			// Note that `acc` isn't a pointer, but `Balance` is.
 			acc.Balance.Set(flags.balance.ToBig())
 		}
@@ -161,7 +182,7 @@ func TestWorstCase(t *testing.T) {
 		t.Run("fuzz", func(t *testing.T) {
 			t.Parallel()
 
-			timeOpt, setTime := stubbedTime()
+			timeOpt, setTime := stubbedTime(t)
 			now := time.Unix(saeparams.TauSeconds, 0)
 			fastForward := func(by time.Duration) {
 				now = now.Add(by)
