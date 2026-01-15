@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"math/big"
 	"runtime"
-	"sync"
 	"sync/atomic"
 
 	"github.com/ava-labs/avalanchego/utils/logging"
@@ -52,10 +51,7 @@ type Block struct {
 	// execution is yet to commence. For more details, see
 	// [Block.SetInterimExecutionTime for setting and [LastToSettleAt] for
 	// usage.
-	interimExecution struct {
-		sync.RWMutex
-		*proxytime.Time[gas.Gas]
-	}
+	interimExecutionTime atomic.Pointer[proxytime.Time[gas.Gas]]
 
 	executed chan struct{} // closed after `execution` is set
 	settled  chan struct{} // closed after `ancestry` is cleared

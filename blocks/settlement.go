@@ -251,27 +251,18 @@ func LastToSettleAt(hooks hook.Points, settleAt *proxytime.Time[gas.Gas], parent
 				continue
 			}
 		}
-		{
-			e := &block.interimExecution
-			e.RLock()
-			passed := e.Time != nil && e.Compare(settleAt) > 0
-			e.RUnlock()
-
-			if passed {
+		if t := block.interimExecutionTime.Load(); t != nil && t.Compare(settleAt) > 0 {
+			known = true
+			continue
+		}
+		if e := block.execution.Load(); e != nil {
+			if e.byGas.Compare(settleAt) > 0 {
+				// There may have been a race between this check and the
+				// interim-execution one above, so we have to check again.
 				known = true
 				continue
 			}
-		}
-		{
-			if e := block.execution.Load(); e != nil {
-				if e.byGas.Compare(settleAt) > 0 {
-					// There may have been a race between this check and the
-					// interim-execution one above, so we have to check again.
-					known = true
-					continue
-				}
-				return block, known, nil
-			}
+			return block, known, nil
 		}
 
 		// TODO(arr4n) more fine-grained checks are possible by computing the
