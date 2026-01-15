@@ -143,46 +143,52 @@ func TestSetRate(t *testing.T) {
 
 	steps := []struct {
 		newRate, wantNumerator uint64
-		wantTruncated          FractionalSecond[uint64]
+		wantRoundedUp          FractionalSecond[uint64]
 		wantInvariant          uint64
 	}{
 		{
 			newRate:       initRate / divisor, // no rounding
 			wantNumerator: tick / divisor,
-			wantTruncated: frac(0, 1),
+			wantRoundedUp: frac(0, 1),
 			wantInvariant: invariant / divisor,
 		},
 		{
 			newRate:       initRate * 5,
 			wantNumerator: tick * 5,
-			wantTruncated: frac(0, 1), // multiplication never has rounding
+			wantRoundedUp: frac(0, 1), // multiplication never has rounding
 			wantInvariant: invariant * 5,
 		},
 		{
 			newRate:       15_000, // same as above, but shows the numbers explicitly
 			wantNumerator: 1_500,
-			wantTruncated: frac(0, 1),
+			wantRoundedUp: frac(0, 1),
 			wantInvariant: 3_000,
 		},
 		{
 			newRate:       75,
-			wantNumerator: 7,                   // 7.5
-			wantTruncated: frac(7_500, 15_000), // rounded down by 0.5, denominated in the old rate
+			wantNumerator: 8,                   // 7.5
+			wantRoundedUp: frac(7_500, 15_000), // rounded up by 0.5, denominated in the old rate
 			wantInvariant: 15,
+		},
+		{
+			newRate:       25,
+			wantNumerator: 3,            // 2.66...
+			wantRoundedUp: frac(25, 75), // rounded up by 0.33..., denominated in the old rate
+			wantInvariant: 5,
 		},
 	}
 
 	for _, s := range steps {
 		old := tm.Rate()
-		gotTruncated, err := tm.SetRate(s.newRate)
+		gotRoundedUp, err := tm.SetRate(s.newRate)
 		require.NoErrorf(t, err, "%T.SetRate(%d)", tm, s.newRate)
 		desc := fmt.Sprintf("rate changed from %d to %d", old, s.newRate)
 		tm.requireEq(t, desc, initSeconds, frac(s.wantNumerator, s.newRate))
 
-		if gotTruncated.Numerator == 0 && s.wantTruncated.Numerator == 0 {
-			assert.NotZerof(t, gotTruncated.Denominator, "truncation %T.Denominator with 0 numerator", gotTruncated)
+		if gotRoundedUp.Numerator == 0 && s.wantRoundedUp.Numerator == 0 {
+			assert.NotZerof(t, gotRoundedUp.Denominator, "rounding %T.Denominator with 0 numerator", gotRoundedUp)
 		} else {
-			assert.Equal(t, s.wantTruncated, gotTruncated, "truncation")
+			assert.Equal(t, s.wantRoundedUp, gotRoundedUp, "rounding up")
 		}
 		assert.Equal(t, s.wantInvariant, invariant)
 	}

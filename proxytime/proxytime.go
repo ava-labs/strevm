@@ -165,14 +165,15 @@ func ConvertMilliseconds[D Duration](rate D, ms uint64) (sec uint64, _ Fractiona
 }
 
 // SetRate changes the unit rate at which time passes. The requisite integer
-// division may result in rounding down of the fractional-second component of
-// time, the amount of which is returned.
+// division may result in rounding up of the fractional-second component of
+// time, the amount of which is returned. Rounding up instead of down achieves
+// monotonicity of the clock.
 //
 // If no values have been registered with [Time.SetRateInvariants] then SetRate
 // will always return a nil error. A non-nil error will only be returned if any
 // of the rate-invariant values overflows a uint64 due to the scaling.
-func (tm *Time[D]) SetRate(hertz D) (truncated FractionalSecond[D], err error) {
-	frac, truncated, err := tm.scale(tm.fraction, hertz)
+func (tm *Time[D]) SetRate(hertz D) (roundedUp FractionalSecond[D], err error) {
+	frac, roundedUp, err := tm.scale(tm.fraction, hertz)
 	if err != nil {
 		// If this happens then there is a bug in the implementation. The
 		// invariant that `tm.fraction < tm.hertz` makes overflow impossible as
@@ -195,14 +196,14 @@ func (tm *Time[D]) SetRate(hertz D) (truncated FractionalSecond[D], err error) {
 
 	tm.fraction = frac
 	tm.hertz = hertz
-	return truncated, nil
+	return roundedUp, nil
 }
 
 // SetRateInvariants sets units that, whenever [Time.SetRate] is called, will be
 // scaled relative to the change in rate. Scaling may be affected by the same
-// truncation described for [Time.SetRate]. Truncation aside, the rational
-// numbers formed by the invariants divided by the rate will each remain equal
-// despite their change in denominator.
+// rounding described for [Time.SetRate]. Rounding aside, the rational numbers
+// formed by the invariants divided by the rate will each remain equal despite
+// their change in denominator.
 //
 // The pointers MUST NOT be nil.
 func (tm *Time[D]) SetRateInvariants(inv ...*D) {
@@ -210,14 +211,14 @@ func (tm *Time[D]) SetRateInvariants(inv ...*D) {
 }
 
 // scale returns `val`, scaled from the existing [Time.Rate] to the newly
-// specified one. See [Time.SetRate] for details about truncation and overflow
-// errors.
-func (tm *Time[D]) scale(val, newRate D) (scaled D, truncated FractionalSecond[D], err error) {
-	scaled, trunc, err := intmath.MulDiv(val, newRate, tm.hertz)
+// specified one. See [Time.SetRate] for details about overflow errors and
+// rounding.
+func (tm *Time[D]) scale(val, newRate D) (scaled D, roundedUp FractionalSecond[D], err error) {
+	scaled, round, err := intmath.MulDivCeil(val, newRate, tm.hertz)
 	if err != nil {
 		return 0, FractionalSecond[D]{}, fmt.Errorf("scaling %d from rate of %d to %d: %w", val, tm.hertz, newRate, err)
 	}
-	return scaled, FractionalSecond[D]{Numerator: trunc, Denominator: tm.hertz}, nil
+	return scaled, FractionalSecond[D]{Numerator: round, Denominator: tm.hertz}, nil
 }
 
 // Sub returns a new [Time], `s` seconds earlier. Rate invariants are NOT copied
@@ -257,8 +258,8 @@ func (tm *Time[D]) CompareUnix(sec uint64) int {
 
 // AsTime converts the proxy time to a standard [time.Time] in UTC. AsTime is
 // analogous to setting a rate of 1e9 (nanosecond), which might result in
-// truncation. The second-range limitations documented on [time.Unix] also apply
-// to AsTime.
+// rounding up. The second-range limitations documented on [time.Unix] also
+// apply to AsTime.
 func (tm *Time[D]) AsTime() time.Time {
 	if tm.seconds > math.MaxInt64 { // keeps gosec linter happy
 		return time.Unix(math.MaxInt64, math.MaxInt64)
