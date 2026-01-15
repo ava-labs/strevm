@@ -22,6 +22,7 @@ import (
 	"github.com/ava-labs/avalanchego/utils/logging"
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core/rawdb"
+	"github.com/ava-labs/libevm/core/state/snapshot"
 	"github.com/ava-labs/libevm/core/txpool"
 	"github.com/ava-labs/libevm/core/txpool/legacypool"
 	"github.com/ava-labs/libevm/core/types"
@@ -78,7 +79,9 @@ func newSUT(t *testing.T, numAccounts uint) SUT {
 	genesis := blockstest.NewGenesis(t, db, config, saetest.MaxAllocFor(wallet.Addresses()...))
 	chain := blockstest.NewChainBuilder(config, genesis)
 
-	exec, err := saexec.New(genesis, chain.GetBlock, config, db, nil, &hookstest.Stub{Target: 1e6}, logger)
+	snapshotConfig := snapshot.Config{CacheSize: 128, AsyncBuild: true}
+
+	exec, err := saexec.New(genesis, chain.GetBlock, config, db, nil, snapshotConfig, &hookstest.Stub{Target: 1e6}, logger)
 	require.NoError(t, err, "saexec.New()")
 	t.Cleanup(func() {
 		require.NoErrorf(t, exec.Close(), "%T.Close()", exec)

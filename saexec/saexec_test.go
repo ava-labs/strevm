@@ -86,8 +86,8 @@ func newSUT(tb testing.TB, hooks *saehookstest.Stub) (context.Context, SUT) {
 		blockstest.WithLogger(logger),
 	)
 	chain := blockstest.NewChainBuilder(config, genesis, opts)
-
-	e, err := New(genesis, chain.GetBlock, config, db, tdbConfig, hooks, logger)
+	snapshotConfig := snapshot.Config{CacheSize: 128, AsyncBuild: true}
+	e, err := New(genesis, chain.GetBlock, config, db, tdbConfig, snapshotConfig, hooks, logger)
 	require.NoError(tb, err, "New()")
 	tb.Cleanup(func() {
 		require.NoErrorf(tb, e.Close(), "%T.Close()", e)

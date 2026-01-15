@@ -21,6 +21,7 @@ import (
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core"
 	"github.com/ava-labs/libevm/core/rawdb"
+	"github.com/ava-labs/libevm/core/state/snapshot"
 	"github.com/ava-labs/libevm/core/txpool"
 	"github.com/ava-labs/libevm/core/txpool/legacypool"
 	"github.com/ava-labs/libevm/core/types"
@@ -119,6 +120,7 @@ func (vm *VM) Init(
 	if err := snowCtx.Metrics.Register("sae", vm.metrics); err != nil {
 		return err
 	}
+	snapshotConfig := snapshot.Config{CacheSize: 128, AsyncBuild: true}
 
 	{ // ==========  Executor  ==========
 		exec, err := saexec.New(
@@ -127,6 +129,7 @@ func (vm *VM) Init(
 			chainConfig,
 			db,
 			triedbConfig,
+			snapshotConfig,
 			hooks,
 			snowCtx.Log,
 		)

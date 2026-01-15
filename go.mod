@@ -2,7 +2,10 @@ module github.com/ava-labs/strevm
 
 go 1.24.11
 
-tool github.com/go-task/task/v3/cmd/task
+tool (
+	github.com/fjl/gencodec
+	github.com/go-task/task/v3/cmd/task
+)
 
 require (
 	github.com/ava-labs/avalanchego v1.14.2-0.20260112194842-874bc6c9d305
@@ -46,7 +49,9 @@ require (
 	github.com/emirpasic/gods v1.18.1 // indirect
 	github.com/ethereum/c-kzg-4844 v1.0.0 // indirect
 	github.com/fatih/color v1.18.0 // indirect
+	github.com/fjl/gencodec v0.1.1 // indirect
 	github.com/fsnotify/fsnotify v1.9.0 // indirect
+	github.com/garslo/gogen v0.0.0-20170306192744-1d203ffc1f61 // indirect
 	github.com/gballet/go-libpcsclite v0.0.0-20191108122812-4678299bea08 // indirect
 	github.com/gballet/go-verkle v0.1.1-0.20231031103413-a67434b50f46 // indirect
 	github.com/getsentry/sentry-go v0.35.0 // indirect
@@ -112,8 +117,10 @@ require (
 	github.com/zeebo/xxh3 v1.0.2 // indirect
 	go.opentelemetry.io/auto/sdk v1.1.0 // indirect
 	go.yaml.in/yaml/v4 v4.0.0-rc.3 // indirect
+	golang.org/x/mod v0.29.0 // indirect
 	golang.org/x/sync v0.18.0 // indirect
 	golang.org/x/time v0.12.0 // indirect
+	golang.org/x/tools v0.38.0 // indirect
 	gopkg.in/warnings.v0 v0.1.2 // indirect
 	mvdan.cc/sh/moreinterp v0.0.0-20251109230715-65adef8e2c5b // indirect
 	mvdan.cc/sh/v3 v3.12.0 // indirect

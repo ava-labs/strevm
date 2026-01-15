@@ -34,9 +34,10 @@ type ChainBuilder struct {
 func NewChainBuilder(config *params.ChainConfig, genesis *blocks.Block, defaultOpts ...ChainOption) *ChainBuilder {
 	c := &ChainBuilder{
 		config: config,
-		chain:  []*blocks.Block{genesis},
+		chain:  []*blocks.Block{},
 	}
 	c.SetDefaultOptions(defaultOpts...)
+	c.insert(genesis)
 	return c
 }
 
@@ -81,13 +82,23 @@ func (cb *ChainBuilder) NewBlock(tb testing.TB, txs []*types.Transaction, opts .
 	last := cb.Last()
 	eth := NewEthBlock(last.EthBlock(), txs, allOpts.eth...)
 	b := NewBlock(tb, eth, last, nil, allOpts.sae...) // TODO(arr4n) support last-settled blocks
-	signer := types.MakeSigner(cb.config, b.Number(), b.BuildTime())
-	SetUninformativeWorstCaseBounds(tb, signer, b)
 
-	cb.chain = append(cb.chain, b)
-	cb.blocksByHash.Store(b.Hash(), b)
-
+	cb.Insert(tb, b)
 	return b
+}
+
+// Insert sets the block's invariants and adds it to the chain.
+func (cb *ChainBuilder) Insert(tb testing.TB, block *blocks.Block) {
+	tb.Helper()
+	signer := types.MakeSigner(cb.config, block.Number(), block.BuildTime())
+	SetUninformativeWorstCaseBounds(tb, signer, block)
+	cb.insert(block)
+}
+
+// insert adds a block to the chain.
+func (cb *ChainBuilder) insert(block *blocks.Block) {
+	cb.chain = append(cb.chain, block)
+	cb.blocksByHash.Store(block.Hash(), block)
 }
 
 // Last returns the last block to be built by the builder, which MAY be the
@@ -116,6 +127,26 @@ func (cb *ChainBuilder) GetBlock(h common.Hash, num uint64) (*blocks.Block, bool
 	ifc, _ := cb.blocksByHash.Load(h)
 	b, ok := ifc.(*blocks.Block)
 	if !ok || b.NumberU64() != num {
+		return nil, false
+	}
+	return b, true
+}
+
+// BlockByNumber returns the block at the given height, and a flag indicating if it was found.
+// If the height is greater than the number of blocks in the chain, it returns an empty hash and false.
+func (cb *ChainBuilder) BlockByNumber(num uint64) (*blocks.Block, bool) {
+	if num >= uint64(len(cb.chain)) {
+		return nil, false
+	}
+	block := cb.chain[num]
+	return block, true
+}
+
+// BlockByHash returns the block with the given hash, and a flag indicating if it was found.
+func (cb *ChainBuilder) BlockByHash(h common.Hash) (*blocks.Block, bool) {
+	ifc, _ := cb.blocksByHash.Load(h)
+	b, ok := ifc.(*blocks.Block)
+	if !ok {
 		return nil, false
 	}
 	return b, true
