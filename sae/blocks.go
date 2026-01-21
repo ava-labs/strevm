@@ -12,7 +12,6 @@ import (
 	"github.com/ava-labs/avalanchego/database"
 	"github.com/ava-labs/avalanchego/ids"
 	"github.com/ava-labs/avalanchego/snow/engine/snowman/block"
-	"github.com/ava-labs/avalanchego/vms/components/gas"
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core"
 	"github.com/ava-labs/libevm/core/txpool"
@@ -25,7 +24,6 @@ import (
 	"github.com/ava-labs/strevm/gastime"
 	"github.com/ava-labs/strevm/hook"
 	saeparams "github.com/ava-labs/strevm/params"
-	"github.com/ava-labs/strevm/proxytime"
 	"github.com/ava-labs/strevm/txgossip"
 	"github.com/ava-labs/strevm/worstcase"
 )
@@ -109,30 +107,28 @@ func (vm *VM) buildBlock(
 		)
 	}
 
-	// Even though we need a [proxytime.Time] value, we only have a gas target
-	// and not a rate. We therefore use [gastime] for construction as it is the
-	// source of truth for target-to-rate conversion.
-	bTime := gastime.OfBlock(vm.hooks, hdr, parent.Header(), 0).Time
-	// If `parent` is the genesis block then the notion of a grandparent is
-	// undefined, so we have to construct its time ourselves.
-	pTime := proxytime.New(parent.BuildTime(), bTime.Rate())
-	pTime.Tick(vm.hooks.SubSecondBlockTime(bTime.Rate(), parent.Header()))
+	bTime := hook.BlockTime(vm.hooks, hdr)
+	pTime := hook.BlockTime(vm.hooks, parent.Header())
 
 	// It is allowed for [hook.Points] to further constrain the allowed block
 	// times. However, every block MUST at least satisfy these basic sanity
 	// checks.
-	if bTime.CompareUnix(saeparams.TauSeconds) < 0 {
+	if bTime.Unix() < saeparams.TauSeconds {
 		return nil, fmt.Errorf("%w: %d < %d", errBlockTimeUnderMinimum, hdr.Time, saeparams.TauSeconds)
 	}
 	if bTime.Compare(pTime) < 0 {
 		return nil, fmt.Errorf("%w: %s < %s", errBlockTimeBeforeParent, bTime.String(), pTime.String())
 	}
-	maxTime := proxytime.Of[gas.Gas](vm.config.Now().Add(maxBlockFutureSeconds))
+	maxTime := vm.config.Now().Add(maxBlockFutureSeconds)
 	if bTime.Compare(maxTime) > 0 {
-		return nil, fmt.Errorf("%w: %d > %d", errBlockTimeAfterMaximum, hdr.Time, maxTime)
+		return nil, fmt.Errorf("%w: %s > %s", errBlockTimeAfterMaximum, bTime.String(), maxTime.String())
 	}
 
-	settleAt := bTime.Sub(saeparams.TauSeconds) // underflow protected by above check of `hdr.Time`
+	// Even though we need a [proxytime.Time] value, we only have a gas target
+	// and not a rate. We therefore use [gastime] for construction as it is the
+	// source of truth for target-to-rate conversion. Underflow of Sub() is
+	// prevented by the above check.
+	settleAt := gastime.OfBlock(vm.hooks, hdr, parent.Header(), 0).Sub(saeparams.TauSeconds)
 	lastSettled, ok, err := blocks.LastToSettleAt(vm.hooks, settleAt, parent)
 	if err != nil {
 		return nil, err

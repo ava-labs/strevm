@@ -6,6 +6,7 @@ package gastime
 
 import (
 	"math"
+	"time"
 
 	"github.com/ava-labs/avalanchego/vms/components/gas"
 	"github.com/ava-labs/libevm/core/types"
@@ -64,10 +65,19 @@ func OfBlock(hooks hook.Points, hdr, parent *types.Header, startingExcess gas.Ga
 	target := hooks.GasTargetAfter(parent)
 	return newT(
 		hdr.Time,
-		hooks.SubSecondBlockTime(SafeRateOfTarget(target), hdr),
+		subSecondGasDuration(hooks, hdr, SafeRateOfTarget(target)),
 		target,
 		startingExcess,
 	)
+}
+
+func subSecondGasDuration(hooks hook.Points, hdr *types.Header, rate gas.Gas) gas.Gas {
+	g, _, _ := intmath.MulDivCeil(
+		gas.Gas(hooks.SubSecondBlockTime(hdr)),
+		gas.Gas(time.Second),
+		rate,
+	) //nolint:errcheck // Sub-second block time is strictly < [time.Second] so can't overflow
+	return g
 }
 
 func newT(unixSeconds uint64, frac, target, startingExcess gas.Gas) *Time {

@@ -8,6 +8,7 @@ import (
 	"math"
 	"math/big"
 	"testing"
+	"time"
 
 	"github.com/ava-labs/avalanchego/vms/components/gas"
 	"github.com/ava-labs/libevm/common"
@@ -345,7 +346,7 @@ func TestOfBlock(t *testing.T) {
 	const (
 		unix   = 42
 		frac   = 12_345
-		target = 1_000_000
+		target = gas.Gas(time.Second/time.Nanosecond) / TargetToRate
 		excess = 98_765
 	)
 	rate := SafeRateOfTarget(target)
@@ -355,10 +356,8 @@ func TestOfBlock(t *testing.T) {
 	}
 	hook := &hooks{
 		Stub: hookstest.Stub{
-			Now: func() *proxytime.Time[gas.Gas] {
-				tm := proxytime.New(unix, rate)
-				tm.Tick(frac)
-				return tm
+			Now: func() time.Time {
+				return time.Unix(unix, frac)
 			},
 		},
 		gasTargetAfter: map[common.Hash]gas.Gas{

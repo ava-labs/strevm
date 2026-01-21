@@ -17,7 +17,7 @@ import (
 func (tm *Time) BeforeBlock(hooks hook.Points, h *types.Header) {
 	tm.FastForwardTo(
 		h.Time,
-		hooks.SubSecondBlockTime(tm.Rate(), h),
+		subSecondGasDuration(hooks, h, tm.Rate()),
 	)
 }
 

@@ -5,6 +5,7 @@
 package hookstest
 
 import (
+	"encoding/binary"
 	"math/big"
 	"testing"
 	"time"
@@ -14,20 +15,15 @@ import (
 	"github.com/ava-labs/libevm/core/state"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/params"
-	"github.com/stretchr/testify/require"
 
 	"github.com/ava-labs/strevm/hook"
-	"github.com/ava-labs/strevm/intmath"
 	"github.com/ava-labs/strevm/proxytime"
 	"github.com/ava-labs/strevm/saetest"
 )
 
 // Stub implements [hook.Points].
 type Stub struct {
-	// Now MAY return time at any gas rate but SHOULD aim to mirror the rate
-	// equivalent to `Target` to avoid truncation introduced by scaling, which
-	// could result in test failures that are difficult to debug.
-	Now    func() *proxytime.Time[gas.Gas]
+	Now    func() time.Time
 	Target gas.Gas
 	Ops    []hook.Op
 	TB     testing.TB
@@ -38,36 +34,20 @@ var _ hook.Points = (*Stub)(nil)
 // BuildHeader constructs a header that builds on top of the parent header. The
 // `Extra` field SHOULD NOT be modified as it encodes sub-second block time.
 func (s *Stub) BuildHeader(parent *types.Header) *types.Header {
-	var now *proxytime.Time[gas.Gas]
+	var now time.Time
 	if s.Now != nil {
 		now = s.Now()
 	} else {
-		now = NowFunc(time.Now)()
+		now = time.Now()
 	}
 
 	hdr := &types.Header{
 		ParentHash: parent.Hash(),
 		Number:     new(big.Int).Add(parent.Number, common.Big1),
-		Time:       now.Unix(),
+		Time:       uint64(now.Unix()),                                           //nolint:gosec // Known non-negative
+		Extra:      binary.BigEndian.AppendUint64(nil, uint64(now.Nanosecond())), //nolint:gosec // Known non-negative
 	}
-	setSubSecondBlockTime(hdr, now.Fraction())
 	return hdr
-}
-
-// SetSubSecondBlockTime encodes `frac` in the header's `Extra` field. This is
-// equivalent to [Stub.BuildHeader] encoding, which SHOULD be used instead.
-// Typically the only reason to use this function is if a header requires an
-// arbitrary parent hash.
-func SetSubSecondBlockTime(tb testing.TB, hdr *types.Header, frac proxytime.FractionalSecond[gas.Gas]) {
-	tb.Helper()
-	require.Emptyf(tb, hdr.Extra, "Overwriting %T.Extra to store block time proxy", hdr)
-	setSubSecondBlockTime(hdr, frac)
-}
-
-func setSubSecondBlockTime(hdr *types.Header, frac proxytime.FractionalSecond[gas.Gas]) {
-	tm := proxytime.New(hdr.Time, frac.Denominator)
-	tm.Tick(frac.Numerator)
-	hdr.Extra = tm.MarshalCanoto()
 }
 
 // BuildBlock calls [types.NewBlock] with its arguments.
@@ -83,10 +63,11 @@ func (*Stub) BuildBlock(
 // source of time.
 func (s *Stub) BlockRebuilderFrom(b *types.Block) hook.BlockBuilder {
 	return &Stub{
-		Now: func() *proxytime.Time[gas.Gas] {
-			tm := new(proxytime.Time[gas.Gas])
-			require.NoErrorf(s.TB, tm.UnmarshalCanoto(b.Header().Extra), "%T.UnmarshalCanoto() in %T.BlockRebuilderFrom()", tm, s)
-			return tm
+		Now: func() time.Time {
+			return time.Unix(
+				int64(b.Time()), //nolint:gosec // Won't overflow for a few millenia
+				int64(s.SubSecondBlockTime(b.Header())),
+			)
 		},
 	}
 }
@@ -96,24 +77,14 @@ func (s *Stub) GasTargetAfter(*types.Header) gas.Gas {
 	return s.Target
 }
 
-// SubSecondBlockTime unmarshals the time encoded and stored by
-// [Stub.BuildHeader] or [SetSubSecondBlockTime], and returns the numerator of
-// [proxytime.FractionalSecond]. If the stored denominator is different to the
-// `rate` argument, the returned value is scaled. If the header's `Extra` field
-// is empty, SubSecondBlockTime returns 0.
-func (s *Stub) SubSecondBlockTime(rate gas.Gas, hdr *types.Header) gas.Gas {
+// SubSecondBlockTime returns the sub-second time encoded and stored by
+// [Stub.BuildHeader] in the header's `Extra` field. If said field is empty,
+// SubSecondBlockTime returns 0.
+func (s *Stub) SubSecondBlockTime(hdr *types.Header) time.Duration {
 	if len(hdr.Extra) == 0 {
 		return 0
 	}
-	tm := new(proxytime.Time[gas.Gas])
-	require.NoErrorf(s.TB, tm.UnmarshalCanoto(hdr.Extra), "%T.UnmarshalCanoto() in %T.SubSecondBlockTime()", tm, s)
-
-	frac := tm.Fraction()
-	if frac.Denominator == rate {
-		return frac.Numerator
-	}
-	num, _, _ := intmath.MulDiv(frac.Numerator, rate, frac.Denominator) // Guaranteed to not overflow because frac < 1 by definition
-	return num
+	return time.Duration(binary.BigEndian.Uint64(hdr.Extra)) //nolint:gosec // Test-only code that relies on our own encoding of nanonseconds in [Stub.BuildHeader]
 }
 
 // EndOfBlockOps ignores its argument and always returns [Stub.Ops].

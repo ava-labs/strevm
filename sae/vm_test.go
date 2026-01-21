@@ -23,7 +23,6 @@ import (
 	"github.com/ava-labs/avalanchego/snow/validators/validatorstest"
 	"github.com/ava-labs/avalanchego/utils/logging"
 	"github.com/ava-labs/avalanchego/utils/set"
-	"github.com/ava-labs/avalanchego/vms/components/gas"
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core/rawdb"
 	"github.com/ava-labs/libevm/core/state"
@@ -44,10 +43,8 @@ import (
 	"github.com/ava-labs/strevm/adaptor"
 	"github.com/ava-labs/strevm/blocks"
 	"github.com/ava-labs/strevm/blocks/blockstest"
-	"github.com/ava-labs/strevm/gastime"
 	"github.com/ava-labs/strevm/hook/hookstest"
 	saeparams "github.com/ava-labs/strevm/params"
-	"github.com/ava-labs/strevm/proxytime"
 	"github.com/ava-labs/strevm/saetest"
 )
 
@@ -199,7 +196,7 @@ func stubbedTime() (_ sutOption, setTime func(time.Time)) {
 		// TODO(StephenButtolph) unify the time functions provided in the config
 		// and the hooks.
 		c.vmConfig.Now = get
-		c.hooks.Now = hookstest.NowFunc(get)
+		c.hooks.Now = get
 	})
 
 	return opt, set
@@ -483,7 +480,7 @@ func TestAcceptBlock(t *testing.T) {
 	}, 100*time.Millisecond, time.Millisecond)
 
 	opt, setTime := stubbedTime()
-	var now time.Time
+	now := time.Unix(0, 0)
 	fastForward := func(by time.Duration) {
 		now = now.Add(by)
 		setTime(now)
@@ -598,21 +595,12 @@ func TestSemanticBlockChecks(t *testing.T) {
 				tt.time = now
 			}
 
-			// As we need to arbitrarily control the parent hash we can't use
-			// the stub hooks' BuildHeader() method, and must therefore set the
-			// sub-second time manually.
-			hdr := &types.Header{
-				ParentHash: tt.parentHash,
-				Number:     new(big.Int).SetUint64(height),
-				Time:       tt.time,
-			}
-			hookstest.SetSubSecondBlockTime(t, hdr, proxytime.FractionalSecond[gas.Gas]{
-				Numerator:   0,
-				Denominator: gastime.SafeRateOfTarget(sut.hooks.Target),
-			})
-
 			ethB := types.NewBlock(
-				hdr,
+				&types.Header{
+					ParentHash: tt.parentHash,
+					Number:     new(big.Int).SetUint64(height),
+					Time:       tt.time,
+				},
 				nil, // txs
 				nil, // uncles
 				tt.receipts,
