@@ -85,28 +85,28 @@ func FuzzWorstCasePrice(f *testing.F) {
 		}{
 			{
 				time:   time0,
-				nanos:  time.Duration(nanos0 % 1e9),
+				nanos:  time.Duration(nanos0 % 1e9), //nolint:gosec
 				used:   gas.Gas(used0),
 				limit:  gas.Gas(limit0),
 				target: gas.Gas(target0),
 			},
 			{
 				time:   time1,
-				nanos:  time.Duration(nanos1 % 1e9),
+				nanos:  time.Duration(nanos1 % 1e9), //nolint:gosec
 				used:   gas.Gas(used1),
 				limit:  gas.Gas(limit1),
 				target: gas.Gas(target1),
 			},
 			{
 				time:   time2,
-				nanos:  time.Duration(nanos2 % 1e9),
+				nanos:  time.Duration(nanos2 % 1e9), //nolint:gosec
 				used:   gas.Gas(used2),
 				limit:  gas.Gas(limit2),
 				target: gas.Gas(target2),
 			},
 			{
 				time:   time3,
-				nanos:  time.Duration(nanos3 % 1e9),
+				nanos:  time.Duration(nanos3 % 1e9), //nolint:gosec
 				used:   gas.Gas(used3),
 				limit:  gas.Gas(limit3),
 				target: gas.Gas(target3),
@@ -123,7 +123,7 @@ func FuzzWorstCasePrice(f *testing.F) {
 				Target: block.target,
 				Now: func() time.Time {
 					return time.Unix(
-						int64(block.time),
+						int64(block.time), //nolint:gosec // Won't overflow for a few millennia
 						int64(block.nanos),
 					)
 				},

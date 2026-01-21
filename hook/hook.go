@@ -85,7 +85,7 @@ type BlockBuilder interface {
 // time.
 func BlockTime(pts Points, hdr *types.Header) time.Time {
 	return time.Unix(
-		int64(hdr.Time), //nolint:gosec // Won't overflow for a few millenia
+		int64(hdr.Time), //nolint:gosec // Won't overflow for a few millennia
 		int64(pts.SubSecondBlockTime(hdr)),
 	)
 }
