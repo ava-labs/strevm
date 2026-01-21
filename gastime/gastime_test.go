@@ -346,7 +346,9 @@ func TestOfBlock(t *testing.T) {
 	const (
 		unix   = 42
 		frac   = 12_345
-		target = gas.Gas(time.Second/time.Nanosecond) / TargetToRate
+		scale  = 250
+		target = 1_000_000_000 / TargetToRate / scale
+		nanos  = frac * scale
 		excess = 98_765
 	)
 	rate := SafeRateOfTarget(target)
@@ -357,7 +359,7 @@ func TestOfBlock(t *testing.T) {
 	hook := &hooks{
 		Stub: hookstest.Stub{
 			Now: func() time.Time {
-				return time.Unix(unix, frac)
+				return time.Unix(unix, nanos)
 			},
 		},
 		gasTargetAfter: map[common.Hash]gas.Gas{

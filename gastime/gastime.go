@@ -72,11 +72,15 @@ func OfBlock(hooks hook.Points, hdr, parent *types.Header, startingExcess gas.Ga
 }
 
 func subSecondGasDuration(hooks hook.Points, hdr *types.Header, rate gas.Gas) gas.Gas {
+	// [hook.Points.SubSecondBlockTime] is required to return values in
+	// [0,second). The lower bound guarantees that the conversion to unsigned
+	// [gas.Gas] is safe while the upper bound guarantees that the mul-div
+	// result can't overflow so we don't have to check the error.
 	g, _, _ := intmath.MulDivCeil(
-		gas.Gas(hooks.SubSecondBlockTime(hdr)),
-		gas.Gas(time.Second),
+		gas.Gas(hooks.SubSecondBlockTime(hdr)), //nolint:gosec // See above
 		rate,
-	) //nolint:errcheck // Sub-second block time is strictly < [time.Second] so can't overflow
+		gas.Gas(time.Second),
+	)
 	return g
 }
 
