@@ -27,7 +27,9 @@ import (
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/core/vm"
 	"github.com/ava-labs/libevm/crypto"
+	"github.com/ava-labs/libevm/eth/ethconfig"
 	"github.com/ava-labs/libevm/eth/filters"
+	"github.com/ava-labs/libevm/eth/gasprice"
 	"github.com/ava-labs/libevm/eth/tracers"
 	"github.com/ava-labs/libevm/ethdb"
 	"github.com/ava-labs/libevm/event"
@@ -49,6 +51,9 @@ func (vm *VM) ethRPCServer() (*rpc.Server, error) {
 		vm:             vm,
 		accountManager: accountManager,
 	}
+	gpoConfig := ethconfig.FullNodeGPO
+	gpoConfig.Default = big.NewInt(0)
+	b.gpo = gasprice.NewOracle(b, gpoConfig)
 
 	filterSystem := filters.NewFilterSystem(b, filters.Config{})
 	filterAPI := filters.NewFilterAPI(filterSystem, false /*isLightClient*/)
@@ -280,15 +285,17 @@ func (s *netAPI) Version() string {
 }
 
 var (
-	_ filters.Backend = (*apiBackend)(nil)
-	_ ethapi.Backend  = (*apiBackend)(nil)
-	_ tracers.Backend = (*apiBackend)(nil)
+	_ gasprice.OracleBackend = (*apiBackend)(nil)
+	_ filters.Backend        = (*apiBackend)(nil)
+	_ ethapi.Backend         = (*apiBackend)(nil)
+	_ tracers.Backend        = (*apiBackend)(nil)
 )
 
 type apiBackend struct {
 	*txgossip.Set
 	vm             *VM
 	accountManager *accounts.Manager
+	gpo            *gasprice.Oracle
 }
 
 func (a *apiBackend) SyncProgress() ethereum.SyncProgress {
@@ -298,11 +305,11 @@ func (a *apiBackend) SyncProgress() ethereum.SyncProgress {
 }
 
 func (a *apiBackend) SuggestGasTipCap(ctx context.Context) (*big.Int, error) {
-	panic(errUnimplemented)
+	return a.gpo.SuggestTipCap(ctx)
 }
 
 func (a *apiBackend) FeeHistory(ctx context.Context, blockCount uint64, lastBlock rpc.BlockNumber, rewardPercentiles []float64) (*big.Int, [][]*big.Int, []*big.Int, []float64, error) {
-	panic(errUnimplemented)
+	return a.gpo.FeeHistory(ctx, blockCount, lastBlock, rewardPercentiles)
 }
 
 func (a *apiBackend) ChainDb() ethdb.Database {
@@ -353,15 +360,18 @@ func (a *apiBackend) HeaderByNumber(ctx context.Context, n rpc.BlockNumber) (*ty
 }
 
 func (a *apiBackend) HeaderByHash(ctx context.Context, hash common.Hash) (*types.Header, error) {
-	panic(errUnimplemented)
+	if b, ok := a.vm.blocks.Load(hash); ok {
+		return b.Header(), nil
+	}
+	return readByHash(a, hash, rawdb.ReadHeader), nil
 }
 
 func (a *apiBackend) HeaderByNumberOrHash(ctx context.Context, blockNrOrHash rpc.BlockNumberOrHash) (*types.Header, error) {
-	panic(errUnimplemented)
+	return readByNumberOrHash(ctx, blockNrOrHash, a.HeaderByNumber, a.HeaderByHash)
 }
 
 func (a *apiBackend) CurrentHeader() *types.Header {
-	panic(errUnimplemented)
+	return a.vm.exec.LastExecuted().Header()
 }
 
 func (a *apiBackend) CurrentBlock() *types.Header {
@@ -370,6 +380,17 @@ func (a *apiBackend) CurrentBlock() *types.Header {
 
 func (a *apiBackend) BlockByNumber(ctx context.Context, n rpc.BlockNumber) (*types.Block, error) {
 	return readByNumber(a, n, rawdb.ReadBlock)
+}
+
+func (a *apiBackend) BlockByHash(ctx context.Context, hash common.Hash) (*types.Block, error) {
+	if b, ok := a.vm.blocks.Load(hash); ok {
+		return b.EthBlock(), nil
+	}
+	return readByHash(a, hash, rawdb.ReadBlock), nil
+}
+
+func (a *apiBackend) BlockByNumberOrHash(ctx context.Context, blockNrOrHash rpc.BlockNumberOrHash) (*types.Block, error) {
+	return readByNumberOrHash(ctx, blockNrOrHash, a.BlockByNumber, a.BlockByHash)
 }
 
 type canonicalReader[T any] func(ethdb.Reader, common.Hash, uint64) *T
@@ -386,6 +407,35 @@ func readByNumber[T any](a *apiBackend, n rpc.BlockNumber, read canonicalReader[
 		rawdb.ReadCanonicalHash(a.vm.db, num),
 		num,
 	), nil
+}
+
+func readByHash[T any](a *apiBackend, hash common.Hash, read canonicalReader[T]) *T {
+	num := rawdb.ReadHeaderNumber(a.vm.db, hash)
+	if num == nil {
+		return nil
+	}
+	return read(
+		a.vm.db,
+		hash,
+		*num,
+	)
+}
+
+var errNoBlockNorHash = errors.New("invalid arguments; neither block nor hash specified")
+
+func readByNumberOrHash[T any](
+	ctx context.Context,
+	blockNrOrHash rpc.BlockNumberOrHash,
+	byNum func(context.Context, rpc.BlockNumber) (*T, error),
+	byHash func(context.Context, common.Hash) (*T, error),
+) (*T, error) {
+	if blockNr, ok := blockNrOrHash.Number(); ok {
+		return byNum(ctx, blockNr)
+	}
+	if hash, ok := blockNrOrHash.Hash(); ok {
+		return byHash(ctx, hash)
+	}
+	return nil, errNoBlockNorHash
 }
 
 var errFutureBlockNotResolved = errors.New("not accepted yet")
@@ -413,28 +463,40 @@ func (a *apiBackend) resolveBlockNumber(bn rpc.BlockNumber) (uint64, error) {
 	return n, nil
 }
 
-func (a *apiBackend) BlockByHash(ctx context.Context, hash common.Hash) (*types.Block, error) {
-	panic(errUnimplemented)
-}
-
-func (a *apiBackend) BlockByNumberOrHash(ctx context.Context, blockNrOrHash rpc.BlockNumberOrHash) (*types.Block, error) {
-	panic(errUnimplemented)
-}
-
 func (a *apiBackend) StateAndHeaderByNumber(ctx context.Context, number rpc.BlockNumber) (*state.StateDB, *types.Header, error) {
-	panic(errUnimplemented)
+	return a.StateAndHeaderByNumberOrHash(ctx, rpc.BlockNumberOrHash{
+		BlockNumber: &number,
+	})
 }
 
 func (a *apiBackend) StateAndHeaderByNumberOrHash(ctx context.Context, blockNrOrHash rpc.BlockNumberOrHash) (*state.StateDB, *types.Header, error) {
-	panic(errUnimplemented)
+	h, err := a.HeaderByNumberOrHash(ctx, blockNrOrHash)
+	if h == nil || err != nil {
+		return nil, nil, err
+	}
+
+	// TODO: Should be returning the post-execution state root rather than the
+	// settled state root.
+	db, err := state.New(h.Root, a.vm.exec.StateCache(), nil)
+	if err != nil {
+		return nil, nil, err
+	}
+	return db, h, nil
 }
 
-func (a *apiBackend) PendingBlockAndReceipts() (*types.Block, types.Receipts) {
-	panic(errUnimplemented)
+func (*apiBackend) PendingBlockAndReceipts() (*types.Block, types.Receipts) {
+	// Pending blocks do not have receipts, so we report that there is not a
+	// pending block.
+	return nil, nil
 }
 
 func (a *apiBackend) GetReceipts(ctx context.Context, hash common.Hash) (types.Receipts, error) {
-	panic(errUnimplemented)
+	h, err := a.HeaderByHash(ctx, hash)
+	if h == nil || err != nil {
+		return nil, err
+	}
+	// TODO: ReadReceipts doesn't work correctly.
+	return rawdb.ReadReceipts(a.vm.db, hash, h.Number.Uint64(), h.Time, a.vm.exec.ChainConfig()), nil
 }
 
 func (a *apiBackend) GetTd(ctx context.Context, hash common.Hash) *big.Int {
@@ -442,7 +504,14 @@ func (a *apiBackend) GetTd(ctx context.Context, hash common.Hash) *big.Int {
 }
 
 func (a *apiBackend) GetEVM(ctx context.Context, msg *core.Message, state *state.StateDB, header *types.Header, vmConfig *vm.Config, blockCtx *vm.BlockContext) *vm.EVM {
-	panic(errUnimplemented)
+	txCtx := vm.TxContext{
+		Origin:   msg.From,
+		GasPrice: header.BaseFee,
+	}
+	if txCtx.GasPrice == nil {
+		txCtx.GasPrice = big.NewInt(0)
+	}
+	return vm.NewEVM(*blockCtx, txCtx, state, a.vm.exec.ChainConfig(), *vmConfig)
 }
 
 func (a *apiBackend) SubscribeChainEvent(ch chan<- core.ChainEvent) event.Subscription {
@@ -459,7 +528,11 @@ func (*apiBackend) SubscribeChainSideEvent(chan<- core.ChainSideEvent) event.Sub
 }
 
 func (a *apiBackend) GetTransaction(ctx context.Context, txHash common.Hash) (bool, *types.Transaction, common.Hash, uint64, uint64, error) {
-	panic(errUnimplemented)
+	tx, blockHash, blockNum, index := rawdb.ReadTransaction(a.vm.db, txHash)
+	if tx == nil {
+		return false, nil, common.Hash{}, 0, 0, nil
+	}
+	return true, tx, blockHash, blockNum, index, nil
 }
 
 func (a *apiBackend) GetPoolTransactions() (types.Transactions, error) {
