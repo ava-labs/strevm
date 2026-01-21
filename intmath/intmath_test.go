@@ -6,8 +6,12 @@ package intmath
 import (
 	"errors"
 	"math"
+	"math/bits"
 	"math/rand/v2"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 const max = math.MaxUint64
@@ -76,6 +80,78 @@ func TestMulDiv(t *testing.T) {
 			t.Errorf("%s[uint64]([max uint64], 2, 1) got error %v; want %v", name, err, ErrOverflow)
 		}
 	}
+}
+
+func FuzzMulDiv(f *testing.F) {
+	// Let the return values of [MulDiv] be q and r (quotient and remainder) and
+	// those for [MulDivCeil] be c and e (ceiling and extra). When calculating
+	// (a*b)/d (for denominator), the following invariants hold:
+	//
+	// MulDiv:
+	// qd + r == ab
+	// ab - qd == r
+	//
+	// MulDivCeil:
+	// (ab + e)/d == c (without remainder)
+	// ab + e == cd
+	// cd - ab == e
+
+	// sub128 returns x-y where `x == xHi<<64 + xLo` and similarly for y. It
+	// asserts that x >= y and that the difference can be represented with only
+	// 64 bits.
+	sub128 := func(t *testing.T, xHi, xLo, yHi, yLo uint64) uint64 {
+		t.Helper()
+		diffHi, borrow := bits.Sub64(xHi, yHi, 0)
+		diffLo, borrow := bits.Sub64(xLo, yLo, borrow)
+		require.Zero(t, borrow, "x < y")
+		require.Zero(t, diffHi, "x - y >= 1<<64")
+		return diffLo
+	}
+
+	f.Fuzz(func(t *testing.T, a, b, den uint64) {
+		if den == 0 {
+			t.Skip("Zero denominator")
+		}
+
+		t.Logf("(%d * %d) / %d", a, b, den)
+
+		quo, rem, err := MulDiv(a, b, den)
+		if errors.Is(err, ErrOverflow) {
+			t.Skip("MulDiv overflow")
+		}
+		require.NoError(t, err, "MulDiv")
+		// ab
+		abHi, abLo := bits.Mul64(a, b)
+		// qd
+		qdHi, qdLo := bits.Mul64(quo, den)
+		// ab - qd == r
+		assert.Equal(t, sub128(t, abHi, abLo, qdHi, qdLo), rem, "Remainder expected to equal ab - qd")
+
+		ceil, extra, err := MulDivCeil(a, b, den)
+		if errors.Is(err, ErrOverflow) {
+			t.Skip("MulDivCeil overflow")
+		}
+		require.NoError(t, err, "MulDivCeil")
+		// cd
+		cdHi, cdLo := bits.Mul64(ceil, den)
+		// cd - ab == e
+		assert.Equal(t, sub128(t, cdHi, cdLo, abHi, abLo), extra, "Extra expected to equal cd - ab")
+
+		if t.Failed() {
+			t.FailNow()
+		}
+		if rem == 0 {
+			t.Run("zero_MulDiv_remainder", func(t *testing.T) {
+				assert.Zero(t, extra, "MulDivCeil extra")
+				assert.Equal(t, quo, ceil, "MulDivCeil result expected to equal MulDiv result")
+			})
+		} else {
+			t.Run("nonzero_MulDiv_remainder", func(t *testing.T) {
+				assert.Equal(t, den, rem+extra, "Sum of MulDiv remainder and MulDivCeil extra expected to equal denominator")
+				assert.Equal(t, quo+1, ceil, "MulDivCeil result expected to be 1 greater than MulDiv result")
+			})
+		}
+	})
 }
 
 func TestCeilDiv(t *testing.T) {
