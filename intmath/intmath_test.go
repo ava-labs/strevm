@@ -70,7 +70,7 @@ func TestMulDiv(t *testing.T) {
 
 	for name, fn := range map[string](func(_, _, _ uint64) (uint64, uint64, error)){
 		"MulDiv":     MulDiv[uint64],
-		"MulDIvCeil": MulDivCeil[uint64],
+		"MulDivCeil": MulDivCeil[uint64],
 	} {
 		if _, _, err := fn(max, 2, 1); !errors.Is(err, ErrOverflow) {
 			t.Errorf("%s[uint64]([max uint64], 2, 1) got error %v; want %v", name, err, ErrOverflow)

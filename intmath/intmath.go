@@ -33,7 +33,8 @@ func MulDiv[T ~uint64](a, b, den T) (quo, rem T, err error) {
 }
 
 // MulDivCeil is equivalent to [MulDiv] except that it returns the rounded-up
-// quotient and the complement of the remainder.
+// quotient and the complement of the remainder, i.e. the amount that would have
+// had to be added to `a*b` to result in the same quotient exactly.
 func MulDivCeil[T ~uint64](a, b, den T) (quo T, extra T, err error) {
 	q, r, err := mulDiv(a, b, den, true)
 	return q, den - r - 1, err

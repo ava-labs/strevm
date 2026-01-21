@@ -194,6 +194,10 @@ func (tm *Time[D]) SetRate(hertz D) (roundedUp FractionalSecond[D], err error) {
 		*v = scaled[i]
 	}
 
+	if frac == hertz {
+		frac = 0
+		tm.seconds++
+	}
 	tm.fraction = frac
 	tm.hertz = hertz
 	return roundedUp, nil
@@ -218,7 +222,7 @@ func (tm *Time[D]) scale(val, newRate D) (scaled D, roundedUp FractionalSecond[D
 	if err != nil {
 		return 0, FractionalSecond[D]{}, fmt.Errorf("scaling %d from rate of %d to %d: %w", val, tm.hertz, newRate, err)
 	}
-	return scaled, FractionalSecond[D]{Numerator: round, Denominator: tm.hertz}, nil
+	return scaled, FractionalSecond[D]{Numerator: round / newRate, Denominator: tm.hertz}, nil
 }
 
 // Sub returns a new [Time], `s` seconds earlier. Rate invariants are NOT copied
