@@ -103,6 +103,7 @@ func NewVM(
 	} {
 		fn(db, lastSynchronous.Hash())
 	}
+	rawdb.WriteCanonicalHash(db, lastSynchronous.Hash(), lastSynchronous.NumberU64())
 	// Internal indicators
 	for _, ptr := range []*atomic.Pointer[blocks.Block]{
 		&vm.preference,
