@@ -18,6 +18,7 @@ import (
 	"github.com/ava-labs/avalanchego/utils"
 	"github.com/ava-labs/avalanchego/utils/bloom"
 	"github.com/ava-labs/avalanchego/utils/logging"
+	"github.com/ava-labs/avalanchego/version"
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core"
 	"github.com/ava-labs/libevm/core/rawdb"
@@ -292,7 +293,7 @@ func (vm *VM) Shutdown(context.Context) error {
 
 // Version reports the VM's version.
 func (vm *VM) Version(context.Context) (string, error) {
-	return "", errUnimplemented
+	return version.Current.String(), nil
 }
 
 func (vm *VM) log() logging.Logger {

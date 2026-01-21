@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math/big"
 	"slices"
 	"sync/atomic"
 	"time"
@@ -83,7 +84,12 @@ func (b *Block) MarkSynchronous(db ethdb.Database, gasTargetOfBlock, excessAfter
 	// itself. As the only reason to include receipts here is for later
 	// settlement in another block, there is no need to pass anything meaningful
 	// as it would also require them to be received by MarkSynchronous.
-	if err := b.MarkExecuted(db, gt, time.Time{}, ethB.BaseFee(), nil /*receipts*/, ethB.Root(), new(atomic.Pointer[Block])); err != nil {
+	baseFee := ethB.BaseFee()
+	if baseFee == nil {
+		// This is only possible for the genesis block.
+		baseFee = new(big.Int)
+	}
+	if err := b.MarkExecuted(db, gt, time.Time{}, baseFee, nil /*receipts*/, ethB.Root(), new(atomic.Pointer[Block])); err != nil {
 		return err
 	}
 	b.synchronous = true

@@ -70,3 +70,10 @@ func (vm *SinceGenesis) Initialize(
 	vm.VM = inner
 	return nil
 }
+
+func (vm *SinceGenesis) Shutdown(ctx context.Context) error {
+	if vm.VM == nil {
+		return nil
+	}
+	return vm.VM.Shutdown(ctx)
+}
