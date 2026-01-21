@@ -14,6 +14,7 @@ import (
 	"github.com/ava-labs/avalanchego/snow/engine/snowman/block"
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core"
+	"github.com/ava-labs/libevm/core/rawdb"
 	"github.com/ava-labs/libevm/core/txpool"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/params"
@@ -356,11 +357,23 @@ func (vm *VM) VerifyBlock(ctx context.Context, bCtx *block.Context, b *blocks.Bl
 
 // GetBlock returns the block with the given ID, or [database.ErrNotFound].
 func (vm *VM) GetBlock(ctx context.Context, id ids.ID) (*blocks.Block, error) {
-	b, ok := vm.blocks.Load(common.Hash(id))
-	if !ok {
+	h := common.Hash(id)
+	if b, ok := vm.blocks.Load(h); ok {
+		return b, nil
+	}
+
+	n := rawdb.ReadHeaderNumber(vm.db, h)
+	if n == nil {
 		return nil, database.ErrNotFound
 	}
-	return b, nil
+
+	b := rawdb.ReadBlock(vm.db, h, *n)
+	if b == nil {
+		return nil, database.ErrNotFound
+	}
+
+	// TODO: Jank
+	return vm.newBlock(b, nil, nil)
 }
 
 // GetBlockIDAtHeight returns the accepted block at the given height, or
