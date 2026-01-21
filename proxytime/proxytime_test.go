@@ -165,15 +165,15 @@ func TestSetRate(t *testing.T) {
 			wantInvariant: 3_000,
 		},
 		{
-			newRate:       75,
-			wantNumerator: 8,                 // ceil(7.5)
-			wantRoundedUp: frac(100, 15_000), // 8/75 == 1_600/15_000 -> 1600-1500 rounding
+			newRate:       75,                // 15_000 / 20
+			wantNumerator: 8,                 // ceil(1_500/20 == 7.5)
+			wantRoundedUp: frac(100, 15_000), // 8/75 == 1_600/15_000 -> 1600-1500 rounding up
 			wantInvariant: 15,
 		},
 		{
-			newRate:       25,
-			wantNumerator: 3,           // ceil(2.66...)
-			wantRoundedUp: frac(1, 75), // 3/25 == 9/75 -> 9-8 rounding
+			newRate:       25,          // 75 / 3
+			wantNumerator: 3,           // ceil(8/3 == 2.66...)
+			wantRoundedUp: frac(1, 75), // 3/25 == 9/75 -> 9-8 rounding up
 			wantInvariant: 5,
 		},
 	}
