@@ -54,24 +54,13 @@ func (tm *Time) establishInvariants() {
 // `target` * [TargetToRate] units of [gas.Gas] is equivalent to a tick of 1
 // second. Targets are clamped to [MaxTarget].
 func New(unixSeconds uint64, target, startingExcess gas.Gas) *Time {
-	return newT(unixSeconds, 0, target, startingExcess)
+	target = clampTarget(target)
+	return makeTime(proxytime.New(unixSeconds, rateOf(target)), target, startingExcess)
 }
 
-// OfBlock is equivalent to [New] except that it derives the Unix timestamp and
-// gas target from the headers of a block and its parent. The constructed [Time]
-// derives its [proxytime.FractionalSecond] from the sub-second block time
-// provided by the hooks.
-func OfBlock(hooks hook.Points, hdr, parent *types.Header, startingExcess gas.Gas) *Time {
-	target := hooks.GasTargetAfter(parent)
-	return newT(
-		hdr.Time,
-		subSecondGasDuration(hooks, hdr, SafeRateOfTarget(target)),
-		target,
-		startingExcess,
-	)
-}
-
-func subSecondGasDuration(hooks hook.Points, hdr *types.Header, rate gas.Gas) gas.Gas {
+// SubSecond scales the value returned by [hook.Points.SubSecondBlockTime] to
+// reflect the given gas rate.
+func SubSecond(hooks hook.Points, hdr *types.Header, rate gas.Gas) gas.Gas {
 	// [hook.Points.SubSecondBlockTime] is required to return values in
 	// [0,second). The lower bound guarantees that the conversion to unsigned
 	// [gas.Gas] is safe while the upper bound guarantees that the mul-div
@@ -82,13 +71,6 @@ func subSecondGasDuration(hooks hook.Points, hdr *types.Header, rate gas.Gas) ga
 		gas.Gas(time.Second),
 	)
 	return g
-}
-
-func newT(unixSeconds uint64, frac, target, startingExcess gas.Gas) *Time {
-	target = clampTarget(target)
-	tm := proxytime.New(unixSeconds, rateOf(target))
-	tm.Tick(frac)
-	return makeTime(tm, target, startingExcess)
 }
 
 // TargetToRate is the ratio between [Time.Target] and [proxytime.Time.Rate].

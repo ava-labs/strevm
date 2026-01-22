@@ -80,16 +80,6 @@ type BlockBuilder interface {
 	) *types.Block
 }
 
-// BlockTime calls [Points.SubSecondBlockTime] on the header and returns the
-// value, combined with the regular timestamp to provide a full-resolution block
-// time.
-func BlockTime(pts Points, hdr *types.Header) time.Time {
-	return time.Unix(
-		int64(hdr.Time), //nolint:gosec // Won't overflow for a few millennia
-		int64(pts.SubSecondBlockTime(hdr)),
-	)
-}
-
 // AccountDebit includes an amount that an account should have debited,
 // along with the nonce used to aut debit the account.
 type AccountDebit struct {

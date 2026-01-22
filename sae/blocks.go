@@ -21,7 +21,6 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/ava-labs/strevm/blocks"
-	"github.com/ava-labs/strevm/gastime"
 	"github.com/ava-labs/strevm/hook"
 	saeparams "github.com/ava-labs/strevm/params"
 	"github.com/ava-labs/strevm/txgossip"
@@ -107,8 +106,8 @@ func (vm *VM) buildBlock(
 		)
 	}
 
-	bTime := hook.BlockTime(vm.hooks, hdr)
-	pTime := hook.BlockTime(vm.hooks, parent.Header())
+	bTime := blocks.PreciseTime(vm.hooks, hdr)
+	pTime := blocks.PreciseTime(vm.hooks, parent.Header())
 
 	// It is allowed for [hook.Points] to further constrain the allowed block
 	// times. However, every block MUST at least satisfy these basic sanity
@@ -124,11 +123,8 @@ func (vm *VM) buildBlock(
 		return nil, fmt.Errorf("%w: %s > %s", errBlockTimeAfterMaximum, bTime.String(), maxTime.String())
 	}
 
-	// Even though we need a [proxytime.Time] value, we only have a gas target
-	// and not a rate. We therefore use [gastime] for construction as it is the
-	// source of truth for target-to-rate conversion. Underflow of Sub() is
-	// prevented by the above check.
-	settleAt := gastime.OfBlock(vm.hooks, hdr, parent.Header(), 0).Sub(saeparams.TauSeconds)
+	// Underflow of Sub() is prevented by the above check.
+	settleAt := blocks.GasTime(vm.hooks, hdr, parent.Header()).Sub(saeparams.TauSeconds)
 	lastSettled, ok, err := blocks.LastToSettleAt(vm.hooks, settleAt, parent)
 	if err != nil {
 		return nil, err

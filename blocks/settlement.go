@@ -13,7 +13,6 @@ import (
 	"github.com/ava-labs/avalanchego/vms/components/gas"
 	"go.uber.org/zap"
 
-	"github.com/ava-labs/strevm/gastime"
 	"github.com/ava-labs/strevm/hook"
 	"github.com/ava-labs/strevm/proxytime"
 )
@@ -240,11 +239,10 @@ func LastToSettleAt(hooks hook.Points, settleAt *proxytime.Time[gas.Gas], parent
 		}
 
 		{
-			startsNoEarlierThan := gastime.OfBlock(
+			startsNoEarlierThan := GasTime(
 				hooks,
 				block.Header(),
 				block.ParentBlock().Header(),
-				0, // excess is irrelevant
 			)
 			if startsNoEarlierThan.Compare(settleAt) > 0 {
 				known = true

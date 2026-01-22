@@ -17,7 +17,6 @@ import (
 	"github.com/ava-labs/libevm/params"
 
 	"github.com/ava-labs/strevm/hook"
-	"github.com/ava-labs/strevm/proxytime"
 	"github.com/ava-labs/strevm/saetest"
 )
 
@@ -99,11 +98,3 @@ func (*Stub) BeforeExecutingBlock(params.Rules, *state.StateDB, *types.Block) er
 
 // AfterExecutingBlock is a no-op.
 func (*Stub) AfterExecutingBlock(*state.StateDB, *types.Block, types.Receipts) {}
-
-// NowFunc returns a function suitable for use in a [Stub], sourcing the current
-// time from `src` at nanosecond resolution.
-func NowFunc(src func() time.Time) func() *proxytime.Time[gas.Gas] {
-	return func() *proxytime.Time[gas.Gas] {
-		return proxytime.Of[gas.Gas](src())
-	}
-}
