@@ -6,12 +6,16 @@ package sae
 import (
 	"context"
 	"fmt"
+	"math/big"
 	"testing"
 
 	"github.com/ava-labs/avalanchego/version"
+	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/common/hexutil"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/crypto"
+	"github.com/ava-labs/libevm/internal/ethapi"
+	"github.com/ava-labs/libevm/params"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -68,6 +72,26 @@ func TestNetNamespace(t *testing.T) {
 	for _, sut := range n.nonValidators {
 		testRPCMethodsWithPeers(sut, numValidators)
 	}
+}
+
+func TestTxPoolNamespace(t *testing.T) {
+	const numTxs = 2
+	ctx, sut := newSUT(t, numTxs)
+
+	txs := make([]*types.Transaction, numTxs)
+	for i := range txs {
+		tx := sut.wallet.SetNonceAndSign(t, i, &types.DynamicFeeTx{
+			To:        &common.Address{},
+			Gas:       params.TxGas,
+			GasFeeCap: big.NewInt(1),
+			Value:     big.NewInt(1),
+		})
+		sut.mustSendTx(t, tx)
+		txs[i] = tx
+	}
+	sut.syncMempool(t)
+
+	testRPCMethod(ctx, t, sut, "txpool_content", map[string]map[string]map[string]*ethapi.RPCTransaction{})
 }
 
 func testRPCMethod[T any](ctx context.Context, t *testing.T, sut *SUT, method string, want T, args ...any) {
