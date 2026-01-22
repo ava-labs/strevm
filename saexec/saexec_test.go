@@ -501,7 +501,7 @@ func TestGasAccounting(t *testing.T) {
 			wantPriceAfter:  1,
 		},
 		{
-			blockTime:       21,                                 // fast-forward so excess is 0
+			blockTime:       21,                                        // fast-forward so excess is 0
 			numTxs:          30 * gastime.DefaultTargetToExcessScaling, // deliberate, see below
 			targetAfter:     5 * gasPerTx,
 			wantExecutedBy:  at(21, 30*gastime.DefaultTargetToExcessScaling, 10*gasPerTx),
