@@ -58,17 +58,17 @@ type config struct {
 	minPrice              gas.Price
 }
 
-// WithMinPrice overrides the default minimum gas price.
-func WithMinPrice(p gas.Price) Option {
-	return options.Func[config](func(c *config) {
-		c.minPrice = p
-	})
-}
-
 // WithTargetToExcessScaling overrides the default target to excess scaling ratio.
 func WithTargetToExcessScaling(s gas.Gas) Option {
 	return options.Func[config](func(c *config) {
 		c.targetToExcessScaling = s
+	})
+}
+
+// WithMinPrice overrides the default minimum gas price.
+func WithMinPrice(p gas.Price) Option {
+	return options.Func[config](func(c *config) {
+		c.minPrice = p
 	})
 }
 
@@ -127,12 +127,6 @@ func (tm *Time) Excess() gas.Gas {
 	return tm.excess
 }
 
-// MinPrice returns the minimum gas price (base fee), i.e. the M parameter in
-// ACP-176's price calculation.
-func (tm *Time) MinPrice() gas.Price {
-	return tm.minPrice
-}
-
 // TargetToExcessScaling returns the ratio between [Time.Target] and the
 // reciprocal of the [Time.Excess] coefficient used in calculating [Time.Price].
 // In [ACP-176] this is the K variable.
@@ -140,14 +134,20 @@ func (tm *Time) TargetToExcessScaling() gas.Gas {
 	return tm.targetToExcessScaling
 }
 
-// SetMinPrice updates the minimum gas price.
-func (tm *Time) SetMinPrice(p gas.Price) {
-	tm.minPrice = p
+// MinPrice returns the minimum gas price (base fee), i.e. the M parameter in
+// ACP-176's price calculation.
+func (tm *Time) MinPrice() gas.Price {
+	return tm.minPrice
 }
 
 // SetTargetToExcessScaling updates the target to excess scaling ratio.
 func (tm *Time) SetTargetToExcessScaling(s gas.Gas) {
 	tm.targetToExcessScaling = s
+}
+
+// SetMinPrice updates the minimum gas price.
+func (tm *Time) SetMinPrice(p gas.Price) {
+	tm.minPrice = p
 }
 
 // Price returns the price of a unit of gas, i.e. the "base fee".
