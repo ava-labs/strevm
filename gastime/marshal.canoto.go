@@ -27,13 +27,17 @@ var (
 )
 
 const (
-	canoto__TimeMarshaler__Time   = 1
-	canoto__TimeMarshaler__target = 2
-	canoto__TimeMarshaler__excess = 3
+	canoto__TimeMarshaler__Time                  = 1
+	canoto__TimeMarshaler__target                = 2
+	canoto__TimeMarshaler__excess                = 3
+	canoto__TimeMarshaler__minPrice              = 4
+	canoto__TimeMarshaler__targetToExcessScaling = 5
 
-	canoto__TimeMarshaler__Time__tag   = "\x0a" // canoto.Tag(canoto__TimeMarshaler__Time, canoto.Len)
-	canoto__TimeMarshaler__target__tag = "\x10" // canoto.Tag(canoto__TimeMarshaler__target, canoto.Varint)
-	canoto__TimeMarshaler__excess__tag = "\x18" // canoto.Tag(canoto__TimeMarshaler__excess, canoto.Varint)
+	canoto__TimeMarshaler__Time__tag                  = "\x0a" // canoto.Tag(canoto__TimeMarshaler__Time, canoto.Len)
+	canoto__TimeMarshaler__target__tag                = "\x10" // canoto.Tag(canoto__TimeMarshaler__target, canoto.Varint)
+	canoto__TimeMarshaler__excess__tag                = "\x18" // canoto.Tag(canoto__TimeMarshaler__excess, canoto.Varint)
+	canoto__TimeMarshaler__minPrice__tag              = "\x20" // canoto.Tag(canoto__TimeMarshaler__minPrice, canoto.Varint)
+	canoto__TimeMarshaler__targetToExcessScaling__tag = "\x28" // canoto.Tag(canoto__TimeMarshaler__targetToExcessScaling, canoto.Varint)
 )
 
 type canotoData_TimeMarshaler struct {
@@ -67,6 +71,18 @@ func (*TimeMarshaler) CanotoSpec(types ...reflect.Type) *canoto.Spec {
 				Name:        "excess",
 				OneOf:       "",
 				TypeUint:    canoto.SizeOf(zero.excess),
+			},
+			{
+				FieldNumber: canoto__TimeMarshaler__minPrice,
+				Name:        "minPrice",
+				OneOf:       "",
+				TypeUint:    canoto.SizeOf(zero.minPrice),
+			},
+			{
+				FieldNumber: canoto__TimeMarshaler__targetToExcessScaling,
+				Name:        "targetToExcessScaling",
+				OneOf:       "",
+				TypeUint:    canoto.SizeOf(zero.targetToExcessScaling),
 			},
 		},
 	}
@@ -158,6 +174,28 @@ func (c *TimeMarshaler) UnmarshalCanotoFrom(r canoto.Reader) error {
 			if canoto.IsZero(c.excess) {
 				return canoto.ErrZeroValue
 			}
+		case canoto__TimeMarshaler__minPrice:
+			if wireType != canoto.Varint {
+				return canoto.ErrUnexpectedWireType
+			}
+
+			if err := canoto.ReadUint(&r, &c.minPrice); err != nil {
+				return err
+			}
+			if canoto.IsZero(c.minPrice) {
+				return canoto.ErrZeroValue
+			}
+		case canoto__TimeMarshaler__targetToExcessScaling:
+			if wireType != canoto.Varint {
+				return canoto.ErrUnexpectedWireType
+			}
+
+			if err := canoto.ReadUint(&r, &c.targetToExcessScaling); err != nil {
+				return err
+			}
+			if canoto.IsZero(c.targetToExcessScaling) {
+				return canoto.ErrZeroValue
+			}
 		default:
 			return canoto.ErrUnknownField
 		}
@@ -202,6 +240,12 @@ func (c *TimeMarshaler) CalculateCanotoCache() {
 	}
 	if !canoto.IsZero(c.excess) {
 		size += uint64(len(canoto__TimeMarshaler__excess__tag)) + canoto.SizeUint(c.excess)
+	}
+	if !canoto.IsZero(c.minPrice) {
+		size += uint64(len(canoto__TimeMarshaler__minPrice__tag)) + canoto.SizeUint(c.minPrice)
+	}
+	if !canoto.IsZero(c.targetToExcessScaling) {
+		size += uint64(len(canoto__TimeMarshaler__targetToExcessScaling__tag)) + canoto.SizeUint(c.targetToExcessScaling)
 	}
 	c.canotoData.size.Store(size)
 }
@@ -257,6 +301,14 @@ func (c *TimeMarshaler) MarshalCanotoInto(w canoto.Writer) canoto.Writer {
 	if !canoto.IsZero(c.excess) {
 		canoto.Append(&w, canoto__TimeMarshaler__excess__tag)
 		canoto.AppendUint(&w, c.excess)
+	}
+	if !canoto.IsZero(c.minPrice) {
+		canoto.Append(&w, canoto__TimeMarshaler__minPrice__tag)
+		canoto.AppendUint(&w, c.minPrice)
+	}
+	if !canoto.IsZero(c.targetToExcessScaling) {
+		canoto.Append(&w, canoto__TimeMarshaler__targetToExcessScaling__tag)
+		canoto.AppendUint(&w, c.targetToExcessScaling)
 	}
 	return w
 }

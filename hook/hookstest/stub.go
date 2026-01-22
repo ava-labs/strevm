@@ -21,7 +21,7 @@ import (
 // Stub implements [hook.Points].
 type Stub struct {
 	Now           func() uint64
-	Target        gas.Gas
+	GasConfig     hook.GasConfig
 	SubSecondTime gas.Gas
 	Ops           []hook.Op
 }
@@ -60,9 +60,9 @@ func (s *Stub) BlockRebuilderFrom(b *types.Block) hook.BlockBuilder {
 	}
 }
 
-// GasTargetAfter ignores its argument and always returns [Stub.Target].
-func (s *Stub) GasTargetAfter(*types.Header) gas.Gas {
-	return s.Target
+// GasConfigAfter ignores its argument and always returns [Stub.GasConfig].
+func (s *Stub) GasConfigAfter(*types.Header) hook.GasConfig {
+	return s.GasConfig
 }
 
 // SubSecondBlockTime time ignores its arguments and always returns

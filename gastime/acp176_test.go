@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/ava-labs/strevm/hook"
 	"github.com/ava-labs/strevm/hook/hookstest"
 )
 
@@ -30,7 +31,11 @@ func TestTargetUpdateTiming(t *testing.T) {
 		newTarget        = initialTarget + 100_000
 	)
 	hook := &hookstest.Stub{
-		Target: newTarget,
+		GasConfig: hook.GasConfig{
+			Target:                newTarget,
+			MinPrice:              DefaultMinPrice,
+			TargetToExcessScaling: DefaultTargetToExcessScaling,
+		},
 	}
 	header := &types.Header{
 		Time: newTime,
@@ -120,7 +125,11 @@ func FuzzWorstCasePrice(f *testing.F) {
 				Time: block.time,
 			}
 			hook := &hookstest.Stub{
-				Target:        block.target,
+				GasConfig: hook.GasConfig{
+					Target:                block.target,
+					MinPrice:              DefaultMinPrice,
+					TargetToExcessScaling: DefaultTargetToExcessScaling,
+				},
 				SubSecondTime: block.timeFrac,
 			}
 

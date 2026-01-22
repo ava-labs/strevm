@@ -37,9 +37,9 @@ type Points interface {
 	// identical block.
 	BlockRebuilderFrom(block *types.Block) BlockBuilder
 
-	// GasTargetAfter returns the gas target that should go into effect
+	// GasConfigAfter returns the gas configuration that should go into effect
 	// immediately after the provided block.
-	GasTargetAfter(*types.Header) gas.Gas
+	GasConfigAfter(*types.Header) GasConfig
 	// SubSecondBlockTime returns the sub-second portion of the block time based
 	// on the provided gas rate.
 	//
@@ -134,6 +134,18 @@ func (o *Op) ApplyTo(stateDB *state.StateDB) error {
 		stateDB.AddBalance(to, &amount)
 	}
 	return nil
+}
+
+// GasConfig contains gas-related parameters that can be configured via hooks.
+type GasConfig struct {
+	// Target is the gas target per second (T parameter in ACP-176).
+	Target gas.Gas
+	// MinPrice is the minimum gas price / base fee (M parameter in ACP-176).
+	MinPrice gas.Price
+	// TargetToExcessScaling is the ratio between the gas target and the
+	// reciprocal of the excess coefficient used in price calculation
+	// (K variable in ACP-176, where K = TargetToExcessScaling * T).
+	TargetToExcessScaling gas.Gas
 }
 
 // MinimumGasConsumption MUST be used as the implementation for the respective

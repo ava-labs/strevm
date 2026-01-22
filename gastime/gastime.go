@@ -8,6 +8,7 @@ import (
 	"math"
 
 	"github.com/ava-labs/avalanchego/vms/components/gas"
+	"github.com/ava-labs/libevm/libevm/options"
 	"github.com/holiman/uint256"
 
 	"github.com/ava-labs/strevm/intmath"
@@ -31,12 +32,14 @@ type Time struct {
 }
 
 // makeTime is a constructor shared by [New] and [Time.Clone].
-func makeTime(t *proxytime.Time[gas.Gas], target, excess gas.Gas) *Time {
+func makeTime(t *proxytime.Time[gas.Gas], target, excess gas.Gas, minPrice gas.Price, targetToExcessScaling gas.Gas) *Time {
 	tm := &Time{
 		TimeMarshaler: TimeMarshaler{
-			Time:   t,
-			target: target,
-			excess: excess,
+			Time:                  t,
+			target:                target,
+			excess:                excess,
+			minPrice:              minPrice,
+			targetToExcessScaling: targetToExcessScaling,
 		},
 	}
 	tm.establishInvariants()
@@ -47,23 +50,57 @@ func (tm *Time) establishInvariants() {
 	tm.Time.SetRateInvariants(&tm.target, &tm.excess)
 }
 
+// An Option configures the [Time] created by [New].
+type Option = options.Option[config]
+
+type config struct {
+	minPrice              gas.Price
+	targetToExcessScaling gas.Gas
+}
+
+// WithMinPrice overrides the default minimum gas price.
+func WithMinPrice(p gas.Price) Option {
+	return options.Func[config](func(c *config) {
+		c.minPrice = p
+	})
+}
+
+// WithTargetToExcessScaling overrides the default target to excess scaling ratio.
+func WithTargetToExcessScaling(s gas.Gas) Option {
+	return options.Func[config](func(c *config) {
+		c.targetToExcessScaling = s
+	})
+}
+
 // New returns a new [Time], set from a Unix timestamp. The consumption of
 // `target` * [TargetToRate] units of [gas.Gas] is equivalent to a tick of 1
-// second. Targets are clamped to [MaxTarget].
-func New(unixSeconds uint64, target, startingExcess gas.Gas) *Time {
+// second. Targets are clamped to [MaxTarget]. The minPrice and
+// targetToExcessScaling parameters default to [DefaultMinPrice] and
+// [DefaultTargetToExcessScaling] respectively, but can be overridden with
+// [WithMinPrice] and [WithTargetToExcessScaling].
+func New(unixSeconds uint64, target, startingExcess gas.Gas, opts ...Option) *Time {
+	cfg := &config{
+		minPrice:              DefaultMinPrice,
+		targetToExcessScaling: DefaultTargetToExcessScaling,
+	}
+	options.ApplyTo(cfg, opts...)
 	target = clampTarget(target)
-	return makeTime(proxytime.New(unixSeconds, rateOf(target)), target, startingExcess)
+	return makeTime(proxytime.New(unixSeconds, rateOf(target)), target, startingExcess, cfg.minPrice, cfg.targetToExcessScaling)
 }
 
 // TargetToRate is the ratio between [Time.Target] and [proxytime.Time.Rate].
 const TargetToRate = 2
 
-// TargetToExcessScaling is the ratio between [Time.Target] and the reciprocal
-// of the [Time.Excess] coefficient used in calculating [Time.Price]. In
-// [ACP-176] this is the K variable.
+// DefaultTargetToExcessScaling is the default ratio between [Time.Target] and
+// the reciprocal of the [Time.Excess] coefficient used in calculating
+// [Time.Price]. In [ACP-176] this is the K variable.
 //
 // [ACP-176]: https://github.com/avalanche-foundation/ACPs/tree/main/ACPs/176-dynamic-evm-gas-limit-and-price-discovery-updates
-const TargetToExcessScaling = 87
+const DefaultTargetToExcessScaling = 87
+
+// DefaultMinPrice is the default minimum gas price (base fee). This is the M
+// parameter in ACP-176's price calculation.
+const DefaultMinPrice gas.Price = 1
 
 // MaxTarget is the maximum allowable [Time.Target] to avoid overflows of the
 // associated [proxytime.Time.Rate]. Values above this are silently clamped.
@@ -77,7 +114,7 @@ func roundRate(r gas.Gas) gas.Gas   { return (r / TargetToRate) * TargetToRate }
 func (tm *Time) Clone() *Time {
 	// [proxytime.Time.Clone] explicitly does NOT clone the rate invariants, so
 	// we reestablish them as if we were constructing a new instance.
-	return makeTime(tm.Time.Clone(), tm.target, tm.excess)
+	return makeTime(tm.Time.Clone(), tm.target, tm.excess, tm.minPrice, tm.targetToExcessScaling)
 }
 
 // Target returns the `T` parameter of ACP-176.
@@ -90,19 +127,47 @@ func (tm *Time) Excess() gas.Gas {
 	return tm.excess
 }
 
-// Price returns the price of a unit of gas, i.e. the "base fee".
-func (tm *Time) Price() gas.Price {
-	return gas.CalculatePrice(1 /* M */, tm.excess, tm.excessScalingFactor())
+// MinPrice returns the minimum gas price (base fee), i.e. the M parameter in
+// ACP-176's price calculation.
+func (tm *Time) MinPrice() gas.Price {
+	return tm.minPrice
 }
 
-// excessScalingFactor returns the K variable of ACP-103/176, i.e. 87*T, capped
-// at [math.MaxUint64].
+// TargetToExcessScaling returns the ratio between [Time.Target] and the
+// reciprocal of the [Time.Excess] coefficient used in calculating [Time.Price].
+// In [ACP-176] this is the K variable.
+func (tm *Time) TargetToExcessScaling() gas.Gas {
+	return tm.targetToExcessScaling
+}
+
+// SetMinPrice updates the minimum gas price.
+func (tm *Time) SetMinPrice(p gas.Price) {
+	tm.minPrice = p
+}
+
+// SetTargetToExcessScaling updates the target to excess scaling ratio.
+func (tm *Time) SetTargetToExcessScaling(s gas.Gas) {
+	tm.targetToExcessScaling = s
+}
+
+// Price returns the price of a unit of gas, i.e. the "base fee".
+func (tm *Time) Price() gas.Price {
+	// TODO (cey): Should we verify this is non-zero?
+	return gas.CalculatePrice(tm.minPrice, tm.excess, tm.excessScalingFactor())
+}
+
+// excessScalingFactor returns the K variable of ACP-103/176, i.e.
+// targetToExcessScaling*T, capped at [math.MaxUint64].
 func (tm *Time) excessScalingFactor() gas.Gas {
-	const overflowThreshold = math.MaxUint64 / TargetToExcessScaling
-	if tm.target > overflowThreshold {
+	// TODO (cey): Should we verify this is non-zero instead?
+	if tm.targetToExcessScaling == 0 {
 		return math.MaxUint64
 	}
-	return TargetToExcessScaling * tm.target
+	overflowThreshold := math.MaxUint64 / tm.targetToExcessScaling
+	if tm.target > gas.Gas(overflowThreshold) {
+		return math.MaxUint64
+	}
+	return tm.targetToExcessScaling * tm.target
 }
 
 // BaseFee is equivalent to [Time.Price], returning the result as a uint256 for

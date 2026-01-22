@@ -37,6 +37,8 @@ import (
 
 	"github.com/ava-labs/strevm/blocks/blockstest"
 	"github.com/ava-labs/strevm/cmputils"
+	"github.com/ava-labs/strevm/gastime"
+	"github.com/ava-labs/strevm/hook"
 	"github.com/ava-labs/strevm/hook/hookstest"
 	"github.com/ava-labs/strevm/saetest"
 	"github.com/ava-labs/strevm/saexec"
@@ -78,7 +80,13 @@ func newSUT(t *testing.T, numAccounts uint) SUT {
 	genesis := blockstest.NewGenesis(t, db, config, saetest.MaxAllocFor(wallet.Addresses()...))
 	chain := blockstest.NewChainBuilder(config, genesis)
 
-	exec, err := saexec.New(genesis, chain.GetBlock, config, db, nil, &hookstest.Stub{Target: 1e6}, logger)
+	exec, err := saexec.New(genesis, chain.GetBlock, config, db, nil, &hookstest.Stub{
+		GasConfig: hook.GasConfig{
+			Target:                1e6,
+			MinPrice:              gastime.DefaultMinPrice,
+			TargetToExcessScaling: gastime.DefaultTargetToExcessScaling,
+		},
+	}, logger)
 	require.NoError(t, err, "saexec.New()")
 	t.Cleanup(func() {
 		require.NoErrorf(t, exec.Close(), "%T.Close()", exec)

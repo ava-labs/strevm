@@ -56,7 +56,11 @@ func newSUT(tb testing.TB, alloc types.GenesisAlloc) SUT {
 		blockstest.WithGasExcess(initialExcess),
 	)
 	hooks := &hookstest.Stub{
-		Target: initialGasTarget,
+		GasConfig: hook.GasConfig{
+			Target:                initialGasTarget,
+			MinPrice:              gastime.DefaultMinPrice,
+			TargetToExcessScaling: gastime.DefaultTargetToExcessScaling,
+		},
 	}
 	s, err := NewState(hooks, config, cache, genesis)
 	require.NoError(tb, err, "NewState()")
@@ -115,7 +119,11 @@ func TestMultipleBlocks(t *testing.T) {
 	}{
 		{
 			hooks: &hookstest.Stub{
-				Target: 2 * initialGasTarget, // Will double the target _after_ this block.
+				GasConfig: hook.GasConfig{
+					Target:                2 * initialGasTarget, // Will double the target _after_ this block.
+					MinPrice:              gastime.DefaultMinPrice,
+					TargetToExcessScaling: gastime.DefaultTargetToExcessScaling,
+				},
 			},
 			wantGasLimit: initialMaxBlockSize,
 			wantBaseFee:  uint256.NewInt(1),
@@ -156,7 +164,11 @@ func TestMultipleBlocks(t *testing.T) {
 		},
 		{
 			hooks: &hookstest.Stub{
-				Target: initialGasTarget, // Restore the target _after_ this block.
+				GasConfig: hook.GasConfig{
+					Target:                initialGasTarget, // Restore the target _after_ this block.
+					MinPrice:              gastime.DefaultMinPrice,
+					TargetToExcessScaling: gastime.DefaultTargetToExcessScaling,
+				},
 			},
 			wantGasLimit: 2 * initialMaxBlockSize,
 			wantBaseFee:  uint256.NewInt(2),
@@ -584,7 +596,7 @@ func TestStartBlockQueueFullDueToTargetChanges(t *testing.T) {
 	sut := newSUT(t, nil)
 	state := sut.State
 
-	sut.Hooks.Target = 1 // applied after the first block
+	sut.Hooks.GasConfig.Target = 1 // applied after the first block
 	h := &types.Header{
 		ParentHash: sut.Genesis.Hash(),
 		Number:     big.NewInt(0),
