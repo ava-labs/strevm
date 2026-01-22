@@ -36,34 +36,36 @@ func TestBoundedSubtract(t *testing.T) {
 	}
 }
 
-func TestMulDiv(t *testing.T) {
-	// Invariants:
-	// wantQuo == wantQuoCeil i.f.f. wantRem == 0
-	// (wantRem + wantExtra) ∈ {0, div}
-	// wantRem < div && wantExtra < div
-	tests := []struct {
-		a, b, div              uint64
-		wantQuo, wantRem       uint64
-		wantQuoCeil, wantExtra uint64
-	}{
-		{
-			a: 5, b: 2, div: 3, // 10/3
-			wantQuo: 3, wantRem: 1,
-			wantQuoCeil: 4, wantExtra: 2,
-		},
-		{
-			a: 5, b: 3, div: 3, // 15/3
-			wantQuo: 5, wantRem: 0,
-			wantQuoCeil: 5, wantExtra: 0,
-		},
-		{
-			a: max, b: 4, div: 8, // must avoid overflow
-			wantQuo: max / 2, wantRem: 4,
-			wantQuoCeil: max/2 + 1, wantExtra: 4,
-		},
-	}
+// mulDivTestCases are shared by [TestMulDiv] and [FuzzMulDiv].
+//
+// Invariants:
+//   - wantQuo == wantQuoCeil i.f.f. wantRem == 0
+//   - (wantRem + wantExtra) ∈ {0, div}
+//   - wantRem < div && wantExtra < div
+var mulDivTestCases = []struct {
+	a, b, div              uint64
+	wantQuo, wantRem       uint64
+	wantQuoCeil, wantExtra uint64
+}{
+	{
+		a: 5, b: 2, div: 3, // 10/3
+		wantQuo: 3, wantRem: 1,
+		wantQuoCeil: 4, wantExtra: 2,
+	},
+	{
+		a: 5, b: 3, div: 3, // 15/3
+		wantQuo: 5, wantRem: 0,
+		wantQuoCeil: 5, wantExtra: 0,
+	},
+	{
+		a: max, b: 4, div: 8, // must avoid overflow
+		wantQuo: max / 2, wantRem: 4,
+		wantQuoCeil: max/2 + 1, wantExtra: 4,
+	},
+}
 
-	for _, tt := range tests {
+func TestMulDiv(t *testing.T) {
+	for _, tt := range mulDivTestCases {
 		if gotQuo, gotRem, err := MulDiv(tt.a, tt.b, tt.div); err != nil || gotQuo != tt.wantQuo || gotRem != tt.wantRem {
 			t.Errorf("MulDiv[%T](%[1]d, %d, %d) got (%d, %d, %v); want (%d, %d, nil)", tt.a, tt.b, tt.div, gotQuo, gotRem, err, tt.wantQuo, tt.wantRem)
 		}
@@ -102,17 +104,16 @@ func FuzzMulDiv(f *testing.F) {
 	sub128 := func(t *testing.T, xHi, xLo, yHi, yLo uint64) uint64 {
 		t.Helper()
 		diffHi, borrow := bits.Sub64(xHi, yHi, 0)
-		diffLo, borrow := bits.Sub64(xLo, yLo, borrow)
 		require.Zero(t, borrow, "x < y")
+		diffLo, borrow := bits.Sub64(xLo, yLo, borrow)
+		require.LessOrEqual(t, borrow, diffHi, "x < y")
+		diffHi -= borrow
 		require.Zero(t, diffHi, "x - y >= 1<<64")
 		return diffLo
 	}
 
-	f.Fuzz(func(t *testing.T, a, b, den uint64) {
-		if den == 0 {
-			t.Skip("Zero denominator")
-		}
-
+	// The actual test is abstracted to allow inversion of `a` and `b`.
+	fuzz := func(t *testing.T, a, b, den uint64) {
 		t.Logf("(%d * %d) / %d", a, b, den)
 
 		quo, rem, err := MulDiv(a, b, den)
@@ -151,6 +152,20 @@ func FuzzMulDiv(f *testing.F) {
 				assert.Equal(t, quo+1, ceil, "MulDivCeil result expected to be 1 greater than MulDiv result")
 			})
 		}
+	}
+
+	m := uint64(math.MaxUint64)
+	f.Add(m, m, uint64(1)) // results in [ErrOverflow]
+	for _, tc := range mulDivTestCases {
+		f.Add(tc.a, tc.b, tc.div)
+	}
+
+	f.Fuzz(func(t *testing.T, a, b, den uint64) {
+		if den == 0 {
+			t.Skip("Zero denominator")
+		}
+		fuzz(t, a, b, den)
+		fuzz(t, b, a, den)
 	})
 }
 
