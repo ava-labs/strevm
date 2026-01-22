@@ -166,19 +166,18 @@ func ConvertMilliseconds[D Duration](rate D, ms uint64) (sec uint64, _ Fractiona
 
 // SetRate changes the unit rate at which time passes. The requisite integer
 // division may result in rounding up of the fractional-second component of
-// time, the amount of which is returned. Rounding up instead of down achieves
-// monotonicity of the clock.
+// time. Rounding up instead of down achieves monotonicity of the clock.
 //
 // If no values have been registered with [Time.SetRateInvariants] then SetRate
 // will always return a nil error. A non-nil error will only be returned if any
 // of the rate-invariant values overflows a uint64 due to the scaling.
-func (tm *Time[D]) SetRate(hertz D) (roundedUp FractionalSecond[D], err error) {
-	frac, roundedUp, err := tm.scale(tm.fraction, hertz)
+func (tm *Time[D]) SetRate(hertz D) error {
+	frac, _, err := tm.scale(tm.fraction, hertz)
 	if err != nil {
 		// If this happens then there is a bug in the implementation. The
 		// invariant that `tm.fraction < tm.hertz` makes overflow impossible as
 		// the scaled fraction will be less than the new rate.
-		return FractionalSecond[D]{}, fmt.Errorf("fractional-second time: %w", err)
+		return fmt.Errorf("fractional-second time: %w", err)
 	}
 
 	// Avoid scaling some but not all rate invariants if one results in an
@@ -187,7 +186,7 @@ func (tm *Time[D]) SetRate(hertz D) (roundedUp FractionalSecond[D], err error) {
 	for i, v := range tm.rateInvariants {
 		scaled[i], _, err = tm.scale(*v, hertz)
 		if err != nil {
-			return FractionalSecond[D]{}, fmt.Errorf("rate invariant [%d]: %w", i, err)
+			return fmt.Errorf("rate invariant [%d]: %w", i, err)
 		}
 	}
 	for i, v := range tm.rateInvariants {
@@ -200,7 +199,7 @@ func (tm *Time[D]) SetRate(hertz D) (roundedUp FractionalSecond[D], err error) {
 	}
 	tm.fraction = frac
 	tm.hertz = hertz
-	return roundedUp, nil
+	return nil
 }
 
 // SetRateInvariants sets units that, whenever [Time.SetRate] is called, will be

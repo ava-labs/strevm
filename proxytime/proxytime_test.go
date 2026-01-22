@@ -143,54 +143,41 @@ func TestSetRate(t *testing.T) {
 
 	steps := []struct {
 		newRate, wantNumerator uint64
-		wantRoundedUp          FractionalSecond[uint64]
 		wantInvariant          uint64
 	}{
 		{
 			newRate:       initRate / divisor, // no rounding
 			wantNumerator: tick / divisor,
-			wantRoundedUp: frac(0, 1),
 			wantInvariant: invariant / divisor,
 		},
 		{
 			newRate:       initRate * 5,
 			wantNumerator: tick * 5,
-			wantRoundedUp: frac(0, 1), // multiplication never has rounding
 			wantInvariant: invariant * 5,
 		},
 		{
 			newRate:       15_000, // same as above, but shows the numbers explicitly
 			wantNumerator: 1_500,
-			wantRoundedUp: frac(0, 1),
 			wantInvariant: 3_000,
 		},
 		{
-			newRate:       75,                // 15_000 / 200
-			wantNumerator: 8,                 // ceil(1_500/200 == 7.5)
-			wantRoundedUp: frac(100, 15_000), // 8/75 == 1_600/15_000 -> 1600-1500 rounding up
+			newRate:       75, // 15_000 / 200
+			wantNumerator: 8,  // ceil(1_500/200 == 7.5)
 			wantInvariant: 15,
 		},
 		{
-			newRate:       25,          // 75 / 3
-			wantNumerator: 3,           // ceil(8/3 == 2.66...)
-			wantRoundedUp: frac(1, 75), // 3/25 == 9/75 -> 9-8 rounding up
+			newRate:       25, // 75 / 3
+			wantNumerator: 3,  // ceil(8/3 == 2.66...)
 			wantInvariant: 5,
 		},
 	}
 
 	for _, s := range steps {
 		old := tm.Rate()
-		gotRoundedUp, err := tm.SetRate(s.newRate)
-		require.NoErrorf(t, err, "%T.SetRate(%d)", tm, s.newRate)
+		require.NoErrorf(t, tm.SetRate(s.newRate), "%T.SetRate(%d)", tm, s.newRate)
 		desc := fmt.Sprintf("rate changed from %d to %d", old, s.newRate)
 		tm.requireEq(t, desc, initSeconds, frac(s.wantNumerator, s.newRate))
-
-		if gotRoundedUp.Numerator == 0 && s.wantRoundedUp.Numerator == 0 {
-			assert.NotZerof(t, gotRoundedUp.Denominator, "rounding %T.Denominator with 0 numerator", gotRoundedUp)
-		} else {
-			assert.Equal(t, s.wantRoundedUp, gotRoundedUp, "rounding up")
-		}
-		assert.Equal(t, s.wantInvariant, invariant)
+		assert.Equal(t, s.wantInvariant, invariant, "scaled invariant")
 	}
 }
 
@@ -231,11 +218,9 @@ func TestSetRateRoundUpFullSecond(t *testing.T) {
 		t.Run(fmt.Sprintf("%d_of_%d_scaled_down_to_%d", tt.tick, tt.rate, tt.newRate), func(t *testing.T) {
 			tm := New(startUnix, tt.rate)
 			tm.Tick(tt.tick)
-			got, err := tm.SetRate(tt.newRate)
-			require.NoError(t, err, "SetRate(%d) from %d", tt.newRate, tt.rate)
+			require.NoError(t, tm.SetRate(tt.newRate), "SetRate(%d) from %d", tt.newRate, tt.rate)
 
 			tm.assertEq(t, "After scaling rate down to force tick to next second", startUnix+1, frac(0, tt.newRate))
-			assert.Equal(t, frac(tt.wantRoundUp, tt.rate), got, "Rounding up from ticking %d/%d to next full second", tt.tick, tt.rate)
 		})
 	}
 }

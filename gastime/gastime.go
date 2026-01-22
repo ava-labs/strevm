@@ -139,16 +139,14 @@ func (tm *Time) BaseFee() *uint256.Int {
 // SetRate changes the gas rate per second, rounding down the argument if it is
 // not a multiple of [TargetToRate]. See [Time.SetTarget] re potential error(s).
 func (tm *Time) SetRate(r gas.Gas) error {
-	_, err := tm.TimeMarshaler.SetRate(roundRate(r))
-	return err
+	return tm.TimeMarshaler.SetRate(roundRate(r))
 }
 
 // SetTarget changes the target gas consumption per second, clamping the
 // argument to [MaxTarget]. It returns an error if the scaled [Time.Excess]
 // overflows as a result of the scaling.
 func (tm *Time) SetTarget(t gas.Gas) error {
-	_, err := tm.TimeMarshaler.SetRate(rateOf(clampTarget(t))) // also updates [Time.Target] as it was passed to [proxytime.Time.SetRateInvariants]
-	return err
+	return tm.TimeMarshaler.SetRate(rateOf(clampTarget(t))) // also updates [Time.Target] as it was passed to [proxytime.Time.SetRateInvariants]
 }
 
 // Tick is equivalent to [proxytime.Time.Tick] except that it also updates the

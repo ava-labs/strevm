@@ -93,8 +93,7 @@ func FuzzTimeExtraction(f *testing.F) {
 
 			want := proxytime.Of[gas.Gas](hooks.Now())
 			rate := gastime.SafeRateOfTarget(gas.Gas(target))
-			_, err := want.SetRate(rate)
-			require.NoErrorf(t, err, "%T.SetRate(%d)", want, rate)
+			require.NoErrorf(t, want.SetRate(rate), "%T.SetRate(%d)", want, rate)
 
 			if diff := cmp.Diff(want, got, gasExtractionCmpOpt()); diff != "" {
 				t.Errorf("diff (-proxytime.Of +GasTime):\n%s", diff)
