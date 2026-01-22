@@ -32,14 +32,14 @@ type Time struct {
 }
 
 // makeTime is a constructor shared by [New] and [Time.Clone].
-func makeTime(t *proxytime.Time[gas.Gas], target, excess gas.Gas, minPrice gas.Price, targetToExcessScaling gas.Gas) *Time {
+func makeTime(t *proxytime.Time[gas.Gas], target, excess, targetToExcessScaling gas.Gas, minPrice gas.Price) *Time {
 	tm := &Time{
 		TimeMarshaler: TimeMarshaler{
 			Time:                  t,
 			target:                target,
 			excess:                excess,
-			minPrice:              minPrice,
 			targetToExcessScaling: targetToExcessScaling,
+			minPrice:              minPrice,
 		},
 	}
 	tm.establishInvariants()
@@ -54,8 +54,8 @@ func (tm *Time) establishInvariants() {
 type Option = options.Option[config]
 
 type config struct {
-	minPrice              gas.Price
 	targetToExcessScaling gas.Gas
+	minPrice              gas.Price
 }
 
 // WithMinPrice overrides the default minimum gas price.
@@ -80,12 +80,12 @@ func WithTargetToExcessScaling(s gas.Gas) Option {
 // [WithMinPrice] and [WithTargetToExcessScaling].
 func New(unixSeconds uint64, target, startingExcess gas.Gas, opts ...Option) *Time {
 	cfg := &config{
-		minPrice:              DefaultMinPrice,
 		targetToExcessScaling: DefaultTargetToExcessScaling,
+		minPrice:              DefaultMinPrice,
 	}
 	options.ApplyTo(cfg, opts...)
 	target = clampTarget(target)
-	return makeTime(proxytime.New(unixSeconds, rateOf(target)), target, startingExcess, cfg.minPrice, cfg.targetToExcessScaling)
+	return makeTime(proxytime.New(unixSeconds, rateOf(target)), target, startingExcess, cfg.targetToExcessScaling, cfg.minPrice)
 }
 
 // TargetToRate is the ratio between [Time.Target] and [proxytime.Time.Rate].
@@ -114,7 +114,7 @@ func roundRate(r gas.Gas) gas.Gas   { return (r / TargetToRate) * TargetToRate }
 func (tm *Time) Clone() *Time {
 	// [proxytime.Time.Clone] explicitly does NOT clone the rate invariants, so
 	// we reestablish them as if we were constructing a new instance.
-	return makeTime(tm.Time.Clone(), tm.target, tm.excess, tm.minPrice, tm.targetToExcessScaling)
+	return makeTime(tm.Time.Clone(), tm.target, tm.excess, tm.targetToExcessScaling, tm.minPrice)
 }
 
 // Target returns the `T` parameter of ACP-176.

@@ -83,8 +83,8 @@ func newSUT(t *testing.T, numAccounts uint) SUT {
 	exec, err := saexec.New(genesis, chain.GetBlock, config, db, nil, &hookstest.Stub{
 		GasConfig: hook.GasConfig{
 			Target:                1e6,
-			MinPrice:              gastime.DefaultMinPrice,
 			TargetToExcessScaling: gastime.DefaultTargetToExcessScaling,
+			MinPrice:              gastime.DefaultMinPrice,
 		},
 	}, logger)
 	require.NoError(t, err, "saexec.New()")

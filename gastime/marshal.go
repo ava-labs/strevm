@@ -18,8 +18,8 @@ type TimeMarshaler struct { //nolint:tagliatelle // TODO(arr4n) submit linter bu
 	*proxytime.Time[gas.Gas] `canoto:"pointer,1"`
 	target                   gas.Gas   `canoto:"uint,2"`
 	excess                   gas.Gas   `canoto:"uint,3"`
-	minPrice                 gas.Price `canoto:"uint,4"`
-	targetToExcessScaling    gas.Gas   `canoto:"uint,5"`
+	targetToExcessScaling    gas.Gas   `canoto:"uint,4"`
+	minPrice                 gas.Price `canoto:"uint,5"`
 
 	// The nocopy is important, not only for canoto, but because of the use of
 	// pointers in [Time.establishInvariants]. See [Time.Clone].

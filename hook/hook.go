@@ -140,12 +140,12 @@ func (o *Op) ApplyTo(stateDB *state.StateDB) error {
 type GasConfig struct {
 	// Target is the gas target per second (T parameter in ACP-176).
 	Target gas.Gas
-	// MinPrice is the minimum gas price / base fee (M parameter in ACP-176).
-	MinPrice gas.Price
 	// TargetToExcessScaling is the ratio between the gas target and the
 	// reciprocal of the excess coefficient used in price calculation
 	// (K variable in ACP-176, where K = TargetToExcessScaling * T).
 	TargetToExcessScaling gas.Gas
+	// MinPrice is the minimum gas price / base fee (M parameter in ACP-176).
+	MinPrice gas.Price
 }
 
 // MinimumGasConsumption MUST be used as the implementation for the respective

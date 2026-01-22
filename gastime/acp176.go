@@ -29,7 +29,7 @@ func (tm *Time) AfterBlock(used gas.Gas, hooks hook.Points, h *types.Header) err
 	if err := tm.SetTarget(cfg.Target); err != nil {
 		return fmt.Errorf("%T.SetTarget() after block: %w", tm, err)
 	}
-	tm.SetMinPrice(cfg.MinPrice)
 	tm.SetTargetToExcessScaling(cfg.TargetToExcessScaling)
+	tm.SetMinPrice(cfg.MinPrice)
 	return nil
 }

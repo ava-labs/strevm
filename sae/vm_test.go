@@ -118,8 +118,8 @@ func newSUT(tb testing.TB, numAccounts uint, opts ...sutOption) (context.Context
 		hooks: &hookstest.Stub{
 			GasConfig: hook.GasConfig{
 				Target:                100e6,
-				MinPrice:              gastime.DefaultMinPrice,
 				TargetToExcessScaling: gastime.DefaultTargetToExcessScaling,
+				MinPrice:              gastime.DefaultMinPrice,
 			},
 		},
 		logLevel: logging.Debug,

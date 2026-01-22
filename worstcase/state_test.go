@@ -58,8 +58,8 @@ func newSUT(tb testing.TB, alloc types.GenesisAlloc) SUT {
 	hooks := &hookstest.Stub{
 		GasConfig: hook.GasConfig{
 			Target:                initialGasTarget,
-			MinPrice:              gastime.DefaultMinPrice,
 			TargetToExcessScaling: gastime.DefaultTargetToExcessScaling,
+			MinPrice:              gastime.DefaultMinPrice,
 		},
 	}
 	s, err := NewState(hooks, config, cache, genesis)
@@ -121,8 +121,8 @@ func TestMultipleBlocks(t *testing.T) {
 			hooks: &hookstest.Stub{
 				GasConfig: hook.GasConfig{
 					Target:                2 * initialGasTarget, // Will double the target _after_ this block.
-					MinPrice:              gastime.DefaultMinPrice,
 					TargetToExcessScaling: gastime.DefaultTargetToExcessScaling,
+					MinPrice:              gastime.DefaultMinPrice,
 				},
 			},
 			wantGasLimit: initialMaxBlockSize,
@@ -166,8 +166,8 @@ func TestMultipleBlocks(t *testing.T) {
 			hooks: &hookstest.Stub{
 				GasConfig: hook.GasConfig{
 					Target:                initialGasTarget, // Restore the target _after_ this block.
-					MinPrice:              gastime.DefaultMinPrice,
 					TargetToExcessScaling: gastime.DefaultTargetToExcessScaling,
+					MinPrice:              gastime.DefaultMinPrice,
 				},
 			},
 			wantGasLimit: 2 * initialMaxBlockSize,

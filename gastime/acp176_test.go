@@ -33,8 +33,8 @@ func TestTargetUpdateTiming(t *testing.T) {
 	hook := &hookstest.Stub{
 		GasConfig: hook.GasConfig{
 			Target:                newTarget,
-			MinPrice:              DefaultMinPrice,
 			TargetToExcessScaling: DefaultTargetToExcessScaling,
+			MinPrice:              DefaultMinPrice,
 		},
 	}
 	header := &types.Header{
@@ -127,8 +127,8 @@ func FuzzWorstCasePrice(f *testing.F) {
 			hook := &hookstest.Stub{
 				GasConfig: hook.GasConfig{
 					Target:                block.target,
-					MinPrice:              DefaultMinPrice,
 					TargetToExcessScaling: DefaultTargetToExcessScaling,
+					MinPrice:              DefaultMinPrice,
 				},
 				SubSecondTime: block.timeFrac,
 			}
