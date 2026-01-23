@@ -151,7 +151,7 @@ func (b *ethAPIBackend) CurrentHeader() *types.Header {
 }
 
 func (b *ethAPIBackend) CurrentBlock() *types.Header {
-	return types.CopyHeader(b.vm.exec.LastExecuted().Header())
+	return b.CurrentHeader()
 }
 
 func (b *ethAPIBackend) GetTd(context.Context, common.Hash) *big.Int {
