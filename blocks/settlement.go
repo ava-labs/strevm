@@ -211,32 +211,26 @@ func LastToSettleAt(hooks hook.Points, settleAt *proxytime.Time[gas.Gas], parent
 	// with criterion (2) being met.
 	known := true
 
-	// The below loop assumes no settlement concurrently with a call to
-	// [LastToSettleAt]. While that may be true now, the consequence of a race
-	// condition when omitting explicit checks would be a panic for nil-pointer
-	// dereferencing.
-	reportRace := func() error {
-		// Specifics of the race are logged by the [Block.ParentBlock] call
-		// resulting in a nil return, so we only log additional context here.
-		parent.log.Error(
-			"Race condition when determining last block to settle",
-			zap.Stringer("parent_hash", parent.Hash()),
-			zap.Uint64("parent_height", parent.Height()),
-			zap.Stringer("settle_at", settleAt),
-		)
-		return fmt.Errorf("%w: settling at %s with parent %#x (%v)", errIncompleteBlockHistory, settleAt.String(), parent.Hash(), parent.Number())
-	}
-
 	// The only way [Block.ParentBlock] can be nil is if `block` was already
 	// settled (see invariant in [Block]). If a block was already settled then
 	// only it or a later (i.e. unsettled) block can be returned by this loop,
 	// therefore we have a guarantee that the loop update will never result in
 	// `block==nil`.
 	for block := parent; ; block = block.ParentBlock() {
-		// Precluded by the last loop iteration's check of [Block.Settled]
-		// unless there is concurrent settlement.
 		if block == nil {
-			return nil, false, reportRace()
+			// Although the below [Block.Settled] check (performed in the last
+			// loop iteration) precludes this from happening, that assumes no
+			// settlement concurrently with a call to [LastToSettleAt]. While
+			// that may be true now, the consequence of a race condition when
+			// omitting this check would be a panic for nil-pointer
+			// dereferencing.
+			parent.log.Error(
+				"Race condition when determining last block to settle",
+				zap.Stringer("parent_hash", parent.Hash()),
+				zap.Uint64("parent_height", parent.Height()),
+				zap.Stringer("settle_at", settleAt),
+			)
+			return nil, false, fmt.Errorf("%w: settling at %d with parent %#x (%v)", errIncompleteBlockHistory, settleAt, parent.Hash(), parent.Number())
 		}
 		// Guarantees that the loop will always exit as the last pre-SAE block
 		// (perhaps the genesis) is always settled, by definition.
@@ -245,14 +239,10 @@ func LastToSettleAt(hooks hook.Points, settleAt *proxytime.Time[gas.Gas], parent
 		}
 
 		{
-			bp := block.ParentBlock()
-			if bp == nil {
-				return nil, false, reportRace()
-			}
 			startsNoEarlierThan := GasTime(
 				hooks,
 				block.Header(),
-				bp.Header(),
+				block.ParentBlock().Header(),
 			)
 			if startsNoEarlierThan.Compare(settleAt) > 0 {
 				known = true
