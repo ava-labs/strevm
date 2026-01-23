@@ -352,14 +352,10 @@ func TestLastToSettleAt(t *testing.T) {
 		})
 	}
 
-	hooks := &hookstest.Stub{
-		Target: 1e6,
-	}
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			settleAt := time.Unix(int64(tt.settleAt), 0) //nolint:gosec // Hard-coded, non-overflowing values
-			got, gotOK, err := LastToSettleAt(hooks, settleAt, tt.parent)
+			got, gotOK, err := LastToSettleAt(&hookstest.Stub{}, settleAt, tt.parent)
 			if err != nil || gotOK != tt.wantOK {
 				t.Fatalf("LastToSettleAt(%d, [parent height %d]) got (_, %t, %v); want (_, %t, nil)", tt.settleAt, tt.parent.Height(), gotOK, err, tt.wantOK)
 			}
