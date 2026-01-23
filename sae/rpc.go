@@ -128,10 +128,6 @@ type ethAPIBackend struct {
 	*txgossip.Set
 }
 
-/////////////////////////////
-// Getters //
-/////////////////////////////
-
 func (b *ethAPIBackend) ChainConfig() *params.ChainConfig {
 	return b.vm.exec.ChainConfig()
 }
