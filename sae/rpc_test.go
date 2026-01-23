@@ -10,6 +10,7 @@ import (
 	"math/big"
 	"testing"
 
+	"github.com/ava-labs/avalanchego/utils"
 	"github.com/ava-labs/avalanchego/version"
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/common/hexutil"
@@ -117,12 +118,12 @@ func TestTxPoolNamespace(t *testing.T) {
 			To:        tx.To(),
 			Value:     canonicalJSON(t, (*hexutil.Big)(tx.Value())),
 			Type:      hexutil.Uint64(tx.Type()),
-			Accesses:  pointerTo(tx.AccessList()),
+			Accesses:  utils.PointerTo(tx.AccessList()),
 			ChainID:   canonicalJSON(t, (*hexutil.Big)(tx.ChainId())),
 			V:         canonicalJSON(t, (*hexutil.Big)(v)),
 			R:         canonicalJSON(t, (*hexutil.Big)(r)),
 			S:         canonicalJSON(t, (*hexutil.Big)(s)),
-			YParity:   pointerTo(hexutil.Uint64(v.Sign())), //nolint:gosec // Won't overflow
+			YParity:   utils.PointerTo(hexutil.Uint64(v.Sign())), //nolint:gosec // Won't overflow
 		}
 	}
 	txToSummary := func(tx *types.Transaction) string {
@@ -177,10 +178,6 @@ func TestTxPoolNamespace(t *testing.T) {
 		"pending": 1,
 		"queued":  1,
 	})
-}
-
-func pointerTo[T any](v T) *T {
-	return &v
 }
 
 // canonicalJSON returns a new instance of `v` obtained by round-tripping it
