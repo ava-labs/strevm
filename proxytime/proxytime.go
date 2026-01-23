@@ -172,7 +172,7 @@ func ConvertMilliseconds[D Duration](rate D, ms uint64) (sec uint64, _ Fractiona
 // will always return a nil error. A non-nil error will only be returned if any
 // of the rate-invariant values overflows a uint64 due to the scaling.
 func (tm *Time[D]) SetRate(hertz D) error {
-	frac, _, err := tm.scale(tm.fraction, hertz)
+	frac, err := tm.scale(tm.fraction, hertz)
 	if err != nil {
 		// If this happens then there is a bug in the implementation. The
 		// invariant that `tm.fraction < tm.hertz` makes overflow impossible as
@@ -184,7 +184,7 @@ func (tm *Time[D]) SetRate(hertz D) error {
 	// error.
 	scaled := make([]D, len(tm.rateInvariants))
 	for i, v := range tm.rateInvariants {
-		scaled[i], _, err = tm.scale(*v, hertz)
+		scaled[i], err = tm.scale(*v, hertz)
 		if err != nil {
 			return fmt.Errorf("rate invariant [%d]: %w", i, err)
 		}
@@ -216,12 +216,12 @@ func (tm *Time[D]) SetRateInvariants(inv ...*D) {
 // scale returns `val`, scaled from the existing [Time.Rate] to the newly
 // specified one. See [Time.SetRate] for details about overflow errors and
 // rounding.
-func (tm *Time[D]) scale(val, newRate D) (scaled D, roundedUp FractionalSecond[D], err error) {
-	scaled, round, err := intmath.MulDivCeil(val, newRate, tm.hertz)
+func (tm *Time[D]) scale(val, newRate D) (D, error) {
+	scaled, _, err := intmath.MulDivCeil(val, newRate, tm.hertz)
 	if err != nil {
-		return 0, FractionalSecond[D]{}, fmt.Errorf("scaling %d from rate of %d to %d: %w", val, tm.hertz, newRate, err)
+		return 0, fmt.Errorf("scaling %d from rate of %d to %d: %w", val, tm.hertz, newRate, err)
 	}
-	return scaled, FractionalSecond[D]{Numerator: round / newRate, Denominator: tm.hertz}, nil
+	return scaled, nil
 }
 
 // Sub returns a new [Time], `s` seconds earlier. Rate invariants are NOT copied
@@ -269,7 +269,7 @@ func (tm *Time[D]) AsTime() time.Time {
 	}
 	// The error can be ignored as the fraction is always less than the rate and
 	// therefore the scaled value can never overflow.
-	nsec, _ /*remainder*/, _ := tm.scale(tm.fraction, 1e9)
+	nsec, _ := tm.scale(tm.fraction, 1e9)
 	return time.Unix(int64(tm.seconds), int64(nsec)).In(time.UTC)
 }
 
