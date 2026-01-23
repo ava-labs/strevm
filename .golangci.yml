@@ -1,5 +1,7 @@
 # This file configures github.com/golangci/golangci-lint.
 
+version: 2
+
 run:
   timeout: 20m
   tests: true
@@ -13,11 +15,8 @@ linters:
     - containedctx
     - errcheck
     - forcetypeassert
-    - gci
     - gocheckcompilerdirectives
-    - gofmt
     - goheader
-    - goimports
     - gomodguard
     - gosec
     - govet
@@ -41,6 +40,12 @@ linters:
     - usestdlibvars
     - unused
     - whitespace
+
+formatters:
+  enable:
+    - gci
+    - gofmt
+    - goimports
 
 linters-settings:
   gci:
