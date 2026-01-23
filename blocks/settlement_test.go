@@ -359,10 +359,8 @@ func TestLastToSettleAt(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Since we only have a target and not a rate, it's better to use
-			// [gastime.New] and then extract the [proxytime.Time] as this will
-			// always set the rate properly.
-			settleAt := gastime.New(tt.settleAt, hooks.GasTargetAfter(tt.parent.Header()), 0).Time
+			rate := gastime.SafeRateOfTarget(hooks.GasTargetAfter(tt.parent.Header()))
+			settleAt := proxytime.New(tt.settleAt, rate)
 			got, gotOK, err := LastToSettleAt(hooks, settleAt, tt.parent)
 			if err != nil || gotOK != tt.wantOK {
 				t.Fatalf("LastToSettleAt(%d, [parent height %d]) got (_, %t, %v); want (_, %t, nil)", tt.settleAt, tt.parent.Height(), gotOK, err, tt.wantOK)
