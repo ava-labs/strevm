@@ -78,6 +78,7 @@ type SUT struct {
 	genesis *blocks.Block
 	wallet  *saetest.Wallet
 	db      ethdb.Database
+	hooks   *hookstest.Stub
 	logger  *saetest.TBLogger
 
 	validators *validatorstest.State
@@ -114,6 +115,7 @@ func newSUT(tb testing.TB, numAccounts uint, opts ...sutOption) (context.Context
 		chainConfig: saetest.ChainConfig(),
 		hooks: &hookstest.Stub{
 			Target: 100e6,
+			TB:     tb,
 		},
 		logLevel: logging.Debug,
 		alloc:    saetest.MaxAllocFor(keys.Addresses()...),
@@ -169,6 +171,7 @@ func newSUT(tb testing.TB, numAccounts uint, opts ...sutOption) (context.Context
 			types.LatestSigner(conf.chainConfig),
 		),
 		db:     db,
+		hooks:  conf.hooks,
 		logger: logger,
 
 		validators: validators,
@@ -184,21 +187,20 @@ func (s *SUT) CallContext(ctx context.Context, result any, method string, args .
 }
 
 // stubbedTime returns an option to configure a new SUT's "now" function along
-// with a function to set the time.
+// with a function to set the time at nanosecond resolution.
 func stubbedTime() (_ sutOption, setTime func(time.Time)) {
 	var now time.Time
 	set := func(n time.Time) {
 		now = n
 	}
 	opt := options.Func[sutConfig](func(c *sutConfig) {
-		// TODO(StephenButtolph) unify the time functions provided in the config
-		// and the hooks.
-		c.vmConfig.Now = func() time.Time {
+		get := func() time.Time {
 			return now
 		}
-		c.hooks.Now = func() uint64 {
-			return unix(now)
-		}
+		// TODO(StephenButtolph) unify the time functions provided in the config
+		// and the hooks.
+		c.vmConfig.Now = get
+		c.hooks.Now = get
 	})
 
 	return opt, set
@@ -482,7 +484,7 @@ func TestAcceptBlock(t *testing.T) {
 	}, 100*time.Millisecond, time.Millisecond)
 
 	opt, setTime := stubbedTime()
-	var now time.Time
+	now := time.Unix(0, 0)
 	fastForward := func(by time.Duration) {
 		now = now.Add(by)
 		setTime(now)
