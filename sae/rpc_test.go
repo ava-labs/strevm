@@ -83,7 +83,7 @@ func TestTxPoolNamespace(t *testing.T) {
 		t.Helper()
 		return sut.wallet.SetNonceAndSign(t, i, &types.DynamicFeeTx{
 			To:        &addresses[i],
-			Gas:       params.TxGas + uint64(i),
+			Gas:       params.TxGas + uint64(i), //nolint:gosec // Won't overflow
 			GasFeeCap: big.NewInt(int64(i + 1)),
 			Value:     big.NewInt(int64(i + 10)),
 			Data:      []byte{}, // non-nil to align with the behavior of a deserialized tx
@@ -122,7 +122,7 @@ func TestTxPoolNamespace(t *testing.T) {
 			V:         canonicalJSON(t, (*hexutil.Big)(v)),
 			R:         canonicalJSON(t, (*hexutil.Big)(r)),
 			S:         canonicalJSON(t, (*hexutil.Big)(s)),
-			YParity:   pointerTo(hexutil.Uint64(v.Sign())),
+			YParity:   pointerTo(hexutil.Uint64(v.Sign())), //nolint:gosec // Won't overflow
 		}
 	}
 	txToSummary := func(tx *types.Transaction) string {
@@ -188,6 +188,8 @@ func pointerTo[T any](v T) *T {
 // as [big.Int], that have different internal representations based on how they
 // are constructed.
 func canonicalJSON[T any](t *testing.T, v *T) *T {
+	t.Helper()
+
 	b, err := json.Marshal(v)
 	require.NoError(t, err, "json.Marshal(%v)", v)
 
@@ -204,9 +206,10 @@ func testRPCMethod[T any](ctx context.Context, t *testing.T, sut *SUT, method st
 		require.NoError(t, sut.CallContext(ctx, &got, method, args...))
 		assert.Equal(t, want, got)
 
-		wantJSON, err := json.MarshalIndent(want, "", "  ")
+		const indent = "  "
+		wantJSON, err := json.MarshalIndent(want, "", indent)
 		require.NoError(t, err, "json.MarshalIndent(want, ..., ..., ...)")
-		gotJSON, err := json.MarshalIndent(got, "", "  ")
+		gotJSON, err := json.MarshalIndent(got, "", indent)
 		require.NoError(t, err, "json.MarshalIndent(got, ..., ..., ...)")
 		t.Logf("Want JSON:\n%s\n\nResult JSON:\n%s", wantJSON, gotJSON)
 	})
