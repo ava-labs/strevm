@@ -5,6 +5,7 @@ package sae
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"math/big"
 	"testing"
@@ -75,24 +76,124 @@ func TestNetNamespace(t *testing.T) {
 }
 
 func TestTxPoolNamespace(t *testing.T) {
-	const numTxs = 2
-	ctx, sut := newSUT(t, numTxs)
+	ctx, sut := newSUT(t, 2)
 
-	txs := make([]*types.Transaction, numTxs)
-	for i := range txs {
-		tx := sut.wallet.SetNonceAndSign(t, i, &types.DynamicFeeTx{
-			To:        &common.Address{},
-			Gas:       params.TxGas,
-			GasFeeCap: big.NewInt(1),
-			Value:     big.NewInt(1),
+	addresses := sut.wallet.Addresses()
+	makeTx := func(i int) *types.Transaction {
+		t.Helper()
+		return sut.wallet.SetNonceAndSign(t, i, &types.DynamicFeeTx{
+			To:        &addresses[i],
+			Gas:       params.TxGas + uint64(i),
+			GasFeeCap: big.NewInt(int64(i + 1)),
+			Value:     big.NewInt(int64(i + 10)),
+			Data:      []byte{}, // non-nil to align with the behavior of a deserialized tx
 		})
-		sut.mustSendTx(t, tx)
-		txs[i] = tx
 	}
-	sut.wallet.DecrementNonce()
+
+	const (
+		pendingAccount = 0
+		queuedAccount  = 1
+	)
+	pendingTx := makeTx(pendingAccount)
+
+	_ = makeTx(1) // skip the nonce to gap the mempool
+	queuedTx := makeTx(queuedAccount)
+
+	sut.mustSendTx(t, pendingTx)
+	sut.mustSendTx(t, queuedTx)
 	sut.syncMempool(t)
 
-	testRPCMethod(ctx, t, sut, "txpool_content", map[string]map[string]map[string]*ethapi.RPCTransaction{})
+	txToRPC := func(from common.Address, tx *types.Transaction) *ethapi.RPCTransaction {
+		v, r, s := tx.RawSignatureValues()
+		return &ethapi.RPCTransaction{
+			From:      from,
+			Gas:       hexutil.Uint64(tx.Gas()),
+			GasPrice:  canonicalJSON(t, (*hexutil.Big)(tx.GasPrice())),
+			GasFeeCap: canonicalJSON(t, (*hexutil.Big)(tx.GasFeeCap())),
+			GasTipCap: canonicalJSON(t, (*hexutil.Big)(tx.GasTipCap())),
+			Hash:      tx.Hash(),
+			Input:     hexutil.Bytes(tx.Data()),
+			Nonce:     hexutil.Uint64(tx.Nonce()),
+			To:        tx.To(),
+			Value:     canonicalJSON(t, (*hexutil.Big)(tx.Value())),
+			Type:      hexutil.Uint64(tx.Type()),
+			Accesses:  pointerTo(tx.AccessList()),
+			ChainID:   canonicalJSON(t, (*hexutil.Big)(tx.ChainId())),
+			V:         canonicalJSON(t, (*hexutil.Big)(v)),
+			R:         canonicalJSON(t, (*hexutil.Big)(r)),
+			S:         canonicalJSON(t, (*hexutil.Big)(s)),
+			YParity:   pointerTo(hexutil.Uint64(v.Sign())),
+		}
+	}
+	txToSummary := func(tx *types.Transaction) string {
+		return fmt.Sprintf("%s: %d wei + %d gas × %d wei",
+			tx.To(),
+			tx.Value().Uint64(),
+			tx.Gas(),
+			tx.GasFeeCap().Uint64(),
+		)
+	}
+
+	testRPCMethod(ctx, t, sut, "txpool_content", map[string]map[string]map[string]*ethapi.RPCTransaction{
+		"pending": {
+			addresses[pendingAccount].Hex(): {
+				"0": txToRPC(addresses[pendingAccount], pendingTx),
+			},
+		},
+		"queued": {
+			addresses[queuedAccount].Hex(): {
+				"1": txToRPC(addresses[queuedAccount], queuedTx),
+			},
+		},
+	})
+
+	testRPCMethod(ctx, t, sut, "txpool_contentFrom", map[string]map[string]*ethapi.RPCTransaction{
+		"pending": {
+			"0": txToRPC(addresses[pendingAccount], pendingTx),
+		},
+		"queued": {},
+	}, addresses[pendingAccount])
+	testRPCMethod(ctx, t, sut, "txpool_contentFrom", map[string]map[string]*ethapi.RPCTransaction{
+		"pending": {},
+		"queued": {
+			"1": txToRPC(addresses[queuedAccount], queuedTx),
+		},
+	}, addresses[queuedAccount])
+
+	testRPCMethod(ctx, t, sut, "txpool_inspect", map[string]map[string]map[string]string{
+		"pending": {
+			addresses[pendingAccount].Hex(): {
+				"0": txToSummary(pendingTx),
+			},
+		},
+		"queued": {
+			addresses[queuedAccount].Hex(): {
+				"1": txToSummary(queuedTx),
+			},
+		},
+	})
+
+	testRPCMethod(ctx, t, sut, "txpool_status", map[string]hexutil.Uint{
+		"pending": 1,
+		"queued":  1,
+	})
+}
+
+func pointerTo[T any](v T) *T {
+	return &v
+}
+
+// canonicalJSON returns a new instance of `v` obtained by round-tripping it
+// through JSON marshalling and unmarshalling. This is useful to for types, such
+// as [big.Int], that have different internal representations based on how they
+// are constructed.
+func canonicalJSON[T any](t *testing.T, v *T) *T {
+	b, err := json.Marshal(v)
+	require.NoError(t, err, "json.Marshal(%v)", v)
+
+	v = new(T)
+	require.NoError(t, json.Unmarshal(b, v), "json.Unmarshal(%s, %T)", string(b), v)
+	return v
 }
 
 func testRPCMethod[T any](ctx context.Context, t *testing.T, sut *SUT, method string, want T, args ...any) {
@@ -102,5 +203,11 @@ func testRPCMethod[T any](ctx context.Context, t *testing.T, sut *SUT, method st
 		t.Logf("%T.CallContext(ctx, %T, %q, %v...)", sut.rpcClient, got, method, args)
 		require.NoError(t, sut.CallContext(ctx, &got, method, args...))
 		assert.Equal(t, want, got)
+
+		wantJSON, err := json.MarshalIndent(want, "", "  ")
+		require.NoError(t, err, "json.MarshalIndent(want, ..., ..., ...)")
+		gotJSON, err := json.MarshalIndent(got, "", "  ")
+		require.NoError(t, err, "json.MarshalIndent(got, ..., ..., ...)")
+		t.Logf("Want JSON:\n%s\n\nResult JSON:\n%s", wantJSON, gotJSON)
 	})
 }
