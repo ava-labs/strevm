@@ -231,7 +231,7 @@ func LastToSettleAt(hooks hook.Points, settleAt time.Time, parent *Block) (b *Bl
 				"Race condition when determining last block to settle",
 				zap.Stringer("parent_hash", parent.Hash()),
 				zap.Uint64("parent_height", parent.Height()),
-				zap.Stringer("settle_at", settleAt),
+				zap.Time("settle_at", settleAt),
 			)
 			return nil, false, fmt.Errorf("%w: settling at %v with parent %#x (%v)", errIncompleteBlockHistory, settleAt, parent.Hash(), parent.Number())
 		}
