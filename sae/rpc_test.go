@@ -169,7 +169,9 @@ func TestBlockByHash(t *testing.T) {
 				assert.Nil(t, got)
 			} else {
 				require.NotNil(t, got)
-				assert.Equal(t, tt.wantHash, common.HexToHash(got["hash"].(string)))
+				gotHash, ok := got["hash"].(string)
+				require.True(t, ok, "hash field should be a string")
+				assert.Equal(t, tt.wantHash, common.HexToHash(gotHash))
 				gotNumber, ok := got["number"].(string)
 				require.True(t, ok, "number field should be a string")
 				wantNumberHex := hexutil.EncodeBig(tt.wantNumber)
