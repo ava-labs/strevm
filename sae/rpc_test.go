@@ -6,9 +6,11 @@ package sae
 import (
 	"context"
 	"fmt"
+	"math/big"
 	"testing"
 
 	"github.com/ava-labs/avalanchego/version"
+	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/common/hexutil"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/crypto"
@@ -67,6 +69,113 @@ func TestNetNamespace(t *testing.T) {
 	}
 	for _, sut := range n.nonValidators {
 		testRPCMethodsWithPeers(sut, numValidators)
+	}
+}
+
+func TestHeaderByHash(t *testing.T) {
+	ctx, sut := newSUT(t, 1)
+	oldBlock := sut.runConsensusLoop(t, sut.lastAcceptedBlock(t))
+
+	for i := 0; i < 3; i++ {
+		sut.runConsensusLoop(t, sut.lastAcceptedBlock(t))
+	}
+	recentBlock := sut.lastAcceptedBlock(t)
+
+	tests := []struct {
+		name       string
+		hash       common.Hash
+		wantNil    bool
+		wantHash   common.Hash
+		wantNumber *big.Int
+	}{
+		{
+			name:       "recent block from cache",
+			hash:       recentBlock.Hash(),
+			wantHash:   recentBlock.Hash(),
+			wantNumber: recentBlock.Header().Number,
+		},
+		{
+			name:       "old block from database",
+			hash:       oldBlock.Hash(),
+			wantHash:   oldBlock.Hash(),
+			wantNumber: oldBlock.Header().Number,
+		},
+		{
+			name:    "non-existent block returns nil",
+			hash:    common.HexToHash("0x686920617272616e20616e64207374657068656e2120"),
+			wantNil: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var got *types.Header
+			err := sut.CallContext(ctx, &got, "eth_getHeaderByHash", tt.hash)
+			require.NoError(t, err)
+
+			if tt.wantNil {
+				assert.Nil(t, got)
+			} else {
+				assert.NotNil(t, got)
+				assert.Equal(t, tt.wantHash, got.Hash())
+				assert.Equal(t, tt.wantNumber, got.Number)
+			}
+		})
+	}
+}
+
+func TestBlockByHash(t *testing.T) {
+	ctx, sut := newSUT(t, 1)
+	oldBlock := sut.runConsensusLoop(t, sut.lastAcceptedBlock(t))
+
+	for i := 0; i < 3; i++ {
+		sut.runConsensusLoop(t, sut.lastAcceptedBlock(t))
+	}
+	recentBlock := sut.lastAcceptedBlock(t)
+
+	tests := []struct {
+		name       string
+		hash       common.Hash
+		wantNil    bool
+		wantHash   common.Hash
+		wantNumber *big.Int
+	}{
+		{
+			name:       "recent block from cache",
+			hash:       recentBlock.Hash(),
+			wantHash:   recentBlock.Hash(),
+			wantNumber: recentBlock.Header().Number,
+		},
+		{
+			name:       "old block from database",
+			hash:       oldBlock.Hash(),
+			wantHash:   oldBlock.Hash(),
+			wantNumber: oldBlock.Header().Number,
+		},
+		{
+			name:    "non-existent block returns nil",
+			hash:    common.HexToHash("0x686920617272616e20616e64207374657068656e2120"),
+			wantNil: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var got map[string]interface{}
+			err := sut.CallContext(ctx, &got, "eth_getBlockByHash", tt.hash, false)
+			require.NoError(t, err)
+
+			if tt.wantNil {
+				assert.Nil(t, got)
+			} else {
+				require.NotNil(t, got)
+				assert.Equal(t, tt.wantHash, common.HexToHash(got["hash"].(string)))
+				gotNumber, ok := got["number"].(string)
+				require.True(t, ok, "number field should be a string")
+				wantNumberHex := hexutil.EncodeBig(tt.wantNumber)
+				assert.Equal(t, wantNumberHex, gotNumber)
+			}
+		})
 	}
 }
 

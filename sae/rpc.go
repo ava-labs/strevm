@@ -152,8 +152,32 @@ func (b *ethAPIBackend) HeaderByNumber(ctx context.Context, n rpc.BlockNumber) (
 	return readByNumber(b, n, rawdb.ReadHeader)
 }
 
+func (b *ethAPIBackend) HeaderByHash(ctx context.Context, hash common.Hash) (*types.Header, error) {
+	if block, ok := b.vm.blocks.Load(hash); ok {
+		return block.Header(), nil
+	}
+
+	number := rawdb.ReadHeaderNumber(b.vm.db, hash)
+	if number == nil {
+		return nil, nil
+	}
+	return rawdb.ReadHeader(b.vm.db, hash, *number), nil
+}
+
 func (b *ethAPIBackend) BlockByNumber(ctx context.Context, n rpc.BlockNumber) (*types.Block, error) {
 	return readByNumber(b, n, rawdb.ReadBlock)
+}
+
+func (b *ethAPIBackend) BlockByHash(ctx context.Context, hash common.Hash) (*types.Block, error) {
+	if block, ok := b.vm.blocks.Load(hash); ok {
+		return block.EthBlock(), nil
+	}
+
+	number := rawdb.ReadHeaderNumber(b.vm.db, hash)
+	if number == nil {
+		return nil, nil
+	}
+	return rawdb.ReadBlock(b.vm.db, hash, *number), nil
 }
 
 type canonicalReader[T any] func(ethdb.Reader, common.Hash, uint64) *T
