@@ -140,12 +140,8 @@ func (b *ethAPIBackend) UnprotectedAllowed() bool {
 	return false
 }
 
-func (b *ethAPIBackend) CurrentHeader() *types.Header {
-	return types.CopyHeader(b.vm.exec.LastEnqueued().Header())
-}
-
 func (b *ethAPIBackend) CurrentBlock() *types.Header {
-	return b.CurrentHeader()
+	return types.CopyHeader(b.vm.exec.LastEnqueued().Header())
 }
 
 func (b *ethAPIBackend) GetTd(context.Context, common.Hash) *big.Int {
