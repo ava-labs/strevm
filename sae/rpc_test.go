@@ -81,7 +81,7 @@ func TestNetNamespace(t *testing.T) {
 
 func TestBlockGetters(t *testing.T) {
 	opt, setTime := stubbedTime()
-	var now time.Time
+	now := time.Unix(0, 0)
 	fastForward := func(by time.Duration) {
 		now = now.Add(by)
 		setTime(now)
