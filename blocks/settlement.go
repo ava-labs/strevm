@@ -213,7 +213,7 @@ func LastToSettleAt(hooks hook.Points, settleAt *proxytime.Time[gas.Gas], parent
 
 	// The below loop assumes no settlement concurrently with a call to
 	// [LastToSettleAt]. While that may be true now, the consequence of a race
-	// condition when omitting explicity checks would be a panic for nil-pointer
+	// condition when omitting explicit checks would be a panic for nil-pointer
 	// dereferencing.
 	reportRace := func() error {
 		// Specifics of the race are logged by the [Block.ParentBlock] call
