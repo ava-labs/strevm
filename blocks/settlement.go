@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"slices"
 	"sync/atomic"
+	"time"
 
 	"github.com/ava-labs/avalanchego/vms/components/gas"
 	"go.uber.org/zap"
@@ -191,13 +192,15 @@ var errIncompleteBlockHistory = errors.New("incomplete block history when determ
 //
 // See the Example for [Block.WhenChildSettles] for one usage of the returned
 // block.
-func LastToSettleAt(hooks hook.Points, settleAt *proxytime.Time[gas.Gas], parent *Block) (b *Block, ok bool, _ error) {
+func LastToSettleAt(hooks hook.Points, settleAt time.Time, parent *Block) (b *Block, ok bool, _ error) {
 	defer func() {
 		// Avoids having to perform this check at every return.
 		if !ok {
 			b = nil
 		}
 	}()
+
+	settleAtGasTime := proxytime.Of[gas.Gas](settleAt)
 
 	// A block can be the last to settle at some time i.f.f. two criteria are
 	// met:
@@ -230,7 +233,7 @@ func LastToSettleAt(hooks hook.Points, settleAt *proxytime.Time[gas.Gas], parent
 				zap.Uint64("parent_height", parent.Height()),
 				zap.Stringer("settle_at", settleAt),
 			)
-			return nil, false, fmt.Errorf("%w: settling at %d with parent %#x (%v)", errIncompleteBlockHistory, settleAt, parent.Hash(), parent.Number())
+			return nil, false, fmt.Errorf("%w: settling at %v with parent %#x (%v)", errIncompleteBlockHistory, settleAt, parent.Hash(), parent.Number())
 		}
 		// Guarantees that the loop will always exit as the last pre-SAE block
 		// (perhaps the genesis) is always settled, by definition.
@@ -238,23 +241,16 @@ func LastToSettleAt(hooks hook.Points, settleAt *proxytime.Time[gas.Gas], parent
 			return block, known, nil
 		}
 
-		{
-			startsNoEarlierThan := GasTime(
-				hooks,
-				block.Header(),
-				block.ParentBlock().Header(),
-			)
-			if startsNoEarlierThan.Compare(settleAt) > 0 {
-				known = true
-				continue
-			}
+		if startsNoEarlierThan := PreciseTime(hooks, block.Header()); startsNoEarlierThan.Compare(settleAt) > 0 {
+			known = true
+			continue
 		}
-		if t := block.interimExecutionTime.Load(); t != nil && t.Compare(settleAt) > 0 {
+		if t := block.interimExecutionTime.Load(); t != nil && t.Compare(settleAtGasTime) > 0 {
 			known = true
 			continue
 		}
 		if e := block.execution.Load(); e != nil {
-			if e.byGas.Compare(settleAt) > 0 {
+			if e.byGas.Compare(settleAtGasTime) > 0 {
 				// There may have been a race between this check and the
 				// interim-execution one above, so we have to check again.
 				known = true

@@ -29,8 +29,7 @@ import (
 //nolint:testableexamples // Output is meaningless
 func ExampleRange() {
 	parent := blockBuildingPreference()
-	now := proxytime.Of[gas.Gas](time.Now())
-	settle, ok, err := LastToSettleAt(vmHooks(), now.Sub(params.TauSeconds), parent)
+	settle, ok, err := LastToSettleAt(vmHooks(), time.Now().Add(-params.TauSeconds), parent)
 	if err != nil {
 		// Due to a malformed input to block verification.
 		return // err
@@ -359,9 +358,7 @@ func TestLastToSettleAt(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			rate := gastime.SafeRateOfTarget(hooks.GasTargetAfter(tt.parent.Header()))
-			settleAt := proxytime.New(tt.settleAt, rate)
-			got, gotOK, err := LastToSettleAt(hooks, settleAt, tt.parent)
+			got, gotOK, err := LastToSettleAt(hooks, time.Unix(int64(tt.settleAt), 0), tt.parent)
 			if err != nil || gotOK != tt.wantOK {
 				t.Fatalf("LastToSettleAt(%d, [parent height %d]) got (_, %t, %v); want (_, %t, nil)", tt.settleAt, tt.parent.Height(), gotOK, err, tt.wantOK)
 			}

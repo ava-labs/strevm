@@ -123,9 +123,8 @@ func (vm *VM) buildBlock(
 		return nil, fmt.Errorf("%w: %s > %s", errBlockTimeAfterMaximum, bTime.String(), maxTime.String())
 	}
 
-	// Underflow of Sub() is prevented by the above check.
-	settleAt := blocks.GasTime(vm.hooks, hdr, parent.Header()).Sub(saeparams.TauSeconds)
-	lastSettled, ok, err := blocks.LastToSettleAt(vm.hooks, settleAt, parent)
+	// Underflow of Add(-tau) is prevented by the above check.
+	lastSettled, ok, err := blocks.LastToSettleAt(vm.hooks, bTime.Add(-saeparams.Tau), parent)
 	if err != nil {
 		return nil, err
 	}
