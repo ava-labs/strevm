@@ -132,46 +132,6 @@ type ethAPIBackend struct {
 // Getters //
 /////////////////////////////
 
-func (b *ethAPIBackend) BlockByHash(ctx context.Context, hash common.Hash) (*types.Block, error) {
-	if b, ok := b.vm.blocks.Load(hash); ok {
-		return b.EthBlock(), nil
-	}
-	return readByHash(b, hash, rawdb.ReadBlock), nil
-}
-
-func (b *ethAPIBackend) BlockByNumberOrHash(ctx context.Context, blockNrOrHash rpc.BlockNumberOrHash) (*types.Block, error) {
-	return readByNumberOrHash(
-		ctx,
-		blockNrOrHash,
-		b.BlockByNumber,
-		b.BlockByHash,
-	)
-}
-
-func (b *ethAPIBackend) ChainDb() ethdb.Database {
-	return b.vm.db
-}
-
-func (b *ethAPIBackend) CurrentHeader() *types.Header {
-	return types.CopyHeader(b.vm.exec.LastEnqueued().Header())
-}
-
-func (b *ethAPIBackend) HeaderByHash(ctx context.Context, hash common.Hash) (*types.Header, error) {
-	if b, ok := b.vm.blocks.Load(hash); ok {
-		return b.Header(), nil
-	}
-	return readByHash(b, hash, rawdb.ReadHeader), nil
-}
-
-func (b *ethAPIBackend) HeaderByNumberOrHash(ctx context.Context, blockNrOrHash rpc.BlockNumberOrHash) (*types.Header, error) {
-	return readByNumberOrHash(
-		ctx,
-		blockNrOrHash,
-		b.HeaderByNumber,
-		b.HeaderByHash,
-	)
-}
-
 func (b *ethAPIBackend) ChainConfig() *params.ChainConfig {
 	return b.vm.exec.ChainConfig()
 }
@@ -182,6 +142,10 @@ func (b *ethAPIBackend) RPCTxFeeCap() float64 {
 
 func (b *ethAPIBackend) UnprotectedAllowed() bool {
 	return false
+}
+
+func (b *ethAPIBackend) CurrentHeader() *types.Header {
+	return types.CopyHeader(b.vm.exec.LastEnqueued().Header())
 }
 
 func (b *ethAPIBackend) CurrentBlock() *types.Header {
@@ -198,6 +162,46 @@ func (b *ethAPIBackend) HeaderByNumber(ctx context.Context, n rpc.BlockNumber) (
 
 func (b *ethAPIBackend) BlockByNumber(ctx context.Context, n rpc.BlockNumber) (*types.Block, error) {
 	return readByNumber(b, n, rawdb.ReadBlock)
+}
+
+func (b *ethAPIBackend) HeaderByHash(ctx context.Context, hash common.Hash) (*types.Header, error) {
+	if b, ok := b.vm.blocks.Load(hash); ok {
+		return b.Header(), nil
+	}
+	return readByHash(b, hash, rawdb.ReadHeader), nil
+}
+
+func (b *ethAPIBackend) BlockByHash(ctx context.Context, hash common.Hash) (*types.Block, error) {
+	if b, ok := b.vm.blocks.Load(hash); ok {
+		return b.EthBlock(), nil
+	}
+	return readByHash(b, hash, rawdb.ReadBlock), nil
+}
+
+func (b *ethAPIBackend) HeaderByNumberOrHash(ctx context.Context, blockNrOrHash rpc.BlockNumberOrHash) (*types.Header, error) {
+	return readByNumberOrHash(
+		ctx,
+		blockNrOrHash,
+		b.HeaderByNumber,
+		b.HeaderByHash,
+	)
+}
+
+func (b *ethAPIBackend) BlockByNumberOrHash(ctx context.Context, blockNrOrHash rpc.BlockNumberOrHash) (*types.Block, error) {
+	return readByNumberOrHash(
+		ctx,
+		blockNrOrHash,
+		b.BlockByNumber,
+		b.BlockByHash,
+	)
+}
+
+func (b *ethAPIBackend) GetTransaction(ctx context.Context, txHash common.Hash) (bool, *types.Transaction, common.Hash, uint64, uint64, error) {
+	tx, blockHash, blockNumber, index := rawdb.ReadTransaction(b.vm.db, txHash)
+	if tx == nil {
+		return false, nil, common.Hash{}, 0, 0, nil
+	}
+	return true, tx, blockHash, blockNumber, index, nil
 }
 
 type canonicalReader[T any] func(ethdb.Reader, common.Hash, uint64) *T

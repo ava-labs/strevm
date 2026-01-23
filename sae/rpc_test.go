@@ -18,7 +18,6 @@ import (
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/crypto"
 	"github.com/ava-labs/libevm/params"
-	"github.com/ava-labs/libevm/rpc"
 	"github.com/holiman/uint256"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -131,32 +130,34 @@ func TestBlockGetters(t *testing.T) {
 
 	type blockGetterTest struct {
 		method string
-		want   any
+		want   *types.Header
 		args   []any
 	}
-	settledTests := []blockGetterTest{
-		{
-			method: "eth_getBlockByHash", want: settledBlock.Header(), args: []any{settledBlock.Hash(), true},
-		},
-		{
-			method: "eth_getBlockByNumber", want: settledBlock.Header(), args: []any{hexutil.Uint64(settledBlock.Height()), true},
-		},
-		{
-			method: "eth_getTransactionCount", want: hexutil.Uint64(0), args: []any{recipient, rpc.BlockNumberOrHashWithHash(settledBlock.Hash(), false)},
-		},
+	testsForBlock := func(b *blocks.Block) []blockGetterTest {
+		return []blockGetterTest{
+			{
+				method: "eth_getBlockByHash", want: b.Header(), args: []any{b.Hash(), true},
+			},
+			{
+				method: "eth_getBlockByNumber", want: b.Header(), args: []any{hexutil.Uint64(b.Height()), true},
+			},
+			{
+				method: "eth_getHeaderByHash", want: b.Header(), args: []any{b.Hash()},
+			},
+			{
+				method: "eth_getHeaderByNumber", want: b.Header(), args: []any{hexutil.Uint64(b.Height())},
+			},
+		}
 	}
-
 	t.Run("settled block", func(t *testing.T) {
-		for _, tt := range settledTests {
-			var got json.RawMessage
-			t.Logf("%T.CallContext(ctx, %T, %q, %v...)", sut.rpcClient, got, tt.method, tt.args)
-			require.NoError(t, sut.CallContext(ctx, &got, tt.method, tt.args...))
-			switch want := tt.want.(type) {
-			case *types.Header:
-				compareWith(t, want, got, compareHeaders)
-			default:
-				t.Fatalf("unhandled block getter test want type %T", tt.want)
-			}
+		for _, tt := range testsForBlock(settledBlock) {
+			testRPCMethod(ctx, t, sut, tt.method, *tt.want, tt.args...)
+		}
+	})
+
+	t.Run("executed but not settled block", func(t *testing.T) {
+		for _, tt := range testsForBlock(executedBlock) {
+			testRPCMethod(ctx, t, sut, tt.method, *tt.want, tt.args...)
 		}
 	})
 }
@@ -164,18 +165,20 @@ func TestBlockGetters(t *testing.T) {
 func testRPCMethod[T any](ctx context.Context, t *testing.T, sut *SUT, method string, want T, args ...any) {
 	t.Helper()
 	t.Run(method, func(t *testing.T) {
+		var gotMessage json.RawMessage
+		t.Logf("%T.CallContext(ctx, %T, %q, %v...)", sut.rpcClient, gotMessage, method, args)
+		require.NoError(t, sut.CallContext(ctx, &gotMessage, method, args...))
 		var got T
-		t.Logf("%T.CallContext(ctx, %T, %q, %v...)", sut.rpcClient, got, method, args)
-		require.NoError(t, sut.CallContext(ctx, &got, method, args...))
-		assert.Equal(t, want, got)
+		require.NoError(t, json.Unmarshal(gotMessage, &got))
+		switch any(want).(type) {
+		case types.Header:
+			wantH := any(&want).(*types.Header) //nolint:forcetypeassert
+			gotH := any(&got).(*types.Header)   //nolint:forcetypeassert
+			compareHeaders(t, wantH, gotH)
+		default:
+			assert.Equal(t, want, got)
+		}
 	})
-}
-
-func compareWith[T any](t *testing.T, want *T, got json.RawMessage, compare func(t *testing.T, a, b *T)) {
-	t.Helper()
-	var gotVal T
-	require.NoError(t, json.Unmarshal(got, &gotVal))
-	compare(t, want, &gotVal)
 }
 
 func compareHeaders(t *testing.T, a, b *types.Header) {
