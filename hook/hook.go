@@ -9,6 +9,7 @@ package hook
 
 import (
 	"math"
+	"time"
 
 	"github.com/ava-labs/avalanchego/ids"
 	"github.com/ava-labs/avalanchego/vms/components/gas"
@@ -40,12 +41,10 @@ type Points interface {
 	// GasTargetAfter returns the gas target that should go into effect
 	// immediately after the provided block.
 	GasTargetAfter(*types.Header) gas.Gas
-	// SubSecondBlockTime returns the sub-second portion of the block time based
-	// on the provided gas rate.
-	//
-	// For example, if the block timestamp is 10.75 seconds and the gas rate is
-	// 100 gas/second, then this method should return 75 gas.
-	SubSecondBlockTime(gasRate gas.Gas, h *types.Header) gas.Gas
+	// SubSecondBlockTime returns the sub-second portion of the block time,
+	// which MUST be non-negative and strictly shorter than a second; i.e. a
+	// value d such that 0 <= d < [time.Second].
+	SubSecondBlockTime(h *types.Header) time.Duration
 	// EndOfBlockOps returns operations outside of the normal EVM state changes
 	// to perform while executing the block, after regular EVM transactions.
 	// These operations will be performed during both worst-case and actual

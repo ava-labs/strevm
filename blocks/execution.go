@@ -30,11 +30,7 @@ import (
 // transactions, with the highest-known gas time. This MAY be at any resolution
 // but MUST be monotonic.
 func (b *Block) SetInterimExecutionTime(t *proxytime.Time[gas.Gas]) {
-	sec := t.Unix()
-	if t.Fraction().Numerator == 0 {
-		sec--
-	}
-	b.executionExceededSecond.Store(&sec)
+	b.interimExecutionTime.Store(t.Clone())
 }
 
 type executionResults struct {
@@ -99,6 +95,17 @@ func (b *Block) MarkExecuted(
 var errMarkBlockExecutedAgain = errors.New("block re-marked as executed")
 
 func (b *Block) markExecuted(e *executionResults, lastExecuted *atomic.Pointer[Block]) error {
+	if it := b.interimExecutionTime.Load(); it != nil && e.byGas.Compare(it) < 0 {
+		// The final execution time is scaled to the new gas target but interim
+		// times are not, which can result in rounding errors. Scaling always
+		// rounds up, to maintain a monotonic clock, but we confirm for safety.
+		// The logger used in tests will also convert this to a failure.
+		b.log.Error("Final execution gas time before last interim time",
+			zap.Stringer("interim_time", it),
+			zap.Stringer("final_time", e.byGas.Time),
+		)
+	}
+
 	if !b.execution.CompareAndSwap(nil, e) {
 		// This is fatal because we corrupted the database's head block if we
 		// got here by [Block.MarkExecuted] being called twice (an invalid use

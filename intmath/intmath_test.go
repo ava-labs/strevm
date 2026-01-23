@@ -33,20 +33,29 @@ func TestBoundedSubtract(t *testing.T) {
 }
 
 func TestMulDiv(t *testing.T) {
+	// Invariants:
+	// wantQuo == wantQuoCeil i.f.f. wantRem == 0
+	// (wantRem + wantExtra) ∈ {0, div}
+	// wantRem < div && wantExtra < div
 	tests := []struct {
-		a, b, div, wantQuo, wantRem uint64
+		a, b, div              uint64
+		wantQuo, wantRem       uint64
+		wantQuoCeil, wantExtra uint64
 	}{
 		{
 			a: 5, b: 2, div: 3, // 10/3
 			wantQuo: 3, wantRem: 1,
+			wantQuoCeil: 4, wantExtra: 2,
 		},
 		{
 			a: 5, b: 3, div: 3, // 15/3
 			wantQuo: 5, wantRem: 0,
+			wantQuoCeil: 5, wantExtra: 0,
 		},
 		{
 			a: max, b: 4, div: 8, // must avoid overflow
 			wantQuo: max / 2, wantRem: 4,
+			wantQuoCeil: max/2 + 1, wantExtra: 4,
 		},
 	}
 
@@ -54,10 +63,18 @@ func TestMulDiv(t *testing.T) {
 		if gotQuo, gotRem, err := MulDiv(tt.a, tt.b, tt.div); err != nil || gotQuo != tt.wantQuo || gotRem != tt.wantRem {
 			t.Errorf("MulDiv[%T](%[1]d, %d, %d) got (%d, %d, %v); want (%d, %d, nil)", tt.a, tt.b, tt.div, gotQuo, gotRem, err, tt.wantQuo, tt.wantRem)
 		}
+		if gotQuo, gotExtra, err := MulDivCeil(tt.a, tt.b, tt.div); err != nil || gotQuo != tt.wantQuoCeil || gotExtra != tt.wantExtra {
+			t.Errorf("MulDivCeil[%T](%[1]d, %d, %d) got (%d, %d, %v) want (%d, %d, nil)", tt.a, tt.b, tt.div, gotQuo, gotExtra, err, tt.wantQuoCeil, tt.wantExtra)
+		}
 	}
 
-	if _, _, err := MulDiv[uint64](max, 2, 1); !errors.Is(err, ErrOverflow) {
-		t.Errorf("MulDiv[uint64]([max uint64], 2, 1) got error %v; want %v", err, ErrOverflow)
+	for name, fn := range map[string](func(_, _, _ uint64) (uint64, uint64, error)){
+		"MulDiv":     MulDiv[uint64],
+		"MulDivCeil": MulDivCeil[uint64],
+	} {
+		if _, _, err := fn(max, 2, 1); !errors.Is(err, ErrOverflow) {
+			t.Errorf("%s[uint64]([max uint64], 2, 1) got error %v; want %v", name, err, ErrOverflow)
+		}
 	}
 }
 
