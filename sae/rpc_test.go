@@ -219,6 +219,18 @@ func TestBlockGetters(t *testing.T) {
 					})
 				}
 			})
+
+			t.Run("eth_getBlockTransactionCountByHash", func(t *testing.T) {
+				var got hexutil.Uint
+				require.NoError(t, sut.CallContext(ctx, &got, "eth_getBlockTransactionCountByHash", ethB.Hash()))
+				require.Equal(t, hexutil.Uint(len(ethB.Transactions())), got)
+			})
+
+			t.Run("eth_getBlockTransactionCountByNumber", func(t *testing.T) {
+				var got hexutil.Uint
+				require.NoError(t, sut.CallContext(ctx, &got, "eth_getBlockTransactionCountByNumber", hexutil.Uint64(ethB.NumberU64())))
+				require.Equal(t, hexutil.Uint(len(ethB.Transactions())), got)
+			})
 		})
 	}
 
@@ -268,5 +280,20 @@ func testRPCMethod[T any](ctx context.Context, t *testing.T, sut *SUT, method st
 		if diff := cmp.Diff(want, got, opts...); diff != "" {
 			t.Errorf("Diff (-want +got):\n%s", diff)
 		}
+	})
+}
+
+func TestUncleCount(t *testing.T) {
+	ctx, sut := newSUT(t, 1)
+
+	// Create any block (uncle count is always 0 in SAE)
+	block := sut.runConsensusLoop(t, sut.lastAcceptedBlock(t))
+
+	t.Run("eth_getUncleCountByBlockHash", func(t *testing.T) {
+		testRPCMethod(ctx, t, sut, "eth_getUncleCountByBlockHash", hexutil.Uint(0), block.Hash())
+	})
+
+	t.Run("eth_getUncleCountByBlockNumber", func(t *testing.T) {
+		testRPCMethod(ctx, t, sut, "eth_getUncleCountByBlockNumber", hexutil.Uint(0), hexutil.Uint64(block.Height()))
 	})
 }
