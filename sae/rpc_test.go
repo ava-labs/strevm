@@ -89,6 +89,7 @@ func TestTxPoolNamespace(t *testing.T) {
 		sut.mustSendTx(t, tx)
 		txs[i] = tx
 	}
+	sut.wallet.DecrementNonce()
 	sut.syncMempool(t)
 
 	testRPCMethod(ctx, t, sut, "txpool_content", map[string]map[string]map[string]*ethapi.RPCTransaction{})

@@ -115,7 +115,7 @@ func (w *Wallet) DecrementNonce(tb testing.TB, account int) {
 	w.nonces[account]--
 }
 
-// DecrementNonce decrements the nonce of the specified account. This is useful
+// IncrementNonce decrements the nonce of the specified account. This is useful
 // for retrying transactions with updated parameters.
 func (w *Wallet) DecrementNonce(tb testing.TB, account int) {
 	tb.Helper()
