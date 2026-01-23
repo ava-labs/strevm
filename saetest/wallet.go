@@ -115,6 +115,14 @@ func (w *Wallet) DecrementNonce(tb testing.TB, account int) {
 	w.nonces[account]--
 }
 
+// DecrementNonce decrements the nonce of the specified account. This is useful
+// for retrying transactions with updated parameters.
+func (w *Wallet) DecrementNonce(tb testing.TB, account int) {
+	tb.Helper()
+	require.NotZerof(tb, w.nonces[account], "Nonce of account [%d] MUST be non-zero to decrement", account)
+	w.nonces[account]--
+}
+
 // MaxAllocFor returns a genesis allocation with [MaxUint256] as the balance for
 // all addresses provided.
 func MaxAllocFor(addrs ...common.Address) types.GenesisAlloc {
