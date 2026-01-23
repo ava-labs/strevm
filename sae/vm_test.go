@@ -9,6 +9,7 @@ import (
 	"math/big"
 	"math/rand/v2"
 	"net/http/httptest"
+	"os"
 	"runtime"
 	"testing"
 	"time"
@@ -32,6 +33,7 @@ import (
 	"github.com/ava-labs/libevm/ethclient"
 	"github.com/ava-labs/libevm/ethdb"
 	"github.com/ava-labs/libevm/libevm/options"
+	"github.com/ava-labs/libevm/log"
 	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/rpc"
 	"github.com/ava-labs/libevm/triedb"
@@ -51,6 +53,8 @@ import (
 func TestMain(m *testing.M) {
 	createWorstCaseFuzzFlags(flag.CommandLine)
 	flag.Parse()
+
+	log.SetDefault(log.NewLogger(log.NewTerminalHandlerWithLevel(os.Stderr, log.LevelError, true)))
 
 	goleak.VerifyTestMain(
 		m,

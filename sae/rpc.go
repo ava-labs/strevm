@@ -128,6 +128,50 @@ type ethAPIBackend struct {
 	*txgossip.Set
 }
 
+/////////////////////////////
+// Getters //
+/////////////////////////////
+
+func (b *ethAPIBackend) BlockByHash(ctx context.Context, hash common.Hash) (*types.Block, error) {
+	if b, ok := b.vm.blocks.Load(hash); ok {
+		return b.EthBlock(), nil
+	}
+	return readByHash(b, hash, rawdb.ReadBlock), nil
+}
+
+func (b *ethAPIBackend) BlockByNumberOrHash(ctx context.Context, blockNrOrHash rpc.BlockNumberOrHash) (*types.Block, error) {
+	return readByNumberOrHash(
+		ctx,
+		blockNrOrHash,
+		b.BlockByNumber,
+		b.BlockByHash,
+	)
+}
+
+func (b *ethAPIBackend) ChainDb() ethdb.Database {
+	return b.vm.db
+}
+
+func (b *ethAPIBackend) CurrentHeader() *types.Header {
+	return types.CopyHeader(b.vm.exec.LastEnqueued().Header())
+}
+
+func (b *ethAPIBackend) HeaderByHash(ctx context.Context, hash common.Hash) (*types.Header, error) {
+	if b, ok := b.vm.blocks.Load(hash); ok {
+		return b.Header(), nil
+	}
+	return readByHash(b, hash, rawdb.ReadHeader), nil
+}
+
+func (b *ethAPIBackend) HeaderByNumberOrHash(ctx context.Context, blockNrOrHash rpc.BlockNumberOrHash) (*types.Header, error) {
+	return readByNumberOrHash(
+		ctx,
+		blockNrOrHash,
+		b.HeaderByNumber,
+		b.HeaderByHash,
+	)
+}
+
 func (b *ethAPIBackend) ChainConfig() *params.ChainConfig {
 	return b.vm.exec.ChainConfig()
 }
@@ -141,7 +185,7 @@ func (b *ethAPIBackend) UnprotectedAllowed() bool {
 }
 
 func (b *ethAPIBackend) CurrentBlock() *types.Header {
-	return types.CopyHeader(b.vm.exec.LastExecuted().Header())
+	return b.CurrentHeader()
 }
 
 func (b *ethAPIBackend) GetTd(context.Context, common.Hash) *big.Int {
@@ -170,6 +214,35 @@ func readByNumber[T any](b *ethAPIBackend, n rpc.BlockNumber, read canonicalRead
 		rawdb.ReadCanonicalHash(b.vm.db, num),
 		num,
 	), nil
+}
+
+func readByHash[T any](b *ethAPIBackend, hash common.Hash, read canonicalReader[T]) *T {
+	num := rawdb.ReadHeaderNumber(b.vm.db, hash)
+	if num == nil {
+		return nil
+	}
+	return read(
+		b.vm.db,
+		hash,
+		*num,
+	)
+}
+
+var errNoBlockNorHash = errors.New("invalid arguments; neither block nor hash specified")
+
+func readByNumberOrHash[T any](
+	ctx context.Context,
+	blockNrOrHash rpc.BlockNumberOrHash,
+	byNum func(context.Context, rpc.BlockNumber) (*T, error),
+	byHash func(context.Context, common.Hash) (*T, error),
+) (*T, error) {
+	if blockNr, ok := blockNrOrHash.Number(); ok {
+		return byNum(ctx, blockNr)
+	}
+	if hash, ok := blockNrOrHash.Hash(); ok {
+		return byHash(ctx, hash)
+	}
+	return nil, errNoBlockNorHash
 }
 
 var errFutureBlockNotResolved = errors.New("not accepted yet")

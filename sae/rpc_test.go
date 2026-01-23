@@ -5,16 +5,26 @@ package sae
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"math/big"
 	"testing"
+	"time"
 
+	snowcommon "github.com/ava-labs/avalanchego/snow/engine/common"
 	"github.com/ava-labs/avalanchego/version"
+	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/common/hexutil"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/crypto"
+	"github.com/ava-labs/libevm/params"
+	"github.com/ava-labs/libevm/rpc"
+	"github.com/holiman/uint256"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/ava-labs/strevm/blocks"
+	saeparams "github.com/ava-labs/strevm/params"
 	"github.com/ava-labs/strevm/saetest"
 )
 
@@ -70,6 +80,87 @@ func TestNetNamespace(t *testing.T) {
 	}
 }
 
+func TestBlockGetters(t *testing.T) {
+	opt, setTime := stubbedTime()
+	var now time.Time
+	fastForward := func(by time.Duration) {
+		now = now.Add(by)
+		setTime(now)
+	}
+	fastForward(saeparams.Tau)
+
+	ctx, sut := newSUT(t, 1, opt)
+
+	testWaitForEvent := func(t *testing.T) {
+		t.Helper()
+		ev, err := sut.WaitForEvent(ctx)
+		require.NoError(t, err)
+		require.Equal(t, snowcommon.PendingTxs, ev)
+	}
+	recipient := common.Address{1, 2, 3, 4}
+	createBlock := func(t *testing.T) *blocks.Block {
+		t.Helper()
+		// Put a tx in the mempool to ensure blocks aren't empty.
+		waitForEvDone := make(chan struct{})
+		go func() {
+			defer close(waitForEvDone)
+			t.Run("WaitForEvent_early_unblocks", testWaitForEvent)
+		}()
+
+		transfer := uint256.NewInt(42)
+		tx := sut.wallet.SetNonceAndSign(t, 0, &types.DynamicFeeTx{
+			To:        &recipient,
+			Gas:       params.TxGas,
+			GasFeeCap: big.NewInt(1),
+			Value:     transfer.ToBig(),
+		})
+		sut.mustSendTx(t, tx)
+
+		select {
+		case <-waitForEvDone:
+		case <-time.After(time.Second):
+			t.Error("WaitForEvent() called before SendTx() did not unblock")
+		}
+		return sut.runConsensusLoop(t, sut.lastAcceptedBlock(t))
+	}
+
+	settledBlock := createBlock(t)
+	fastForward(saeparams.Tau)
+	executedBlock := createBlock(t)
+	require.NoError(t, executedBlock.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", executedBlock)
+
+	type blockGetterTest struct {
+		method string
+		want   any
+		args   []any
+	}
+	settledTests := []blockGetterTest{
+		{
+			method: "eth_getBlockByHash", want: settledBlock.Header(), args: []any{settledBlock.Hash(), true},
+		},
+		{
+			method: "eth_getBlockByNumber", want: settledBlock.Header(), args: []any{hexutil.Uint64(settledBlock.Height()), true},
+		},
+		{
+			method: "eth_getTransactionCount", want: hexutil.Uint64(0), args: []any{recipient, rpc.BlockNumberOrHashWithHash(settledBlock.Hash(), false)},
+		},
+	}
+
+	t.Run("settled block", func(t *testing.T) {
+		for _, tt := range settledTests {
+			var got json.RawMessage
+			t.Logf("%T.CallContext(ctx, %T, %q, %v...)", sut.rpcClient, got, tt.method, tt.args)
+			require.NoError(t, sut.CallContext(ctx, &got, tt.method, tt.args...))
+			switch want := tt.want.(type) {
+			case *types.Header:
+				compareWith(t, want, got, compareHeaders)
+			default:
+				t.Fatalf("unhandled block getter test want type %T", tt.want)
+			}
+		}
+	})
+}
+
 func testRPCMethod[T any](ctx context.Context, t *testing.T, sut *SUT, method string, want T, args ...any) {
 	t.Helper()
 	t.Run(method, func(t *testing.T) {
@@ -78,4 +169,35 @@ func testRPCMethod[T any](ctx context.Context, t *testing.T, sut *SUT, method st
 		require.NoError(t, sut.CallContext(ctx, &got, method, args...))
 		assert.Equal(t, want, got)
 	})
+}
+
+func compareWith[T any](t *testing.T, want *T, got json.RawMessage, compare func(t *testing.T, a, b *T)) {
+	t.Helper()
+	var gotVal T
+	require.NoError(t, json.Unmarshal(got, &gotVal))
+	compare(t, want, &gotVal)
+}
+
+func compareHeaders(t *testing.T, a, b *types.Header) {
+	t.Helper()
+	assert.Equal(t, a.ParentHash, b.ParentHash, "ParentHash")
+	assert.Equal(t, a.UncleHash, b.UncleHash, "UncleHash")
+	assert.Equal(t, a.Coinbase, b.Coinbase, "Coinbase")
+	assert.Equal(t, a.Root, b.Root, "Root")
+	assert.Equal(t, a.TxHash, b.TxHash, "TxHash")
+	assert.Equal(t, a.ReceiptHash, b.ReceiptHash, "ReceiptHash")
+	assert.Equal(t, a.Bloom, b.Bloom, "Bloom")
+	assert.Zerof(t, a.Difficulty.Cmp(b.Difficulty), "Difficulty: got %s, want %s", b.Difficulty.String(), a.Difficulty.String())
+	assert.Zerof(t, a.Number.Cmp(b.Number), "Number: got %s, want %s", b.Number.String(), a.Number.String())
+	assert.Equal(t, a.GasLimit, b.GasLimit, "GasLimit")
+	assert.Equal(t, a.GasUsed, b.GasUsed, "GasUsed")
+	assert.Equal(t, a.Time, b.Time, "Time")
+	assert.Equal(t, a.Extra, b.Extra, "Extra")
+	assert.Equal(t, a.MixDigest, b.MixDigest, "MixDigest")
+	assert.Equal(t, a.Nonce, b.Nonce, "Nonce")
+	assert.Zerof(t, a.BaseFee.Cmp(b.BaseFee), "BaseFee: got %s, want %s", b.BaseFee.String(), a.BaseFee.String())
+	assert.Equal(t, a.WithdrawalsHash, b.WithdrawalsHash, "WithdrawalsHash")
+	assert.Equal(t, a.BlobGasUsed, b.BlobGasUsed, "BlobGasUsed")
+	assert.Equal(t, a.ExcessBlobGas, b.ExcessBlobGas, "ExcessBlobGas")
+	assert.Equal(t, a.ParentBeaconRoot, b.ParentBeaconRoot, "ParentBeaconRoot")
 }
