@@ -5,7 +5,9 @@
 package hookstest
 
 import (
+	"encoding/binary"
 	"math/big"
+	"testing"
 	"time"
 
 	"github.com/ava-labs/avalanchego/vms/components/gas"
@@ -20,27 +22,32 @@ import (
 
 // Stub implements [hook.Points].
 type Stub struct {
-	Now           func() uint64
-	GasConfig     hook.GasConfig
-	SubSecondTime gas.Gas
-	Ops           []hook.Op
+	Now       func() time.Time
+	GasConfig hook.GasConfig
+	Target    gas.Gas
+	Ops       []hook.Op
+	TB        testing.TB
 }
 
 var _ hook.Points = (*Stub)(nil)
 
-// BuildHeader constructs a header that builds on top of the parent header.
+// BuildHeader constructs a header that builds on top of the parent header. The
+// `Extra` field SHOULD NOT be modified as it encodes sub-second block time.
 func (s *Stub) BuildHeader(parent *types.Header) *types.Header {
-	var now uint64
+	var now time.Time
 	if s.Now != nil {
 		now = s.Now()
 	} else {
-		now = uint64(time.Now().Unix()) //nolint:gosec // Time won't overflow for quite a while
+		now = time.Now()
 	}
-	return &types.Header{
+
+	hdr := &types.Header{
 		ParentHash: parent.Hash(),
 		Number:     new(big.Int).Add(parent.Number, common.Big1),
-		Time:       now,
+		Time:       uint64(now.Unix()),                                           //nolint:gosec // Known non-negative
+		Extra:      binary.BigEndian.AppendUint64(nil, uint64(now.Nanosecond())), //nolint:gosec // Known non-negative
 	}
+	return hdr
 }
 
 // BuildBlock calls [types.NewBlock] with its arguments.
@@ -56,7 +63,12 @@ func (*Stub) BuildBlock(
 // source of time.
 func (s *Stub) BlockRebuilderFrom(b *types.Block) hook.BlockBuilder {
 	return &Stub{
-		Now: b.Time,
+		Now: func() time.Time {
+			return time.Unix(
+				int64(b.Time()), //nolint:gosec // Won't overflow for a few millennia
+				int64(s.SubSecondBlockTime(b.Header())),
+			)
+		},
 	}
 }
 
@@ -65,10 +77,14 @@ func (s *Stub) GasConfigAfter(*types.Header) hook.GasConfig {
 	return s.GasConfig
 }
 
-// SubSecondBlockTime time ignores its arguments and always returns
-// [Stub.SubSecondTime].
-func (s *Stub) SubSecondBlockTime(gas.Gas, *types.Header) gas.Gas {
-	return s.SubSecondTime
+// SubSecondBlockTime returns the sub-second time encoded and stored by
+// [Stub.BuildHeader] in the header's `Extra` field. If said field is empty,
+// SubSecondBlockTime returns 0.
+func (s *Stub) SubSecondBlockTime(hdr *types.Header) time.Duration {
+	if len(hdr.Extra) == 0 {
+		return 0
+	}
+	return time.Duration(binary.BigEndian.Uint64(hdr.Extra)) //nolint:gosec // Test-only code that relies on our own encoding of nanonseconds in [Stub.BuildHeader]
 }
 
 // EndOfBlockOps ignores its argument and always returns [Stub.Ops].

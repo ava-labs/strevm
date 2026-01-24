@@ -6,11 +6,14 @@ package gastime
 
 import (
 	"math"
+	"time"
 
 	"github.com/ava-labs/avalanchego/vms/components/gas"
+	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/libevm/options"
 	"github.com/holiman/uint256"
 
+	"github.com/ava-labs/strevm/hook"
 	"github.com/ava-labs/strevm/intmath"
 	"github.com/ava-labs/strevm/proxytime"
 )
@@ -82,6 +85,21 @@ func New(unixSeconds uint64, target, startingExcess gas.Gas, opts ...Option) *Ti
 	return makeTime(proxytime.New(unixSeconds, rateOf(target)), target, startingExcess, *cfg)
 }
 
+// SubSecond scales the value returned by [hook.Points.SubSecondBlockTime] to
+// reflect the given gas rate.
+func SubSecond(hooks hook.Points, hdr *types.Header, rate gas.Gas) gas.Gas {
+	// [hook.Points.SubSecondBlockTime] is required to return values in
+	// [0,second). The lower bound guarantees that the conversion to unsigned
+	// [gas.Gas] is safe while the upper bound guarantees that the mul-div
+	// result can't overflow so we don't have to check the error.
+	g, _, _ := intmath.MulDivCeil(
+		gas.Gas(hooks.SubSecondBlockTime(hdr)), //nolint:gosec // See above
+		rate,
+		gas.Gas(time.Second),
+	)
+	return g
+}
+
 // TargetToRate is the ratio between [Time.Target] and [proxytime.Time.Rate].
 const TargetToRate = 2
 
@@ -103,6 +121,13 @@ const MaxTarget = gas.Gas(math.MaxUint64 / TargetToRate)
 func rateOf(target gas.Gas) gas.Gas { return target * TargetToRate }
 func clampTarget(t gas.Gas) gas.Gas { return min(t, MaxTarget) }
 func roundRate(r gas.Gas) gas.Gas   { return (r / TargetToRate) * TargetToRate }
+
+// SafeRateOfTarget returns the corresponding rate for the given gas target,
+// protecting against overflow. It is equivalent to the product of
+// [TargetToRate] and the minimum of [MaxTarget] and the argument.
+func SafeRateOfTarget(target gas.Gas) gas.Gas {
+	return rateOf(clampTarget(target))
+}
 
 // Clone returns a deep copy of the time.
 func (tm *Time) Clone() *Time {
@@ -173,16 +198,14 @@ func (tm *Time) BaseFee() *uint256.Int {
 // SetRate changes the gas rate per second, rounding down the argument if it is
 // not a multiple of [TargetToRate]. See [Time.SetTarget] re potential error(s).
 func (tm *Time) SetRate(r gas.Gas) error {
-	_, err := tm.TimeMarshaler.SetRate(roundRate(r))
-	return err
+	return tm.TimeMarshaler.SetRate(roundRate(r))
 }
 
 // SetTarget changes the target gas consumption per second, clamping the
 // argument to [MaxTarget]. It returns an error if the scaled [Time.Excess]
 // overflows as a result of the scaling.
 func (tm *Time) SetTarget(t gas.Gas) error {
-	_, err := tm.TimeMarshaler.SetRate(rateOf(clampTarget(t))) // also updates [Time.Target] as it was passed to [proxytime.Time.SetRateInvariants]
-	return err
+	return tm.TimeMarshaler.SetRate(rateOf(clampTarget(t))) // also updates [Time.Target] as it was passed to [proxytime.Time.SetRateInvariants]
 }
 
 // Tick is equivalent to [proxytime.Time.Tick] except that it also updates the

@@ -9,8 +9,13 @@ import (
 	"fmt"
 	"slices"
 	"sync/atomic"
+	"time"
 
+	"github.com/ava-labs/avalanchego/vms/components/gas"
 	"go.uber.org/zap"
+
+	"github.com/ava-labs/strevm/hook"
+	"github.com/ava-labs/strevm/proxytime"
 )
 
 type ancestry struct {
@@ -187,13 +192,15 @@ var errIncompleteBlockHistory = errors.New("incomplete block history when determ
 //
 // See the Example for [Block.WhenChildSettles] for one usage of the returned
 // block.
-func LastToSettleAt(settleAt uint64, parent *Block) (b *Block, ok bool, _ error) {
+func LastToSettleAt(hooks hook.Points, settleAt time.Time, parent *Block) (b *Block, ok bool, _ error) {
 	defer func() {
 		// Avoids having to perform this check at every return.
 		if !ok {
 			b = nil
 		}
 	}()
+
+	settleAtGasTime := proxytime.Of[gas.Gas](settleAt)
 
 	// A block can be the last to settle at some time i.f.f. two criteria are
 	// met:
@@ -224,9 +231,9 @@ func LastToSettleAt(settleAt uint64, parent *Block) (b *Block, ok bool, _ error)
 				"Race condition when determining last block to settle",
 				zap.Stringer("parent_hash", parent.Hash()),
 				zap.Uint64("parent_height", parent.Height()),
-				zap.Uint64("settle_at", settleAt),
+				zap.Time("settle_at", settleAt),
 			)
-			return nil, false, fmt.Errorf("%w: settling at %d with parent %#x (%v)", errIncompleteBlockHistory, settleAt, parent.Hash(), parent.Number())
+			return nil, false, fmt.Errorf("%w: settling at %v with parent %#x (%v)", errIncompleteBlockHistory, settleAt, parent.Hash(), parent.Number())
 		}
 		// Guarantees that the loop will always exit as the last pre-SAE block
 		// (perhaps the genesis) is always settled, by definition.
@@ -234,28 +241,28 @@ func LastToSettleAt(settleAt uint64, parent *Block) (b *Block, ok bool, _ error)
 			return block, known, nil
 		}
 
-		if startsNoEarlierThan := block.BuildTime(); startsNoEarlierThan > settleAt {
+		if startsNoEarlierThan := PreciseTime(hooks, block.Header()); startsNoEarlierThan.Compare(settleAt) > 0 {
 			known = true
 			continue
 		}
-		// TODO(arr4n) more fine-grained checks are possible by computing the
-		// minimum possible gas consumption of blocks. For example,
-		// `block.BuildTime()+block.intrinsicGasSum()` can be compared against
-		// `settleAt`, as can the sum of a chain of blocks.
-
-		if t := block.executionExceededSecond.Load(); t != nil && *t >= settleAt {
+		if t := block.interimExecutionTime.Load(); t != nil && t.Compare(settleAtGasTime) > 0 {
 			known = true
 			continue
 		}
 		if e := block.execution.Load(); e != nil {
-			if e.byGas.CompareUnix(settleAt) > 0 {
+			if e.byGas.Compare(settleAtGasTime) > 0 {
 				// There may have been a race between this check and the
-				// execution-exceeded one above, so we have to check again.
+				// interim-execution one above, so we have to check again.
 				known = true
 				continue
 			}
 			return block, known, nil
 		}
+
+		// TODO(arr4n) more fine-grained checks are possible by computing the
+		// minimum possible gas consumption of blocks. For example,
+		// `block.BuildTime()+block.intrinsicGasSum()` can be compared against
+		// `equivSettleAt`, as can the sum of a chain of blocks.
 
 		// Note that a grandchild block having unknown execution completion time
 		// does not rule out knowing a child's completion time, so this could be
