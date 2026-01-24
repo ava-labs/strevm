@@ -32,7 +32,7 @@ type Time struct {
 }
 
 // makeTime is a constructor shared by [New] and [Time.Clone].
-func makeTime(t *proxytime.Time[gas.Gas], target, excess, targetToExcessScaling gas.Gas, minPrice gas.Price) *Time {
+func makeTime(t *proxytime.Time[gas.Gas], target, excess, c config) *Time {
 	tm := &Time{
 		TimeMarshaler: TimeMarshaler{
 			Time:                  t,
