@@ -12,14 +12,20 @@ import (
 
 //go:generate go run github.com/StephenButtolph/canoto/canoto $GOFILE
 
+type config struct {
+	targetToExcessScaling gas.Gas   `canoto:"uint,1"`
+	minPrice              gas.Price `canoto:"uint,2"`
+
+	canotoData canotoData_config
+}
+
 // A TimeMarshaler can marshal a time to and from canoto. It is of limited use
 // by itself and MUST only be used via a wrapping [Time].
 type TimeMarshaler struct { //nolint:tagliatelle // TODO(arr4n) submit linter bug report
 	*proxytime.Time[gas.Gas] `canoto:"pointer,1"`
-	target                   gas.Gas   `canoto:"uint,2"`
-	excess                   gas.Gas   `canoto:"uint,3"`
-	targetToExcessScaling    gas.Gas   `canoto:"uint,4"`
-	minPrice                 gas.Price `canoto:"uint,5"`
+	target                   gas.Gas `canoto:"uint,2"`
+	excess                   gas.Gas `canoto:"uint,3"`
+	config                   config  `canoto:"value,4"`
 
 	// The nocopy is important, not only for canoto, but because of the use of
 	// pointers in [Time.establishInvariants]. See [Time.Clone].

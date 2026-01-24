@@ -31,32 +31,8 @@ type Time struct {
 	TimeMarshaler
 }
 
-// makeTime is a constructor shared by [New] and [Time.Clone].
-func makeTime(t *proxytime.Time[gas.Gas], target, excess, targetToExcessScaling gas.Gas, minPrice gas.Price) *Time {
-	tm := &Time{
-		TimeMarshaler: TimeMarshaler{
-			Time:                  t,
-			target:                target,
-			excess:                excess,
-			targetToExcessScaling: targetToExcessScaling,
-			minPrice:              minPrice,
-		},
-	}
-	tm.establishInvariants()
-	return tm
-}
-
-func (tm *Time) establishInvariants() {
-	tm.Time.SetRateInvariants(&tm.target, &tm.excess)
-}
-
 // An Option configures the [Time] created by [New].
 type Option = options.Option[config]
-
-type config struct {
-	targetToExcessScaling gas.Gas
-	minPrice              gas.Price
-}
 
 // WithTargetToExcessScaling overrides the default target to excess scaling ratio.
 func WithTargetToExcessScaling(s gas.Gas) Option {
@@ -72,6 +48,24 @@ func WithMinPrice(p gas.Price) Option {
 	})
 }
 
+// makeTime is a constructor shared by [New] and [Time.Clone].
+func makeTime(t *proxytime.Time[gas.Gas], target, excess gas.Gas, c config) *Time {
+	tm := &Time{
+		TimeMarshaler: TimeMarshaler{
+			Time:   t,
+			target: target,
+			excess: excess,
+			config: c,
+		},
+	}
+	tm.establishInvariants()
+	return tm
+}
+
+func (tm *Time) establishInvariants() {
+	tm.Time.SetRateInvariants(&tm.target, &tm.excess)
+}
+
 // New returns a new [Time], set from a Unix timestamp. The consumption of
 // `target` * [TargetToRate] units of [gas.Gas] is equivalent to a tick of 1
 // second. Targets are clamped to [MaxTarget]. The minPrice and
@@ -85,7 +79,7 @@ func New(unixSeconds uint64, target, startingExcess gas.Gas, opts ...Option) *Ti
 	}
 	options.ApplyTo(cfg, opts...)
 	target = clampTarget(target)
-	return makeTime(proxytime.New(unixSeconds, rateOf(target)), target, startingExcess, cfg.targetToExcessScaling, cfg.minPrice)
+	return makeTime(proxytime.New(unixSeconds, rateOf(target)), target, startingExcess, *cfg)
 }
 
 // TargetToRate is the ratio between [Time.Target] and [proxytime.Time.Rate].
@@ -114,7 +108,7 @@ func roundRate(r gas.Gas) gas.Gas   { return (r / TargetToRate) * TargetToRate }
 func (tm *Time) Clone() *Time {
 	// [proxytime.Time.Clone] explicitly does NOT clone the rate invariants, so
 	// we reestablish them as if we were constructing a new instance.
-	return makeTime(tm.Time.Clone(), tm.target, tm.excess, tm.targetToExcessScaling, tm.minPrice)
+	return makeTime(tm.Time.Clone(), tm.target, tm.excess, tm.config)
 }
 
 // Target returns the `T` parameter of ACP-176.
@@ -131,43 +125,43 @@ func (tm *Time) Excess() gas.Gas {
 // reciprocal of the [Time.Excess] coefficient used in calculating [Time.Price].
 // In [ACP-176] this is the K variable.
 func (tm *Time) TargetToExcessScaling() gas.Gas {
-	return tm.targetToExcessScaling
+	return tm.config.targetToExcessScaling
 }
 
 // MinPrice returns the minimum gas price (base fee), i.e. the M parameter in
 // ACP-176's price calculation.
 func (tm *Time) MinPrice() gas.Price {
-	return tm.minPrice
+	return tm.config.minPrice
 }
 
 // SetTargetToExcessScaling updates the target to excess scaling ratio.
 func (tm *Time) SetTargetToExcessScaling(s gas.Gas) {
-	tm.targetToExcessScaling = s
+	tm.config.targetToExcessScaling = s
 }
 
 // SetMinPrice updates the minimum gas price.
 func (tm *Time) SetMinPrice(p gas.Price) {
-	tm.minPrice = p
+	tm.config.minPrice = p
 }
 
 // Price returns the price of a unit of gas, i.e. the "base fee".
 func (tm *Time) Price() gas.Price {
 	// TODO (cey): Should we verify this is non-zero?
-	return gas.CalculatePrice(tm.minPrice, tm.excess, tm.excessScalingFactor())
+	return gas.CalculatePrice(tm.config.minPrice, tm.excess, tm.excessScalingFactor())
 }
 
 // excessScalingFactor returns the K variable of ACP-103/176, i.e.
 // targetToExcessScaling*T, capped at [math.MaxUint64].
 func (tm *Time) excessScalingFactor() gas.Gas {
 	// TODO (cey): Should we verify this is non-zero instead?
-	if tm.targetToExcessScaling == 0 {
+	if tm.config.targetToExcessScaling == 0 {
 		return math.MaxUint64
 	}
-	overflowThreshold := math.MaxUint64 / tm.targetToExcessScaling
+	overflowThreshold := math.MaxUint64 / tm.config.targetToExcessScaling
 	if tm.target > overflowThreshold {
 		return math.MaxUint64
 	}
-	return tm.targetToExcessScaling * tm.target
+	return tm.config.targetToExcessScaling * tm.target
 }
 
 // BaseFee is equivalent to [Time.Price], returning the result as a uint256 for
