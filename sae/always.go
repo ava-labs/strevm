@@ -28,6 +28,7 @@ type SinceGenesis struct {
 	config Config
 }
 
+// NewSinceGenesis constructs a new [SinceGenesis].
 func NewSinceGenesis(c Config) *SinceGenesis {
 	return &SinceGenesis{config: c}
 }
@@ -71,6 +72,7 @@ func (vm *SinceGenesis) Initialize(
 	return nil
 }
 
+// Shutdown gracefully closes the VM.
 func (vm *SinceGenesis) Shutdown(ctx context.Context) error {
 	if vm.VM == nil {
 		return nil

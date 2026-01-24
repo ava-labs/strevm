@@ -77,9 +77,8 @@ func (vm *VM) hooks() hook.Points {
 	return vm.config.Hooks
 }
 
-// NewVM returns a new [VM] on which the [VM.Init] method MUST be called before
-// other use. This deferment allows the [VM] to be constructed before
-// `Initialize` has been called on the harness.
+// NewVM returns a new [VM] that is ready for use immediately upon return.
+// [VM.Shutdown] MUST be called to release resources.
 func NewVM(
 	c Config,
 	snowCtx *snow.Context,

@@ -59,6 +59,11 @@ func createWorstCaseFuzzFlags(set *flag.FlagSet) {
 	set.Uint64Var(&fs.rngSeed, name("rng_seed"), 0, "Seed for random-number generator; ignored if zero")
 }
 
+// A guzzler is both a [params.ChainConfigHooks] and [params.RulesHooks]. When
+// registered as libevm extras they result in the [guzzler.guzzle] method being
+// a [vm.PrecompiledStatefulContract] instantiated at the address specified in
+// the `Addr` field. Furthermore, a guzzler can be JSON round-tripped, allowing
+// it to be included in a chain's genesis.
 type guzzler struct {
 	params.NOOPHooks `json:"-"`
 	Addr             common.Address `json:"guzzler_address"`
@@ -85,6 +90,9 @@ func (g *guzzler) PrecompileOverride(a common.Address) (libevm.PrecompiledContra
 	return vm.NewStatefulPrecompile(g.guzzle), true
 }
 
+// guzzle consumes an amount of gas configurable via its input (call data),
+// which MUST either be an empty slice or a big-endian uint64 indicating the
+// amount of gas to _keep_ (not consume).
 func (g *guzzler) guzzle(env vm.PrecompileEnvironment, input []byte) ([]byte, error) {
 	switch len(input) {
 	case 0:
