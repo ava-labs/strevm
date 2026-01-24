@@ -151,7 +151,7 @@ func (tm *Time) Price() gas.Price {
 }
 
 // excessScalingFactor returns the K variable of ACP-103/176, i.e.
-// targetToExcessScaling*T, capped at [math.MaxUint64].
+// [config.targetToExcessScaling] * T, capped at [math.MaxUint64].
 func (tm *Time) excessScalingFactor() gas.Gas {
 	// TODO (cey): Should we verify this is non-zero instead?
 	if tm.config.targetToExcessScaling == 0 {
