@@ -1,4 +1,4 @@
-// Copyright (C) 2025, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2025-2026, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package saetest
@@ -6,6 +6,7 @@ package saetest
 import (
 	"crypto/ecdsa"
 	"encoding/binary"
+	"slices"
 	"testing"
 
 	"github.com/ava-labs/libevm/common"
@@ -16,42 +17,70 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// A KeyChain manages a set of private keys (suitable only for tests) to sign
+// transactions.
+type KeyChain struct {
+	keys  []*ecdsa.PrivateKey
+	addrs []common.Address
+}
+
+// NewUNSAFEKeyChain returns a new key chain with the specified number of
+// accounts. Private keys are generated deterministically.
+func NewUNSAFEKeyChain(tb testing.TB, accounts uint) *KeyChain {
+	tb.Helper()
+
+	var (
+		keys  []*ecdsa.PrivateKey
+		addrs []common.Address
+	)
+	for i := range accounts {
+		seed := binary.BigEndian.AppendUint64(nil, uint64(i))
+		key := ethtest.UNSAFEDeterministicPrivateKey(tb, seed)
+		keys = append(keys, key)
+		addrs = append(addrs, crypto.PubkeyToAddress(key.PublicKey))
+	}
+	return &KeyChain{
+		keys:  keys,
+		addrs: addrs,
+	}
+}
+
+// SignTx returns [types.SignNewTx], called with `data` and the respective
+// `account` key.
+func (kc *KeyChain) SignTx(tb testing.TB, signer types.Signer, account int, data types.TxData) *types.Transaction {
+	tb.Helper()
+	tx, err := types.SignNewTx(kc.keys[account], signer, data)
+	require.NoError(tb, err, "types.SignNewTx(...)")
+	return tx
+}
+
 // A Wallet manages a set of private keys (suitable only for tests) and nonces
 // to sign transactions.
 type Wallet struct {
-	accounts []*account
-	signer   types.Signer
-}
-
-type account struct {
-	key   *ecdsa.PrivateKey
-	nonce uint64
+	*KeyChain
+	nonces []uint64 // MUST have same length as `kc.keys`
+	signer types.Signer
 }
 
 // NewUNSAFEWallet returns a new wallet with the specified number of accounts.
 // Private keys are generated deterministically.
 func NewUNSAFEWallet(tb testing.TB, accounts uint, signer types.Signer) *Wallet {
 	tb.Helper()
-
-	w := &Wallet{
-		accounts: make([]*account, accounts),
-		signer:   signer,
-	}
-	for i := range accounts {
-		seed := binary.BigEndian.AppendUint64(nil, uint64(i))
-		key := ethtest.UNSAFEDeterministicPrivateKey(tb, seed)
-		w.accounts[i] = &account{key: key}
-	}
-	return w
+	return NewWalletWithKeyChain(NewUNSAFEKeyChain(tb, accounts), signer)
 }
 
-// Addresses returns all addresses managed by the wallet.
-func (w *Wallet) Addresses() []common.Address {
-	addrs := make([]common.Address, len(w.accounts))
-	for i, a := range w.accounts {
-		addrs[i] = crypto.PubkeyToAddress(a.key.PublicKey)
+// NewWalletWithKeyChain returns a new wallet, backed by the provided key chain.
+func NewWalletWithKeyChain(kc *KeyChain, signer types.Signer) *Wallet {
+	return &Wallet{
+		KeyChain: kc,
+		nonces:   make([]uint64, len(kc.keys)),
+		signer:   signer,
 	}
-	return addrs
+}
+
+// Addresses returns all addresses managed by the key chain.
+func (kc *KeyChain) Addresses() []common.Address {
+	return slices.Clone(kc.addrs)
 }
 
 // SetNonceAndSign overrides the nonce in the `data` with the next one for the
@@ -61,24 +90,29 @@ func (w *Wallet) Addresses() []common.Address {
 func (w *Wallet) SetNonceAndSign(tb testing.TB, account int, data types.TxData) *types.Transaction {
 	tb.Helper()
 
-	acc := w.accounts[account]
-
+	n := w.nonces[account]
 	switch d := data.(type) {
 	case *types.LegacyTx:
-		d.Nonce = acc.nonce
+		d.Nonce = n
 	case *types.AccessListTx:
-		d.Nonce = acc.nonce
+		d.Nonce = n
 	case *types.DynamicFeeTx:
-		d.Nonce = acc.nonce
+		d.Nonce = n
 	default:
 		tb.Fatalf("Unsupported transaction type: %T", d)
 	}
 
-	tx, err := types.SignNewTx(acc.key, w.signer, data)
-	require.NoError(tb, err, "types.SignNewTx(...)")
-
-	acc.nonce++
+	tx := w.SignTx(tb, w.signer, account, data)
+	w.nonces[account]++
 	return tx
+}
+
+// DecrementNonce decrements the nonce of the specified account. This is useful
+// for retrying transactions with updated parameters.
+func (w *Wallet) DecrementNonce(tb testing.TB, account int) {
+	tb.Helper()
+	require.NotZerof(tb, w.nonces[account], "Nonce of account [%d] MUST be non-zero to decrement", account)
+	w.nonces[account]--
 }
 
 // MaxAllocFor returns a genesis allocation with [MaxUint256] as the balance for

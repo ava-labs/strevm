@@ -1,4 +1,4 @@
-// Copyright (C) 2025, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2025-2026, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package saexec
@@ -110,15 +110,24 @@ func (e *Executor) execute(b *blocks.Block, logger logging.Logger) error {
 		return fmt.Errorf("before-block hook: %v", err)
 	}
 
+	baseFee := gasClock.BaseFee()
+	b.CheckBaseFeeBound(baseFee)
 	header := types.CopyHeader(b.Header())
-	header.BaseFee = gasClock.BaseFee().ToBig()
+	header.BaseFee = baseFee.ToBig()
 
 	gasPool := core.GasPool(math.MaxUint64) // required by geth but irrelevant so max it out
 	var blockGasConsumed gas.Gas
 
+	signer := types.MakeSigner(e.chainConfig, b.Number(), b.BuildTime())
 	receipts := make(types.Receipts, len(b.Transactions()))
 	for ti, tx := range b.Transactions() {
 		stateDB.SetTxContext(tx.Hash(), ti)
+		b.CheckSenderBalanceBound(stateDB, signer, tx)
+
+		logger = logger.With(
+			zap.Int("tx_index", ti),
+			zap.Stringer("tx_hash", tx.Hash()),
+		)
 
 		receipt, err := core.ApplyTransaction(
 			e.chainConfig,
@@ -134,8 +143,6 @@ func (e *Executor) execute(b *blocks.Block, logger logging.Logger) error {
 		if err != nil {
 			logger.Fatal(
 				"Transaction execution errored (not reverted); see emergency playbook",
-				zap.Int("tx_index", ti),
-				zap.Stringer("tx_hash", tx.Hash()),
 				zap.String("playbook", "https://github.com/ava-labs/strevm/issues/28"),
 				zap.Error(err),
 			)
@@ -162,7 +169,9 @@ func (e *Executor) execute(b *blocks.Block, logger logging.Logger) error {
 		receipts[ti] = receipt
 	}
 
+	numTxs := len(b.Transactions())
 	for i, o := range e.hooks.EndOfBlockOps(b.EthBlock()) {
+		b.CheckOpBurnerBalanceBounds(stateDB, numTxs+i, o)
 		blockGasConsumed += o.Gas
 		perTxClock.Tick(o.Gas)
 		b.SetInterimExecutionTime(perTxClock)
@@ -202,10 +211,9 @@ func (e *Executor) execute(b *blocks.Block, logger logging.Logger) error {
 	// 1. [blocks.Block.MarkExecuted] guarantees disk then in-memory changes.
 	// 2. Internal indicator of last executed MUST follow in-memory change.
 	// 3. External indicator of last executed MUST follow internal indicator.
-	if err := b.MarkExecuted(e.db, gasClock.Clone(), endTime, header.BaseFee, receipts, root); err != nil {
+	if err := b.MarkExecuted(e.db, gasClock.Clone(), endTime, header.BaseFee, receipts, root, &e.lastExecuted /* (2) */); err != nil {
 		return err
 	}
-	e.lastExecuted.Store(b)                           // (2)
 	e.sendPostExecutionEvents(b.EthBlock(), receipts) // (3)
 	return nil
 }

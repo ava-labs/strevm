@@ -1,4 +1,4 @@
-// Copyright (C) 2025, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2025-2026, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package sae
@@ -68,14 +68,15 @@ func (vm *VM) AcceptBlock(ctx context.Context, b *blocks.Block) error {
 	parentLastSettled := b.ParentBlock().LastSettled()
 
 	// f(b_{n-1}) before f(b_n)
+	//
+	// [blocks.Block.MarkSettled] guarantees M before I (i.e. `vm.last.settled`)
 	for _, s := range settles {
-		if err := s.MarkSettled(); err != nil {
+		if err := s.MarkSettled(&vm.last.settled); err != nil {
 			return err
 		}
 	}
 
-	// I(s ∈ S) before I(b ∈ A) before I(b ∈ E)
-	vm.last.settled.Store(b.LastSettled())
+	// I(s ∈ S) above, before I(b ∈ A) before I(b ∈ E)
 	vm.last.accepted.Store(b)
 	if err := vm.exec.Enqueue(ctx, b); err != nil {
 		return err

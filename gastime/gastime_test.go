@@ -1,4 +1,4 @@
-// Copyright (C) 2025, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2025-2026, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package gastime
@@ -117,8 +117,8 @@ func TestScaling(t *testing.T) {
 		Excess: (func() gas.Gas {
 			// Scale the _initial_ excess relative to the new and _initial_
 			// rates, not the most recent rate before scaling.
-			x, _, err := intmath.MulDiv(initExcess, wantRate, 3.2e6)
-			require.NoErrorf(t, err, "intmath.MulDiv(%d, %d, %d)", initExcess, 4e6, 3.2e6)
+			x, _, err := intmath.MulDivCeil(initExcess, wantRate, 3.2e6)
+			require.NoErrorf(t, err, "intmath.MulDivCeil(%d, %d, %d)", initExcess, 4e6, 3.2e6)
 			return x
 		})(),
 		Price: initPrice, // unchanged

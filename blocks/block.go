@@ -1,4 +1,4 @@
-// Copyright (C) 2025, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2025-2026, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 // Package blocks defines [Streaming Asynchronous Execution] (SAE) blocks.
@@ -14,9 +14,12 @@ import (
 	"sync/atomic"
 
 	"github.com/ava-labs/avalanchego/utils/logging"
+	"github.com/ava-labs/avalanchego/vms/components/gas"
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core/types"
 	"go.uber.org/zap"
+
+	"github.com/ava-labs/strevm/proxytime"
 )
 
 // A Block extends a [types.Block] to track SAE-defined concepts of async
@@ -37,6 +40,9 @@ type Block struct {
 	// Only the genesis block or the last pre-SAE block is synchronous. These
 	// are self-settling by definition so their `ancestry` MUST be nil.
 	synchronous bool
+	// Determined during block building and MUST be set before execution as
+	// expected by the Executor.
+	bounds *WorstCaseBounds
 	// Non-nil i.f.f. [Block.MarkExecuted] has returned without error.
 	execution atomic.Pointer[executionResults]
 
@@ -45,7 +51,7 @@ type Block struct {
 	// execution is yet to commence. For more details, see
 	// [Block.SetInterimExecutionTime for setting and [LastToSettleAt] for
 	// usage.
-	executionExceededSecond atomic.Pointer[uint64]
+	interimExecutionTime atomic.Pointer[proxytime.Time[gas.Gas]]
 
 	executed chan struct{} // closed after `execution` is set
 	settled  chan struct{} // closed after `ancestry` is cleared
@@ -84,8 +90,8 @@ func New(eth *types.Block, parent, lastSettled *Block, log logging.Logger) (*Blo
 		return nil, err
 	}
 	b.log = log.With(
-		zap.Uint64("height", b.Height()),
-		zap.Stringer("hash", b.Hash()),
+		zap.Uint64("block_height", b.Height()),
+		zap.Stringer("block_hash", b.Hash()),
 	)
 	return b, nil
 }

@@ -1,4 +1,4 @@
-// Copyright (C) 2025, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2025-2026, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package proxytime
@@ -143,48 +143,85 @@ func TestSetRate(t *testing.T) {
 
 	steps := []struct {
 		newRate, wantNumerator uint64
-		wantTruncated          FractionalSecond[uint64]
 		wantInvariant          uint64
 	}{
 		{
 			newRate:       initRate / divisor, // no rounding
 			wantNumerator: tick / divisor,
-			wantTruncated: frac(0, 1),
 			wantInvariant: invariant / divisor,
 		},
 		{
 			newRate:       initRate * 5,
 			wantNumerator: tick * 5,
-			wantTruncated: frac(0, 1), // multiplication never has rounding
 			wantInvariant: invariant * 5,
 		},
 		{
 			newRate:       15_000, // same as above, but shows the numbers explicitly
 			wantNumerator: 1_500,
-			wantTruncated: frac(0, 1),
 			wantInvariant: 3_000,
 		},
 		{
-			newRate:       75,
-			wantNumerator: 7,                   // 7.5
-			wantTruncated: frac(7_500, 15_000), // rounded down by 0.5, denominated in the old rate
+			newRate:       75, // 15_000 / 200
+			wantNumerator: 8,  // ceil(1_500/200 == 7.5)
 			wantInvariant: 15,
+		},
+		{
+			newRate:       25, // 75 / 3
+			wantNumerator: 3,  // ceil(8/3 == 2.66...)
+			wantInvariant: 5,
 		},
 	}
 
 	for _, s := range steps {
 		old := tm.Rate()
-		gotTruncated, err := tm.SetRate(s.newRate)
-		require.NoErrorf(t, err, "%T.SetRate(%d)", tm, s.newRate)
+		require.NoErrorf(t, tm.SetRate(s.newRate), "%T.SetRate(%d)", tm, s.newRate)
 		desc := fmt.Sprintf("rate changed from %d to %d", old, s.newRate)
 		tm.requireEq(t, desc, initSeconds, frac(s.wantNumerator, s.newRate))
+		assert.Equal(t, s.wantInvariant, invariant, "scaled invariant")
+	}
+}
 
-		if gotTruncated.Numerator == 0 && s.wantTruncated.Numerator == 0 {
-			assert.NotZerof(t, gotTruncated.Denominator, "truncation %T.Denominator with 0 numerator", gotTruncated)
-		} else {
-			assert.Equal(t, s.wantTruncated, gotTruncated, "truncation")
-		}
-		assert.Equal(t, s.wantInvariant, invariant)
+func TestSetRateRoundUpFullSecond(t *testing.T) {
+	tests := []struct {
+		rate, tick           uint64
+		newRate, wantRoundUp uint64
+	}{
+		{
+			rate:        100,
+			tick:        99,
+			newRate:     10,
+			wantRoundUp: 1,
+		},
+		{
+			rate:        100,
+			tick:        99,
+			newRate:     11,
+			wantRoundUp: 1,
+		},
+		{
+			rate:        100,
+			tick:        98,
+			newRate:     11,
+			wantRoundUp: 2,
+		},
+		{
+			rate:        97,
+			tick:        92,
+			newRate:     13,
+			wantRoundUp: 5,
+		},
+	}
+
+	for _, tt := range tests {
+		const startUnix = 42
+
+		t.Run(fmt.Sprintf("%d_of_%d_scaled_down_to_%d", tt.tick, tt.rate, tt.newRate), func(t *testing.T) {
+			tm := New(startUnix, tt.rate)
+			tm.Tick(tt.tick)
+			require.NoError(t, tm.SetRate(tt.newRate), "SetRate(%d) from %d", tt.newRate, tt.rate)
+
+			tm.assertEq(t, "After scaling rate down to force tick to next second", startUnix+1, frac(0, tt.newRate))
+		})
 	}
 }
 
@@ -403,7 +440,66 @@ func TestCmpUnix(t *testing.T) {
 	for _, tt := range tests {
 		tt.tm.Tick(tt.tick)
 		if got := tt.tm.CompareUnix(tt.cmpAgainst); got != tt.want {
-			t.Errorf("Time{%d + %d/%d}.CmpUnix(%d) got %d; want %d", tt.tm.Unix(), tt.tm.fraction, tt.tm.hertz, tt.cmpAgainst, got, tt.want)
+			t.Errorf("Time{%s}.CmpUnix(%d) got %d; want %d", tt.tm.String(), tt.cmpAgainst, got, tt.want)
 		}
+	}
+}
+
+func TestCompareDifferentRates(t *testing.T) {
+	fromFrac := func(num, denom uint64) *Time[uint64] {
+		// All comparisons are targeting fractional differences so we want the
+		// Unix seconds to be equal, but the actual value is irrelevant.
+		tm := New(42, denom)
+		tm.Tick(num)
+		return tm
+	}
+
+	tests := []struct {
+		tm, u *Time[uint64]
+		want  int
+	}{
+		{
+			tm:   fromFrac(0, 1e6),
+			u:    fromFrac(0, 2e6),
+			want: 0,
+		},
+		{
+			tm:   fromFrac(5, 10),
+			u:    fromFrac(10, 20),
+			want: 0,
+		},
+		{
+			tm:   fromFrac(3, 7),
+			u:    fromFrac(4, 8),
+			want: -1,
+		},
+		{
+			tm:   fromFrac(1<<62, 1<<63),
+			u:    fromFrac(1, 2),
+			want: 0,
+		},
+		{
+			tm:   fromFrac(math.MaxUint64/2, math.MaxUint64),
+			u:    fromFrac(math.MaxUint64/2+1, math.MaxUint64),
+			want: -1,
+		},
+		{
+			tm:   fromFrac(1<<61+1, 1<<62),
+			u:    fromFrac(1<<62, 1<<63),
+			want: 1,
+		},
+		{
+			tm:   fromFrac(math.MaxUint64-1, math.MaxUint64),
+			u:    fromFrac(1, math.MaxUint64-1),
+			want: 1,
+		},
+	}
+
+	for _, tt := range tests {
+		a, b := tt.tm, tt.u
+		want := tt.want
+
+		assert.Equalf(t, want, a.Compare(b), "Time{%s}.Compare(%s)", a, b)
+		assert.Equalf(t, -want, b.Compare(a), "Time{%s}.Compare(%s)", b, a)
 	}
 }

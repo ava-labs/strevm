@@ -1,4 +1,4 @@
-// Copyright (C) 2025, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2025-2026, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package sae
@@ -106,23 +106,25 @@ func (vm *VM) buildBlock(
 		)
 	}
 
+	bTime := blocks.PreciseTime(vm.hooks, hdr)
+	pTime := blocks.PreciseTime(vm.hooks, parent.Header())
+
 	// It is allowed for [hook.Points] to further constrain the allowed block
 	// times. However, every block MUST at least satisfy these basic sanity
 	// checks.
-	if hdr.Time < saeparams.TauSeconds {
+	if bTime.Unix() < saeparams.TauSeconds {
 		return nil, fmt.Errorf("%w: %d < %d", errBlockTimeUnderMinimum, hdr.Time, saeparams.TauSeconds)
 	}
-	if parentTime := parent.BuildTime(); hdr.Time < parentTime {
-		return nil, fmt.Errorf("%w: %d < %d", errBlockTimeBeforeParent, hdr.Time, parentTime)
+	if bTime.Compare(pTime) < 0 {
+		return nil, fmt.Errorf("%w: %s < %s", errBlockTimeBeforeParent, bTime.String(), pTime.String())
 	}
-	if maxTime := unix(vm.config.Now().Add(maxFutureBlockTime)); hdr.Time > maxTime {
-		return nil, fmt.Errorf("%w: %d > %d", errBlockTimeAfterMaximum, hdr.Time, maxTime)
+	maxTime := vm.config.Now().Add(maxBlockFutureSeconds)
+	if bTime.Compare(maxTime) > 0 {
+		return nil, fmt.Errorf("%w: %s > %s", errBlockTimeAfterMaximum, bTime.String(), maxTime.String())
 	}
 
-	// TODO(StephenButtolph) settlement logic needs to support sub-second block
-	// times. Tracked in https://github.com/ava-labs/strevm/issues/49
-	settleAt := hdr.Time - saeparams.TauSeconds
-	lastSettled, ok, err := blocks.LastToSettleAt(settleAt, parent)
+	// Underflow of Add(-tau) is prevented by the above check.
+	lastSettled, ok, err := blocks.LastToSettleAt(vm.hooks, bTime.Add(-saeparams.Tau), parent)
 	if err != nil {
 		return nil, err
 	}
@@ -176,7 +178,7 @@ func (vm *VM) buildBlock(
 				return nil, fmt.Errorf("applying op at end of block %d to worst-case state: %v", b.Height(), err)
 			}
 		}
-		if err := state.FinishBlock(); err != nil {
+		if _, err := state.FinishBlock(); err != nil {
 			log.Warn("Could not finish historical worst-case calculation",
 				zap.Error(err),
 			)
@@ -186,10 +188,16 @@ func (vm *VM) buildBlock(
 
 	hdr.Root = lastSettled.PostExecutionStateRoot()
 	if err := state.StartBlock(hdr); err != nil {
-		log.Warn("Could not start worst-case block calculation",
+		// A full queue is a normal mode of operation (backpressure working as
+		// intended) so should not be a warning.
+		logTo := log.Warn
+		if errors.Is(err, worstcase.ErrQueueFull) {
+			logTo = log.Debug
+		}
+		logTo("Could not start worst-case block calculation",
 			zap.Error(err),
 		)
-		return nil, fmt.Errorf("starting worst-case state for new block: %v", err)
+		return nil, fmt.Errorf("starting worst-case state for new block: %w", err)
 	}
 
 	hdr.GasLimit = state.GasLimit()
@@ -207,23 +215,26 @@ func (vm *VM) buildBlock(
 		if remainingGas := state.GasLimit() - state.GasUsed(); remainingGas < params.TxGas {
 			break
 		}
+		log = log.With(
+			zap.Stringer("tx_hash", ltx.Hash),
+			zap.Int("tx_index", len(included)),
+			zap.Stringer("sender", ltx.Sender),
+		)
 
 		tx, ok := ltx.Resolve()
 		if !ok {
-			log.Debug("Could not resolve lazy transaction",
-				zap.Stringer("tx_hash", ltx.Hash),
-			)
+			log.Debug("Could not resolve lazy transaction")
 			continue
 		}
 
+		// The [saexec.Executor] checks the worst-case balance before tx
+		// execution so we MUST record it at the equivalent point, before
+		// ApplyTx().
 		if err := state.ApplyTx(tx); err != nil {
-			log.Debug("Could not apply transaction",
-				zap.Int("tx_index", len(included)),
-				zap.Stringer("tx_hash", ltx.Hash),
-				zap.Error(err),
-			)
+			log.Debug("Could not apply transaction", zap.Error(err))
 			continue
 		}
+		log.Trace("Including transaction")
 		included = append(included, tx)
 	}
 
@@ -231,9 +242,8 @@ func (vm *VM) buildBlock(
 	// that [hook.Op.Gas] can be included?
 	hdr.GasUsed = state.GasUsed()
 
-	// Although we never interact with the worst-case state after this point, we
-	// still mark the block as finished to align with normal execution.
-	if err := state.FinishBlock(); err != nil {
+	bounds, err := state.FinishBlock()
+	if err != nil {
 		log.Warn("Could not finish worst-case block calculation",
 			zap.Error(err),
 		)
@@ -251,7 +261,12 @@ func (vm *VM) buildBlock(
 		included,
 		receipts,
 	)
-	return vm.newBlock(ethB, parent, lastSettled)
+	b, err := vm.newBlock(ethB, parent, lastSettled)
+	if err != nil {
+		return nil, err
+	}
+	b.SetWorstCaseBounds(bounds)
+	return b, nil
 }
 
 var (
@@ -328,6 +343,7 @@ func (vm *VM) VerifyBlock(ctx context.Context, bCtx *block.Context, b *blocks.Bl
 	if err := b.CopyAncestorsFrom(rebuilt); err != nil {
 		return err
 	}
+	b.SetWorstCaseBounds(rebuilt.WorstCaseBounds())
 
 	vm.blocks.Store(b.Hash(), b)
 	return nil

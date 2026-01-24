@@ -1,4 +1,4 @@
-// Copyright (C) 2025, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2025-2026, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package blocks
@@ -6,6 +6,7 @@ package blocks
 import (
 	"context"
 	"fmt"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -18,6 +19,9 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/ava-labs/strevm/gastime"
+	"github.com/ava-labs/strevm/hook"
+	"github.com/ava-labs/strevm/hook/hookstest"
+	"github.com/ava-labs/strevm/params"
 	"github.com/ava-labs/strevm/proxytime"
 	"github.com/ava-labs/strevm/saetest"
 )
@@ -25,7 +29,7 @@ import (
 //nolint:testableexamples // Output is meaningless
 func ExampleRange() {
 	parent := blockBuildingPreference()
-	settle, ok, err := LastToSettleAt(uint64(time.Now().Unix()), parent) //nolint:gosec // Time won't overflow for quite a while
+	settle, ok, err := LastToSettleAt(vmHooks(), time.Now().Add(-params.Tau), parent)
 	if err != nil {
 		// Due to a malformed input to block verification.
 		return // err
@@ -42,8 +46,9 @@ func ExampleRange() {
 	_ = Range(settle, parent)
 }
 
-// blockBuildingPreference exists only to allow examples to build.
+// blockBuildingPreference and vmHooks exist only to allow examples to build.
 func blockBuildingPreference() *Block { return nil }
+func vmHooks() hook.Points            { return nil }
 
 func TestSettlementInvariants(t *testing.T) {
 	parent := newBlock(t, newEthBlock(5, 5, nil), nil, nil)
@@ -70,9 +75,11 @@ func TestSettlementInvariants(t *testing.T) {
 		t.FailNow()
 	}
 
-	require.NoError(t, b.MarkSettled(), "first call to MarkSettled()")
+	var lastSettledPtr atomic.Pointer[Block]
+	require.NoError(t, b.MarkSettled(&lastSettledPtr), "first call to MarkSettled()")
 
 	t.Run("after_MarkSettled", func(t *testing.T) {
+		assert.Equal(t, b, lastSettledPtr.Load(), "Atomic pointer to last-settled block")
 		require.True(t, b.Settled(), "Settled()")
 		assert.NoError(t, b.WaitUntilSettled(context.Background()), "WaitUntilSettled()")
 		assert.NoError(t, b.CheckInvariants(Settled), "CheckInvariants(Settled)")
@@ -88,7 +95,7 @@ func TestSettlementInvariants(t *testing.T) {
 		assertNumErrorLogs(t, 1)
 		assert.Nil(t, b.LastSettled(), "LastSettled()")
 		assertNumErrorLogs(t, 2)
-		assert.ErrorIs(t, b.MarkSettled(), errBlockResettled, "second call to MarkSettled()")
+		assert.ErrorIs(t, b.MarkSettled(&lastSettledPtr), errBlockResettled, "second call to MarkSettled()")
 		assertNumErrorLogs(t, 3)
 		if t.Failed() {
 			t.FailNow()
@@ -265,19 +272,6 @@ func TestLastToSettleAt(t *testing.T) {
 		"Block 9 MUST remain unexecuted", // exercises lagging-execution logic when building on 9
 	)
 
-	for i, b := range blocks {
-		// Setting interim execution time isn't required for the algorithm to
-		// work as it just allows [LastToSettleAt] to return definitive results
-		// earlier in execution. It does, however, risk an edge-case error for
-		// blocks that complete execution on an exact second boundary so needs
-		// to be tested; see the [Block.SetInterimExecutionTime] implementation
-		// for details.
-		if i%2 == 0 || !b.Executed() {
-			continue
-		}
-		b.SetInterimExecutionTime(b.ExecutedByGasTime().Time)
-	}
-
 	type testCase struct {
 		name     string
 		settleAt uint64
@@ -360,7 +354,8 @@ func TestLastToSettleAt(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, gotOK, err := LastToSettleAt(tt.settleAt, tt.parent)
+			settleAt := time.Unix(int64(tt.settleAt), 0) //nolint:gosec // Hard-coded, non-overflowing values
+			got, gotOK, err := LastToSettleAt(&hookstest.Stub{}, settleAt, tt.parent)
 			if err != nil || gotOK != tt.wantOK {
 				t.Fatalf("LastToSettleAt(%d, [parent height %d]) got (_, %t, %v); want (_, %t, nil)", tt.settleAt, tt.parent.Height(), gotOK, err, tt.wantOK)
 			}

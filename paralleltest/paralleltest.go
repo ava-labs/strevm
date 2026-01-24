@@ -45,7 +45,7 @@ func NewExecutor[CommonData, Prefetch any, R parallel.PrecompileResult, Aggregat
 	tb.Helper()
 
 	gen := blockstest.NewGenesis(tb, db, config, alloc)
-	chain := blockstest.NewChainBuilder(gen)
+	chain := blockstest.NewChainBuilder(config, gen)
 
 	par := parallel.New(prefetchers, processors)
 	precompile := parallel.AddAsPrecompile(par, handler)

@@ -1,4 +1,4 @@
-// Copyright (C) 2025, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2025-2026, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package gastime
@@ -17,7 +17,7 @@ import (
 func (tm *Time) BeforeBlock(hooks hook.Points, h *types.Header) {
 	tm.FastForwardTo(
 		h.Time,
-		hooks.SubSecondBlockTime(tm.Rate(), h),
+		SubSecond(hooks, h, tm.Rate()),
 	)
 }
 

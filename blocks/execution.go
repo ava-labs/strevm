@@ -1,4 +1,4 @@
-// Copyright (C) 2025, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2025-2026, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package blocks
@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"math/big"
 	"slices"
+	"sync/atomic"
 	"time"
 
 	"github.com/ava-labs/avalanchego/vms/components/gas"
@@ -29,11 +30,7 @@ import (
 // transactions, with the highest-known gas time. This MAY be at any resolution
 // but MUST be monotonic.
 func (b *Block) SetInterimExecutionTime(t *proxytime.Time[gas.Gas]) {
-	sec := t.Unix()
-	if t.Fraction().Numerator == 0 {
-		sec--
-	}
-	b.executionExceededSecond.Store(&sec)
+	b.interimExecutionTime.Store(t.Clone())
 }
 
 type executionResults struct {
@@ -56,11 +53,21 @@ type executionResults struct {
 // MarkExecuted guarantees that state is persisted to the database before
 // in-memory indicators of execution are updated. [Block.Executed] returning
 // true and [Block.WaitUntilExecuted] returning cleanly are both therefore
-// indicative of a successful database write by MarkExecuted.
+// indicative of a successful database write by MarkExecuted. The atomic pointer
+// to the last-executed block is updated before [Block.WaitUntilExecuted]
+// returns.
 //
 // This method MUST NOT be called more than once. The wall-clock [time.Time] is
 // for metrics only.
-func (b *Block) MarkExecuted(db ethdb.Database, byGas *gastime.Time, byWall time.Time, baseFee *big.Int, receipts types.Receipts, stateRootPost common.Hash) error {
+func (b *Block) MarkExecuted(
+	db ethdb.Database,
+	byGas *gastime.Time,
+	byWall time.Time,
+	baseFee *big.Int,
+	receipts types.Receipts,
+	stateRootPost common.Hash,
+	lastExecuted *atomic.Pointer[Block],
+) error {
 	e := &executionResults{
 		byGas:         *byGas.Clone(),
 		byWall:        byWall,
@@ -82,12 +89,23 @@ func (b *Block) MarkExecuted(db ethdb.Database, byGas *gastime.Time, byWall time
 	}
 
 	// Memory and indicators
-	return b.markExecuted(e)
+	return b.markExecuted(e, lastExecuted)
 }
 
 var errMarkBlockExecutedAgain = errors.New("block re-marked as executed")
 
-func (b *Block) markExecuted(e *executionResults) error {
+func (b *Block) markExecuted(e *executionResults, lastExecuted *atomic.Pointer[Block]) error {
+	if it := b.interimExecutionTime.Load(); it != nil && e.byGas.Compare(it) < 0 {
+		// The final execution time is scaled to the new gas target but interim
+		// times are not, which can result in rounding errors. Scaling always
+		// rounds up, to maintain a monotonic clock, but we confirm for safety.
+		// The logger used in tests will also convert this to a failure.
+		b.log.Error("Final execution gas time before last interim time",
+			zap.Stringer("interim_time", it),
+			zap.Stringer("final_time", e.byGas.Time),
+		)
+	}
+
 	if !b.execution.CompareAndSwap(nil, e) {
 		// This is fatal because we corrupted the database's head block if we
 		// got here by [Block.MarkExecuted] being called twice (an invalid use
@@ -95,6 +113,7 @@ func (b *Block) markExecuted(e *executionResults) error {
 		b.log.Fatal("Block re-marked as executed")
 		return fmt.Errorf("%w: height %d", errMarkBlockExecutedAgain, b.Height())
 	}
+	lastExecuted.Store(b)
 	close(b.executed)
 	return nil
 }

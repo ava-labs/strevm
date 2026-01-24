@@ -1,4 +1,4 @@
-// Copyright (C) 2025, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2025-2026, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package blocks
@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"math/big"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -27,7 +28,7 @@ import (
 // post-execution artefacts (other than the gas time).
 func (b *Block) markExecutedForTests(tb testing.TB, db ethdb.Database, tm *gastime.Time) {
 	tb.Helper()
-	require.NoError(tb, b.MarkExecuted(db, tm, time.Time{}, new(big.Int), nil, common.Hash{}), "MarkExecuted()")
+	require.NoError(tb, b.MarkExecuted(db, tm, time.Time{}, new(big.Int), nil, common.Hash{}, new(atomic.Pointer[Block])), "MarkExecuted()")
 }
 
 func TestMarkExecuted(t *testing.T) {
@@ -94,7 +95,8 @@ func TestMarkExecuted(t *testing.T) {
 			TxHash: tx.Hash(),
 		})
 	}
-	require.NoError(t, b.MarkExecuted(db, gasTime, wallTime, baseFee, receipts, stateRoot), "MarkExecuted()")
+	lastExecuted := new(atomic.Pointer[Block])
+	require.NoError(t, b.MarkExecuted(db, gasTime, wallTime, baseFee, receipts, stateRoot, lastExecuted), "MarkExecuted()")
 
 	t.Run("after_MarkExecuted", func(t *testing.T) {
 		require.True(t, b.Executed(), "Executed()")
@@ -108,14 +110,16 @@ func TestMarkExecuted(t *testing.T) {
 
 		assert.Equal(t, stateRoot, b.PostExecutionStateRoot(), "PostExecutionStateRoot()") // i.e. this block
 		// Although not directly relevant to MarkExecuted, demonstrate that the
-		// two notion's of a state root are in fact different.
+		// two notions of a state root are in fact different.
 		assert.Equal(t, settles.EthBlock().Root(), b.SettledStateRoot(), "SettledStateRoot()") // i.e. the block this block settles
 		assert.NotEqual(t, b.SettledStateRoot(), b.PostExecutionStateRoot(), "PostExecutionStateRoot() != SettledStateRoot()")
+
+		assert.Equal(t, b, lastExecuted.Load(), "Atomic pointer to last-executed block")
 
 		t.Run("MarkExecuted_again", func(t *testing.T) {
 			rec := saetest.NewLogRecorder(logging.Warn)
 			b.log = rec
-			assert.ErrorIs(t, b.MarkExecuted(db, gasTime, wallTime, baseFee, receipts, stateRoot), errMarkBlockExecutedAgain)
+			assert.ErrorIs(t, b.MarkExecuted(db, gasTime, wallTime, baseFee, receipts, stateRoot, lastExecuted), errMarkBlockExecutedAgain)
 			// The database's head block might have been corrupted so this MUST
 			// be a fatal action.
 			assert.Len(t, rec.At(logging.Fatal), 1, "FATAL logs")

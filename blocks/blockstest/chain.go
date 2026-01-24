@@ -1,4 +1,4 @@
-// Copyright (C) 2025, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2025-2026, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 // Package blockstest provides test helpers for constructing [Streaming
@@ -15,12 +15,14 @@ import (
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/libevm/options"
+	"github.com/ava-labs/libevm/params"
 
 	"github.com/ava-labs/strevm/blocks"
 )
 
 // A ChainBuilder builds a chain of blocks, maintaining necessary invariants.
 type ChainBuilder struct {
+	config       *params.ChainConfig
 	chain        []*blocks.Block
 	blocksByHash sync.Map
 
@@ -29,9 +31,10 @@ type ChainBuilder struct {
 
 // NewChainBuilder returns a new ChainBuilder starting from the provided block,
 // which MUST NOT be nil.
-func NewChainBuilder(genesis *blocks.Block, defaultOpts ...ChainOption) *ChainBuilder {
+func NewChainBuilder(config *params.ChainConfig, genesis *blocks.Block, defaultOpts ...ChainOption) *ChainBuilder {
 	c := &ChainBuilder{
-		chain: []*blocks.Block{genesis},
+		config: config,
+		chain:  []*blocks.Block{genesis},
 	}
 	c.SetDefaultOptions(defaultOpts...)
 	return c
@@ -78,6 +81,9 @@ func (cb *ChainBuilder) NewBlock(tb testing.TB, txs []*types.Transaction, opts .
 	last := cb.Last()
 	eth := NewEthBlock(last.EthBlock(), txs, allOpts.eth...)
 	b := NewBlock(tb, eth, last, nil, allOpts.sae...) // TODO(arr4n) support last-settled blocks
+	signer := types.MakeSigner(cb.config, b.Number(), b.BuildTime())
+	SetUninformativeWorstCaseBounds(tb, signer, b)
+
 	cb.chain = append(cb.chain, b)
 	cb.blocksByHash.Store(b.Hash(), b)
 

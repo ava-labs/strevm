@@ -1,10 +1,11 @@
-// Copyright (C) 2025, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2025-2026, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package sae
 
 import (
 	"context"
+	"flag"
 	"math/big"
 	"math/rand/v2"
 	"net/http/httptest"
@@ -16,8 +17,10 @@ import (
 	"github.com/ava-labs/avalanchego/snow"
 	"github.com/ava-labs/avalanchego/snow/consensus/snowman"
 	snowcommon "github.com/ava-labs/avalanchego/snow/engine/common"
+	"github.com/ava-labs/avalanchego/snow/engine/enginetest"
 	"github.com/ava-labs/avalanchego/snow/engine/snowman/block"
 	"github.com/ava-labs/avalanchego/snow/snowtest"
+	"github.com/ava-labs/avalanchego/snow/validators/validatorstest"
 	"github.com/ava-labs/avalanchego/utils/logging"
 	"github.com/ava-labs/avalanchego/utils/set"
 	"github.com/ava-labs/libevm/common"
@@ -46,6 +49,9 @@ import (
 )
 
 func TestMain(m *testing.M) {
+	createWorstCaseFuzzFlags(flag.CommandLine)
+	flag.Parse()
+
 	goleak.VerifyTestMain(
 		m,
 		goleak.IgnoreCurrent(),
@@ -62,21 +68,33 @@ func TestMain(m *testing.M) {
 type SUT struct {
 	block.ChainVM
 	*ethclient.Client
+	rpcClient *rpc.Client
 
 	rawVM   *VM
 	genesis *blocks.Block
 	wallet  *saetest.Wallet
 	db      ethdb.Database
+	hooks   *hookstest.Stub
+	logger  *saetest.TBLogger
+
+	validators *validatorstest.State
+	sender     *enginetest.Sender
 }
 
 type (
 	sutConfig struct {
 		vmConfig       Config
+		chainConfig    *params.ChainConfig
 		hooks          *hookstest.Stub
+		logLevel       logging.Level
+		alloc          types.GenesisAlloc
 		genesisOptions []blockstest.GenesisOption
 	}
 	sutOption = options.Option[sutConfig]
 )
+
+// chainID is made a global to keep it constant across multiple SUTs.
+var chainID = ids.GenerateTestID()
 
 func newSUT(tb testing.TB, numAccounts uint, opts ...sutOption) (context.Context, *SUT) {
 	tb.Helper()
@@ -84,13 +102,19 @@ func newSUT(tb testing.TB, numAccounts uint, opts ...sutOption) (context.Context
 	mempoolConf := legacypool.DefaultConfig // copies
 	mempoolConf.Journal = "/dev/null"
 
+	keys := saetest.NewUNSAFEKeyChain(tb, numAccounts)
+
 	conf := options.ApplyTo(&sutConfig{
 		vmConfig: Config{
 			MempoolConfig: mempoolConf,
 		},
+		chainConfig: saetest.ChainConfig(),
 		hooks: &hookstest.Stub{
 			Target: 100e6,
+			TB:     tb,
 		},
+		logLevel: logging.Debug,
+		alloc:    saetest.MaxAllocFor(keys.Addresses()...),
 		genesisOptions: []blockstest.GenesisOption{
 			blockstest.WithTimestamp(saeparams.TauSeconds),
 		},
@@ -103,56 +127,76 @@ func newSUT(tb testing.TB, numAccounts uint, opts ...sutOption) (context.Context
 		require.NoError(tb, snow.Shutdown(ctx), "Shutdown()")
 	})
 
-	config := saetest.ChainConfig()
-	signer := types.LatestSigner(config)
-	wallet := saetest.NewUNSAFEWallet(tb, numAccounts, signer)
-
 	db := rawdb.NewMemoryDatabase()
-	genesis := blockstest.NewGenesis(tb, db, config, saetest.MaxAllocFor(wallet.Addresses()...), conf.genesisOptions...)
+	genesis := blockstest.NewGenesis(tb, db, conf.chainConfig, conf.alloc, conf.genesisOptions...)
 
-	logger := saetest.NewTBLogger(tb, logging.Warn)
+	logger := saetest.NewTBLogger(tb, conf.logLevel)
 	ctx := logger.CancelOnError(tb.Context())
-	snowCtx := snowtest.Context(tb, ids.GenerateTestID())
+	snowCtx := snowtest.Context(tb, chainID)
 	snowCtx.Log = logger
 
+	sender := &enginetest.Sender{
+		SendAppGossipF: func(context.Context, snowcommon.SendConfig, []byte) error {
+			return nil
+		},
+	}
+
 	// TODO(arr4n) change this to use [SinceGenesis.Initialize] via the `snow` variable.
-	require.NoError(tb, vm.Init(snowCtx, conf.hooks, config, db, &triedb.Config{}, genesis), "Init()")
+	require.NoError(tb, vm.Init(snowCtx, conf.hooks, conf.chainConfig, db, &triedb.Config{}, genesis, sender), "Init()")
 	_ = snow.Initialize
 
 	handlers, err := snow.CreateHandlers(ctx)
 	require.NoErrorf(tb, err, "%T.CreateHandlers()", snow)
-	server := httptest.NewServer(handlers[rpcHTTPExtensionPath])
+	server := httptest.NewServer(handlers[wsHTTPExtensionPath])
 	tb.Cleanup(server.Close)
-	client, err := ethclient.Dial(server.URL)
-	require.NoError(tb, err, "ethclient.Dial(http.NewServer(%T.CreateHandlers()))", snow)
+	rpcClient, err := rpc.Dial("ws://" + server.Listener.Addr().String())
+	require.NoErrorf(tb, err, "rpc.Dial(http.NewServer(%T.CreateHandlers()))", snow)
+	client := ethclient.NewClient(rpcClient)
 	tb.Cleanup(client.Close)
 
+	validators, ok := snowCtx.ValidatorState.(*validatorstest.State)
+	require.Truef(tb, ok, "unexpected type %T for snowCtx.ValidatorState", snowCtx.ValidatorState)
 	return ctx, &SUT{
-		ChainVM: snow,
-		Client:  client,
-		rawVM:   vm,
-		genesis: genesis,
-		wallet:  wallet,
-		db:      db,
+		ChainVM:   snow,
+		Client:    client,
+		rpcClient: rpcClient,
+		rawVM:     vm,
+		genesis:   genesis,
+		wallet: saetest.NewWalletWithKeyChain(
+			keys,
+			types.LatestSigner(conf.chainConfig),
+		),
+		db:     db,
+		hooks:  conf.hooks,
+		logger: logger,
+
+		validators: validators,
+		sender:     sender,
 	}
 }
 
+// CallContext propagates its arguments to and from [SUT.rpcClient.CallContext].
+// Embedding both the [ethclient.Client] and the underlying [rpc.Client] isn't
+// possible due to a name conflict, so this method is manually exposed.
+func (s *SUT) CallContext(ctx context.Context, result any, method string, args ...any) error {
+	return s.rpcClient.CallContext(ctx, result, method, args...)
+}
+
 // stubbedTime returns an option to configure a new SUT's "now" function along
-// with a function to set the time.
+// with a function to set the time at nanosecond resolution.
 func stubbedTime() (_ sutOption, setTime func(time.Time)) {
 	var now time.Time
 	set := func(n time.Time) {
 		now = n
 	}
 	opt := options.Func[sutConfig](func(c *sutConfig) {
-		// TODO(StephenButtolph) unify the time functions provided in the config
-		// and the hooks.
-		c.vmConfig.Now = func() time.Time {
+		get := func() time.Time {
 			return now
 		}
-		c.hooks.Now = func() uint64 {
-			return unix(now)
-		}
+		// TODO(StephenButtolph) unify the time functions provided in the config
+		// and the hooks.
+		c.vmConfig.Now = get
+		c.hooks.Now = get
 	})
 
 	return opt, set
@@ -164,9 +208,22 @@ func withGenesisOpts(opts ...blockstest.GenesisOption) sutOption {
 	})
 }
 
+func (s *SUT) nodeID() ids.NodeID {
+	return s.rawVM.snowCtx.NodeID
+}
+
+// context returns a [context.Context], derived from the [testing.TB], that is
+// cancelled if the SUT's default logger receives a log at [logging.Error] or
+// higher.
+//
+//nolint:thelper // Not a helper
+func (s *SUT) context(tb testing.TB) context.Context {
+	return s.logger.CancelOnError(tb.Context())
+}
+
 func (s *SUT) mustSendTx(tb testing.TB, tx *types.Transaction) {
 	tb.Helper()
-	require.NoErrorf(tb, s.Client.SendTransaction(tb.Context(), tx), "%T.SendTransaction([%#x])", s.Client, tx.Hash())
+	require.NoErrorf(tb, s.Client.SendTransaction(s.context(tb), tx), "%T.SendTransaction([%#x])", s.Client, tx.Hash())
 }
 
 func (s *SUT) stateAt(tb testing.TB, root common.Hash) *state.StateDB {
@@ -191,7 +248,7 @@ func (s *SUT) syncMempool(tb testing.TB) {
 func (s *SUT) runConsensusLoop(tb testing.TB, preference *blocks.Block) *blocks.Block {
 	tb.Helper()
 
-	ctx := tb.Context()
+	ctx := s.context(tb)
 	require.NoError(tb, s.SetPreference(ctx, preference.ID()), "SetPreference()")
 
 	proposed, err := s.BuildBlock(ctx)
@@ -207,11 +264,48 @@ func (s *SUT) runConsensusLoop(tb testing.TB, preference *blocks.Block) *blocks.
 	return s.lastAcceptedBlock(tb)
 }
 
+// waitUntilExecuted blocks until an external indicator shows that `b` has been
+// executed.
+func (s *SUT) waitUntilExecuted(tb testing.TB, b *blocks.Block) {
+	tb.Helper()
+	defer func() {
+		tb.Helper()
+		require.True(tb, b.Executed(), "%T.Executed()", b)
+	}()
+
+	// The subscription is opened before checking the block number to avoid
+	// missing the notification that the block was executed.
+	c := make(chan *types.Header)
+	ctx := tb.Context()
+	sub, err := s.SubscribeNewHead(ctx, c)
+	require.NoErrorf(tb, err, "%T.SubscribeNewHead()", s.Client)
+	defer sub.Unsubscribe()
+
+	num, err := s.BlockNumber(ctx)
+	require.NoErrorf(tb, err, "%T.BlockNumber()", s.Client)
+	if num >= b.Height() {
+		return
+	}
+
+	for {
+		select {
+		case <-ctx.Done():
+			tb.Fatalf("waiting for block %d to execute: %v", b.Height(), ctx.Err())
+		case err := <-sub.Err():
+			tb.Fatalf("%T.SubscribeNewHead().Err() returned: %v", s.Client, err)
+		case h := <-c:
+			if h.Number.Uint64() >= b.Height() {
+				return
+			}
+		}
+	}
+}
+
 // lastAcceptedBlock is a convenience wrapper for calling [VM.GetBlock] with
 // the ID from [VM.LastAccepted] as an argument.
 func (s *SUT) lastAcceptedBlock(tb testing.TB) *blocks.Block {
 	tb.Helper()
-	ctx := tb.Context()
+	ctx := s.context(tb)
 	id, err := s.LastAccepted(ctx)
 	require.NoError(tb, err, "LastAccepted()")
 	b, err := s.GetBlock(ctx, id)
@@ -239,7 +333,10 @@ func (s *SUT) assertBlockHashInvariants(ctx context.Context, t *testing.T) {
 	t.Helper()
 	t.Run("block_hash_invariants", func(t *testing.T) {
 		b := s.lastAcceptedBlock(t)
-		require.NoError(t, b.WaitUntilExecuted(t.Context()), "GetBlock(LastAccepted()).WaitUntilExecuted()")
+		// The API client is an external reader, so we must wait on an external
+		// indicator. The block's WaitUntilExecuted is only an internal
+		// indicator.
+		s.waitUntilExecuted(t, b)
 		t.Logf("Last accepted (and executed) block: %d", b.Height())
 
 		for num, want := range map[rpc.BlockNumber]common.Hash{
@@ -377,12 +474,13 @@ func TestSyntacticBlockChecks(t *testing.T) {
 }
 
 func TestAcceptBlock(t *testing.T) {
-	for blocks.InMemoryBlockCount() != 0 {
+	require.EventuallyWithT(t, func(t *assert.CollectT) {
 		runtime.GC()
-	}
+		require.Zero(t, blocks.InMemoryBlockCount(), "initial in-memory block count")
+	}, 100*time.Millisecond, time.Millisecond)
 
 	opt, setTime := stubbedTime()
-	var now time.Time
+	now := time.Unix(0, 0)
 	fastForward := func(by time.Duration) {
 		now = now.Add(by)
 		setTime(now)
@@ -514,4 +612,42 @@ func TestSemanticBlockChecks(t *testing.T) {
 			require.ErrorIs(t, snowB.Verify(ctx), tt.wantErr, "Verify()")
 		})
 	}
+}
+
+func requireReceiveTx(tb testing.TB, nodes []*SUT, txHash common.Hash) {
+	tb.Helper()
+	for _, sut := range nodes {
+		assert.Eventuallyf(tb, func() bool {
+			return sut.rawVM.mempool.Has(ids.ID(txHash))
+		}, 5*time.Second, 100*time.Millisecond, "tx %x not gossiped to node %s", txHash, sut.nodeID())
+	}
+	if tb.Failed() {
+		tb.FailNow()
+	}
+}
+
+func requireNotReceiveTx(tb testing.TB, nodes []*SUT, txHash common.Hash) {
+	tb.Helper()
+	for _, sut := range nodes {
+		assert.False(tb, sut.rawVM.mempool.Has(ids.ID(txHash)), "tx %x was gossiped to node %s", txHash, sut.nodeID())
+	}
+	if tb.Failed() {
+		tb.FailNow()
+	}
+}
+
+func TestGossip(t *testing.T) {
+	n := newNetworkedSUTs(t, 2, 2)
+
+	nonValidators := n.allNonValidators()
+	api := nonValidators[0]
+	tx := api.wallet.SetNonceAndSign(t, 0, &types.DynamicFeeTx{
+		To:        &common.Address{},
+		Gas:       params.TxGas,
+		GasFeeCap: big.NewInt(1),
+		Value:     big.NewInt(1),
+	})
+	api.mustSendTx(t, tx)
+	requireReceiveTx(t, n.allValidators(), tx.Hash())
+	requireNotReceiveTx(t, nonValidators[1:], tx.Hash())
 }

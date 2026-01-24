@@ -1,4 +1,4 @@
-// Copyright (C) 2025, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2025-2026, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package blockstest
@@ -56,7 +56,7 @@ func TestIntegration(t *testing.T) {
 	sdb, err := state.New(bc.Genesis().Root(), state.NewDatabase(db), nil)
 	require.NoError(t, err, "state.New(%T.Genesis().Root())", bc)
 
-	build := NewChainBuilder(NewBlock(t, bc.Genesis(), nil, nil))
+	build := NewChainBuilder(config, NewBlock(t, bc.Genesis(), nil, nil))
 	dest := common.Address{'d', 'e', 's', 't'}
 	for i := range numBlocks {
 		// Genesis is block 0

@@ -1,4 +1,4 @@
-// Copyright (C) 2025, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2025-2026, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 // Package proxytime measures the passage of time based on a proxy unit and
@@ -58,6 +58,15 @@ func New[D Duration](unixSeconds uint64, hertz D) *Time[D] {
 	}
 }
 
+// Of converts the time at nanosecond resolution. [time.Time.Unix] MUST be
+// non-negative.
+func Of[D Duration](t time.Time) *Time[D] {
+	const hz = time.Second / time.Nanosecond
+	tm := New(uint64(t.Unix()), D(hz)) //nolint:gosec // Known to be non-negative
+	tm.Tick(D(t.Nanosecond()))
+	return tm
+}
+
 // Unix returns tm as a Unix timestamp.
 func (tm *Time[D]) Unix() uint64 {
 	return tm.seconds
@@ -74,6 +83,21 @@ type FractionalSecond[D Duration] struct {
 // [Time.Rate].
 func (tm *Time[D]) Fraction() FractionalSecond[D] {
 	return FractionalSecond[D]{tm.fraction, tm.hertz}
+}
+
+// Compare returns
+//
+//	-1 if f < g
+//	 0 if f == g
+//	+1 if f > g.
+func (f FractionalSecond[D]) Compare(g FractionalSecond[D]) int {
+	// Cross-multiplication of non-negative components maintains order.
+	fHi, fLo := bits.Mul64(uint64(f.Numerator), uint64(g.Denominator))
+	gHi, gLo := bits.Mul64(uint64(g.Numerator), uint64(f.Denominator))
+	if c := cmp.Compare(fHi, gHi); c != 0 {
+		return c
+	}
+	return cmp.Compare(fLo, gLo)
 }
 
 // Rate returns the proxy duration required for the passage of one second.
@@ -141,44 +165,48 @@ func ConvertMilliseconds[D Duration](rate D, ms uint64) (sec uint64, _ Fractiona
 }
 
 // SetRate changes the unit rate at which time passes. The requisite integer
-// division may result in rounding down of the fractional-second component of
-// time, the amount of which is returned.
+// division may result in rounding up of the fractional-second component of
+// time. Rounding up instead of down achieves monotonicity of the clock.
 //
 // If no values have been registered with [Time.SetRateInvariants] then SetRate
 // will always return a nil error. A non-nil error will only be returned if any
 // of the rate-invariant values overflows a uint64 due to the scaling.
-func (tm *Time[D]) SetRate(hertz D) (truncated FractionalSecond[D], err error) {
-	frac, truncated, err := tm.scale(tm.fraction, hertz)
+func (tm *Time[D]) SetRate(hertz D) error {
+	frac, err := tm.scale(tm.fraction, hertz)
 	if err != nil {
 		// If this happens then there is a bug in the implementation. The
 		// invariant that `tm.fraction < tm.hertz` makes overflow impossible as
 		// the scaled fraction will be less than the new rate.
-		return FractionalSecond[D]{}, fmt.Errorf("fractional-second time: %w", err)
+		return fmt.Errorf("fractional-second time: %w", err)
 	}
 
 	// Avoid scaling some but not all rate invariants if one results in an
 	// error.
 	scaled := make([]D, len(tm.rateInvariants))
 	for i, v := range tm.rateInvariants {
-		scaled[i], _, err = tm.scale(*v, hertz)
+		scaled[i], err = tm.scale(*v, hertz)
 		if err != nil {
-			return FractionalSecond[D]{}, fmt.Errorf("rate invariant [%d]: %w", i, err)
+			return fmt.Errorf("rate invariant [%d]: %w", i, err)
 		}
 	}
 	for i, v := range tm.rateInvariants {
 		*v = scaled[i]
 	}
 
+	if frac == hertz {
+		frac = 0
+		tm.seconds++
+	}
 	tm.fraction = frac
 	tm.hertz = hertz
-	return truncated, nil
+	return nil
 }
 
 // SetRateInvariants sets units that, whenever [Time.SetRate] is called, will be
 // scaled relative to the change in rate. Scaling may be affected by the same
-// truncation described for [Time.SetRate]. Truncation aside, the rational
-// numbers formed by the invariants divided by the rate will each remain equal
-// despite their change in denominator.
+// rounding described for [Time.SetRate]. Rounding aside, the rational numbers
+// formed by the invariants divided by the rate will each remain equal despite
+// their change in denominator.
 //
 // The pointers MUST NOT be nil.
 func (tm *Time[D]) SetRateInvariants(inv ...*D) {
@@ -186,14 +214,24 @@ func (tm *Time[D]) SetRateInvariants(inv ...*D) {
 }
 
 // scale returns `val`, scaled from the existing [Time.Rate] to the newly
-// specified one. See [Time.SetRate] for details about truncation and overflow
-// errors.
-func (tm *Time[D]) scale(val, newRate D) (scaled D, truncated FractionalSecond[D], err error) {
-	scaled, trunc, err := intmath.MulDiv(val, newRate, tm.hertz)
+// specified one. See [Time.SetRate] for details about overflow errors and
+// rounding.
+func (tm *Time[D]) scale(val, newRate D) (D, error) {
+	scaled, _, err := intmath.MulDivCeil(val, newRate, tm.hertz)
 	if err != nil {
-		return 0, FractionalSecond[D]{}, fmt.Errorf("scaling %d from rate of %d to %d: %w", val, tm.hertz, newRate, err)
+		return 0, fmt.Errorf("scaling %d from rate of %d to %d: %w", val, tm.hertz, newRate, err)
 	}
-	return scaled, FractionalSecond[D]{Numerator: trunc, Denominator: tm.hertz}, nil
+	return scaled, nil
+}
+
+// Sub returns a new [Time], `s` seconds earlier. Rate invariants are NOT copied
+// and no underflow protection is provided.
+func (tm *Time[D]) Sub(s uint64) *Time[D] {
+	return &Time[D]{
+		seconds:  tm.seconds - s,
+		fraction: tm.fraction,
+		hertz:    tm.hertz,
+	}
 }
 
 // Compare returns
@@ -202,12 +240,12 @@ func (tm *Time[D]) scale(val, newRate D) (scaled D, truncated FractionalSecond[D
 //	 0 if tm and u represent the same instant
 //	+1 if tm is after u.
 //
-// Results are undefined if [Time.Rate] is different for the two instants.
+// The two instants MAY have a different [Time.Rate].
 func (tm *Time[D]) Compare(u *Time[D]) int {
 	if c := cmp.Compare(tm.seconds, u.seconds); c != 0 {
 		return c
 	}
-	return cmp.Compare(tm.fraction, u.fraction)
+	return tm.Fraction().Compare(u.Fraction())
 }
 
 // CompareUnix is equivalent to [Time.Compare] against a zero-fractional-second
@@ -215,20 +253,23 @@ func (tm *Time[D]) Compare(u *Time[D]) int {
 // `tm` has the same [Time.Unix] as `sec` but non-zero [Time.Fraction] then
 // CompareUnix will return 1.
 func (tm *Time[D]) CompareUnix(sec uint64) int {
-	return tm.Compare(&Time[D]{seconds: sec})
+	return tm.Compare(&Time[D]{
+		seconds: sec,
+		hertz:   tm.hertz,
+	})
 }
 
 // AsTime converts the proxy time to a standard [time.Time] in UTC. AsTime is
 // analogous to setting a rate of 1e9 (nanosecond), which might result in
-// truncation. The second-range limitations documented on [time.Unix] also apply
-// to AsTime.
+// rounding up. The second-range limitations documented on [time.Unix] also
+// apply to AsTime.
 func (tm *Time[D]) AsTime() time.Time {
 	if tm.seconds > math.MaxInt64 { // keeps gosec linter happy
 		return time.Unix(math.MaxInt64, math.MaxInt64)
 	}
 	// The error can be ignored as the fraction is always less than the rate and
 	// therefore the scaled value can never overflow.
-	nsec, _ /*remainder*/, _ := tm.scale(tm.fraction, 1e9)
+	nsec, _ := tm.scale(tm.fraction, 1e9)
 	return time.Unix(int64(tm.seconds), int64(nsec)).In(time.UTC)
 }
 
