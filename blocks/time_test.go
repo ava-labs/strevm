@@ -38,9 +38,7 @@ func TestGasTime(t *testing.T) {
 			return time.Unix(unix, nanos)
 		},
 		GasConfig: hook.GasConfig{
-			Target:                target,
-			TargetToExcessScaling: gastime.DefaultTargetToExcessScaling,
-			MinPrice:              gastime.DefaultMinPrice,
+			Target: target,
 		},
 	}
 	parent := &types.Header{
@@ -79,9 +77,7 @@ func FuzzTimeExtraction(f *testing.F) {
 				return time.Unix(unix, subSec)
 			},
 			GasConfig: hook.GasConfig{
-				Target:                gas.Gas(target),
-				TargetToExcessScaling: gastime.DefaultTargetToExcessScaling,
-				MinPrice:              gastime.DefaultMinPrice,
+				Target: gas.Gas(target),
 			},
 		}
 		parent := &types.Header{

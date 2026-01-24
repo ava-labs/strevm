@@ -105,9 +105,7 @@ func newSUT(tb testing.TB, hooks *saehookstest.Stub) (context.Context, SUT) {
 func defaultHooks() *saehookstest.Stub {
 	return &saehookstest.Stub{
 		GasConfig: hook.GasConfig{
-			Target:                1e6,
-			TargetToExcessScaling: gastime.DefaultTargetToExcessScaling,
-			MinPrice:              gastime.DefaultMinPrice,
+			Target: 1e6,
 		},
 	}
 }
@@ -412,9 +410,7 @@ func TestGasAccounting(t *testing.T) {
 	const gasPerTx = gas.Gas(params.TxGas)
 	hooks := &saehookstest.Stub{
 		GasConfig: hook.GasConfig{
-			Target:                5 * gasPerTx,
-			TargetToExcessScaling: gastime.DefaultTargetToExcessScaling,
-			MinPrice:              gastime.DefaultMinPrice,
+			Target: 5 * gasPerTx,
 		},
 	}
 	ctx, sut := newSUT(t, hooks)

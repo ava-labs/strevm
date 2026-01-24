@@ -38,16 +38,22 @@ type Time struct {
 type Option = options.Option[config]
 
 // WithTargetToExcessScaling overrides the default target to excess scaling ratio.
+// A zero value is ignored, preserving the default.
 func WithTargetToExcessScaling(s gas.Gas) Option {
 	return options.Func[config](func(c *config) {
-		c.targetToExcessScaling = s
+		if s != 0 {
+			c.targetToExcessScaling = s
+		}
 	})
 }
 
 // WithMinPrice overrides the default minimum gas price.
+// A zero value is ignored, preserving the default.
 func WithMinPrice(p gas.Price) Option {
 	return options.Func[config](func(c *config) {
-		c.minPrice = p
+		if p != 0 {
+			c.minPrice = p
+		}
 	})
 }
 
@@ -76,11 +82,7 @@ func (tm *Time) establishInvariants() {
 // [DefaultTargetToExcessScaling] respectively, but can be overridden with
 // [WithMinPrice] and [WithTargetToExcessScaling].
 func New(unixSeconds uint64, target, startingExcess gas.Gas, opts ...Option) *Time {
-	cfg := &config{
-		targetToExcessScaling: DefaultTargetToExcessScaling,
-		minPrice:              DefaultMinPrice,
-	}
-	options.ApplyTo(cfg, opts...)
+	cfg := newCfgWithOptions(opts...)
 	target = clampTarget(target)
 	return makeTime(proxytime.New(unixSeconds, rateOf(target)), target, startingExcess, *cfg)
 }
@@ -159,14 +161,20 @@ func (tm *Time) MinPrice() gas.Price {
 	return tm.config.minPrice
 }
 
-// SetTargetToExcessScaling updates the target to excess scaling ratio.
-func (tm *Time) SetTargetToExcessScaling(s gas.Gas) {
-	tm.config.targetToExcessScaling = s
+// SetConfig updates the optional gas parameters using the provided options.
+// Zero values in the options are ignored, preserving the defaults.
+func (tm *Time) SetConfig(opts ...Option) {
+	cfg := newCfgWithOptions(opts...)
+	tm.config = *cfg
 }
 
-// SetMinPrice updates the minimum gas price.
-func (tm *Time) SetMinPrice(p gas.Price) {
-	tm.config.minPrice = p
+func newCfgWithOptions(opts ...Option) *config {
+	cfg := &config{
+		targetToExcessScaling: DefaultTargetToExcessScaling,
+		minPrice:              DefaultMinPrice,
+	}
+	options.ApplyTo(cfg, opts...)
+	return cfg
 }
 
 // Price returns the price of a unit of gas, i.e. the "base fee".

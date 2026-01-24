@@ -43,7 +43,6 @@ import (
 	"github.com/ava-labs/strevm/adaptor"
 	"github.com/ava-labs/strevm/blocks"
 	"github.com/ava-labs/strevm/blocks/blockstest"
-	"github.com/ava-labs/strevm/gastime"
 	"github.com/ava-labs/strevm/hook"
 	"github.com/ava-labs/strevm/hook/hookstest"
 	saeparams "github.com/ava-labs/strevm/params"
@@ -113,9 +112,7 @@ func newSUT(tb testing.TB, numAccounts uint, opts ...sutOption) (context.Context
 		chainConfig: saetest.ChainConfig(),
 		hooks: &hookstest.Stub{
 			GasConfig: hook.GasConfig{
-				Target:                100e6,
-				TargetToExcessScaling: gastime.DefaultTargetToExcessScaling,
-				MinPrice:              gastime.DefaultMinPrice,
+				Target: 100e6,
 			},
 			TB: tb,
 		},
