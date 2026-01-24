@@ -72,11 +72,6 @@ type Config struct {
 	Now func() time.Time // defaults to [time.Now] if nil
 }
 
-// hooks is a convenience wrapper for accessing the VM's hooks.
-func (vm *VM) hooks() hook.Points {
-	return vm.config.Hooks
-}
-
 // NewVM returns a new [VM] that is ready for use immediately upon return.
 // [VM.Shutdown] MUST be called to release resources.
 func NewVM(
@@ -303,6 +298,10 @@ func (vm *VM) Version(context.Context) (string, error) {
 
 func (vm *VM) log() logging.Logger {
 	return vm.snowCtx.Log
+}
+
+func (vm *VM) hooks() hook.Points {
+	return vm.config.Hooks
 }
 
 func (vm *VM) signerForBlock(b *types.Block) types.Signer {
