@@ -45,7 +45,7 @@ func TestTxTypeSupport(t *testing.T) {
 		}
 	}
 	b := sut.runConsensusLoop(t, sut.genesis)
-	require.NoErrorf(t, b.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()")
+	require.NoErrorf(t, b.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", b)
 
 	sdb := sut.stateAt(t, b.PostExecutionStateRoot())
 	got := sdb.GetNonce(sut.wallet.Addresses()[0])
