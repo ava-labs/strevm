@@ -79,15 +79,15 @@ func (b *Block) markSettled(lastSettled *atomic.Pointer[Block]) error {
 // Wherever MarkSynchronous results in different behaviour to
 // [Block.MarkSettled], the respective methods are documented as such. They can
 // otherwise be considered identical.
-func (b *Block) MarkSynchronous(db ethdb.Database, subSecondBlockTime time.Duration, gasTargetAfterBlock, excessAfter gas.Gas) error {
+func (b *Block) MarkSynchronous(hooks hook.Points, db ethdb.Database, excessAfter gas.Gas) error {
 	ethB := b.EthBlock()
 	baseFee := ethB.BaseFee()
 	if baseFee == nil { // genesis blocks
 		baseFee = new(big.Int)
 	}
 	execTime := gastime.New(
-		preciseTime(b.Header(), subSecondBlockTime),
-		gasTargetAfterBlock,
+		PreciseTime(hooks, b.Header()),
+		hooks.GasTargetAfter(b.Header()), // target _after_ is a requirement of [Block.MarkExecuted]
 		excessAfter,
 	)
 	// Receipts of a synchronous block have already been "settled" by the block

@@ -48,7 +48,9 @@ type executionResults struct {
 }
 
 // MarkExecuted marks the block as having been executed at the specified time(s)
-// and with the specified results. It also sets the chain's head block to b.
+// and with the specified results. It also sets the chain's head block to b. The
+// [gastime.Time] MUST have already been scaled to the target applicable after
+// the block, as defined by the relevant [hook.Points].
 //
 // MarkExecuted guarantees that state is persisted to the database before
 // in-memory indicators of execution are updated. [Block.Executed] returning

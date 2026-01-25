@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/ava-labs/strevm/hook/hookstest"
 	"github.com/ava-labs/strevm/saetest"
 )
 
@@ -67,8 +68,10 @@ func newChain(tb testing.TB, db ethdb.Database, startHeight, total uint64, lastS
 		blocks = append(blocks, b)
 		if synchronous {
 			// The target and excess are irrelevant for the purposes of
-			// [newChain], and sub-second time for genesis is unnecessary.
-			require.NoError(tb, b.MarkSynchronous(db, 0, 1, 0), "MarkSynchronous()")
+			// [newChain], and non-zero sub-second time for genesis is
+			// unnecessary.
+			h := &hookstest.Stub{Target: 1}
+			require.NoError(tb, b.MarkSynchronous(h, db, 0), "MarkSynchronous()")
 		}
 
 		parent = byNum[n]

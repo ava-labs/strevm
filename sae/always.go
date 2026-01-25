@@ -60,8 +60,7 @@ func (vm *SinceGenesis) Initialize(
 	if err != nil {
 		return fmt.Errorf("blocks.New(%T.ToBlock(), ...): %v", genesis, err)
 	}
-	tgt := vm.config.Hooks.GasTargetAfter(genBlock.Header())
-	if err := genBlock.MarkSynchronous(db, 0 /*sub-second time*/, tgt, 0 /*gas excess*/); err != nil {
+	if err := genBlock.MarkSynchronous(vm.config.Hooks, db, 0 /*gas excess*/); err != nil {
 		return fmt.Errorf("%T{genesis}.MarkSynchronous(): %v", genBlock, err)
 	}
 

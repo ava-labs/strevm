@@ -12,7 +12,6 @@ import (
 	"math/big"
 	"slices"
 	"testing"
-	"time"
 
 	"github.com/ava-labs/avalanchego/utils/logging"
 	"github.com/ava-labs/avalanchego/vms/components/gas"
@@ -28,6 +27,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/ava-labs/strevm/blocks"
+	"github.com/ava-labs/strevm/hook/hookstest"
 	"github.com/ava-labs/strevm/saetest"
 )
 
@@ -122,16 +122,16 @@ func NewGenesis(tb testing.TB, db ethdb.Database, config *params.ChainConfig, al
 	require.NoErrorf(tb, tdb.Commit(hash, true), "%T.Commit(core.SetupGenesisBlock(...))", tdb)
 
 	b := NewBlock(tb, gen.ToBlock(), nil, nil)
-	require.NoErrorf(tb, b.MarkSynchronous(db, conf.subSecondBlockTime, conf.gasTarget, conf.gasExcess), "%T.MarkSynchronous()", b)
+	h := &hookstest.Stub{Target: conf.gasTarget}
+	require.NoErrorf(tb, b.MarkSynchronous(h, db, conf.gasExcess), "%T.MarkSynchronous()", b)
 	return b
 }
 
 type genesisConfig struct {
-	tdbConfig          *triedb.Config
-	timestamp          uint64
-	subSecondBlockTime time.Duration
-	gasTarget          gas.Gas
-	gasExcess          gas.Gas
+	tdbConfig *triedb.Config
+	timestamp uint64
+	gasTarget gas.Gas
+	gasExcess gas.Gas
 }
 
 // A GenesisOption configures [NewGenesis].
