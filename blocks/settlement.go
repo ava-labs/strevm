@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/ava-labs/avalanchego/vms/components/gas"
+	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/ethdb"
 	"go.uber.org/zap"
 
@@ -94,7 +95,8 @@ func (b *Block) MarkSynchronous(hooks hook.Points, db ethdb.Database, excessAfte
 	// itself. As the only reason to pass receipts here is for later settlement
 	// in another block, there is no need to pass anything meaningful as it
 	// would also require them to be received as an argument to MarkSynchronous.
-	if err := b.MarkExecuted(db, execTime, time.Time{}, baseFee, nil /*receipts*/, ethB.Root(), new(atomic.Pointer[Block])); err != nil {
+	var rs types.Receipts
+	if err := b.MarkExecuted(db, execTime, time.Time{}, baseFee, rs, ethB.Root(), new(atomic.Pointer[Block])); err != nil {
 		return err
 	}
 	b.synchronous = true
