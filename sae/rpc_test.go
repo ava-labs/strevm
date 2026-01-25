@@ -5,7 +5,6 @@ package sae
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"math/big"
 	"testing"
@@ -18,9 +17,10 @@ import (
 	"github.com/ava-labs/libevm/crypto"
 	"github.com/ava-labs/libevm/libevm/ethapi"
 	"github.com/ava-labs/libevm/params"
-	"github.com/stretchr/testify/assert"
+	"github.com/google/go-cmp/cmp"
 	"github.com/stretchr/testify/require"
 
+	"github.com/ava-labs/strevm/cmputils"
 	"github.com/ava-labs/strevm/saetest"
 )
 
@@ -109,20 +109,20 @@ func TestTxPoolNamespace(t *testing.T) {
 		return &ethapi.RPCTransaction{
 			From:      from,
 			Gas:       hexutil.Uint64(tx.Gas()),
-			GasPrice:  canonicalJSON(t, (*hexutil.Big)(tx.GasPrice())),
-			GasFeeCap: canonicalJSON(t, (*hexutil.Big)(tx.GasFeeCap())),
-			GasTipCap: canonicalJSON(t, (*hexutil.Big)(tx.GasTipCap())),
+			GasPrice:  (*hexutil.Big)(tx.GasPrice()),
+			GasFeeCap: (*hexutil.Big)(tx.GasFeeCap()),
+			GasTipCap: (*hexutil.Big)(tx.GasTipCap()),
 			Hash:      tx.Hash(),
 			Input:     hexutil.Bytes(tx.Data()),
 			Nonce:     hexutil.Uint64(tx.Nonce()),
 			To:        tx.To(),
-			Value:     canonicalJSON(t, (*hexutil.Big)(tx.Value())),
+			Value:     (*hexutil.Big)(tx.Value()),
 			Type:      hexutil.Uint64(tx.Type()),
 			Accesses:  utils.PointerTo(tx.AccessList()),
-			ChainID:   canonicalJSON(t, (*hexutil.Big)(tx.ChainId())),
-			V:         canonicalJSON(t, (*hexutil.Big)(v)),
-			R:         canonicalJSON(t, (*hexutil.Big)(r)),
-			S:         canonicalJSON(t, (*hexutil.Big)(s)),
+			ChainID:   (*hexutil.Big)(tx.ChainId()),
+			V:         (*hexutil.Big)(v),
+			R:         (*hexutil.Big)(r),
+			S:         (*hexutil.Big)(s),
 			YParity:   utils.PointerTo(hexutil.Uint64(v.Sign())), //nolint:gosec // Won't overflow
 		}
 	}
@@ -180,34 +180,18 @@ func TestTxPoolNamespace(t *testing.T) {
 	})
 }
 
-// canonicalJSON returns a new instance of `v` obtained by round-tripping it
-// through JSON marshalling and unmarshalling. This is useful to for types, such
-// as [big.Int], that have different internal representations based on how they
-// are constructed.
-func canonicalJSON[T any](t *testing.T, v *T) *T {
-	t.Helper()
-
-	b, err := json.Marshal(v)
-	require.NoError(t, err, "json.Marshal(%v)", v)
-
-	v = new(T)
-	require.NoError(t, json.Unmarshal(b, v), "json.Unmarshal(%s, %T)", string(b), v)
-	return v
-}
-
 func testRPCMethod[T any](ctx context.Context, t *testing.T, sut *SUT, method string, want T, args ...any) {
 	t.Helper()
 	t.Run(method, func(t *testing.T) {
 		var got T
 		t.Logf("%T.CallContext(ctx, %T, %q, %v...)", sut.rpcClient, got, method, args)
 		require.NoError(t, sut.CallContext(ctx, &got, method, args...))
-		assert.Equal(t, want, got)
 
-		const indent = "  "
-		wantJSON, err := json.MarshalIndent(want, "", indent)
-		require.NoError(t, err, "json.MarshalIndent(want, ..., ..., ...)")
-		gotJSON, err := json.MarshalIndent(got, "", indent)
-		require.NoError(t, err, "json.MarshalIndent(got, ..., ..., ...)")
-		t.Logf("Want JSON:\n%s\n\nResult JSON:\n%s", wantJSON, gotJSON)
+		opts := cmp.Options{
+			cmputils.HexutilBigs(),
+		}
+		if diff := cmp.Diff(want, got, opts...); diff != "" {
+			t.Errorf("Diff (-want +got):\n%s", diff)
+		}
 	})
 }

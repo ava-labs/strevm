@@ -6,6 +6,7 @@ package cmputils
 import (
 	"math/big"
 
+	"github.com/ava-labs/libevm/common/hexutil"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/google/go-cmp/cmp"
 )
@@ -39,5 +40,13 @@ func TransactionsByHash() cmp.Option {
 func ReceiptsByTxHash() cmp.Option {
 	return ComparerWithNilCheck(func(r, s *types.Receipt) bool {
 		return r.TxHash == s.TxHash
+	})
+}
+
+// HexutilBigs returns a [cmp.Comparer] for [hexutil.Big] pointers. A nil
+// pointer is not equal to zero.
+func HexutilBigs() cmp.Option {
+	return ComparerWithNilCheck(func(a, b *hexutil.Big) bool {
+		return (*big.Int)(a).Cmp((*big.Int)(b)) == 0
 	})
 }
