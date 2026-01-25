@@ -63,7 +63,7 @@ func (s *Stub) BlockRebuilderFrom(b *types.Block) hook.BlockBuilder {
 		Now: func() time.Time {
 			return time.Unix(
 				int64(b.Time()), //nolint:gosec // Won't overflow for a few millennia
-				int64(s.SubSecondBlockTime(b.Header())),
+				s.SubSecondBlockTime(b.Header()).Nanoseconds(),
 			)
 		},
 	}

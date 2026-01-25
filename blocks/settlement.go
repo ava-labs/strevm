@@ -69,7 +69,9 @@ func (b *Block) markSettled(lastSettled *atomic.Pointer[Block]) error {
 // behaviour is impossible under SAE rules.
 //
 // Arguments required by [Block.MarkExecuted] but not accepted by
-// MarkSynchronous are derived from the block to maintain invariants.
+// MarkSynchronous are derived from the block to maintain invariants. The
+// `subSecondBlockTime` argument MUST follow the same constraints as the
+// respective [hook.Points] method.
 //
 // MarkSynchronous and [Block.Synchronous] are not safe for concurrent use. This
 // method MUST therefore be called *before* instantiating the SAE VM.
@@ -77,18 +79,22 @@ func (b *Block) markSettled(lastSettled *atomic.Pointer[Block]) error {
 // Wherever MarkSynchronous results in different behaviour to
 // [Block.MarkSettled], the respective methods are documented as such. They can
 // otherwise be considered identical.
-func (b *Block) MarkSynchronous(db ethdb.Database, gasTargetOfBlock, excessAfter gas.Gas) error {
-	gt := gastime.New(b.BuildTime(), gasTargetOfBlock, excessAfter)
+func (b *Block) MarkSynchronous(db ethdb.Database, subSecondBlockTime time.Duration, gasTargetAfterBlock, excessAfter gas.Gas) error {
 	ethB := b.EthBlock()
 	baseFee := ethB.BaseFee()
 	if baseFee == nil { // genesis blocks
 		baseFee = new(big.Int)
 	}
+	execTime := gastime.New(
+		preciseTime(b.Header(), subSecondBlockTime),
+		gasTargetAfterBlock,
+		excessAfter,
+	)
 	// Receipts of a synchronous block have already been "settled" by the block
 	// itself. As the only reason to pass receipts here is for later settlement
 	// in another block, there is no need to pass anything meaningful as it
 	// would also require them to be received as an argument to MarkSynchronous.
-	if err := b.MarkExecuted(db, gt, time.Time{}, baseFee, nil /*receipts*/, ethB.Root(), new(atomic.Pointer[Block])); err != nil {
+	if err := b.MarkExecuted(db, execTime, time.Time{}, baseFee, nil /*receipts*/, ethB.Root(), new(atomic.Pointer[Block])); err != nil {
 		return err
 	}
 	b.synchronous = true
