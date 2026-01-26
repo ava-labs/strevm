@@ -65,6 +65,69 @@ func TestTargetUpdateTiming(t *testing.T) {
 	assert.Greater(t, tm.Price(), enforcedPrice, "Price should not decrease in AfterBlock()")
 }
 
+func FuzzPriceInvarianceAfterBlock(f *testing.F) {
+	for _, s := range []struct {
+		T, x, M, KonT       uint64
+		newT, newM, newKonT uint64
+	}{
+		{
+			T: 1e6, M: 1, KonT: 1, // i.e. K == 1e6
+			x:    2e6,          // Initial price is M⋅exp(x/K) = exp(2/1) ~= 7
+			newT: 1e6, newM: 1, // both unchanged
+			newKonT: 2, // i.e. K == 2e6; without proper scaling, price becomes exp(2/2) ~= 2
+		},
+	} {
+		f.Add(s.T, s.x, s.M, s.KonT, s.newT, s.newM, s.newKonT)
+	}
+
+	f.Fuzz(func(
+		t *testing.T,
+		initTarget, excess, initMinPrice, initScaling uint64,
+		newTarget, newMinPrice, newScaling uint64,
+	) {
+		if initMinPrice == 0 || newMinPrice == 0 {
+			t.Skip("Zero price coefficient")
+		}
+		if initScaling == 0 || newScaling == 0 {
+			t.Skip("Zero scaling denominator")
+		}
+
+		tm := New(
+			0,
+			gas.Gas(initTarget),
+			gas.Gas(excess),
+			WithMinPrice(gas.Price(initMinPrice)),
+			WithTargetToExcessScaling(gas.Gas(initScaling)),
+		)
+		initPrice := tm.Price()
+
+		hooks := &hookstest.Stub{
+			GasConfig: hook.GasConfig{
+				Target:                gas.Gas(newTarget),
+				MinPrice:              gas.Price(newMinPrice),
+				TargetToExcessScaling: gas.Gas(newScaling),
+			},
+		}
+
+		// Consuming gas increases the excess, which changes the price. We're
+		// only interested in invariance under changes in config.
+		const gasUsed = 0
+		require.NoError(t, tm.AfterBlock(gasUsed, hooks, nil), "AfterBlock()")
+
+		want := initPrice
+		if p := hooks.GasConfig.MinPrice; p > initPrice {
+			want = p
+		}
+		if got := tm.Price(); got != want {
+			t.Logf("Target: %d -> %d", initTarget, newTarget)
+			t.Logf("Excess: %v (unchanged)", excess)
+			t.Logf("MinPrice: %d -> %d", initMinPrice, newMinPrice)
+			t.Logf("TargetToExcessScaling: %d -> %d", initScaling, newScaling)
+			t.Errorf("AfterBlock([0 gas consumed]) -> %T.Price() got %d want %d (i.e. unchanged)", tm, got, want)
+		}
+	})
+}
+
 func FuzzWorstCasePrice(f *testing.F) {
 	f.Fuzz(func(
 		t *testing.T,
