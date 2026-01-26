@@ -203,6 +203,6 @@ func testRPCMethod[T any](ctx context.Context, t *testing.T, sut *SUT, method st
 		var got T
 		t.Logf("%T.CallContext(ctx, %T, %q, %v...)", sut.rpcClient, got, method, args)
 		require.NoError(t, sut.CallContext(ctx, &got, method, args...))
-		assert.Equalf(t, want, got, "%T.CallContext(..., %q, ...)", sut.rpcClient, method)
+		assert.Equal(t, want, got)
 	})
 }

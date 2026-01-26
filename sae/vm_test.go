@@ -258,28 +258,26 @@ func (s *SUT) syncMempool(tb testing.TB) {
 	require.NoErrorf(tb, p.Sync(), "%T.Sync()", p)
 }
 
-func (sut *SUT) createAndAcceptBlock(tb testing.TB, txs ...*types.Transaction) *blocks.Block {
+// requireInMempool requires that the transaction with the specified hash is
+// eventually in the mempool. It calls [SUT.syncMempool] before every check.
+func (s *SUT) requireInMempool(tb testing.TB, tx common.Hash) {
 	tb.Helper()
-	ctx := sut.context(tb)
+	in := func() bool {
+		s.syncMempool(tb)
+		return s.rawVM.mempool.Pool.Has(tx)
+	}
+	require.Eventuallyf(tb, in, 250*time.Millisecond, 25*time.Millisecond, "tx %v in mempool", tx)
+}
 
-	waitForEvDone := make(chan error)
-	go func() {
-		defer close(waitForEvDone)
-		ev, err := sut.WaitForEvent(ctx)
-		assert.NoErrorf(tb, err, "%T.WaitForEvent()", sut)
-		assert.Equal(tb, snowcommon.PendingTxs, ev)
-	}()
+func (s *SUT) createAndAcceptBlock(tb testing.TB, txs ...*types.Transaction) *blocks.Block {
+	tb.Helper()
 
 	for _, tx := range txs {
-		sut.mustSendTx(tb, tx)
+		s.mustSendTx(tb, tx)
+		s.requireInMempool(tb, tx.Hash())
 	}
 
-	select {
-	case <-waitForEvDone:
-	case <-time.After(time.Second):
-		tb.Error("WaitForEvent() called before SendTx() did not unblock")
-	}
-	return sut.runConsensusLoop(tb, sut.lastAcceptedBlock(tb))
+	return s.runConsensusLoop(tb, s.lastAcceptedBlock(tb))
 }
 
 // runConsensusLoop sets the preference to the specified block then builds,
