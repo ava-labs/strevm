@@ -10,8 +10,10 @@ import (
 	"testing"
 
 	"github.com/ava-labs/avalanchego/utils/logging"
+	libevmlog "github.com/ava-labs/libevm/log"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
+	"golang.org/x/exp/slog"
 )
 
 // logger is the common wrapper around [LogRecorder] and [tbLogger] handlers,
@@ -164,3 +166,39 @@ func (l *TBLogger) log(lvl logging.Level, msg string, fields ...zap.Field) {
 	_, file, line, _ := runtime.Caller(3)
 	to("[Log@%s] %s %v - %s:%d", lvl, msg, enc.Fields, file, line)
 }
+
+// NewTBHandler constructs a [slog.Handler] that propagates logs to [testing.TB].
+// Logs at [libevmlog.LevelWarn] or above go to [testing.TB.Errorf], except
+// [libevmlog.LevelCrit] which goes to [testing.TB.Fatalf]. All other logs go to
+// [testing.TB.Logf].
+func NewTBHandler(tb testing.TB, level slog.Level) slog.Handler {
+	return &tbHandler{tb: tb, level: level}
+}
+
+type tbHandler struct {
+	tb    testing.TB
+	level slog.Level
+}
+
+func (h *tbHandler) Enabled(_ context.Context, level slog.Level) bool {
+	return level >= h.level
+}
+
+func (h *tbHandler) Handle(_ context.Context, r slog.Record) error {
+	var to func(string, ...any)
+	switch {
+	case r.Level >= libevmlog.LevelCrit:
+		to = h.tb.Fatalf
+	case r.Level >= libevmlog.LevelWarn:
+		to = h.tb.Errorf
+	default:
+		to = h.tb.Logf
+	}
+	to("[%s] %s", libevmlog.LevelAlignedString(r.Level), r.Message)
+	return nil
+}
+
+// WithAttrs and WithGroup return the receiver unchanged. Attribute/group
+// context is not needed for test failure detection.
+func (h *tbHandler) WithAttrs([]slog.Attr) slog.Handler { return h }
+func (h *tbHandler) WithGroup(string) slog.Handler      { return h }
