@@ -186,24 +186,36 @@ func (s *SUT) CallContext(ctx context.Context, result any, method string, args .
 	return s.rpcClient.CallContext(ctx, result, method, args...)
 }
 
-// stubbedTime returns an option to configure a new SUT's "now" function along
-// with a function to set the time at nanosecond resolution.
-func stubbedTime() (_ sutOption, setTime func(time.Time)) {
-	var now time.Time
-	set := func(n time.Time) {
-		now = n
+type vmTime struct {
+	now time.Time
+}
+
+func (t *vmTime) Now() time.Time {
+	return t.now
+}
+
+func (t *vmTime) Set(n time.Time) {
+	t.now = n
+}
+
+func (t *vmTime) Advance(d time.Duration) {
+	t.now = t.now.Add(d)
+}
+
+// withVMTime returns an option to configure a new SUT's "now" function along
+// with a struct to access and set the time at nanosecond resolution.
+func withVMTime() (sutOption, *vmTime) {
+	t := &vmTime{
+		now: time.Unix(1000, 0),
 	}
 	opt := options.Func[sutConfig](func(c *sutConfig) {
-		get := func() time.Time {
-			return now
-		}
 		// TODO(StephenButtolph) unify the time functions provided in the config
 		// and the hooks.
-		c.vmConfig.Now = get
-		c.hooks.Now = get
+		c.vmConfig.Now = t.Now
+		c.hooks.Now = t.Now
 	})
 
-	return opt, set
+	return opt, t
 }
 
 func withGenesisOpts(opts ...blockstest.GenesisOption) sutOption {
@@ -244,6 +256,30 @@ func (s *SUT) syncMempool(tb testing.TB) {
 	var _ txpool.TxPool // maintain import for [comment] rendering
 	p := s.rawVM.mempool.Pool
 	require.NoErrorf(tb, p.Sync(), "%T.Sync()", p)
+}
+
+func (sut *SUT) createAndAcceptBlock(tb testing.TB, txs ...*types.Transaction) *blocks.Block {
+	tb.Helper()
+	ctx := sut.context(tb)
+
+	waitForEvDone := make(chan error)
+	go func() {
+		defer close(waitForEvDone)
+		ev, err := sut.WaitForEvent(ctx)
+		assert.NoErrorf(tb, err, "%T.WaitForEvent()", sut)
+		assert.Equal(tb, snowcommon.PendingTxs, ev)
+	}()
+
+	for _, tx := range txs {
+		sut.mustSendTx(tb, tx)
+	}
+
+	select {
+	case <-waitForEvDone:
+	case <-time.After(time.Second):
+		tb.Error("WaitForEvent() called before SendTx() did not unblock")
+	}
+	return sut.runConsensusLoop(tb, sut.lastAcceptedBlock(tb))
 }
 
 // runConsensusLoop sets the preference to the specified block then builds,
@@ -483,13 +519,8 @@ func TestAcceptBlock(t *testing.T) {
 		require.Zero(t, blocks.InMemoryBlockCount(), "initial in-memory block count")
 	}, 100*time.Millisecond, time.Millisecond)
 
-	opt, setTime := stubbedTime()
-	now := time.Unix(0, 0)
-	fastForward := func(by time.Duration) {
-		now = now.Add(by)
-		setTime(now)
-	}
-	fastForward(saeparams.Tau)
+	opt, vmTime := withVMTime()
+	vmTime.Advance(saeparams.Tau)
 
 	ctx, sut := newSUT(t, 1, opt)
 	// Causes [VM.AcceptBlock] to wait until the block has executed.
@@ -504,7 +535,7 @@ func TestAcceptBlock(t *testing.T) {
 	rng := rand.New(rand.NewPCG(0, 0)) //nolint:gosec // Reproducibility is useful for tests
 	for range 100 {
 		ffMillis := 100 + rng.IntN(1000*(1+saeparams.TauSeconds))
-		fastForward(time.Millisecond * time.Duration(ffMillis))
+		vmTime.Advance(time.Millisecond * time.Duration(ffMillis))
 
 		b := sut.runConsensusLoop(t, last())
 		unsettled = append(unsettled, b)

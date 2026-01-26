@@ -161,12 +161,8 @@ func TestWorstCase(t *testing.T) {
 		t.Run("fuzz", func(t *testing.T) {
 			t.Parallel()
 
-			timeOpt, setTime := stubbedTime()
-			now := time.Unix(saeparams.TauSeconds, 0)
-			fastForward := func(by time.Duration) {
-				now = now.Add(by)
-				setTime(now)
-			}
+			timeOpt, vmTime := withVMTime()
+			vmTime.Set(time.Unix(saeparams.TauSeconds, 0))
 
 			ctx, sut := newSUT(t, flags.numAccounts, sutOpt, timeOpt)
 			// If we don't wait for blocks to be executed then their results may
@@ -223,7 +219,7 @@ func TestWorstCase(t *testing.T) {
 				sut.syncMempool(t)
 
 				for accepted := false; !accepted; {
-					fastForward(time.Millisecond * time.Duration(rng.IntN(1000*3*saeparams.TauSeconds)))
+					vmTime.Advance(time.Millisecond * time.Duration(rng.IntN(1000*3*saeparams.TauSeconds)))
 
 					require.NoError(t, sut.SetPreference(ctx, sut.lastAcceptedBlock(t).ID()), "SetPreference()")
 

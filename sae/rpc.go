@@ -170,26 +170,8 @@ func (b *ethAPIBackend) BlockByHash(ctx context.Context, hash common.Hash) (*typ
 	return readByHash(b, hash, rawdb.ReadBlock), nil
 }
 
-func (b *ethAPIBackend) HeaderByNumberOrHash(ctx context.Context, blockNumOrHash rpc.BlockNumberOrHash) (*types.Header, error) {
-	return readByNumberOrHash(
-		ctx,
-		blockNumOrHash,
-		b.HeaderByNumber,
-		b.HeaderByHash,
-	)
-}
-
-func (b *ethAPIBackend) BlockByNumberOrHash(ctx context.Context, blockNumOrHash rpc.BlockNumberOrHash) (*types.Block, error) {
-	return readByNumberOrHash(
-		ctx,
-		blockNumOrHash,
-		b.BlockByNumber,
-		b.BlockByHash,
-	)
-}
-
-func (b *ethAPIBackend) GetTransaction(ctx context.Context, txHash common.Hash) (bool, *types.Transaction, common.Hash, uint64, uint64, error) {
-	tx, blockHash, blockNumber, index := rawdb.ReadTransaction(b.vm.db, txHash)
+func (b *ethAPIBackend) GetTransaction(ctx context.Context, txHash common.Hash) (exists bool, tx *types.Transaction, blockHash common.Hash, blockNumber uint64, index uint64, err error) {
+	tx, blockHash, blockNumber, index = rawdb.ReadTransaction(b.vm.db, txHash)
 	if tx == nil {
 		return false, nil, common.Hash{}, 0, 0, nil
 	}
@@ -214,23 +196,6 @@ func readByHash[T any](b *ethAPIBackend, hash common.Hash, read canonicalReader[
 		return nil
 	}
 	return read(b.vm.db, hash, *num)
-}
-
-var errNoBlockNorHash = errors.New("invalid arguments; neither block number nor hash specified")
-
-func readByNumberOrHash[T any](
-	ctx context.Context,
-	blockNumOrHash rpc.BlockNumberOrHash,
-	byNum func(context.Context, rpc.BlockNumber) (*T, error),
-	byHash func(context.Context, common.Hash) (*T, error),
-) (*T, error) {
-	if n, ok := blockNumOrHash.Number(); ok {
-		return byNum(ctx, n)
-	}
-	if hash, ok := blockNumOrHash.Hash(); ok {
-		return byHash(ctx, hash)
-	}
-	return nil, errNoBlockNorHash
 }
 
 var errFutureBlockNotResolved = errors.New("not accepted yet")

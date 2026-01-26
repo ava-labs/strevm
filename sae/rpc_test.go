@@ -5,24 +5,23 @@ package sae
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"math/big"
 	"testing"
-	"time"
 
-	snowcommon "github.com/ava-labs/avalanchego/snow/engine/common"
 	"github.com/ava-labs/avalanchego/version"
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/common/hexutil"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/crypto"
 	"github.com/ava-labs/libevm/params"
+	"github.com/ava-labs/libevm/rpc"
 	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/holiman/uint256"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/ava-labs/strevm/blocks"
 	"github.com/ava-labs/strevm/cmputils"
 	saeparams "github.com/ava-labs/strevm/params"
 	"github.com/ava-labs/strevm/saetest"
@@ -81,102 +80,129 @@ func TestNetNamespace(t *testing.T) {
 }
 
 func TestBlockGetters(t *testing.T) {
-	opt, setTime := stubbedTime()
-	now := time.Unix(0, 0)
-	fastForward := func(by time.Duration) {
-		now = now.Add(by)
-		setTime(now)
-	}
-	fastForward(saeparams.Tau)
+	opt, vmTime := withVMTime()
+	vmTime.Advance(saeparams.Tau)
 
 	ctx, sut := newSUT(t, 1, opt)
+	genesis := sut.lastAcceptedBlock(t)
 
-	testWaitForEvent := func(t *testing.T) {
-		t.Helper()
-		ev, err := sut.WaitForEvent(ctx)
-		require.NoError(t, err)
-		require.Equal(t, snowcommon.PendingTxs, ev)
-	}
 	recipient := common.Address{1, 2, 3, 4}
-	createBlock := func(t *testing.T) *blocks.Block {
+	transfer := uint256.NewInt(42)
+	createTx := func(t *testing.T) *types.Transaction {
 		t.Helper()
-		// Put a tx in the mempool to ensure blocks aren't empty.
-		waitForEvDone := make(chan struct{})
-		go func() {
-			defer close(waitForEvDone)
-			t.Run("WaitForEvent_early_unblocks", testWaitForEvent)
-		}()
-
-		transfer := uint256.NewInt(42)
-		tx := sut.wallet.SetNonceAndSign(t, 0, &types.DynamicFeeTx{
+		return sut.wallet.SetNonceAndSign(t, 0, &types.DynamicFeeTx{
 			To:        &recipient,
 			Gas:       params.TxGas,
 			GasFeeCap: big.NewInt(1),
 			Value:     transfer.ToBig(),
 		})
-		sut.mustSendTx(t, tx)
-
-		select {
-		case <-waitForEvDone:
-		case <-time.After(time.Second):
-			t.Error("WaitForEvent() called before SendTx() did not unblock")
-		}
-		return sut.runConsensusLoop(t, sut.lastAcceptedBlock(t))
 	}
 
-	settledBlock := createBlock(t)
-	fastForward(saeparams.Tau)
-	executedBlock := createBlock(t)
-	require.NoError(t, executedBlock.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", executedBlock)
+	onDisk := sut.createAndAcceptBlock(t, createTx(t)) // a block will be settled after this one
+	settledBlock := sut.createAndAcceptBlock(t, createTx(t))
+	require.NoErrorf(t, settledBlock.WaitUntilExecuted(ctx), "%T.WaitUntilSettled()", settledBlock)
+	vmTime.Set(settledBlock.ExecutedByGasTime().AsTime().Add(saeparams.Tau)) // ensure it will be finalized
+	executedBlock := sut.createAndAcceptBlock(t, createTx(t))
+	require.NoErrorf(t, executedBlock.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", executedBlock)
 
-	type blockGetterTest struct {
-		method string
-		want   *types.Header
-		args   []any
+	cmpOpts := cmp.Options{
+		cmputils.EthBlocks(),
+		cmputils.Headers(),
+		cmpopts.EquateEmpty(),
 	}
-	testsForBlock := func(b *blocks.Block) []blockGetterTest {
-		return []blockGetterTest{
-			{
-				method: "eth_getBlockByHash", want: b.Header(), args: []any{b.Hash(), true},
-			},
-			{
-				method: "eth_getBlockByNumber", want: b.Header(), args: []any{hexutil.Uint64(b.Height()), true},
-			},
-			{
-				method: "eth_getHeaderByHash", want: b.Header(), args: []any{b.Hash()},
-			},
-			{
-				method: "eth_getHeaderByNumber", want: b.Header(), args: []any{hexutil.Uint64(b.Height())},
-			},
-		}
+	//nolint:thelper // not a test helper
+	ethclientTests := func(t *testing.T, wantBlock *types.Block) {
+		t.Run("BlockByHash", func(t *testing.T) {
+			gotBlock, err := sut.BlockByHash(ctx, wantBlock.Hash())
+			require.NoErrorf(t, err, "BlockByHash(ctx, %s)", wantBlock.Hash())
+			if diff := cmp.Diff(wantBlock, gotBlock, cmpOpts...); diff != "" {
+				t.Errorf("Diff (-want +got):\n%s", diff)
+			}
+		})
+
+		t.Run("BlockByNumber", func(t *testing.T) {
+			gotBlock, err := sut.BlockByNumber(ctx, new(big.Int).SetUint64(wantBlock.NumberU64()))
+			require.NoErrorf(t, err, "BlockByNumber(ctx, %d)", wantBlock.NumberU64())
+			if diff := cmp.Diff(wantBlock, gotBlock, cmpOpts...); diff != "" {
+				t.Errorf("Diff (-want +got):\n%s", diff)
+			}
+		})
+
+		t.Run("HeaderByHash", func(t *testing.T) {
+			gotHeader, err := sut.HeaderByHash(ctx, wantBlock.Hash())
+			require.NoErrorf(t, err, "HeaderByHash(ctx, %s)", wantBlock.Hash())
+			if diff := cmp.Diff(wantBlock.Header(), gotHeader, cmpOpts...); diff != "" {
+				t.Errorf("Diff (-want +got):\n%s", diff)
+			}
+		})
+
+		t.Run("HeaderByNumber", func(t *testing.T) {
+			gotHeader, err := sut.HeaderByNumber(ctx, new(big.Int).SetUint64(wantBlock.NumberU64()))
+			require.NoErrorf(t, err, "HeaderByNumber(ctx, %d)", wantBlock.NumberU64())
+			if diff := cmp.Diff(wantBlock.Header(), gotHeader, cmpOpts...); diff != "" {
+				t.Errorf("Diff (-want +got):\n%s", diff)
+			}
+		})
+
+		t.Run("GetTransaction", func(t *testing.T) {
+			for _, wantTx := range wantBlock.Transactions() {
+				gotTx, isPending, err := sut.TransactionByHash(ctx, wantTx.Hash())
+				require.NoErrorf(t, err, "GetTransaction(ctx, %s)", wantTx.Hash())
+				require.Falsef(t, isPending, "GetTransaction(...): isPending for %s", wantTx.Hash())
+				if diff := cmp.Diff(wantTx, gotTx, cmputils.TransactionsByHash()); diff != "" {
+					t.Errorf("Diff (-want +got) for %s:\n%s", wantTx.Hash(), diff)
+				}
+			}
+		})
 	}
+
+	t.Run("genesis block", func(t *testing.T) {
+		ethclientTests(t, genesis.EthBlock())
+	})
+
+	t.Run("on-disk block", func(t *testing.T) {
+		ethclientTests(t, onDisk.EthBlock())
+	})
+
 	t.Run("settled block", func(t *testing.T) {
-		for _, tt := range testsForBlock(settledBlock) {
-			testRPCMethod(ctx, t, sut, tt.method, *tt.want, tt.args...)
-		}
+		ethclientTests(t, settledBlock.EthBlock())
+
+		t.Run("BlockByNumber Finalized", func(t *testing.T) {
+			gotBlock, err := sut.BlockByNumber(ctx, big.NewInt(int64(rpc.FinalizedBlockNumber)))
+			require.NoErrorf(t, err, "BlockByNumber(ctx, %d)", rpc.FinalizedBlockNumber)
+			if diff := cmp.Diff(settledBlock.EthBlock(), gotBlock, cmpOpts...); diff != "" {
+				t.Errorf("Diff (-want +got):\n%s", diff)
+			}
+		})
+
+		t.Run("BlockByNumber Safe", func(t *testing.T) {
+			gotBlock, err := sut.BlockByNumber(ctx, big.NewInt(int64(rpc.SafeBlockNumber)))
+			require.NoErrorf(t, err, "BlockByNumber(ctx, %d)", rpc.SafeBlockNumber)
+			if diff := cmp.Diff(settledBlock.EthBlock(), gotBlock, cmpOpts...); diff != "" {
+				t.Errorf("Diff (-want +got):\n%s", diff)
+			}
+		})
 	})
 
 	t.Run("executed but not settled block", func(t *testing.T) {
-		for _, tt := range testsForBlock(executedBlock) {
-			testRPCMethod(ctx, t, sut, tt.method, *tt.want, tt.args...)
-		}
+		ethclientTests(t, executedBlock.EthBlock())
+
+		t.Run("BlockByNumber Latest", func(t *testing.T) {
+			gotBlock, err := sut.BlockByNumber(ctx, big.NewInt(int64(rpc.LatestBlockNumber)))
+			require.NoErrorf(t, err, "BlockByNumber(ctx, %d)", rpc.LatestBlockNumber)
+			if diff := cmp.Diff(executedBlock.EthBlock(), gotBlock, cmpOpts...); diff != "" {
+				t.Errorf("Diff (-want +got):\n%s", diff)
+			}
+		})
 	})
 }
 
 func testRPCMethod[T any](ctx context.Context, t *testing.T, sut *SUT, method string, want T, args ...any) {
 	t.Helper()
 	t.Run(method, func(t *testing.T) {
-		var gotRawJSON json.RawMessage
-		t.Logf("%T.CallContext(ctx, %T, %q, %v...)", sut.rpcClient, gotRawJSON, method, args)
-		require.NoError(t, sut.CallContext(ctx, &gotRawJSON, method, args...))
-
 		var got T
-		require.NoErrorf(t, json.Unmarshal(gotRawJSON, &got), "json.Unmarshal(..., %T)", &got)
-		opts := cmp.Options{
-			cmputils.Headers(),
-		}
-		if diff := cmp.Diff(want, got, opts...); diff != "" {
-			t.Errorf("Diff (-want +got):\n%s", diff)
-		}
+		t.Logf("%T.CallContext(ctx, %T, %q, %v...)", sut.rpcClient, got, method, args)
+		require.NoError(t, sut.CallContext(ctx, &got, method, args...))
+		assert.Equalf(t, want, got, "%T.CallContext(..., %q, ...)", sut.rpcClient, method)
 	})
 }
