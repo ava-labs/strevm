@@ -171,17 +171,16 @@ func (l *TBLogger) log(lvl logging.Level, msg string, fields ...zap.Field) {
 // Logs at [libevmlog.LevelWarn] or above go to [testing.TB.Errorf], except
 // [libevmlog.LevelCrit] which goes to [testing.TB.Fatalf]. All other logs go to
 // [testing.TB.Logf].
-func NewTBHandler(tb testing.TB, level slog.Level) slog.Handler {
-	return &tbHandler{tb: tb, level: level}
+func NewTBHandler(tb testing.TB) slog.Handler {
+	return &tbHandler{tb: tb}
 }
 
 type tbHandler struct {
-	tb    testing.TB
-	level slog.Level
+	tb testing.TB
 }
 
 func (h *tbHandler) Enabled(_ context.Context, level slog.Level) bool {
-	return level >= h.level
+	return level >= libevmlog.LevelWarn
 }
 
 func (h *tbHandler) Handle(_ context.Context, r slog.Record) error {
