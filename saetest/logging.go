@@ -171,6 +171,8 @@ func (l *TBLogger) log(lvl logging.Level, msg string, fields ...zap.Field) {
 // Logs at [libevmlog.LevelWarn] or above go to [testing.TB.Errorf], except
 // [libevmlog.LevelCrit] which goes to [testing.TB.Fatalf]. All other logs go to
 // [testing.TB.Logf].
+//
+//nolint:thelper // The outputs include the logging site while the TB site is most useful if here
 func NewTBHandler(tb testing.TB) slog.Handler {
 	return &tbHandler{tb: tb}
 }
