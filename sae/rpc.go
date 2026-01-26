@@ -141,7 +141,7 @@ func (b *ethAPIBackend) UnprotectedAllowed() bool {
 }
 
 func (b *ethAPIBackend) CurrentBlock() *types.Header {
-	return types.CopyHeader(b.vm.exec.LastEnqueued().Header())
+	return types.CopyHeader(b.vm.exec.LastExecuted().Header())
 }
 
 func (b *ethAPIBackend) GetTd(context.Context, common.Hash) *big.Int {
@@ -170,19 +170,19 @@ func (b *ethAPIBackend) BlockByHash(ctx context.Context, hash common.Hash) (*typ
 	return readByHash(b, hash, rawdb.ReadBlock), nil
 }
 
-func (b *ethAPIBackend) HeaderByNumberOrHash(ctx context.Context, blockNrOrHash rpc.BlockNumberOrHash) (*types.Header, error) {
+func (b *ethAPIBackend) HeaderByNumberOrHash(ctx context.Context, blockNumOrHash rpc.BlockNumberOrHash) (*types.Header, error) {
 	return readByNumberOrHash(
 		ctx,
-		blockNrOrHash,
+		blockNumOrHash,
 		b.HeaderByNumber,
 		b.HeaderByHash,
 	)
 }
 
-func (b *ethAPIBackend) BlockByNumberOrHash(ctx context.Context, blockNrOrHash rpc.BlockNumberOrHash) (*types.Block, error) {
+func (b *ethAPIBackend) BlockByNumberOrHash(ctx context.Context, blockNumOrHash rpc.BlockNumberOrHash) (*types.Block, error) {
 	return readByNumberOrHash(
 		ctx,
-		blockNrOrHash,
+		blockNumOrHash,
 		b.BlockByNumber,
 		b.BlockByHash,
 	)
@@ -205,11 +205,7 @@ func readByNumber[T any](b *ethAPIBackend, n rpc.BlockNumber, read canonicalRead
 	} else if err != nil {
 		return nil, err
 	}
-	return read(
-		b.vm.db,
-		rawdb.ReadCanonicalHash(b.vm.db, num),
-		num,
-	), nil
+	return read(b.vm.db, rawdb.ReadCanonicalHash(b.vm.db, num), num), nil
 }
 
 func readByHash[T any](b *ethAPIBackend, hash common.Hash, read canonicalReader[T]) *T {
@@ -217,25 +213,21 @@ func readByHash[T any](b *ethAPIBackend, hash common.Hash, read canonicalReader[
 	if num == nil {
 		return nil
 	}
-	return read(
-		b.vm.db,
-		hash,
-		*num,
-	)
+	return read(b.vm.db, hash, *num)
 }
 
-var errNoBlockNorHash = errors.New("invalid arguments; neither block nor hash specified")
+var errNoBlockNorHash = errors.New("invalid arguments; neither block number nor hash specified")
 
 func readByNumberOrHash[T any](
 	ctx context.Context,
-	blockNrOrHash rpc.BlockNumberOrHash,
+	blockNumOrHash rpc.BlockNumberOrHash,
 	byNum func(context.Context, rpc.BlockNumber) (*T, error),
 	byHash func(context.Context, common.Hash) (*T, error),
 ) (*T, error) {
-	if blockNr, ok := blockNrOrHash.Number(); ok {
-		return byNum(ctx, blockNr)
+	if n, ok := blockNumOrHash.Number(); ok {
+		return byNum(ctx, n)
 	}
-	if hash, ok := blockNrOrHash.Hash(); ok {
+	if hash, ok := blockNumOrHash.Hash(); ok {
 		return byHash(ctx, hash)
 	}
 	return nil, errNoBlockNorHash
