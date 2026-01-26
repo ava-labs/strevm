@@ -18,11 +18,12 @@ import (
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/crypto"
 	"github.com/ava-labs/libevm/params"
+	"github.com/google/go-cmp/cmp"
 	"github.com/holiman/uint256"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/ava-labs/strevm/blocks"
+	"github.com/ava-labs/strevm/cmputils"
 	saeparams "github.com/ava-labs/strevm/params"
 	"github.com/ava-labs/strevm/saetest"
 )
@@ -165,42 +166,17 @@ func TestBlockGetters(t *testing.T) {
 func testRPCMethod[T any](ctx context.Context, t *testing.T, sut *SUT, method string, want T, args ...any) {
 	t.Helper()
 	t.Run(method, func(t *testing.T) {
-		var gotMessage json.RawMessage
-		t.Logf("%T.CallContext(ctx, %T, %q, %v...)", sut.rpcClient, gotMessage, method, args)
-		require.NoError(t, sut.CallContext(ctx, &gotMessage, method, args...))
+		var gotRawJSON json.RawMessage
+		t.Logf("%T.CallContext(ctx, %T, %q, %v...)", sut.rpcClient, gotRawJSON, method, args)
+		require.NoError(t, sut.CallContext(ctx, &gotRawJSON, method, args...))
+
 		var got T
-		require.NoError(t, json.Unmarshal(gotMessage, &got))
-		switch any(want).(type) {
-		case types.Header:
-			wantH := any(&want).(*types.Header) //nolint:forcetypeassert
-			gotH := any(&got).(*types.Header)   //nolint:forcetypeassert
-			compareHeaders(t, wantH, gotH)
-		default:
-			assert.Equal(t, want, got)
+		require.NoErrorf(t, json.Unmarshal(gotRawJSON, &got), "json.Unmarshal(..., %T)", &got)
+		opts := cmp.Options{
+			cmputils.Headers(),
+		}
+		if diff := cmp.Diff(want, got, opts...); diff != "" {
+			t.Errorf("Diff (-want +got):\n%s", diff)
 		}
 	})
-}
-
-func compareHeaders(t *testing.T, a, b *types.Header) {
-	t.Helper()
-	assert.Equal(t, a.ParentHash, b.ParentHash, "ParentHash")
-	assert.Equal(t, a.UncleHash, b.UncleHash, "UncleHash")
-	assert.Equal(t, a.Coinbase, b.Coinbase, "Coinbase")
-	assert.Equal(t, a.Root, b.Root, "Root")
-	assert.Equal(t, a.TxHash, b.TxHash, "TxHash")
-	assert.Equal(t, a.ReceiptHash, b.ReceiptHash, "ReceiptHash")
-	assert.Equal(t, a.Bloom, b.Bloom, "Bloom")
-	assert.Zerof(t, a.Difficulty.Cmp(b.Difficulty), "Difficulty: got %s, want %s", b.Difficulty.String(), a.Difficulty.String())
-	assert.Zerof(t, a.Number.Cmp(b.Number), "Number: got %s, want %s", b.Number.String(), a.Number.String())
-	assert.Equal(t, a.GasLimit, b.GasLimit, "GasLimit")
-	assert.Equal(t, a.GasUsed, b.GasUsed, "GasUsed")
-	assert.Equal(t, a.Time, b.Time, "Time")
-	assert.Equal(t, a.Extra, b.Extra, "Extra")
-	assert.Equal(t, a.MixDigest, b.MixDigest, "MixDigest")
-	assert.Equal(t, a.Nonce, b.Nonce, "Nonce")
-	assert.Zerof(t, a.BaseFee.Cmp(b.BaseFee), "BaseFee: got %s, want %s", b.BaseFee.String(), a.BaseFee.String())
-	assert.Equal(t, a.WithdrawalsHash, b.WithdrawalsHash, "WithdrawalsHash")
-	assert.Equal(t, a.BlobGasUsed, b.BlobGasUsed, "BlobGasUsed")
-	assert.Equal(t, a.ExcessBlobGas, b.ExcessBlobGas, "ExcessBlobGas")
-	assert.Equal(t, a.ParentBeaconRoot, b.ParentBeaconRoot, "ParentBeaconRoot")
 }
