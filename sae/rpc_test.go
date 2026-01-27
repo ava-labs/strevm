@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"math/big"
 	"testing"
+	"time"
 
 	"github.com/ava-labs/avalanchego/version"
 	"github.com/ava-labs/libevm/common"
@@ -18,10 +19,10 @@ import (
 	"github.com/ava-labs/libevm/rpc"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
-	"github.com/holiman/uint256"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/ava-labs/strevm/blocks"
 	"github.com/ava-labs/strevm/cmputils"
 	saeparams "github.com/ava-labs/strevm/params"
 	"github.com/ava-labs/strevm/saetest"
@@ -80,120 +81,90 @@ func TestNetNamespace(t *testing.T) {
 }
 
 func TestBlockGetters(t *testing.T) {
-	opt, vmTime := withVMTime()
-	vmTime.Advance(saeparams.Tau)
+	opt, vmTime := withVMTime(time.Unix(saeparams.TauSeconds, 0))
 
 	ctx, sut := newSUT(t, 1, opt)
 	genesis := sut.lastAcceptedBlock(t)
 
-	recipient := common.Address{1, 2, 3, 4}
-	transfer := uint256.NewInt(42)
 	createTx := func(t *testing.T) *types.Transaction {
 		t.Helper()
 		return sut.wallet.SetNonceAndSign(t, 0, &types.DynamicFeeTx{
-			To:        &recipient,
+			To:        &common.Address{},
 			Gas:       params.TxGas,
 			GasFeeCap: big.NewInt(1),
-			Value:     transfer.ToBig(),
 		})
 	}
 
-	onDisk := sut.createAndAcceptBlock(t, createTx(t)) // a block will be settled after this one
-	settledBlock := sut.createAndAcceptBlock(t, createTx(t))
-	require.NoErrorf(t, settledBlock.WaitUntilExecuted(ctx), "%T.WaitUntilSettled()", settledBlock)
-	vmTime.Set(settledBlock.ExecutedByGasTime().AsTime().Add(saeparams.Tau)) // ensure it will be finalized
-	executedBlock := sut.createAndAcceptBlock(t, createTx(t))
-	require.NoErrorf(t, executedBlock.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", executedBlock)
+	// Once a block is settled, its ancestors are only accessible from the
+	// database.
+	onDisk := sut.createAndAcceptBlock(t, createTx(t))
+
+	settled := sut.createAndAcceptBlock(t, createTx(t))
+	require.NoErrorf(t, settled.WaitUntilExecuted(ctx), "%T.WaitUntilSettled()", settled)
+	vmTime.set(settled.ExecutedByGasTime().AsTime().Add(saeparams.Tau)) // ensure it will be settled
+
+	executed := sut.createAndAcceptBlock(t, createTx(t))
+	require.NoErrorf(t, executed.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", executed)
 
 	cmpOpts := cmp.Options{
-		cmputils.EthBlocks(),
+		cmputils.Blocks(),
 		cmputils.Headers(),
 		cmpopts.EquateEmpty(),
 	}
-	//nolint:thelper // not a test helper
-	ethclientTests := func(t *testing.T, wantBlock *types.Block) {
-		t.Run("BlockByHash", func(t *testing.T) {
-			gotBlock, err := sut.BlockByHash(ctx, wantBlock.Hash())
-			require.NoErrorf(t, err, "BlockByHash(ctx, %s)", wantBlock.Hash())
-			if diff := cmp.Diff(wantBlock, gotBlock, cmpOpts...); diff != "" {
-				t.Errorf("Diff (-want +got):\n%s", diff)
-			}
-		})
 
-		t.Run("BlockByNumber", func(t *testing.T) {
-			gotBlock, err := sut.BlockByNumber(ctx, new(big.Int).SetUint64(wantBlock.NumberU64()))
-			require.NoErrorf(t, err, "BlockByNumber(ctx, %d)", wantBlock.NumberU64())
-			if diff := cmp.Diff(wantBlock, gotBlock, cmpOpts...); diff != "" {
-				t.Errorf("Diff (-want +got):\n%s", diff)
-			}
-		})
+	for _, b := range []*blocks.Block{genesis, onDisk, settled, executed} {
+		t.Run(fmt.Sprintf("block_num_%d", b.Height()), func(t *testing.T) {
+			ethB := b.EthBlock()
 
-		t.Run("HeaderByHash", func(t *testing.T) {
-			gotHeader, err := sut.HeaderByHash(ctx, wantBlock.Hash())
-			require.NoErrorf(t, err, "HeaderByHash(ctx, %s)", wantBlock.Hash())
-			if diff := cmp.Diff(wantBlock.Header(), gotHeader, cmpOpts...); diff != "" {
-				t.Errorf("Diff (-want +got):\n%s", diff)
-			}
-		})
+			testRPCGetter(ctx, t, "BlockByHash", sut.BlockByHash, ethB.Hash(), ethB, cmpOpts...)
+			testRPCGetter(ctx, t, "BlockByNumber", sut.BlockByNumber, ethB.Number(), ethB, cmpOpts...)
+			testRPCGetter(ctx, t, "HeaderByHash", sut.HeaderByHash, ethB.Hash(), ethB.Header(), cmpOpts...)
+			testRPCGetter(ctx, t, "HeaderByNumber", sut.HeaderByNumber, ethB.Number(), ethB.Header(), cmpOpts...)
 
-		t.Run("HeaderByNumber", func(t *testing.T) {
-			gotHeader, err := sut.HeaderByNumber(ctx, new(big.Int).SetUint64(wantBlock.NumberU64()))
-			require.NoErrorf(t, err, "HeaderByNumber(ctx, %d)", wantBlock.NumberU64())
-			if diff := cmp.Diff(wantBlock.Header(), gotHeader, cmpOpts...); diff != "" {
-				t.Errorf("Diff (-want +got):\n%s", diff)
-			}
-		})
-
-		t.Run("GetTransaction", func(t *testing.T) {
-			for _, wantTx := range wantBlock.Transactions() {
-				gotTx, isPending, err := sut.TransactionByHash(ctx, wantTx.Hash())
-				require.NoErrorf(t, err, "GetTransaction(ctx, %s)", wantTx.Hash())
-				require.Falsef(t, isPending, "GetTransaction(...): isPending for %s", wantTx.Hash())
-				if diff := cmp.Diff(wantTx, gotTx, cmputils.TransactionsByHash()); diff != "" {
-					t.Errorf("Diff (-want +got) for %s:\n%s", wantTx.Hash(), diff)
+			t.Run("TransactionByHash", func(t *testing.T) {
+				for _, want := range ethB.Transactions() {
+					t.Run(want.Hash().String(), func(t *testing.T) {
+						got, isPending, err := sut.TransactionByHash(ctx, want.Hash())
+						require.NoError(t, err)
+						assert.False(t, isPending, "pending")
+						if diff := cmp.Diff(want, got, cmputils.TransactionsByHash()); diff != "" {
+							t.Errorf("Diff (-want +got):\n%s", diff)
+						}
+					})
 				}
-			}
+			})
 		})
 	}
 
-	t.Run("genesis block", func(t *testing.T) {
-		ethclientTests(t, genesis.EthBlock())
+	t.Run("named_blocks", func(t *testing.T) {
+		tests := []struct {
+			num  rpc.BlockNumber
+			want *blocks.Block
+		}{
+			{rpc.LatestBlockNumber, executed},
+			// TODO(arr4n) add a test for pending
+			{rpc.SafeBlockNumber, settled},
+			{rpc.FinalizedBlockNumber, settled},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.num.String(), func(t *testing.T) {
+				testRPCGetter(ctx, t, "BlockByNumber", sut.BlockByNumber, big.NewInt(tt.num.Int64()), tt.want.EthBlock(), cmpOpts...)
+				testRPCGetter(ctx, t, "HeaderByNumber", sut.HeaderByNumber, big.NewInt(tt.num.Int64()), tt.want.Header(), cmpOpts...)
+			})
+		}
 	})
+}
 
-	t.Run("on-disk block", func(t *testing.T) {
-		ethclientTests(t, onDisk.EthBlock())
-	})
-
-	t.Run("settled block", func(t *testing.T) {
-		ethclientTests(t, settledBlock.EthBlock())
-
-		t.Run("BlockByNumber Finalized", func(t *testing.T) {
-			gotBlock, err := sut.BlockByNumber(ctx, big.NewInt(int64(rpc.FinalizedBlockNumber)))
-			require.NoErrorf(t, err, "BlockByNumber(ctx, %d)", rpc.FinalizedBlockNumber)
-			if diff := cmp.Diff(settledBlock.EthBlock(), gotBlock, cmpOpts...); diff != "" {
-				t.Errorf("Diff (-want +got):\n%s", diff)
-			}
-		})
-
-		t.Run("BlockByNumber Safe", func(t *testing.T) {
-			gotBlock, err := sut.BlockByNumber(ctx, big.NewInt(int64(rpc.SafeBlockNumber)))
-			require.NoErrorf(t, err, "BlockByNumber(ctx, %d)", rpc.SafeBlockNumber)
-			if diff := cmp.Diff(settledBlock.EthBlock(), gotBlock, cmpOpts...); diff != "" {
-				t.Errorf("Diff (-want +got):\n%s", diff)
-			}
-		})
-	})
-
-	t.Run("executed but not settled block", func(t *testing.T) {
-		ethclientTests(t, executedBlock.EthBlock())
-
-		t.Run("BlockByNumber Latest", func(t *testing.T) {
-			gotBlock, err := sut.BlockByNumber(ctx, big.NewInt(int64(rpc.LatestBlockNumber)))
-			require.NoErrorf(t, err, "BlockByNumber(ctx, %d)", rpc.LatestBlockNumber)
-			if diff := cmp.Diff(executedBlock.EthBlock(), gotBlock, cmpOpts...); diff != "" {
-				t.Errorf("Diff (-want +got):\n%s", diff)
-			}
-		})
+func testRPCGetter[Arg any, T any](ctx context.Context, t *testing.T, funcName string, get func(context.Context, Arg) (T, error), arg Arg, want T, opts ...cmp.Option) {
+	t.Helper()
+	t.Run(funcName, func(t *testing.T) {
+		got, err := get(ctx, arg)
+		t.Logf("%s(ctx, %v)", funcName, arg)
+		require.NoErrorf(t, err, "%s(%v)", funcName, arg)
+		if diff := cmp.Diff(want, got, opts...); diff != "" {
+			t.Errorf("%s(%v) diff (-want +got):\n%s", funcName, arg, diff)
+		}
 	})
 }
 

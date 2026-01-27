@@ -187,32 +187,32 @@ func (s *SUT) CallContext(ctx context.Context, result any, method string, args .
 }
 
 type vmTime struct {
-	now time.Time
+	time.Time
 }
 
-func (t *vmTime) Now() time.Time {
-	return t.now
+func (t *vmTime) now() time.Time {
+	return t.Time
 }
 
-func (t *vmTime) Set(n time.Time) {
-	t.now = n
+func (t *vmTime) set(n time.Time) {
+	t.Time = n
 }
 
-func (t *vmTime) Advance(d time.Duration) {
-	t.now = t.now.Add(d)
+func (t *vmTime) advance(d time.Duration) {
+	t.Time = t.Time.Add(d)
 }
 
 // withVMTime returns an option to configure a new SUT's "now" function along
 // with a struct to access and set the time at nanosecond resolution.
-func withVMTime() (sutOption, *vmTime) {
+func withVMTime(startTime time.Time) (sutOption, *vmTime) {
 	t := &vmTime{
-		now: time.Unix(1000, 0),
+		Time: startTime,
 	}
 	opt := options.Func[sutConfig](func(c *sutConfig) {
 		// TODO(StephenButtolph) unify the time functions provided in the config
 		// and the hooks.
-		c.vmConfig.Now = t.Now
-		c.hooks.Now = t.Now
+		c.vmConfig.Now = t.now
+		c.hooks.Now = t.now
 	})
 
 	return opt, t
@@ -260,15 +260,24 @@ func (s *SUT) syncMempool(tb testing.TB) {
 
 // requireInMempool requires that the transaction with the specified hash is
 // eventually in the mempool. It calls [SUT.syncMempool] before every check.
-func (s *SUT) requireInMempool(tb testing.TB, tx common.Hash) {
+func (s *SUT) requireInMempool(tb testing.TB, txs ...common.Hash) {
 	tb.Helper()
 	in := func() bool {
 		s.syncMempool(tb)
-		return s.rawVM.mempool.Pool.Has(tx)
+		for i, tx := range txs {
+			if !s.rawVM.mempool.Pool.Has(tx) {
+				tb.Logf("tx %d:%v not in mempool", i, tx)
+				return false
+			}
+		}
+		return true
 	}
-	require.Eventuallyf(tb, in, 250*time.Millisecond, 25*time.Millisecond, "tx %v in mempool", tx)
+	require.Eventuallyf(tb, in, 250*time.Millisecond, 25*time.Millisecond, "expected all of txs [%v] to be in mempool", txs)
 }
 
+// createAndAcceptBlock sends all of the transactions to the mempool, asserts
+// that they are present, then returns the result of [SUT.runConsensusLoop] with
+// [SUT.lastAcceptedBlock] as its argument.
 func (s *SUT) createAndAcceptBlock(tb testing.TB, txs ...*types.Transaction) *blocks.Block {
 	tb.Helper()
 
@@ -517,8 +526,7 @@ func TestAcceptBlock(t *testing.T) {
 		require.Zero(t, blocks.InMemoryBlockCount(), "initial in-memory block count")
 	}, 100*time.Millisecond, time.Millisecond)
 
-	opt, vmTime := withVMTime()
-	vmTime.Advance(saeparams.Tau)
+	opt, vmTime := withVMTime(time.Unix(saeparams.TauSeconds, 0))
 
 	ctx, sut := newSUT(t, 1, opt)
 	// Causes [VM.AcceptBlock] to wait until the block has executed.
@@ -533,7 +541,7 @@ func TestAcceptBlock(t *testing.T) {
 	rng := rand.New(rand.NewPCG(0, 0)) //nolint:gosec // Reproducibility is useful for tests
 	for range 100 {
 		ffMillis := 100 + rng.IntN(1000*(1+saeparams.TauSeconds))
-		vmTime.Advance(time.Millisecond * time.Duration(ffMillis))
+		vmTime.advance(time.Millisecond * time.Duration(ffMillis))
 
 		b := sut.runConsensusLoop(t, last())
 		unsettled = append(unsettled, b)

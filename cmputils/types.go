@@ -43,12 +43,13 @@ func ReceiptsByTxHash() cmp.Option {
 	})
 }
 
-// EthBlocks returns a set of [cmp.Options] for comparing [types.Block] values.
-// You must also use [Headers] to compare the block headers.
-func EthBlocks() cmp.Option {
+// Blocks returns a set of [cmp.Options] for comparing [types.Block] values.
+// The [Headers] option MUST be used alongside this but isn't included
+// automatically, to avoid duplication.
+func Blocks() cmp.Option {
 	return cmp.Options{
-		cmp.AllowUnexported(types.Block{}, types.Header{}),
-		cmpopts.IgnoreFields(types.Block{}, "ReceivedAt", "ReceivedFrom", "hash", "size", "extra"),
+		cmp.AllowUnexported(types.Block{}),
+		cmpopts.IgnoreFields(types.Block{}, "hash", "size", "extra"),
 		IfIn[types.Block](TransactionsByHash()),
 	}
 }
