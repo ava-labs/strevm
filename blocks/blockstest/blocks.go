@@ -124,9 +124,11 @@ func NewGenesis(tb testing.TB, db ethdb.Database, config *params.ChainConfig, al
 	require.NoErrorf(tb, tdb.Commit(hash, true), "%T.Commit(core.SetupGenesisBlock(...))", tdb)
 
 	b := NewBlock(tb, gen.ToBlock(), nil, nil)
+	tm, err := gastime.New(gen.Timestamp, conf.gasTarget, conf.gasExcess)
+	require.NoError(tb, err)
 	require.NoErrorf(tb, b.MarkExecuted(
 		db,
-		gastime.New(gen.Timestamp, conf.gasTarget, conf.gasExcess),
+		tm,
 		time.Time{},
 		new(big.Int),
 		nil,

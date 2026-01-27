@@ -58,7 +58,9 @@ func TestSettlementInvariants(t *testing.T) {
 
 	db := rawdb.NewMemoryDatabase()
 	for _, b := range []*Block{b, parent, lastSettled} {
-		b.markExecutedForTests(t, db, gastime.New(b.BuildTime(), 1, 0))
+		tm, err := gastime.New(b.BuildTime(), 1, 0)
+		require.NoError(t, err)
+		b.markExecutedForTests(t, db, tm)
 	}
 
 	t.Run("before_MarkSettled", func(t *testing.T) {
@@ -216,7 +218,8 @@ func TestLastToSettleAt(t *testing.T) {
 	})
 
 	db := rawdb.NewMemoryDatabase()
-	tm := gastime.New(0, 5 /*target*/, 0)
+	tm, err := gastime.New(0, 5 /*target*/, 0)
+	require.NoError(t, err)
 	require.Equal(t, gas.Gas(10), tm.Rate())
 
 	requireTime := func(t *testing.T, sec uint64, numerator gas.Gas) {

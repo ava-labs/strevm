@@ -142,9 +142,11 @@ type GasConfig struct {
 	// TargetToExcessScaling is the ratio between the gas target and the
 	// reciprocal of the excess coefficient used in price calculation
 	// (K variable in ACP-176, where K = TargetToExcessScaling * T).
-	TargetToExcessScaling gas.Gas
+	// A nil value means "don't change".
+	TargetToExcessScaling *gas.Gas
 	// MinPrice is the minimum gas price / base fee (M parameter in ACP-176).
-	MinPrice gas.Price
+	// A nil value means "don't change".
+	MinPrice *gas.Price
 }
 
 // MinimumGasConsumption MUST be used as the implementation for the respective

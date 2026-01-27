@@ -24,7 +24,8 @@ func TestTargetUpdateTiming(t *testing.T) {
 		initialTarget gas.Gas = 1_600_000
 		initialExcess         = 1_234_567_890
 	)
-	tm := New(initialTime, initialTarget, initialExcess)
+	tm, err := New(initialTime, initialTarget, initialExcess)
+	require.NoError(t, err)
 	initialRate := tm.Rate()
 
 	const (
@@ -76,8 +77,10 @@ func FuzzWorstCasePrice(f *testing.F) {
 	) {
 		initTarget = max(initTarget, 1)
 
-		worstcase := New(initTimestamp, gas.Gas(initTarget), gas.Gas(initExcess))
-		actual := New(initTimestamp, gas.Gas(initTarget), gas.Gas(initExcess))
+		worstcase, err := New(initTimestamp, gas.Gas(initTarget), gas.Gas(initExcess))
+		require.NoError(t, err)
+		actual, err := New(initTimestamp, gas.Gas(initTarget), gas.Gas(initExcess))
+		require.NoError(t, err)
 
 		blocks := []struct {
 			time   uint64

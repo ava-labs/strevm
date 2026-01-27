@@ -26,7 +26,8 @@ func (tm *Time) cloneViaCanotoRoundTrip(tb testing.TB) *Time {
 }
 
 func TestClone(t *testing.T) {
-	tm := New(42, 1e6, 1e5)
+	tm, err := New(42, 1e6, 1e5)
+	require.NoError(t, err)
 	tm.Tick(1)
 
 	if diff := cmp.Diff(tm, tm.Clone(), CmpOpt()); diff != "" {
@@ -78,7 +79,8 @@ func (tm *Time) mustSetTarget(tb testing.TB, target gas.Gas) {
 
 func TestScaling(t *testing.T) {
 	const initExcess = gas.Gas(1_234_567_890)
-	tm := New(42, 1.6e6, initExcess)
+	tm, err := New(42, 1.6e6, initExcess)
+	require.NoError(t, err)
 
 	// The initial price isn't important in this test; what we care about is
 	// that it's invariant under scaling of the target etc.
@@ -154,7 +156,8 @@ func TestScaling(t *testing.T) {
 
 func TestExcess(t *testing.T) {
 	const rate = gas.Gas(3.2e6)
-	tm := New(42, rate/2, 0)
+	tm, err := New(42, rate/2, 0)
+	require.NoError(t, err)
 
 	frac := func(num gas.Gas) (f proxytime.FractionalSecond[gas.Gas]) {
 		f.Numerator = num
@@ -298,7 +301,8 @@ func TestExcessScalingFactor(t *testing.T) {
 		{max, max},
 	}
 
-	tm := New(0, 1, 0)
+	tm, err := New(0, 1, 0)
+	require.NoError(t, err)
 	for _, tt := range tests {
 		require.NoErrorf(t, tm.SetTarget(tt.target), "%T.SetTarget(%v)", tm, tt.target)
 		assert.Equalf(t, tt.want, tm.excessScalingFactor(), "T = %d", tt.target)
@@ -306,7 +310,8 @@ func TestExcessScalingFactor(t *testing.T) {
 }
 
 func TestTargetClamping(t *testing.T) {
-	tm := New(0, MaxTarget+1, 0)
+	tm, err := New(0, MaxTarget+1, 0)
+	require.NoError(t, err)
 	require.Equal(t, MaxTarget, tm.Target(), "tm.Target() clamped by constructor")
 
 	tests := []struct {

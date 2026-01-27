@@ -52,7 +52,9 @@ func TestMarkExecuted(t *testing.T) {
 	rawdb.WriteBlock(db, ethB)
 
 	settles := newBlock(t, newEthBlock(0, 0, nil), nil, nil)
-	settles.markExecutedForTests(t, db, gastime.New(0, 1, 0))
+	tm, err := gastime.New(0, 1, 0)
+	require.NoError(t, err)
+	settles.markExecutedForTests(t, db, tm)
 	b := newBlock(t, ethB, nil, settles)
 
 	t.Run("before_MarkExecuted", func(t *testing.T) {
@@ -85,7 +87,8 @@ func TestMarkExecuted(t *testing.T) {
 		}
 	})
 
-	gasTime := gastime.New(42, 1e6, 42)
+	gasTime, err := gastime.New(42, 1e6, 42)
+	require.NoError(t, err)
 	wallTime := time.Unix(42, 100)
 	stateRoot := common.Hash{'s', 't', 'a', 't', 'e'}
 	baseFee := big.NewInt(314159)
