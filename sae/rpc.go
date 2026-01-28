@@ -67,7 +67,21 @@ func (vm *VM) ethRPCServer() (*rpc.Server, error) {
 		// - txpool_status
 		{"txpool", ethapi.NewTxPoolAPI(b)},
 
+		// Standard Ethereum node APIs:
+		// - eth_blockNumber
+		// - eth_getBlockByHash
+		// - eth_getBlockByNumber
+		//
+		// Geth-specific APIs:
+		// - eth_getHeaderByHash
+		// - eth_getHeaderByNumber
 		{"eth", ethapi.NewBlockChainAPI(b)},
+		// Standard Ethereum node APIs:
+		// - eth_getBlockTransactionCountByHash
+		// - eth_getBlockTransactionCountByNumber
+		// - eth_getTransactionByBlockHashAndIndex
+		// - eth_getTransactionByBlockNumberAndIndex
+		// - eth_getTransactionByHash
 		{"eth", ethapi.NewTransactionAPI(b, new(ethapi.AddrLocker))},
 		{"eth", filterAPI},
 	}
@@ -166,6 +180,28 @@ func (b *ethAPIBackend) BlockByNumber(ctx context.Context, n rpc.BlockNumber) (*
 	return readByNumber(b, n, rawdb.ReadBlock)
 }
 
+func (b *ethAPIBackend) HeaderByHash(ctx context.Context, hash common.Hash) (*types.Header, error) {
+	if b, ok := b.vm.blocks.Load(hash); ok {
+		return b.Header(), nil
+	}
+	return readByHash(b, hash, rawdb.ReadHeader), nil
+}
+
+func (b *ethAPIBackend) BlockByHash(ctx context.Context, hash common.Hash) (*types.Block, error) {
+	if b, ok := b.vm.blocks.Load(hash); ok {
+		return b.EthBlock(), nil
+	}
+	return readByHash(b, hash, rawdb.ReadBlock), nil
+}
+
+func (b *ethAPIBackend) GetTransaction(ctx context.Context, txHash common.Hash) (exists bool, tx *types.Transaction, blockHash common.Hash, blockNumber uint64, index uint64, err error) {
+	tx, blockHash, blockNumber, index = rawdb.ReadTransaction(b.vm.db, txHash)
+	if tx == nil {
+		return false, nil, common.Hash{}, 0, 0, nil
+	}
+	return true, tx, blockHash, blockNumber, index, nil
+}
+
 type canonicalReader[T any] func(ethdb.Reader, common.Hash, uint64) *T
 
 func readByNumber[T any](b *ethAPIBackend, n rpc.BlockNumber, read canonicalReader[T]) (*T, error) {
@@ -175,11 +211,15 @@ func readByNumber[T any](b *ethAPIBackend, n rpc.BlockNumber, read canonicalRead
 	} else if err != nil {
 		return nil, err
 	}
-	return read(
-		b.vm.db,
-		rawdb.ReadCanonicalHash(b.vm.db, num),
-		num,
-	), nil
+	return read(b.vm.db, rawdb.ReadCanonicalHash(b.vm.db, num), num), nil
+}
+
+func readByHash[T any](b *ethAPIBackend, hash common.Hash, read canonicalReader[T]) *T {
+	num := rawdb.ReadHeaderNumber(b.vm.db, hash)
+	if num == nil {
+		return nil
+	}
+	return read(b.vm.db, hash, *num)
 }
 
 var errFutureBlockNotResolved = errors.New("not accepted yet")

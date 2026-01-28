@@ -8,8 +8,8 @@ import (
 	"fmt"
 	"math/big"
 	"testing"
+	"time"
 
-	"github.com/ava-labs/avalanchego/utils"
 	"github.com/ava-labs/avalanchego/version"
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/common/hexutil"
@@ -17,11 +17,15 @@ import (
 	"github.com/ava-labs/libevm/crypto"
 	"github.com/ava-labs/libevm/libevm/ethapi"
 	"github.com/ava-labs/libevm/params"
+	"github.com/ava-labs/libevm/rpc"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/ava-labs/strevm/blocks"
 	"github.com/ava-labs/strevm/cmputils"
+	saeparams "github.com/ava-labs/strevm/params"
 	"github.com/ava-labs/strevm/saetest"
 )
 
@@ -96,36 +100,18 @@ func TestTxPoolNamespace(t *testing.T) {
 		queuedAccount  = 1
 	)
 	pendingTx := makeTx(pendingAccount)
+	pendingRPCTx := ethapi.NewRPCPendingTransaction(pendingTx, nil, saetest.ChainConfig())
 
 	_ = makeTx(queuedAccount) // skip the nonce to gap the mempool
 	queuedTx := makeTx(queuedAccount)
+	queuedRPCTx := ethapi.NewRPCPendingTransaction(queuedTx, nil, saetest.ChainConfig())
 
 	sut.mustSendTx(t, pendingTx)
 	sut.mustSendTx(t, queuedTx)
 	sut.syncMempool(t)
 
-	txToRPC := func(from common.Address, tx *types.Transaction) *ethapi.RPCTransaction {
-		v, r, s := tx.RawSignatureValues()
-		return &ethapi.RPCTransaction{
-			From:      from,
-			Gas:       hexutil.Uint64(tx.Gas()),
-			GasPrice:  (*hexutil.Big)(tx.GasPrice()),
-			GasFeeCap: (*hexutil.Big)(tx.GasFeeCap()),
-			GasTipCap: (*hexutil.Big)(tx.GasTipCap()),
-			Hash:      tx.Hash(),
-			Input:     hexutil.Bytes(tx.Data()),
-			Nonce:     hexutil.Uint64(tx.Nonce()),
-			To:        tx.To(),
-			Value:     (*hexutil.Big)(tx.Value()),
-			Type:      hexutil.Uint64(tx.Type()),
-			Accesses:  utils.PointerTo(tx.AccessList()),
-			ChainID:   (*hexutil.Big)(tx.ChainId()),
-			V:         (*hexutil.Big)(v),
-			R:         (*hexutil.Big)(r),
-			S:         (*hexutil.Big)(s),
-			YParity:   utils.PointerTo(hexutil.Uint64(v.Sign())), //nolint:gosec // Won't overflow
-		}
-	}
+	// TODO: This formatting is copied from libevm, consider exposing it somehow
+	// or removing the dependency on the exact format.
 	txToSummary := func(tx *types.Transaction) string {
 		return fmt.Sprintf("%s: %d wei + %d gas × %d wei",
 			tx.To(),
@@ -138,26 +124,26 @@ func TestTxPoolNamespace(t *testing.T) {
 	testRPCMethod(ctx, t, sut, "txpool_content", map[string]map[string]map[string]*ethapi.RPCTransaction{
 		"pending": {
 			addresses[pendingAccount].Hex(): {
-				"0": txToRPC(addresses[pendingAccount], pendingTx),
+				"0": pendingRPCTx,
 			},
 		},
 		"queued": {
 			addresses[queuedAccount].Hex(): {
-				"1": txToRPC(addresses[queuedAccount], queuedTx),
+				"1": queuedRPCTx,
 			},
 		},
 	})
 
 	testRPCMethod(ctx, t, sut, "txpool_contentFrom", map[string]map[string]*ethapi.RPCTransaction{
 		"pending": {
-			"0": txToRPC(addresses[pendingAccount], pendingTx),
+			"0": pendingRPCTx,
 		},
 		"queued": {},
 	}, addresses[pendingAccount])
 	testRPCMethod(ctx, t, sut, "txpool_contentFrom", map[string]map[string]*ethapi.RPCTransaction{
 		"pending": {},
 		"queued": {
-			"1": txToRPC(addresses[queuedAccount], queuedTx),
+			"1": queuedRPCTx,
 		},
 	}, addresses[queuedAccount])
 
@@ -177,6 +163,94 @@ func TestTxPoolNamespace(t *testing.T) {
 	testRPCMethod(ctx, t, sut, "txpool_status", map[string]hexutil.Uint{
 		"pending": 1,
 		"queued":  1,
+	})
+}
+
+func TestBlockGetters(t *testing.T) {
+	opt, vmTime := withVMTime(time.Unix(saeparams.TauSeconds, 0))
+
+	ctx, sut := newSUT(t, 1, opt)
+	genesis := sut.lastAcceptedBlock(t)
+
+	createTx := func(t *testing.T) *types.Transaction {
+		t.Helper()
+		return sut.wallet.SetNonceAndSign(t, 0, &types.DynamicFeeTx{
+			To:        &common.Address{},
+			Gas:       params.TxGas,
+			GasFeeCap: big.NewInt(1),
+		})
+	}
+
+	// Once a block is settled, its ancestors are only accessible from the
+	// database.
+	onDisk := sut.createAndAcceptBlock(t, createTx(t))
+
+	settled := sut.createAndAcceptBlock(t, createTx(t))
+	require.NoErrorf(t, settled.WaitUntilExecuted(ctx), "%T.WaitUntilSettled()", settled)
+	vmTime.set(settled.ExecutedByGasTime().AsTime().Add(saeparams.Tau)) // ensure it will be settled
+
+	executed := sut.createAndAcceptBlock(t, createTx(t))
+	require.NoErrorf(t, executed.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", executed)
+
+	cmpOpts := cmp.Options{
+		cmputils.Blocks(),
+		cmputils.Headers(),
+		cmpopts.EquateEmpty(),
+	}
+
+	for _, b := range []*blocks.Block{genesis, onDisk, settled, executed} {
+		t.Run(fmt.Sprintf("block_num_%d", b.Height()), func(t *testing.T) {
+			ethB := b.EthBlock()
+
+			testRPCGetter(ctx, t, "BlockByHash", sut.BlockByHash, ethB.Hash(), ethB, cmpOpts...)
+			testRPCGetter(ctx, t, "BlockByNumber", sut.BlockByNumber, ethB.Number(), ethB, cmpOpts...)
+			testRPCGetter(ctx, t, "HeaderByHash", sut.HeaderByHash, ethB.Hash(), ethB.Header(), cmpOpts...)
+			testRPCGetter(ctx, t, "HeaderByNumber", sut.HeaderByNumber, ethB.Number(), ethB.Header(), cmpOpts...)
+
+			t.Run("TransactionByHash", func(t *testing.T) {
+				for _, want := range ethB.Transactions() {
+					t.Run(want.Hash().String(), func(t *testing.T) {
+						got, isPending, err := sut.TransactionByHash(ctx, want.Hash())
+						require.NoError(t, err)
+						assert.False(t, isPending, "pending")
+						if diff := cmp.Diff(want, got, cmputils.TransactionsByHash()); diff != "" {
+							t.Errorf("Diff (-want +got):\n%s", diff)
+						}
+					})
+				}
+			})
+		})
+	}
+
+	t.Run("named_blocks", func(t *testing.T) {
+		tests := []struct {
+			num  rpc.BlockNumber
+			want *blocks.Block
+		}{
+			{rpc.LatestBlockNumber, executed},
+			// TODO(arr4n) add a test for pending
+			{rpc.SafeBlockNumber, settled},
+			{rpc.FinalizedBlockNumber, settled},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.num.String(), func(t *testing.T) {
+				testRPCGetter(ctx, t, "BlockByNumber", sut.BlockByNumber, big.NewInt(tt.num.Int64()), tt.want.EthBlock(), cmpOpts...)
+				testRPCGetter(ctx, t, "HeaderByNumber", sut.HeaderByNumber, big.NewInt(tt.num.Int64()), tt.want.Header(), cmpOpts...)
+			})
+		}
+	})
+}
+
+func testRPCGetter[Arg any, T any](ctx context.Context, t *testing.T, funcName string, get func(context.Context, Arg) (T, error), arg Arg, want T, opts ...cmp.Option) {
+	t.Helper()
+	t.Run(funcName, func(t *testing.T) {
+		got, err := get(ctx, arg)
+		t.Logf("%s(ctx, %v)", funcName, arg)
+		require.NoErrorf(t, err, "%s(%v)", funcName, arg)
+		if diff := cmp.Diff(want, got, opts...); diff != "" {
+			t.Errorf("%s(%v) diff (-want +got):\n%s", funcName, arg, diff)
+		}
 	})
 }
 
