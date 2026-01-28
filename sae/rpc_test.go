@@ -195,8 +195,8 @@ func TestEthGetters(t *testing.T) {
 	for _, b := range []*blocks.Block{genesis, onDisk, settled, executed} {
 		t.Run(fmt.Sprintf("block_num_%d", b.Height()), func(t *testing.T) {
 			ethB := b.EthBlock()
-			getByHash(ctx, t, sut, ethB)
-			getByNumber(ctx, t, sut, ethB, rpc.BlockNumber(b.Number().Int64()))
+			testGetByHash(ctx, t, sut, ethB)
+			testGetByNumber(ctx, t, sut, ethB, rpc.BlockNumber(b.Number().Int64()))
 		})
 	}
 
@@ -213,7 +213,7 @@ func TestEthGetters(t *testing.T) {
 
 		for _, tt := range tests {
 			t.Run(tt.num.String(), func(t *testing.T) {
-				getByNumber(ctx, t, sut, tt.want.EthBlock(), tt.num)
+				testGetByNumber(ctx, t, sut, tt.want.EthBlock(), tt.num)
 			})
 		}
 
@@ -221,7 +221,7 @@ func TestEthGetters(t *testing.T) {
 	})
 }
 
-func getByHash(ctx context.Context, t *testing.T, sut *SUT, want *types.Block) {
+func testGetByHash(ctx context.Context, t *testing.T, sut *SUT, want *types.Block) {
 	t.Helper()
 	cmpOpts := []cmp.Option{
 		cmputils.Blocks(),
@@ -251,7 +251,7 @@ func getByHash(ctx context.Context, t *testing.T, sut *SUT, want *types.Block) {
 	}
 }
 
-func getByNumber(ctx context.Context, t *testing.T, sut *SUT, block *types.Block, n rpc.BlockNumber) {
+func testGetByNumber(ctx context.Context, t *testing.T, sut *SUT, block *types.Block, n rpc.BlockNumber) {
 	t.Helper()
 	cmpOpts := []cmp.Option{
 		cmputils.Blocks(),
