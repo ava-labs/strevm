@@ -60,8 +60,21 @@ func (vm *VM) ethRPCServer() (*rpc.Server, error) {
 		// - net_peerCount
 		// - net_version
 		{"net", newNetAPI(vm.peers, vm.exec.ChainConfig().ChainID.Uint64())},
-
+		// Standard Ethereum node APIs:
+		// - eth_blockNumber
+		// - eth_getBlockByHash
+		// - eth_getBlockByNumber
+		//
+		// Geth-specific APIs:
+		// - eth_getHeaderByHash
+		// - eth_getHeaderByNumber
 		{"eth", ethapi.NewBlockChainAPI(b)},
+		// Standard Ethereum node APIs:
+		// - eth_getBlockTransactionCountByHash
+		// - eth_getBlockTransactionCountByNumber
+		// - eth_getTransactionByBlockHashAndIndex
+		// - eth_getTransactionByBlockNumberAndIndex
+		// - eth_getTransactionByHash
 		{"eth", ethapi.NewTransactionAPI(b, new(ethapi.AddrLocker))},
 		{"eth", filterAPI},
 	}
