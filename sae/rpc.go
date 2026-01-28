@@ -208,10 +208,7 @@ func (b *ethAPIBackend) GetBody(ctx context.Context, hash common.Hash, number rp
 	if block, ok := b.vm.blocks.Load(hash); ok {
 		return block.EthBlock().Body(), nil
 	}
-
-	// Fall back to database for settled blocks
-	body := readByHash(b, hash, rawdb.ReadBody)
-	return body, nil
+	return rawdb.ReadBody(b.vm.db, hash, uint64(number)), nil
 }
 
 type canonicalReader[T any] func(ethdb.Reader, common.Hash, uint64) *T
