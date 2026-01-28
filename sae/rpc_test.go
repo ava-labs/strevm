@@ -244,7 +244,7 @@ func TestEthGettersEdgeCases(t *testing.T) {
 
 	nonExistentHash := common.HexToHash("0x6A6F6E617468616E206F7070656E6865696D6572207761732068657265")
 	nonExistentTxHash := common.HexToHash("0x6A6F6E617468616E206F7070656E6865696D6572207761732068657265")
-	futureBlockNum := rpc.BlockNumber(blockWithTx.Height() + 1234)
+	futureBlockNum := rpc.BlockNumber(blockWithTx.Height() + 1234) //nolint:gosec // test height will never overflow
 	ethBlock := blockWithTx.EthBlock()
 	outOfBoundsIndex := hexutil.Uint(len(ethBlock.Transactions()) + 147) //nolint:gosec // intentionally out of bounds
 	genesisBlock := genesis.EthBlock()
