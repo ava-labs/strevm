@@ -205,6 +205,9 @@ func (b *ethAPIBackend) GetTransaction(ctx context.Context, txHash common.Hash) 
 }
 
 func (b *ethAPIBackend) GetBody(ctx context.Context, hash common.Hash, number rpc.BlockNumber) (*types.Body, error) {
+	if number < 0 || hash == (common.Hash{}) {
+		return nil, errors.New("invalid arguments; expect hash and no special block numbers")
+	}
 	if block, ok := b.vm.blocks.Load(hash); ok {
 		return block.EthBlock().Body(), nil
 	}
