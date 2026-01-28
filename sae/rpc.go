@@ -449,6 +449,7 @@ func (b *ethAPIBackend) resolveBlockNumber(bn rpc.BlockNumber) (uint64, error) {
 	}
 	return n, nil
 }
+
 func (b *ethAPIBackend) Stats() (pending int, queued int) {
 	return b.Set.Pool.Stats()
 }
