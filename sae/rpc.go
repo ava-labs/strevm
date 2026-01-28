@@ -466,6 +466,34 @@ func (b *ethAPIBackend) SubscribeChainEvent(ch chan<- core.ChainEvent) event.Sub
 	return b.vm.exec.SubscribeChainEvent(ch)
 }
 
+func (b *ethAPIBackend) SubscribeChainHeadEvent(ch chan<- core.ChainHeadEvent) event.Subscription {
+	return b.vm.exec.SubscribeChainHeadEvent(ch)
+}
+
+func (*ethAPIBackend) SubscribeChainSideEvent(chan<- core.ChainSideEvent) event.Subscription {
+	// SAE never reorgs, so there are no side events.
+	return newNoopSubscription()
+}
+
+func (b *ethAPIBackend) SubscribeNewTxsEvent(ch chan<- core.NewTxsEvent) event.Subscription {
+	return b.Set.Pool.SubscribeTransactions(ch, true)
+}
+
+func (*ethAPIBackend) SubscribeRemovedLogsEvent(chan<- core.RemovedLogsEvent) event.Subscription {
+	// SAE never reorgs, so no logs are ever removed.
+	return newNoopSubscription()
+}
+
+func (b *ethAPIBackend) SubscribeLogsEvent(ch chan<- []*types.Log) event.Subscription {
+	return b.vm.exec.SubscribeLogsEvent(ch)
+}
+
+func (*ethAPIBackend) SubscribePendingLogsEvent(chan<- []*types.Log) event.Subscription {
+	// In SAE, "pending" refers to the execution status. There are no logs known
+	// for transactions pending execution.
+	return newNoopSubscription()
+}
+
 func (b *ethAPIBackend) StateAndHeaderByNumber(ctx context.Context, number rpc.BlockNumber) (*state.StateDB, *types.Header, error) {
 	panic(errUnimplemented)
 }
@@ -484,15 +512,6 @@ func (b *ethAPIBackend) GetReceipts(ctx context.Context, hash common.Hash) (type
 
 func (b *ethAPIBackend) GetEVM(ctx context.Context, msg *core.Message, state *state.StateDB, header *types.Header, vmConfig *vm.Config, blockCtx *vm.BlockContext) *vm.EVM {
 	panic(errUnimplemented)
-}
-
-func (b *ethAPIBackend) SubscribeChainHeadEvent(ch chan<- core.ChainHeadEvent) event.Subscription {
-	return b.vm.exec.SubscribeChainHeadEvent(ch)
-}
-
-func (*ethAPIBackend) SubscribeChainSideEvent(chan<- core.ChainSideEvent) event.Subscription {
-	// SAE never reorgs, so there are no side events.
-	return newNoopSubscription()
 }
 
 func (b *ethAPIBackend) GetPoolTransactions() (types.Transactions, error) {
@@ -522,10 +541,6 @@ func (b *ethAPIBackend) GetPoolNonce(ctx context.Context, addr common.Address) (
 	return b.Pool.Nonce(addr), nil
 }
 
-func (b *ethAPIBackend) SubscribeNewTxsEvent(ch chan<- core.NewTxsEvent) event.Subscription {
-	return b.Set.Pool.SubscribeTransactions(ch, true)
-}
-
 func (b *ethAPIBackend) Engine() consensus.Engine {
 	panic(errUnimplemented)
 }
@@ -536,21 +551,6 @@ func (b *ethAPIBackend) GetBody(ctx context.Context, hash common.Hash, number rp
 
 func (b *ethAPIBackend) GetLogs(ctx context.Context, blockHash common.Hash, number uint64) ([][]*types.Log, error) {
 	panic(errUnimplemented)
-}
-
-func (*ethAPIBackend) SubscribeRemovedLogsEvent(chan<- core.RemovedLogsEvent) event.Subscription {
-	// SAE never reorgs, so no logs are ever removed.
-	return newNoopSubscription()
-}
-
-func (b *ethAPIBackend) SubscribeLogsEvent(ch chan<- []*types.Log) event.Subscription {
-	return b.vm.exec.SubscribeLogsEvent(ch)
-}
-
-func (*ethAPIBackend) SubscribePendingLogsEvent(chan<- []*types.Log) event.Subscription {
-	// In SAE, "pending" refers to the execution status. There are no logs known
-	// for transactions pending execution.
-	return newNoopSubscription()
 }
 
 func (b *ethAPIBackend) BloomStatus() (uint64, uint64) {
