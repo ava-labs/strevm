@@ -227,6 +227,7 @@ func testGetByHash(ctx context.Context, t *testing.T, sut *SUT, want *types.Bloc
 	testRPCGetter(ctx, t, "BlockByHash", sut.BlockByHash, want.Hash(), want)
 	testRPCGetter(ctx, t, "HeaderByHash", sut.HeaderByHash, want.Hash(), want.Header())
 	testRPCGetter(ctx, t, "TransactionCount", sut.TransactionCount, want.Hash(), uint(len(want.Transactions())))
+	testRPCMethod(ctx, t, sut, "eth_getUncleCountByBlockHash", hexutil.Uint(0), want.Hash())
 
 	for i, wantTx := range want.Transactions() {
 		t.Run("TransactionByHash", func(t *testing.T) {
@@ -252,6 +253,7 @@ func testGetByNumber(ctx context.Context, t *testing.T, sut *SUT, block *types.B
 	testRPCGetter(ctx, t, "BlockByNumber", sut.BlockByNumber, big.NewInt(number), block)
 	testRPCGetter(ctx, t, "HeaderByNumber", sut.HeaderByNumber, big.NewInt(number), block.Header())
 	testRPCMethod(ctx, t, sut, "eth_getBlockTransactionCountByNumber", hexutil.Uint(len(block.Transactions())), n)
+	testRPCMethod(ctx, t, sut, "eth_getUncleCountByBlockNumber", hexutil.Uint(0), n)
 
 	for i, wantTx := range block.Transactions() {
 		hexIdx := hexutil.Uint(i) //nolint:gosec // definitely won't overflow
