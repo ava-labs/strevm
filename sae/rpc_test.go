@@ -18,6 +18,7 @@ import (
 	"github.com/ava-labs/libevm/libevm/ethapi"
 	"github.com/ava-labs/libevm/params"
 	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/stretchr/testify/require"
 
 	"github.com/ava-labs/strevm/cmputils"
@@ -87,7 +88,6 @@ func TestTxPoolNamespace(t *testing.T) {
 			Gas:       params.TxGas + uint64(i), //nolint:gosec // Won't overflow
 			GasFeeCap: big.NewInt(int64(i + 1)),
 			Value:     big.NewInt(int64(i + 10)),
-			Data:      []byte{}, // non-nil to align with the behavior of a deserialized tx
 		})
 	}
 
@@ -97,7 +97,7 @@ func TestTxPoolNamespace(t *testing.T) {
 	)
 	pendingTx := makeTx(pendingAccount)
 
-	_ = makeTx(1) // skip the nonce to gap the mempool
+	_ = makeTx(queuedAccount) // skip the nonce to gap the mempool
 	queuedTx := makeTx(queuedAccount)
 
 	sut.mustSendTx(t, pendingTx)
@@ -188,6 +188,7 @@ func testRPCMethod[T any](ctx context.Context, t *testing.T, sut *SUT, method st
 		require.NoError(t, sut.CallContext(ctx, &got, method, args...))
 
 		opts := cmp.Options{
+			cmpopts.EquateEmpty(),
 			cmputils.HexutilBigs(),
 		}
 		if diff := cmp.Diff(want, got, opts...); diff != "" {
