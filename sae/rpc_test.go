@@ -65,8 +65,10 @@ func TestNetNamespace(t *testing.T) {
 		testRPCMethod(ctx, t, sut, "net_version", fmt.Sprintf("%d", saetest.ChainConfig().ChainID.Uint64()))
 	}
 
-	_, sut := newSUT(t, 1) // No peers
-	testRPCMethodsWithPeers(sut, 0)
+	t.Run("without_peers", func(t *testing.T) {
+		_, sut := newSUT(t, 1) // No peers
+		testRPCMethodsWithPeers(sut, 0)
+	})
 
 	const (
 		numValidators    = 1

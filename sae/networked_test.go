@@ -34,17 +34,24 @@ type networkedSUTs struct {
 func newNetworkedSUTs(tb testing.TB, numValidators, numNonValidators int) *networkedSUTs {
 	tb.Helper()
 
+	// [newSUT] only enables the libevm TB logger after creation of the VM, to
+	// avoid a warning about snapshot generation that is safe to ignore.
+	// However, the creation of a network means that all later VMs would trigger
+	// the same warning, so we delay enabling until later.
+	opt := withoutLibEVMTBLogger()
+	defer enableLibEVMTBLogger(tb)
+
 	net := &networkedSUTs{
 		validators:    make(map[ids.NodeID]*SUT, numValidators),
 		nonValidators: make(map[ids.NodeID]*SUT, numNonValidators),
 	}
 	const numAccounts = 1
 	for range numValidators {
-		_, sut := newSUT(tb, numAccounts)
+		_, sut := newSUT(tb, numAccounts, opt)
 		net.validators[sut.nodeID()] = sut
 	}
 	for range numNonValidators {
-		_, sut := newSUT(tb, numAccounts)
+		_, sut := newSUT(tb, numAccounts, opt)
 		net.nonValidators[sut.nodeID()] = sut
 	}
 

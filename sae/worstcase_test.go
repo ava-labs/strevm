@@ -97,6 +97,7 @@ func TestWorstCase(t *testing.T) {
 		extras.ChainConfig.Set(c.chainConfig, evmHooks)
 
 		c.logLevel = logging.Warn
+		withoutLibEVMTBLogger().Configure(c)
 
 		for _, acc := range c.alloc {
 			// Note that `acc` isn't a pointer, but `Balance` is.
