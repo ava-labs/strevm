@@ -294,6 +294,32 @@ type ethAPIBackend struct {
 	accountManager *accounts.Manager
 }
 
+func (b *ethAPIBackend) ChainConfig() *params.ChainConfig {
+	return b.vm.exec.ChainConfig()
+}
+
+func (b *ethAPIBackend) RPCTxFeeCap() float64 {
+	// TODO(StephenButtolph) Expose this as a config.
+	return 1 // 1 AVAX
+}
+
+func (b *ethAPIBackend) UnprotectedAllowed() bool {
+	// TODO(StephenButtolph) Expose this as a config and default to false.
+	return true
+}
+
+func (b *ethAPIBackend) CurrentHeader() *types.Header {
+	return types.CopyHeader(b.vm.exec.LastExecuted().Header())
+}
+
+func (b *ethAPIBackend) CurrentBlock() *types.Header {
+	return b.CurrentHeader()
+}
+
+func (b *ethAPIBackend) GetTd(context.Context, common.Hash) *big.Int {
+	return big.NewInt(0) // TODO(arr4n)
+}
+
 func (b *ethAPIBackend) SyncProgress() ethereum.SyncProgress {
 	// Avalanchego does not expose APIs until after the node has fully synced.
 	// Just report that syncing is complete.
@@ -331,28 +357,6 @@ func (b *ethAPIBackend) RPCGasCap() uint64 {
 func (b *ethAPIBackend) RPCEVMTimeout() time.Duration {
 	// TODO(StephenButtolph) Expose this as a config.
 	return 5 * time.Second
-}
-
-func (b *ethAPIBackend) CurrentHeader() *types.Header {
-	return types.CopyHeader(b.vm.exec.LastExecuted().Header())
-}
-
-func (b *ethAPIBackend) CurrentBlock() *types.Header {
-	return b.CurrentHeader()
-}
-
-func (b *ethAPIBackend) GetTd(context.Context, common.Hash) *big.Int {
-	return big.NewInt(0) // TODO(arr4n)
-}
-
-func (b *ethAPIBackend) RPCTxFeeCap() float64 {
-	// TODO(StephenButtolph) Expose this as a config.
-	return 1 // 1 AVAX
-}
-
-func (b *ethAPIBackend) UnprotectedAllowed() bool {
-	// TODO(StephenButtolph) Expose this as a config and default to false.
-	return true
 }
 
 func (b *ethAPIBackend) SetHead(number uint64) {
@@ -519,10 +523,6 @@ func (b *ethAPIBackend) GetPoolNonce(ctx context.Context, addr common.Address) (
 
 func (b *ethAPIBackend) SubscribeNewTxsEvent(ch chan<- core.NewTxsEvent) event.Subscription {
 	return b.Set.Pool.SubscribeTransactions(ch, true)
-}
-
-func (b *ethAPIBackend) ChainConfig() *params.ChainConfig {
-	return b.vm.exec.ChainConfig()
 }
 
 func (b *ethAPIBackend) Engine() consensus.Engine {
