@@ -6,6 +6,7 @@ package sae
 import (
 	"context"
 	"fmt"
+	"math"
 	"math/big"
 	"testing"
 	"time"
@@ -20,7 +21,6 @@ import (
 	"github.com/ava-labs/libevm/rpc"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/ava-labs/strevm/blocks"
@@ -219,39 +219,57 @@ func TestEthGetters(t *testing.T) {
 
 		testRPCMethod(ctx, t, sut, "eth_blockNumber", hexutil.Uint64(executed.Height()))
 	})
+
+	testGetByUnknownHash(ctx, t, sut)
+	testGetByUnknownNumber(ctx, t, sut)
 }
 
 func testGetByHash(ctx context.Context, t *testing.T, sut *SUT, want *types.Block) {
 	t.Helper()
 
-	testRPCGetter(ctx, t, "BlockByHash", sut.BlockByHash, want.Hash(), want)
-	testRPCGetter(ctx, t, "HeaderByHash", sut.HeaderByHash, want.Hash(), want.Header())
-	testRPCGetter(ctx, t, "TransactionCount", sut.TransactionCount, want.Hash(), uint(len(want.Transactions())))
+	testRPCGetter(ctx, t, "eth_getBlockByHash", sut.BlockByHash, want.Hash(), want)
+	testRPCGetter(ctx, t, "eth_getBlockByHash", sut.HeaderByHash, want.Hash(), want.Header())
+	testRPCGetter(ctx, t, "eth_getBlockTransactionCountByHash", sut.TransactionCount, want.Hash(), uint(len(want.Transactions())))
 	testRPCMethod(ctx, t, sut, "eth_getUncleCountByBlockHash", hexutil.Uint(0), want.Hash())
 
 	for i, wantTx := range want.Transactions() {
-		t.Run("TransactionByHash", func(t *testing.T) {
-			got, isPending, err := sut.TransactionByHash(ctx, wantTx.Hash())
-			require.NoError(t, err)
-			assert.False(t, isPending, "pending")
-			if diff := cmp.Diff(wantTx, got, cmputils.TransactionsByHash()); diff != "" {
-				t.Errorf("Diff (-want +got):\n%s", diff)
-			}
-		})
-
 		hexInd := hexutil.Uint(i) //nolint:gosec // definitely won't overflow
 		marshaled, err := wantTx.MarshalBinary()
 		require.NoErrorf(t, err, "%T.MarshalBinary()", wantTx)
+
+		testRPCMethod(ctx, t, sut, "eth_getTransactionByHash", wantTx, wantTx.Hash())
 		testRPCMethod(ctx, t, sut, "eth_getTransactionByBlockHashAndIndex", wantTx, want.Hash(), hexInd)
 		testRPCMethod(ctx, t, sut, "eth_getRawTransactionByBlockHashAndIndex", hexutil.Bytes(marshaled), want.Hash(), hexInd)
+		testRPCMethod(ctx, t, sut, "eth_getRawTransactionByHash", hexutil.Bytes(marshaled), wantTx.Hash())
 	}
+
+	outOfBoundsIndex := hexutil.Uint(len(want.Transactions()) + 1) //nolint:gosec // intentionally out of bounds
+	testRPCMethod[*types.Transaction](ctx, t, sut, "eth_getTransactionByBlockHashAndIndex", nil, want.Hash(), outOfBoundsIndex)
+	testRPCMethod[hexutil.Bytes](ctx, t, sut, "eth_getRawTransactionByBlockHashAndIndex", nil, want.Hash(), outOfBoundsIndex)
+}
+
+func testGetByUnknownHash(ctx context.Context, t *testing.T, sut *SUT) {
+	t.Helper()
+
+	t.Run("non_existent_block_hash", func(t *testing.T) {
+		testRPCMethod[*types.Block](ctx, t, sut, "eth_getBlockByHash", nil, common.Hash{}, true)
+		testRPCMethod[*types.Header](ctx, t, sut, "eth_getHeaderByHash", nil, common.Hash{})
+		testRPCMethod[*hexutil.Uint](ctx, t, sut, "eth_getBlockTransactionCountByHash", nil, common.Hash{})
+		testRPCMethod[*types.Transaction](ctx, t, sut, "eth_getTransactionByBlockHashAndIndex", nil, common.Hash{}, hexutil.Uint(0))
+		testRPCMethod[hexutil.Bytes](ctx, t, sut, "eth_getRawTransactionByBlockHashAndIndex", nil, common.Hash{}, hexutil.Uint(0))
+	})
+
+	t.Run("non_existent_transaction_hash", func(t *testing.T) {
+		testRPCMethod[*types.Transaction](ctx, t, sut, "eth_getTransactionByHash", nil, common.Hash{})
+		testRPCMethod[hexutil.Bytes](ctx, t, sut, "eth_getRawTransactionByHash", nil, common.Hash{})
+	})
 }
 
 func testGetByNumber(ctx context.Context, t *testing.T, sut *SUT, block *types.Block, n rpc.BlockNumber) {
 	t.Helper()
 	number := n.Int64()
-	testRPCGetter(ctx, t, "BlockByNumber", sut.BlockByNumber, big.NewInt(number), block)
-	testRPCGetter(ctx, t, "HeaderByNumber", sut.HeaderByNumber, big.NewInt(number), block.Header())
+	testRPCGetter(ctx, t, "eth_getBlockByNumber", sut.BlockByNumber, big.NewInt(number), block)
+	testRPCGetter(ctx, t, "eth_getBlockByNumber", sut.HeaderByNumber, big.NewInt(number), block.Header())
 	testRPCMethod(ctx, t, sut, "eth_getBlockTransactionCountByNumber", hexutil.Uint(len(block.Transactions())), n)
 	testRPCMethod(ctx, t, sut, "eth_getUncleCountByBlockNumber", hexutil.Uint(0), n)
 
@@ -259,9 +277,27 @@ func testGetByNumber(ctx context.Context, t *testing.T, sut *SUT, block *types.B
 		hexIdx := hexutil.Uint(i) //nolint:gosec // definitely won't overflow
 		marshaled, err := wantTx.MarshalBinary()
 		require.NoErrorf(t, err, "%T.MarshalBinary()", wantTx)
+
 		testRPCMethod(ctx, t, sut, "eth_getTransactionByBlockNumberAndIndex", wantTx, n, hexIdx)
 		testRPCMethod(ctx, t, sut, "eth_getRawTransactionByBlockNumberAndIndex", hexutil.Bytes(marshaled), n, hexIdx)
 	}
+
+	outOfBoundsIndex := hexutil.Uint(len(block.Transactions()) + 1) //nolint:gosec // intentionally out of bounds
+	testRPCMethod[*types.Transaction](ctx, t, sut, "eth_getTransactionByBlockNumberAndIndex", nil, n, outOfBoundsIndex)
+	testRPCMethod[hexutil.Bytes](ctx, t, sut, "eth_getRawTransactionByBlockNumberAndIndex", nil, n, outOfBoundsIndex)
+}
+
+func testGetByUnknownNumber(ctx context.Context, t *testing.T, sut *SUT) {
+	t.Helper()
+
+	t.Run("future_block_number", func(t *testing.T) {
+		const n rpc.BlockNumber = math.MaxInt64
+		testRPCMethod[*types.Block](ctx, t, sut, "eth_getBlockByNumber", nil, n, true)
+		testRPCMethod[*types.Header](ctx, t, sut, "eth_getHeaderByNumber", nil, n)
+		testRPCMethod[*hexutil.Uint](ctx, t, sut, "eth_getBlockTransactionCountByNumber", nil, n)
+		testRPCMethod[*types.Transaction](ctx, t, sut, "eth_getTransactionByBlockNumberAndIndex", nil, n, hexutil.Uint(0))
+		testRPCMethod[hexutil.Bytes](ctx, t, sut, "eth_getRawTransactionByBlockNumberAndIndex", nil, n, hexutil.Uint(0))
+	})
 }
 
 func testRPCGetter[Arg any, T any](ctx context.Context, t *testing.T, funcName string, get func(context.Context, Arg) (T, error), arg Arg, want T) {
