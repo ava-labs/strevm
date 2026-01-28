@@ -166,7 +166,7 @@ func TestTxPoolNamespace(t *testing.T) {
 	})
 }
 
-func TestBlockGetters(t *testing.T) {
+func TestEthGetters(t *testing.T) {
 	opt, vmTime := withVMTime(time.Unix(saeparams.TauSeconds, 0))
 
 	ctx, sut := newSUT(t, 1, opt)
@@ -192,44 +192,11 @@ func TestBlockGetters(t *testing.T) {
 	executed := sut.createAndAcceptBlock(t, createTx(t))
 	require.NoErrorf(t, executed.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", executed)
 
-	cmpOpts := cmp.Options{
-		cmputils.Blocks(),
-		cmputils.Headers(),
-		cmpopts.EquateEmpty(),
-	}
-
 	for _, b := range []*blocks.Block{genesis, onDisk, settled, executed} {
 		t.Run(fmt.Sprintf("block_num_%d", b.Height()), func(t *testing.T) {
 			ethB := b.EthBlock()
-
-			testRPCGetter(ctx, t, "BlockByHash", sut.BlockByHash, ethB.Hash(), ethB, cmpOpts...)
-			testRPCGetter(ctx, t, "BlockByNumber", sut.BlockByNumber, ethB.Number(), ethB, cmpOpts...)
-			testRPCGetter(ctx, t, "HeaderByHash", sut.HeaderByHash, ethB.Hash(), ethB.Header(), cmpOpts...)
-			testRPCGetter(ctx, t, "HeaderByNumber", sut.HeaderByNumber, ethB.Number(), ethB.Header(), cmpOpts...)
-			testRPCGetter(ctx, t, "TransactionCount", sut.TransactionCount, ethB.Hash(), uint(len(ethB.Transactions())), cmpOpts)
-
-			t.Run("TransactionByHash", func(t *testing.T) {
-				blockNum := rpc.BlockNumber(ethB.NumberU64()) //nolint:gosec // definitely won't overflow
-				for i, want := range ethB.Transactions() {
-					t.Run(want.Hash().String(), func(t *testing.T) {
-						got, isPending, err := sut.TransactionByHash(ctx, want.Hash())
-						require.NoError(t, err)
-						assert.False(t, isPending, "pending")
-						if diff := cmp.Diff(want, got, cmputils.TransactionsByHash()); diff != "" {
-							t.Errorf("Diff (-want +got):\n%s", diff)
-						}
-					})
-
-					txIndex := uint(i) //nolint:gosec // definitely won't overflow
-					hexInd := hexutil.Uint(txIndex)
-					marshaled, err := want.MarshalBinary()
-					require.NoErrorf(t, err, "%T.MarshalBinary()", want)
-					testRPCMethod(ctx, t, sut, "eth_getTransactionByBlockHashAndIndex", want, ethB.Hash(), hexInd)
-					testRPCMethod(ctx, t, sut, "eth_getRawTransactionByBlockHashAndIndex", hexutil.Bytes(marshaled), ethB.Hash(), hexInd)
-					testRPCMethod(ctx, t, sut, "eth_getTransactionByBlockNumberAndIndex", want, blockNum, hexInd)
-					testRPCMethod(ctx, t, sut, "eth_getRawTransactionByBlockNumberAndIndex", hexutil.Bytes(marshaled), blockNum, hexInd)
-				}
-			})
+			getByHash(ctx, t, sut, ethB)
+			getByNumber(ctx, t, sut, ethB, rpc.BlockNumber(b.Number().Int64()))
 		})
 	}
 
@@ -246,22 +213,63 @@ func TestBlockGetters(t *testing.T) {
 
 		for _, tt := range tests {
 			t.Run(tt.num.String(), func(t *testing.T) {
-				testRPCGetter(ctx, t, "BlockByNumber", sut.BlockByNumber, big.NewInt(tt.num.Int64()), tt.want.EthBlock(), cmpOpts...)
-				testRPCGetter(ctx, t, "HeaderByNumber", sut.HeaderByNumber, big.NewInt(tt.num.Int64()), tt.want.Header(), cmpOpts...)
-				testRPCMethod(ctx, t, sut, "eth_getBlockTransactionCountByNumber", hexutil.Uint(len(tt.want.EthBlock().Transactions())), tt.num)
-
-				for i, want := range tt.want.EthBlock().Transactions() {
-					hexIdx := hexutil.Uint(i) //nolint:gosec // definitely won't overflow
-					marshaled, err := want.MarshalBinary()
-					require.NoErrorf(t, err, "%T.MarshalBinary()", want)
-					testRPCMethod(ctx, t, sut, "eth_getTransactionByBlockNumberAndIndex", want, tt.num, hexIdx)
-					testRPCMethod(ctx, t, sut, "eth_getRawTransactionByBlockNumberAndIndex", hexutil.Bytes(marshaled), tt.num, hexIdx)
-				}
+				getByNumber(ctx, t, sut, tt.want.EthBlock(), tt.num)
 			})
 		}
 
 		testRPCMethod(ctx, t, sut, "eth_blockNumber", hexutil.Uint64(executed.Height()))
 	})
+}
+
+func getByHash(ctx context.Context, t *testing.T, sut *SUT, want *types.Block) {
+	t.Helper()
+	cmpOpts := []cmp.Option{
+		cmputils.Blocks(),
+		cmputils.Headers(),
+		cmpopts.EquateEmpty(),
+	}
+
+	testRPCGetter(ctx, t, "BlockByHash", sut.BlockByHash, want.Hash(), want, cmpOpts...)
+	testRPCGetter(ctx, t, "HeaderByHash", sut.HeaderByHash, want.Hash(), want.Header(), cmpOpts...)
+	testRPCGetter(ctx, t, "TransactionCount", sut.TransactionCount, want.Hash(), uint(len(want.Transactions())), cmpOpts...)
+
+	for i, wantTx := range want.Transactions() {
+		t.Run("TransactionByHash", func(t *testing.T) {
+			got, isPending, err := sut.TransactionByHash(ctx, wantTx.Hash())
+			require.NoError(t, err)
+			assert.False(t, isPending, "pending")
+			if diff := cmp.Diff(wantTx, got, cmputils.TransactionsByHash()); diff != "" {
+				t.Errorf("Diff (-want +got):\n%s", diff)
+			}
+		})
+
+		hexInd := hexutil.Uint(i) //nolint:gosec // definitely won't overflow
+		marshaled, err := wantTx.MarshalBinary()
+		require.NoErrorf(t, err, "%T.MarshalBinary()", wantTx)
+		testRPCMethod(ctx, t, sut, "eth_getTransactionByBlockHashAndIndex", wantTx, want.Hash(), hexInd)
+		testRPCMethod(ctx, t, sut, "eth_getRawTransactionByBlockHashAndIndex", hexutil.Bytes(marshaled), want.Hash(), hexInd)
+	}
+}
+
+func getByNumber(ctx context.Context, t *testing.T, sut *SUT, block *types.Block, n rpc.BlockNumber) {
+	t.Helper()
+	cmpOpts := []cmp.Option{
+		cmputils.Blocks(),
+		cmputils.Headers(),
+		cmpopts.EquateEmpty(),
+	}
+	number := n.Int64()
+	testRPCGetter(ctx, t, "BlockByNumber", sut.BlockByNumber, big.NewInt(number), block, cmpOpts...)
+	testRPCGetter(ctx, t, "HeaderByNumber", sut.HeaderByNumber, big.NewInt(number), block.Header(), cmpOpts...)
+	testRPCMethod(ctx, t, sut, "eth_getBlockTransactionCountByNumber", hexutil.Uint(len(block.Transactions())), n)
+
+	for i, wantTx := range block.Transactions() {
+		hexIdx := hexutil.Uint(i) //nolint:gosec // definitely won't overflow
+		marshaled, err := wantTx.MarshalBinary()
+		require.NoErrorf(t, err, "%T.MarshalBinary()", wantTx)
+		testRPCMethod(ctx, t, sut, "eth_getTransactionByBlockNumberAndIndex", wantTx, n, hexIdx)
+		testRPCMethod(ctx, t, sut, "eth_getRawTransactionByBlockNumberAndIndex", hexutil.Bytes(marshaled), n, hexIdx)
+	}
 }
 
 func testRPCGetter[Arg any, T any](ctx context.Context, t *testing.T, funcName string, get func(context.Context, Arg) (T, error), arg Arg, want T, opts ...cmp.Option) {
