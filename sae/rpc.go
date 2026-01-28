@@ -204,16 +204,6 @@ func (b *ethAPIBackend) GetTransaction(ctx context.Context, txHash common.Hash) 
 	return true, tx, blockHash, blockNumber, index, nil
 }
 
-func (b *ethAPIBackend) GetBody(ctx context.Context, hash common.Hash, number rpc.BlockNumber) (*types.Body, error) {
-	if number < 0 || hash == (common.Hash{}) {
-		return nil, errors.New("invalid arguments; expect hash and no special block numbers")
-	}
-	if block, ok := b.vm.blocks.Load(hash); ok {
-		return block.EthBlock().Body(), nil
-	}
-	return rawdb.ReadBody(b.vm.db, hash, uint64(number)), nil
-}
-
 type canonicalReader[T any] func(ethdb.Reader, common.Hash, uint64) *T
 
 func readByNumber[T any](b *ethAPIBackend, n rpc.BlockNumber, read canonicalReader[T]) (*T, error) {
