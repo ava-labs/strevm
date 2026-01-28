@@ -15,6 +15,7 @@ import (
 	"github.com/ava-labs/libevm/common/hexutil"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/crypto"
+	"github.com/ava-labs/libevm/libevm/ethapi"
 	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/rpc"
 	"github.com/google/go-cmp/cmp"
@@ -78,6 +79,91 @@ func TestNetNamespace(t *testing.T) {
 	for _, sut := range n.nonValidators {
 		testRPCMethodsWithPeers(sut, numValidators)
 	}
+}
+
+func TestTxPoolNamespace(t *testing.T) {
+	ctx, sut := newSUT(t, 2)
+
+	addresses := sut.wallet.Addresses()
+	makeTx := func(i int) *types.Transaction {
+		t.Helper()
+		return sut.wallet.SetNonceAndSign(t, i, &types.DynamicFeeTx{
+			To:        &addresses[i],
+			Gas:       params.TxGas + uint64(i), //nolint:gosec // Won't overflow
+			GasFeeCap: big.NewInt(int64(i + 1)),
+			Value:     big.NewInt(int64(i + 10)),
+		})
+	}
+
+	const (
+		pendingAccount = 0
+		queuedAccount  = 1
+	)
+	pendingTx := makeTx(pendingAccount)
+	pendingRPCTx := ethapi.NewRPCPendingTransaction(pendingTx, nil, saetest.ChainConfig())
+
+	_ = makeTx(queuedAccount) // skip the nonce to gap the mempool
+	queuedTx := makeTx(queuedAccount)
+	queuedRPCTx := ethapi.NewRPCPendingTransaction(queuedTx, nil, saetest.ChainConfig())
+
+	sut.mustSendTx(t, pendingTx)
+	sut.mustSendTx(t, queuedTx)
+	sut.syncMempool(t)
+
+	// TODO: This formatting is copied from libevm, consider exposing it somehow
+	// or removing the dependency on the exact format.
+	txToSummary := func(tx *types.Transaction) string {
+		return fmt.Sprintf("%s: %d wei + %d gas × %d wei",
+			tx.To(),
+			tx.Value().Uint64(),
+			tx.Gas(),
+			tx.GasFeeCap().Uint64(),
+		)
+	}
+
+	testRPCMethod(ctx, t, sut, "txpool_content", map[string]map[string]map[string]*ethapi.RPCTransaction{
+		"pending": {
+			addresses[pendingAccount].Hex(): {
+				"0": pendingRPCTx,
+			},
+		},
+		"queued": {
+			addresses[queuedAccount].Hex(): {
+				"1": queuedRPCTx,
+			},
+		},
+	})
+
+	testRPCMethod(ctx, t, sut, "txpool_contentFrom", map[string]map[string]*ethapi.RPCTransaction{
+		"pending": {
+			"0": pendingRPCTx,
+		},
+		"queued": {},
+	}, addresses[pendingAccount])
+	testRPCMethod(ctx, t, sut, "txpool_contentFrom", map[string]map[string]*ethapi.RPCTransaction{
+		"pending": {},
+		"queued": {
+			"1": queuedRPCTx,
+		},
+	}, addresses[queuedAccount])
+
+	testRPCMethod(ctx, t, sut, "txpool_inspect", map[string]map[string]map[string]string{
+		"pending": {
+			addresses[pendingAccount].Hex(): {
+				"0": txToSummary(pendingTx),
+			},
+		},
+		"queued": {
+			addresses[queuedAccount].Hex(): {
+				"1": txToSummary(queuedTx),
+			},
+		},
+	})
+
+	testRPCMethod(ctx, t, sut, "txpool_status", map[string]hexutil.Uint{
+		"pending": 1,
+		"queued":  1,
+	})
 }
 
 func TestBlockGetters(t *testing.T) {
@@ -199,6 +285,7 @@ func testRPCMethod[T any](ctx context.Context, t *testing.T, sut *SUT, method st
 		opts := []cmp.Option{
 			cmpopts.EquateEmpty(),
 			cmputils.TransactionsByHash(),
+			cmputils.HexutilBigs(),
 		}
 		if diff := cmp.Diff(want, got, opts...); diff != "" {
 			t.Errorf("Diff (-want +got):\n%s", diff)
