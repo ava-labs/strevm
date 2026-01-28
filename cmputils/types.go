@@ -10,6 +10,7 @@ import (
 
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 )
 
 // BigInts returns a [cmp.Comparer] for [big.Int] pointers. A nil pointer is not
@@ -42,4 +43,25 @@ func ReceiptsByTxHash() cmp.Option {
 	return ComparerWithNilCheck(func(r, s *types.Receipt) bool {
 		return r.TxHash == s.TxHash
 	})
+}
+
+// Blocks returns a set of [cmp.Options] for comparing [types.Block] values.
+// The [Headers] option MUST be used alongside this but isn't included
+// automatically, to avoid duplication.
+func Blocks() cmp.Option {
+	return cmp.Options{
+		cmp.AllowUnexported(types.Block{}),
+		cmpopts.IgnoreFields(types.Block{}, "hash", "size", "extra"),
+		IfIn[types.Block](TransactionsByHash()),
+	}
+}
+
+// Headers returns a set of [cmp.Options] for comparing [type.Headers] values.
+func Headers() cmp.Option {
+	return cmp.Options{
+		cmpopts.IgnoreFields(types.Header{}, "extra"),
+		// Without the [IfIn] filter, any other use of [BigInts] will result in
+		// ambiguous comparers as [cmp] can't deduplicate them.
+		IfIn[types.Header](BigInts()),
+	}
 }

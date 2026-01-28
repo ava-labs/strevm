@@ -9,6 +9,7 @@ import (
 	"math/big"
 	"math/rand/v2"
 	"net/http/httptest"
+	"os"
 	"runtime"
 	"testing"
 	"time"
@@ -32,6 +33,7 @@ import (
 	"github.com/ava-labs/libevm/ethclient"
 	"github.com/ava-labs/libevm/ethdb"
 	"github.com/ava-labs/libevm/libevm/options"
+	"github.com/ava-labs/libevm/log"
 	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/rpc"
 	"github.com/ava-labs/libevm/triedb"
@@ -51,6 +53,8 @@ import (
 func TestMain(m *testing.M) {
 	createWorstCaseFuzzFlags(flag.CommandLine)
 	flag.Parse()
+
+	log.SetDefault(log.NewLogger(log.NewTerminalHandlerWithLevel(os.Stderr, log.LevelError, true)))
 
 	goleak.VerifyTestMain(
 		m,
@@ -182,24 +186,36 @@ func (s *SUT) CallContext(ctx context.Context, result any, method string, args .
 	return s.rpcClient.CallContext(ctx, result, method, args...)
 }
 
-// stubbedTime returns an option to configure a new SUT's "now" function along
-// with a function to set the time at nanosecond resolution.
-func stubbedTime() (_ sutOption, setTime func(time.Time)) {
-	var now time.Time
-	set := func(n time.Time) {
-		now = n
+type vmTime struct {
+	time.Time
+}
+
+func (t *vmTime) now() time.Time {
+	return t.Time
+}
+
+func (t *vmTime) set(n time.Time) {
+	t.Time = n
+}
+
+func (t *vmTime) advance(d time.Duration) {
+	t.Time = t.Time.Add(d)
+}
+
+// withVMTime returns an option to configure a new SUT's "now" function along
+// with a struct to access and set the time at nanosecond resolution.
+func withVMTime(startTime time.Time) (sutOption, *vmTime) {
+	t := &vmTime{
+		Time: startTime,
 	}
 	opt := options.Func[sutConfig](func(c *sutConfig) {
-		get := func() time.Time {
-			return now
-		}
 		// TODO(StephenButtolph) unify the time functions provided in the config
 		// and the hooks.
-		c.vmConfig.Now = get
-		c.hooks.Now = get
+		c.vmConfig.Now = t.now
+		c.hooks.Now = t.now
 	})
 
-	return opt, set
+	return opt, t
 }
 
 func withGenesisOpts(opts ...blockstest.GenesisOption) sutOption {
@@ -240,6 +256,42 @@ func (s *SUT) syncMempool(tb testing.TB) {
 	var _ txpool.TxPool // maintain import for [comment] rendering
 	p := s.rawVM.mempool.Pool
 	require.NoErrorf(tb, p.Sync(), "%T.Sync()", p)
+}
+
+// requireInMempool requires that the transaction with the specified hash is
+// eventually in the mempool. It calls [SUT.syncMempool] before every check.
+func (s *SUT) requireInMempool(tb testing.TB, txs ...common.Hash) {
+	tb.Helper()
+	require.EventuallyWithTf(
+		tb,
+		func(c *assert.CollectT) {
+			s.syncMempool(tb)
+			for i, tx := range txs {
+				assert.Truef(c, s.rawVM.mempool.Pool.Has(tx), "tx %d:%v not in mempool", i, tx)
+			}
+		},
+		250*time.Millisecond, 25*time.Millisecond,
+		"all of txs [%v] to in mempool", txs,
+	)
+}
+
+// createAndAcceptBlock sends all of the transactions to the mempool, asserts
+// that they are present in the mempool, then returns the result of [SUT.runConsensusLoop] with
+// [SUT.lastAcceptedBlock] as its argument.
+// Because the mempool may already include other transactions, or the transactions
+// provided may fail validation, there is no guarantee that the returned block
+// includes all of the provided transactions.
+func (s *SUT) createAndAcceptBlock(tb testing.TB, txs ...*types.Transaction) *blocks.Block {
+	tb.Helper()
+
+	txHashes := make([]common.Hash, len(txs))
+	for i, tx := range txs {
+		s.mustSendTx(tb, tx)
+		txHashes[i] = tx.Hash()
+	}
+	s.requireInMempool(tb, txHashes...)
+
+	return s.runConsensusLoop(tb, s.lastAcceptedBlock(tb))
 }
 
 // runConsensusLoop sets the preference to the specified block then builds,
@@ -479,13 +531,7 @@ func TestAcceptBlock(t *testing.T) {
 		require.Zero(t, blocks.InMemoryBlockCount(), "initial in-memory block count")
 	}, 100*time.Millisecond, time.Millisecond)
 
-	opt, setTime := stubbedTime()
-	now := time.Unix(0, 0)
-	fastForward := func(by time.Duration) {
-		now = now.Add(by)
-		setTime(now)
-	}
-	fastForward(saeparams.Tau)
+	opt, vmTime := withVMTime(time.Unix(saeparams.TauSeconds, 0))
 
 	ctx, sut := newSUT(t, 1, opt)
 	// Causes [VM.AcceptBlock] to wait until the block has executed.
@@ -500,7 +546,7 @@ func TestAcceptBlock(t *testing.T) {
 	rng := rand.New(rand.NewPCG(0, 0)) //nolint:gosec // Reproducibility is useful for tests
 	for range 100 {
 		ffMillis := 100 + rng.IntN(1000*(1+saeparams.TauSeconds))
-		fastForward(time.Millisecond * time.Duration(ffMillis))
+		vmTime.advance(time.Millisecond * time.Duration(ffMillis))
 
 		b := sut.runConsensusLoop(t, last())
 		unsettled = append(unsettled, b)
