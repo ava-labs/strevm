@@ -27,6 +27,8 @@ import (
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/eth"
 	"github.com/ava-labs/libevm/libevm/ethapi"
+	"github.com/ava-labs/libevm/libevm/ethtest"
+	"github.com/ava-labs/libevm/log"
 	"github.com/ava-labs/libevm/params"
 	"github.com/google/go-cmp/cmp"
 	"github.com/holiman/uint256"
@@ -34,6 +36,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
+	"golang.org/x/exp/slog"
 
 	"github.com/ava-labs/strevm/blocks/blockstest"
 	"github.com/ava-labs/strevm/cmputils"
@@ -69,6 +72,7 @@ func newWallet(tb testing.TB, numAccounts uint) *saetest.Wallet {
 
 func newSUT(t *testing.T, numAccounts uint) SUT {
 	t.Helper()
+	log.SetDefault(log.NewLogger(ethtest.NewTBLogHandler(t, slog.LevelError)))
 	logger := saetest.NewTBLogger(t, logging.Warn)
 
 	wallet := newWallet(t, numAccounts)
