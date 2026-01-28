@@ -6,6 +6,7 @@ package sae
 import (
 	"context"
 	"fmt"
+	"math"
 	"math/big"
 	"testing"
 	"time"
@@ -219,78 +220,9 @@ func TestEthGetters(t *testing.T) {
 
 		testRPCMethod(ctx, t, sut, "eth_blockNumber", hexutil.Uint64(executed.Height()))
 	})
-}
 
-// TestEthGettersEdgeCases validates that Ethereum RPC methods handle edge cases
-// according to the Ethereum JSON-RPC specification (EIP-1474).
-//
-// In short, when requested data does not exist (missing blocks,
-// transactions, or invalid indices), methods should return null rather than
-// errors. See https://ethereum.org/developers/docs/apis/json-rpc
-func TestEthGettersEdgeCases(t *testing.T) {
-	ctx, sut := newSUT(t, 1)
-
-	createTx := func(t *testing.T) *types.Transaction {
-		t.Helper()
-		return sut.wallet.SetNonceAndSign(t, 0, &types.DynamicFeeTx{
-			To:        &common.Address{},
-			Gas:       params.TxGas,
-			GasFeeCap: big.NewInt(1),
-		})
-	}
-	genesis := sut.lastAcceptedBlock(t)
-	blockWithTx := sut.createAndAcceptBlock(t, createTx(t))
-	require.NoErrorf(t, blockWithTx.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", blockWithTx)
-
-	nonExistentHash := common.HexToHash("0x6A6F6E617468616E206F7070656E6865696D6572207761732068657265")
-	nonExistentTxHash := common.HexToHash("0x6A6F6E617468616E206F7070656E6865696D6572207761732068657265")
-	futureBlockNum := rpc.BlockNumber(blockWithTx.Height() + 1234) //nolint:gosec // test height will never overflow
-	ethBlock := blockWithTx.EthBlock()
-	outOfBoundsIndex := hexutil.Uint(len(ethBlock.Transactions()) + 147) //nolint:gosec // intentionally out of bounds
-	genesisBlock := genesis.EthBlock()
-
-	t.Run("non_existent_block_hash", func(t *testing.T) {
-		testRPCMethod[*types.Block](ctx, t, sut, "eth_getBlockByHash", nil, nonExistentHash, true)
-		testRPCMethod[*types.Header](ctx, t, sut, "eth_getHeaderByHash", nil, nonExistentHash)
-		testRPCMethod[*hexutil.Uint](ctx, t, sut, "eth_getBlockTransactionCountByHash", nil, nonExistentHash)
-		testRPCMethod[*types.Transaction](ctx, t, sut, "eth_getTransactionByBlockHashAndIndex", nil, nonExistentHash, hexutil.Uint(0))
-		testRPCMethod(ctx, t, sut, "eth_getRawTransactionByBlockHashAndIndex", hexutil.Bytes{}, nonExistentHash, hexutil.Uint(0))
-	})
-
-	t.Run("future_block_number", func(t *testing.T) {
-		testRPCMethod[*types.Block](ctx, t, sut, "eth_getBlockByNumber", nil, futureBlockNum, true)
-		testRPCMethod[*types.Header](ctx, t, sut, "eth_getHeaderByNumber", nil, futureBlockNum)
-		testRPCMethod[*hexutil.Uint](ctx, t, sut, "eth_getBlockTransactionCountByNumber", nil, futureBlockNum)
-		testRPCMethod[*types.Transaction](ctx, t, sut, "eth_getTransactionByBlockNumberAndIndex", nil, futureBlockNum, hexutil.Uint(0))
-		testRPCMethod(ctx, t, sut, "eth_getRawTransactionByBlockNumberAndIndex", hexutil.Bytes{}, futureBlockNum, hexutil.Uint(0))
-	})
-
-	t.Run("non_existent_transaction_hash", func(t *testing.T) {
-		testRPCMethod[*types.Transaction](ctx, t, sut, "eth_getTransactionByHash", nil, nonExistentTxHash)
-		testRPCMethod(ctx, t, sut, "eth_getRawTransactionByHash", hexutil.Bytes{}, nonExistentTxHash)
-	})
-
-	t.Run("out_of_bounds_index", func(t *testing.T) {
-		blockNum := rpc.BlockNumber(ethBlock.Number().Int64())
-		testRPCMethod[*types.Transaction](ctx, t, sut, "eth_getTransactionByBlockHashAndIndex", nil, ethBlock.Hash(), outOfBoundsIndex)
-		testRPCMethod(ctx, t, sut, "eth_getRawTransactionByBlockHashAndIndex", hexutil.Bytes{}, ethBlock.Hash(), outOfBoundsIndex)
-		testRPCMethod[*types.Transaction](ctx, t, sut, "eth_getTransactionByBlockNumberAndIndex", nil, blockNum, outOfBoundsIndex)
-		testRPCMethod(ctx, t, sut, "eth_getRawTransactionByBlockNumberAndIndex", hexutil.Bytes{}, blockNum, outOfBoundsIndex)
-	})
-
-	t.Run("empty_block_transaction_queries", func(t *testing.T) {
-		require.Empty(t, genesisBlock.Transactions(), "genesis block should have no transactions")
-
-		// Transaction count should be 0, not nil
-		testRPCMethod(ctx, t, sut, "eth_getBlockTransactionCountByHash", hexutil.Uint(0), genesisBlock.Hash())
-		testRPCMethod(ctx, t, sut, "eth_getBlockTransactionCountByNumber", hexutil.Uint(0), rpc.BlockNumber(0))
-
-		// Any index should return nil for empty block
-		testRPCMethod[*types.Transaction](ctx, t, sut, "eth_getTransactionByBlockHashAndIndex", nil, genesisBlock.Hash(), hexutil.Uint(0))
-		testRPCMethod(ctx, t, sut, "eth_getRawTransactionByBlockHashAndIndex", hexutil.Bytes{}, genesisBlock.Hash(), hexutil.Uint(0))
-		testRPCMethod[*types.Transaction](ctx, t, sut, "eth_getTransactionByBlockNumberAndIndex", nil, rpc.BlockNumber(0), hexutil.Uint(0))
-		testRPCMethod(ctx, t, sut, "eth_getRawTransactionByBlockNumberAndIndex", hexutil.Bytes{}, rpc.BlockNumber(0), hexutil.Uint(0))
-	})
+	testGetByUnknownHash(ctx, t, sut)
+	testGetByUnknownNumber(ctx, t, sut)
 }
 
 func testGetByHash(ctx context.Context, t *testing.T, sut *SUT, want *types.Block) {
@@ -316,6 +248,27 @@ func testGetByHash(ctx context.Context, t *testing.T, sut *SUT, want *types.Bloc
 		testRPCMethod(ctx, t, sut, "eth_getTransactionByBlockHashAndIndex", wantTx, want.Hash(), hexInd)
 		testRPCMethod(ctx, t, sut, "eth_getRawTransactionByBlockHashAndIndex", hexutil.Bytes(marshaled), want.Hash(), hexInd)
 	}
+
+	outOfBoundsIndex := hexutil.Uint(len(want.Transactions()) + 1) //nolint:gosec // intentionally out of bounds
+	testRPCMethod[*types.Transaction](ctx, t, sut, "eth_getTransactionByBlockHashAndIndex", nil, want.Hash(), outOfBoundsIndex)
+	testRPCMethod(ctx, t, sut, "eth_getRawTransactionByBlockHashAndIndex", hexutil.Bytes{}, want.Hash(), outOfBoundsIndex)
+}
+
+func testGetByUnknownHash(ctx context.Context, t *testing.T, sut *SUT) {
+	t.Helper()
+
+	t.Run("non_existent_block_hash", func(t *testing.T) {
+		testRPCMethod[*types.Block](ctx, t, sut, "eth_getBlockByHash", nil, common.Hash{}, true)
+		testRPCMethod[*types.Header](ctx, t, sut, "eth_getHeaderByHash", nil, common.Hash{})
+		testRPCMethod[*hexutil.Uint](ctx, t, sut, "eth_getBlockTransactionCountByHash", nil, common.Hash{})
+		testRPCMethod[*types.Transaction](ctx, t, sut, "eth_getTransactionByBlockHashAndIndex", nil, common.Hash{}, hexutil.Uint(0))
+		testRPCMethod(ctx, t, sut, "eth_getRawTransactionByBlockHashAndIndex", hexutil.Bytes{}, common.Hash{}, hexutil.Uint(0))
+	})
+
+	t.Run("non_existent_transaction_hash", func(t *testing.T) {
+		testRPCMethod[*types.Transaction](ctx, t, sut, "eth_getTransactionByHash", nil, common.Hash{})
+		testRPCMethod(ctx, t, sut, "eth_getRawTransactionByHash", hexutil.Bytes{}, common.Hash{})
+	})
 }
 
 func testGetByNumber(ctx context.Context, t *testing.T, sut *SUT, block *types.Block, n rpc.BlockNumber) {
@@ -332,6 +285,30 @@ func testGetByNumber(ctx context.Context, t *testing.T, sut *SUT, block *types.B
 		testRPCMethod(ctx, t, sut, "eth_getTransactionByBlockNumberAndIndex", wantTx, n, hexIdx)
 		testRPCMethod(ctx, t, sut, "eth_getRawTransactionByBlockNumberAndIndex", hexutil.Bytes(marshaled), n, hexIdx)
 	}
+
+	outOfBoundsIndex := hexutil.Uint(len(block.Transactions()) + 1) //nolint:gosec // intentionally out of bounds
+	testRPCMethod[*types.Transaction](ctx, t, sut, "eth_getTransactionByBlockNumberAndIndex", nil, n, outOfBoundsIndex)
+	testRPCMethod(ctx, t, sut, "eth_getRawTransactionByBlockNumberAndIndex", hexutil.Bytes{}, n, outOfBoundsIndex)
+}
+
+func testGetByUnknownNumber(ctx context.Context, t *testing.T, sut *SUT) {
+	t.Helper()
+
+	t.Run("unknown_block_numbers", func(t *testing.T) {
+		const (
+			unknownBlockNumber rpc.BlockNumber = -5
+			futureBlockNumber  rpc.BlockNumber = math.MaxInt64
+		)
+
+		for _, n := range []rpc.BlockNumber{unknownBlockNumber, futureBlockNumber} {
+			testRPCMethod[*types.Block](ctx, t, sut, "eth_getBlockByNumber", nil, n, true)
+			testRPCMethod[*types.Header](ctx, t, sut, "eth_getHeaderByNumber", nil, n)
+			testRPCMethod[*hexutil.Uint](ctx, t, sut, "eth_getBlockTransactionCountByNumber", nil, n)
+			testRPCMethod[*types.Transaction](ctx, t, sut, "eth_getTransactionByBlockNumberAndIndex", nil, n, hexutil.Uint(0))
+			testRPCMethod(ctx, t, sut, "eth_getRawTransactionByBlockNumberAndIndex", hexutil.Bytes{}, n, hexutil.Uint(0))
+		}
+	})
+
 }
 
 func testRPCGetter[Arg any, T any](ctx context.Context, t *testing.T, funcName string, get func(context.Context, Arg) (T, error), arg Arg, want T) {
