@@ -29,7 +29,28 @@ var ErrOverflow = errors.New("overflow")
 // the event that `a*b>=2^64`. However, if the quotient were to overflow then
 // [ErrOverflow] is returned.
 func MulDiv[T ~uint64](a, b, den T) (quo, rem T, err error) {
+	return mulDiv(a, b, den, false)
+}
+
+// MulDivCeil is equivalent to [MulDiv] except that it returns the rounded-up
+// quotient and the complement of the remainder, i.e. the amount that would have
+// had to be added to `a*b` to result in the same quotient exactly.
+func MulDivCeil[T ~uint64](a, b, den T) (quo T, extra T, err error) {
+	q, r, err := mulDiv(a, b, den, true)
+	return q, den - r - 1, err
+}
+
+func mulDiv[T ~uint64](a, b, den T, ceil bool) (quo, rem T, err error) {
 	hi, lo := bits.Mul64(uint64(a), uint64(b))
+
+	if ceil {
+		var carry uint64
+		lo, carry = bits.Add64(lo, uint64(den)-1, 0)
+		// If both `a` and `b` are MaxUint64 then `hi==MaxUint64-1` so this
+		// can't overflow because `carry ∈ {0,1}`.
+		hi += carry
+	}
+
 	if uint64(den) <= hi {
 		return 0, 0, ErrOverflow
 	}

@@ -14,9 +14,12 @@ import (
 	"sync/atomic"
 
 	"github.com/ava-labs/avalanchego/utils/logging"
+	"github.com/ava-labs/avalanchego/vms/components/gas"
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core/types"
 	"go.uber.org/zap"
+
+	"github.com/ava-labs/strevm/proxytime"
 )
 
 // A Block extends a [types.Block] to track SAE-defined concepts of async
@@ -48,7 +51,7 @@ type Block struct {
 	// execution is yet to commence. For more details, see
 	// [Block.SetInterimExecutionTime for setting and [LastToSettleAt] for
 	// usage.
-	executionExceededSecond atomic.Pointer[uint64]
+	interimExecutionTime atomic.Pointer[proxytime.Time[gas.Gas]]
 
 	executed chan struct{} // closed after `execution` is set
 	settled  chan struct{} // closed after `ancestry` is cleared

@@ -106,23 +106,25 @@ func (vm *VM) buildBlock(
 		)
 	}
 
+	bTime := blocks.PreciseTime(vm.hooks, hdr)
+	pTime := blocks.PreciseTime(vm.hooks, parent.Header())
+
 	// It is allowed for [hook.Points] to further constrain the allowed block
 	// times. However, every block MUST at least satisfy these basic sanity
 	// checks.
-	if hdr.Time < saeparams.TauSeconds {
+	if bTime.Unix() < saeparams.TauSeconds {
 		return nil, fmt.Errorf("%w: %d < %d", errBlockTimeUnderMinimum, hdr.Time, saeparams.TauSeconds)
 	}
-	if parentTime := parent.BuildTime(); hdr.Time < parentTime {
-		return nil, fmt.Errorf("%w: %d < %d", errBlockTimeBeforeParent, hdr.Time, parentTime)
+	if bTime.Compare(pTime) < 0 {
+		return nil, fmt.Errorf("%w: %s < %s", errBlockTimeBeforeParent, bTime.String(), pTime.String())
 	}
-	if maxTime := unix(vm.config.Now().Add(maxFutureBlockTime)); hdr.Time > maxTime {
-		return nil, fmt.Errorf("%w: %d > %d", errBlockTimeAfterMaximum, hdr.Time, maxTime)
+	maxTime := vm.config.Now().Add(maxBlockFutureSeconds)
+	if bTime.Compare(maxTime) > 0 {
+		return nil, fmt.Errorf("%w: %s > %s", errBlockTimeAfterMaximum, bTime.String(), maxTime.String())
 	}
 
-	// TODO(StephenButtolph) settlement logic needs to support sub-second block
-	// times. Tracked in https://github.com/ava-labs/strevm/issues/49
-	settleAt := hdr.Time - saeparams.TauSeconds
-	lastSettled, ok, err := blocks.LastToSettleAt(settleAt, parent)
+	// Underflow of Add(-tau) is prevented by the above check.
+	lastSettled, ok, err := blocks.LastToSettleAt(vm.hooks, bTime.Add(-saeparams.Tau), parent)
 	if err != nil {
 		return nil, err
 	}
