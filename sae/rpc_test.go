@@ -244,7 +244,7 @@ func testGetByHash(ctx context.Context, t *testing.T, sut *SUT, want *types.Bloc
 
 	outOfBoundsIndex := hexutil.Uint(len(want.Transactions()) + 1) //nolint:gosec // intentionally out of bounds
 	testRPCMethod[*types.Transaction](ctx, t, sut, "eth_getTransactionByBlockHashAndIndex", nil, want.Hash(), outOfBoundsIndex)
-	testRPCMethod(ctx, t, sut, "eth_getRawTransactionByBlockHashAndIndex", hexutil.Bytes{}, want.Hash(), outOfBoundsIndex)
+	testRPCMethod[hexutil.Bytes](ctx, t, sut, "eth_getRawTransactionByBlockHashAndIndex", nil, want.Hash(), outOfBoundsIndex)
 }
 
 func testGetByUnknownHash(ctx context.Context, t *testing.T, sut *SUT) {
@@ -255,12 +255,12 @@ func testGetByUnknownHash(ctx context.Context, t *testing.T, sut *SUT) {
 		testRPCMethod[*types.Header](ctx, t, sut, "eth_getHeaderByHash", nil, common.Hash{})
 		testRPCMethod[*hexutil.Uint](ctx, t, sut, "eth_getBlockTransactionCountByHash", nil, common.Hash{})
 		testRPCMethod[*types.Transaction](ctx, t, sut, "eth_getTransactionByBlockHashAndIndex", nil, common.Hash{}, hexutil.Uint(0))
-		testRPCMethod(ctx, t, sut, "eth_getRawTransactionByBlockHashAndIndex", hexutil.Bytes{}, common.Hash{}, hexutil.Uint(0))
+		testRPCMethod[hexutil.Bytes](ctx, t, sut, "eth_getRawTransactionByBlockHashAndIndex", nil, common.Hash{}, hexutil.Uint(0))
 	})
 
 	t.Run("non_existent_transaction_hash", func(t *testing.T) {
 		testRPCMethod[*types.Transaction](ctx, t, sut, "eth_getTransactionByHash", nil, common.Hash{})
-		testRPCMethod(ctx, t, sut, "eth_getRawTransactionByHash", hexutil.Bytes{}, common.Hash{})
+		testRPCMethod[hexutil.Bytes](ctx, t, sut, "eth_getRawTransactionByHash", nil, common.Hash{})
 	})
 }
 
@@ -282,7 +282,7 @@ func testGetByNumber(ctx context.Context, t *testing.T, sut *SUT, block *types.B
 
 	outOfBoundsIndex := hexutil.Uint(len(block.Transactions()) + 1) //nolint:gosec // intentionally out of bounds
 	testRPCMethod[*types.Transaction](ctx, t, sut, "eth_getTransactionByBlockNumberAndIndex", nil, n, outOfBoundsIndex)
-	testRPCMethod(ctx, t, sut, "eth_getRawTransactionByBlockNumberAndIndex", hexutil.Bytes{}, n, outOfBoundsIndex)
+	testRPCMethod[hexutil.Bytes](ctx, t, sut, "eth_getRawTransactionByBlockNumberAndIndex", nil, n, outOfBoundsIndex)
 }
 
 func testGetByUnknownNumber(ctx context.Context, t *testing.T, sut *SUT) {
@@ -294,7 +294,7 @@ func testGetByUnknownNumber(ctx context.Context, t *testing.T, sut *SUT) {
 		testRPCMethod[*types.Header](ctx, t, sut, "eth_getHeaderByNumber", nil, n)
 		testRPCMethod[*hexutil.Uint](ctx, t, sut, "eth_getBlockTransactionCountByNumber", nil, n)
 		testRPCMethod[*types.Transaction](ctx, t, sut, "eth_getTransactionByBlockNumberAndIndex", nil, n, hexutil.Uint(0))
-		testRPCMethod(ctx, t, sut, "eth_getRawTransactionByBlockNumberAndIndex", hexutil.Bytes{}, n, hexutil.Uint(0))
+		testRPCMethod[hexutil.Bytes](ctx, t, sut, "eth_getRawTransactionByBlockNumberAndIndex", nil, n, hexutil.Uint(0))
 	})
 }
 
