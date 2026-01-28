@@ -250,32 +250,32 @@ func TestEthGettersEdgeCases(t *testing.T) {
 	genesisBlock := genesis.EthBlock()
 
 	t.Run("non_existent_block_hash", func(t *testing.T) {
-		testNilResponse(ctx, t, sut, "eth_getBlockByHash", nonExistentHash, true)
-		testNilResponse(ctx, t, sut, "eth_getHeaderByHash", nonExistentHash)
-		testNilResponse(ctx, t, sut, "eth_getBlockTransactionCountByHash", nonExistentHash)
-		testNilResponse(ctx, t, sut, "eth_getTransactionByBlockHashAndIndex", nonExistentHash, hexutil.Uint(0))
-		testEmptyBytes(ctx, t, sut, "eth_getRawTransactionByBlockHashAndIndex", nonExistentHash, hexutil.Uint(0))
+		testRPCMethod[*types.Block](ctx, t, sut, "eth_getBlockByHash", nil, nonExistentHash, true)
+		testRPCMethod[*types.Header](ctx, t, sut, "eth_getHeaderByHash", nil, nonExistentHash)
+		testRPCMethod[*hexutil.Uint](ctx, t, sut, "eth_getBlockTransactionCountByHash", nil, nonExistentHash)
+		testRPCMethod[*types.Transaction](ctx, t, sut, "eth_getTransactionByBlockHashAndIndex", nil, nonExistentHash, hexutil.Uint(0))
+		testRPCMethod(ctx, t, sut, "eth_getRawTransactionByBlockHashAndIndex", hexutil.Bytes{}, nonExistentHash, hexutil.Uint(0))
 	})
 
 	t.Run("future_block_number", func(t *testing.T) {
-		testNilResponse(ctx, t, sut, "eth_getBlockByNumber", futureBlockNum, true)
-		testNilResponse(ctx, t, sut, "eth_getHeaderByNumber", futureBlockNum)
-		testNilResponse(ctx, t, sut, "eth_getBlockTransactionCountByNumber", futureBlockNum)
-		testNilResponse(ctx, t, sut, "eth_getTransactionByBlockNumberAndIndex", futureBlockNum, hexutil.Uint(0))
-		testEmptyBytes(ctx, t, sut, "eth_getRawTransactionByBlockNumberAndIndex", futureBlockNum, hexutil.Uint(0))
+		testRPCMethod[*types.Block](ctx, t, sut, "eth_getBlockByNumber", nil, futureBlockNum, true)
+		testRPCMethod[*types.Header](ctx, t, sut, "eth_getHeaderByNumber", nil, futureBlockNum)
+		testRPCMethod[*hexutil.Uint](ctx, t, sut, "eth_getBlockTransactionCountByNumber", nil, futureBlockNum)
+		testRPCMethod[*types.Transaction](ctx, t, sut, "eth_getTransactionByBlockNumberAndIndex", nil, futureBlockNum, hexutil.Uint(0))
+		testRPCMethod(ctx, t, sut, "eth_getRawTransactionByBlockNumberAndIndex", hexutil.Bytes{}, futureBlockNum, hexutil.Uint(0))
 	})
 
 	t.Run("non_existent_transaction_hash", func(t *testing.T) {
-		testNilResponse(ctx, t, sut, "eth_getTransactionByHash", nonExistentTxHash)
-		testEmptyBytes(ctx, t, sut, "eth_getRawTransactionByHash", nonExistentTxHash)
+		testRPCMethod[*types.Transaction](ctx, t, sut, "eth_getTransactionByHash", nil, nonExistentTxHash)
+		testRPCMethod(ctx, t, sut, "eth_getRawTransactionByHash", hexutil.Bytes{}, nonExistentTxHash)
 	})
 
 	t.Run("out_of_bounds_index", func(t *testing.T) {
 		blockNum := rpc.BlockNumber(ethBlock.Number().Int64())
-		testNilResponse(ctx, t, sut, "eth_getTransactionByBlockHashAndIndex", ethBlock.Hash(), outOfBoundsIndex)
-		testEmptyBytes(ctx, t, sut, "eth_getRawTransactionByBlockHashAndIndex", ethBlock.Hash(), outOfBoundsIndex)
-		testNilResponse(ctx, t, sut, "eth_getTransactionByBlockNumberAndIndex", blockNum, outOfBoundsIndex)
-		testEmptyBytes(ctx, t, sut, "eth_getRawTransactionByBlockNumberAndIndex", blockNum, outOfBoundsIndex)
+		testRPCMethod[*types.Transaction](ctx, t, sut, "eth_getTransactionByBlockHashAndIndex", nil, ethBlock.Hash(), outOfBoundsIndex)
+		testRPCMethod(ctx, t, sut, "eth_getRawTransactionByBlockHashAndIndex", hexutil.Bytes{}, ethBlock.Hash(), outOfBoundsIndex)
+		testRPCMethod[*types.Transaction](ctx, t, sut, "eth_getTransactionByBlockNumberAndIndex", nil, blockNum, outOfBoundsIndex)
+		testRPCMethod(ctx, t, sut, "eth_getRawTransactionByBlockNumberAndIndex", hexutil.Bytes{}, blockNum, outOfBoundsIndex)
 	})
 
 	t.Run("empty_block_transaction_queries", func(t *testing.T) {
@@ -286,34 +286,10 @@ func TestEthGettersEdgeCases(t *testing.T) {
 		testRPCMethod(ctx, t, sut, "eth_getBlockTransactionCountByNumber", hexutil.Uint(0), rpc.BlockNumber(0))
 
 		// Any index should return nil for empty block
-		testNilResponse(ctx, t, sut, "eth_getTransactionByBlockHashAndIndex", genesisBlock.Hash(), hexutil.Uint(0))
-		testEmptyBytes(ctx, t, sut, "eth_getRawTransactionByBlockHashAndIndex", genesisBlock.Hash(), hexutil.Uint(0))
-		testNilResponse(ctx, t, sut, "eth_getTransactionByBlockNumberAndIndex", rpc.BlockNumber(0), hexutil.Uint(0))
-		testEmptyBytes(ctx, t, sut, "eth_getRawTransactionByBlockNumberAndIndex", rpc.BlockNumber(0), hexutil.Uint(0))
-	})
-}
-
-// testNilResponse asserts that an RPC method returns nil (no error, null result)
-// when querying for non-existent data. This validates Ethereum JSON-RPC spec
-// behavior where missing data returns null rather than an error.
-func testNilResponse(ctx context.Context, t *testing.T, sut *SUT, method string, args ...any) {
-	t.Helper()
-	t.Run(method, func(t *testing.T) {
-		var got any
-		require.NoError(t, sut.CallContext(ctx, &got, method, args...))
-		require.Nil(t, got)
-	})
-}
-
-// testEmptyBytes asserts that an RPC method returns empty/nil bytes (no error)
-// when querying for non-existent data. Used for raw transaction methods which
-// return hexutil.Bytes that marshal as null when empty.
-func testEmptyBytes(ctx context.Context, t *testing.T, sut *SUT, method string, args ...any) {
-	t.Helper()
-	t.Run(method, func(t *testing.T) {
-		var got hexutil.Bytes
-		require.NoError(t, sut.CallContext(ctx, &got, method, args...))
-		require.Empty(t, got)
+		testRPCMethod[*types.Transaction](ctx, t, sut, "eth_getTransactionByBlockHashAndIndex", nil, genesisBlock.Hash(), hexutil.Uint(0))
+		testRPCMethod(ctx, t, sut, "eth_getRawTransactionByBlockHashAndIndex", hexutil.Bytes{}, genesisBlock.Hash(), hexutil.Uint(0))
+		testRPCMethod[*types.Transaction](ctx, t, sut, "eth_getTransactionByBlockNumberAndIndex", nil, rpc.BlockNumber(0), hexutil.Uint(0))
+		testRPCMethod(ctx, t, sut, "eth_getRawTransactionByBlockNumberAndIndex", hexutil.Bytes{}, rpc.BlockNumber(0), hexutil.Uint(0))
 	})
 }
 
