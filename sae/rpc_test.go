@@ -221,6 +221,102 @@ func TestEthGetters(t *testing.T) {
 	})
 }
 
+// TestEthGettersEdgeCases validates that Ethereum RPC methods handle edge cases
+// according to the Ethereum JSON-RPC specification (EIP-1474).
+//
+// In short, when requested data does not exist (missing blocks,
+// transactions, or invalid indices), methods should return null rather than
+// errors. See https://ethereum.org/developers/docs/apis/json-rpc
+func TestEthGettersEdgeCases(t *testing.T) {
+	ctx, sut := newSUT(t, 1)
+
+	createTx := func(t *testing.T) *types.Transaction {
+		t.Helper()
+		return sut.wallet.SetNonceAndSign(t, 0, &types.DynamicFeeTx{
+			To:        &common.Address{},
+			Gas:       params.TxGas,
+			GasFeeCap: big.NewInt(1),
+		})
+	}
+	genesis := sut.lastAcceptedBlock(t)
+	blockWithTx := sut.createAndAcceptBlock(t, createTx(t))
+	require.NoErrorf(t, blockWithTx.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", blockWithTx)
+
+	nonExistentHash := common.HexToHash("0x6A6F6E617468616E206F7070656E6865696D6572207761732068657265")
+	nonExistentTxHash := common.HexToHash("0x6A6F6E617468616E206F7070656E6865696D6572207761732068657265")
+	futureBlockNum := rpc.BlockNumber(blockWithTx.Height() + 1234)
+	ethBlock := blockWithTx.EthBlock()
+	outOfBoundsIndex := hexutil.Uint(len(ethBlock.Transactions()) + 147) //nolint:gosec // intentionally out of bounds
+	genesisBlock := genesis.EthBlock()
+
+	t.Run("non_existent_block_hash", func(t *testing.T) {
+		testNilResponse(ctx, t, sut, "eth_getBlockByHash", nonExistentHash, true)
+		testNilResponse(ctx, t, sut, "eth_getHeaderByHash", nonExistentHash)
+		testNilResponse(ctx, t, sut, "eth_getBlockTransactionCountByHash", nonExistentHash)
+		testNilResponse(ctx, t, sut, "eth_getTransactionByBlockHashAndIndex", nonExistentHash, hexutil.Uint(0))
+		testEmptyBytes(ctx, t, sut, "eth_getRawTransactionByBlockHashAndIndex", nonExistentHash, hexutil.Uint(0))
+	})
+
+	t.Run("future_block_number", func(t *testing.T) {
+		testNilResponse(ctx, t, sut, "eth_getBlockByNumber", futureBlockNum, true)
+		testNilResponse(ctx, t, sut, "eth_getHeaderByNumber", futureBlockNum)
+		testNilResponse(ctx, t, sut, "eth_getBlockTransactionCountByNumber", futureBlockNum)
+		testNilResponse(ctx, t, sut, "eth_getTransactionByBlockNumberAndIndex", futureBlockNum, hexutil.Uint(0))
+		testEmptyBytes(ctx, t, sut, "eth_getRawTransactionByBlockNumberAndIndex", futureBlockNum, hexutil.Uint(0))
+	})
+
+	t.Run("non_existent_transaction_hash", func(t *testing.T) {
+		testNilResponse(ctx, t, sut, "eth_getTransactionByHash", nonExistentTxHash)
+		testEmptyBytes(ctx, t, sut, "eth_getRawTransactionByHash", nonExistentTxHash)
+	})
+
+	t.Run("out_of_bounds_index", func(t *testing.T) {
+		blockNum := rpc.BlockNumber(ethBlock.Number().Int64())
+		testNilResponse(ctx, t, sut, "eth_getTransactionByBlockHashAndIndex", ethBlock.Hash(), outOfBoundsIndex)
+		testEmptyBytes(ctx, t, sut, "eth_getRawTransactionByBlockHashAndIndex", ethBlock.Hash(), outOfBoundsIndex)
+		testNilResponse(ctx, t, sut, "eth_getTransactionByBlockNumberAndIndex", blockNum, outOfBoundsIndex)
+		testEmptyBytes(ctx, t, sut, "eth_getRawTransactionByBlockNumberAndIndex", blockNum, outOfBoundsIndex)
+	})
+
+	t.Run("empty_block_transaction_queries", func(t *testing.T) {
+		require.Empty(t, genesisBlock.Transactions(), "genesis block should have no transactions")
+
+		// Transaction count should be 0, not nil
+		testRPCMethod(ctx, t, sut, "eth_getBlockTransactionCountByHash", hexutil.Uint(0), genesisBlock.Hash())
+		testRPCMethod(ctx, t, sut, "eth_getBlockTransactionCountByNumber", hexutil.Uint(0), rpc.BlockNumber(0))
+
+		// Any index should return nil for empty block
+		testNilResponse(ctx, t, sut, "eth_getTransactionByBlockHashAndIndex", genesisBlock.Hash(), hexutil.Uint(0))
+		testEmptyBytes(ctx, t, sut, "eth_getRawTransactionByBlockHashAndIndex", genesisBlock.Hash(), hexutil.Uint(0))
+		testNilResponse(ctx, t, sut, "eth_getTransactionByBlockNumberAndIndex", rpc.BlockNumber(0), hexutil.Uint(0))
+		testEmptyBytes(ctx, t, sut, "eth_getRawTransactionByBlockNumberAndIndex", rpc.BlockNumber(0), hexutil.Uint(0))
+	})
+}
+
+// testNilResponse asserts that an RPC method returns nil (no error, null result)
+// when querying for non-existent data. This validates Ethereum JSON-RPC spec
+// behavior where missing data returns null rather than an error.
+func testNilResponse(ctx context.Context, t *testing.T, sut *SUT, method string, args ...any) {
+	t.Helper()
+	t.Run(method, func(t *testing.T) {
+		var got any
+		require.NoError(t, sut.CallContext(ctx, &got, method, args...))
+		require.Nil(t, got)
+	})
+}
+
+// testEmptyBytes asserts that an RPC method returns empty/nil bytes (no error)
+// when querying for non-existent data. Used for raw transaction methods which
+// return hexutil.Bytes that marshal as null when empty.
+func testEmptyBytes(ctx context.Context, t *testing.T, sut *SUT, method string, args ...any) {
+	t.Helper()
+	t.Run(method, func(t *testing.T) {
+		var got hexutil.Bytes
+		require.NoError(t, sut.CallContext(ctx, &got, method, args...))
+		require.Empty(t, got)
+	})
+}
+
 func testGetByHash(ctx context.Context, t *testing.T, sut *SUT, want *types.Block) {
 	t.Helper()
 	cmpOpts := []cmp.Option{
