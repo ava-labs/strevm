@@ -223,15 +223,10 @@ func TestEthGetters(t *testing.T) {
 
 func testGetByHash(ctx context.Context, t *testing.T, sut *SUT, want *types.Block) {
 	t.Helper()
-	cmpOpts := []cmp.Option{
-		cmputils.Blocks(),
-		cmputils.Headers(),
-		cmpopts.EquateEmpty(),
-	}
 
-	testRPCGetter(ctx, t, "BlockByHash", sut.BlockByHash, want.Hash(), want, cmpOpts...)
-	testRPCGetter(ctx, t, "HeaderByHash", sut.HeaderByHash, want.Hash(), want.Header(), cmpOpts...)
-	testRPCGetter(ctx, t, "TransactionCount", sut.TransactionCount, want.Hash(), uint(len(want.Transactions())), cmpOpts...)
+	testRPCGetter(ctx, t, "BlockByHash", sut.BlockByHash, want.Hash(), want)
+	testRPCGetter(ctx, t, "HeaderByHash", sut.HeaderByHash, want.Hash(), want.Header())
+	testRPCGetter(ctx, t, "TransactionCount", sut.TransactionCount, want.Hash(), uint(len(want.Transactions())))
 
 	for i, wantTx := range want.Transactions() {
 		t.Run("TransactionByHash", func(t *testing.T) {
@@ -253,14 +248,9 @@ func testGetByHash(ctx context.Context, t *testing.T, sut *SUT, want *types.Bloc
 
 func testGetByNumber(ctx context.Context, t *testing.T, sut *SUT, block *types.Block, n rpc.BlockNumber) {
 	t.Helper()
-	cmpOpts := []cmp.Option{
-		cmputils.Blocks(),
-		cmputils.Headers(),
-		cmpopts.EquateEmpty(),
-	}
 	number := n.Int64()
-	testRPCGetter(ctx, t, "BlockByNumber", sut.BlockByNumber, big.NewInt(number), block, cmpOpts...)
-	testRPCGetter(ctx, t, "HeaderByNumber", sut.HeaderByNumber, big.NewInt(number), block.Header(), cmpOpts...)
+	testRPCGetter(ctx, t, "BlockByNumber", sut.BlockByNumber, big.NewInt(number), block)
+	testRPCGetter(ctx, t, "HeaderByNumber", sut.HeaderByNumber, big.NewInt(number), block.Header())
 	testRPCMethod(ctx, t, sut, "eth_getBlockTransactionCountByNumber", hexutil.Uint(len(block.Transactions())), n)
 
 	for i, wantTx := range block.Transactions() {
@@ -272,8 +262,14 @@ func testGetByNumber(ctx context.Context, t *testing.T, sut *SUT, block *types.B
 	}
 }
 
-func testRPCGetter[Arg any, T any](ctx context.Context, t *testing.T, funcName string, get func(context.Context, Arg) (T, error), arg Arg, want T, opts ...cmp.Option) {
+func testRPCGetter[Arg any, T any](ctx context.Context, t *testing.T, funcName string, get func(context.Context, Arg) (T, error), arg Arg, want T) {
 	t.Helper()
+	opts := []cmp.Option{
+		cmputils.Blocks(),
+		cmputils.Headers(),
+		cmpopts.EquateEmpty(),
+	}
+
 	t.Run(funcName, func(t *testing.T) {
 		got, err := get(ctx, arg)
 		t.Logf("%s(ctx, %v)", funcName, arg)
