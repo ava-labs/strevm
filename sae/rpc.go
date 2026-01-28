@@ -403,22 +403,22 @@ func (b *ethAPIBackend) GetTransaction(ctx context.Context, txHash common.Hash) 
 
 type canonicalReader[T any] func(ethdb.Reader, common.Hash, uint64) *T
 
-func readByNumber[T any](a *ethAPIBackend, n rpc.BlockNumber, read canonicalReader[T]) (*T, error) {
-	num, err := a.resolveBlockNumber(n)
+func readByNumber[T any](b *ethAPIBackend, n rpc.BlockNumber, read canonicalReader[T]) (*T, error) {
+	num, err := b.resolveBlockNumber(n)
 	if errors.Is(err, errFutureBlockNotResolved) {
 		return nil, nil
 	} else if err != nil {
 		return nil, err
 	}
-	return read(a.vm.db, rawdb.ReadCanonicalHash(a.vm.db, num), num), nil
+	return read(b.vm.db, rawdb.ReadCanonicalHash(b.vm.db, num), num), nil
 }
 
-func readByHash[T any](a *ethAPIBackend, hash common.Hash, read canonicalReader[T]) *T {
-	num := rawdb.ReadHeaderNumber(a.vm.db, hash)
+func readByHash[T any](b *ethAPIBackend, hash common.Hash, read canonicalReader[T]) *T {
+	num := rawdb.ReadHeaderNumber(b.vm.db, hash)
 	if num == nil {
 		return nil
 	}
-	return read(a.vm.db, hash, *num)
+	return read(b.vm.db, hash, *num)
 }
 
 var errFutureBlockNotResolved = errors.New("not accepted yet")
