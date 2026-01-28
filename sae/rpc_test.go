@@ -247,6 +247,7 @@ func testGetByHash(ctx context.Context, t *testing.T, sut *SUT, want *types.Bloc
 		require.NoErrorf(t, err, "%T.MarshalBinary()", wantTx)
 		testRPCMethod(ctx, t, sut, "eth_getTransactionByBlockHashAndIndex", wantTx, want.Hash(), hexInd)
 		testRPCMethod(ctx, t, sut, "eth_getRawTransactionByBlockHashAndIndex", hexutil.Bytes(marshaled), want.Hash(), hexInd)
+		testRPCMethod(ctx, t, sut, "eth_getRawTransactionByHash", hexutil.Bytes(marshaled), wantTx.Hash())
 	}
 
 	outOfBoundsIndex := hexutil.Uint(len(want.Transactions()) + 1) //nolint:gosec // intentionally out of bounds
