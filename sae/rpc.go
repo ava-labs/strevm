@@ -36,8 +36,14 @@ func (vm *VM) ethRPCServer() (*rpc.Server, error) {
 	}
 	s := rpc.NewServer()
 
+	// Even if this function errors, we should close API to prevent a goroutine
+	// from leaking.
 	filterSystem := filters.NewFilterSystem(b, filters.Config{})
 	filterAPI := filters.NewFilterAPI(filterSystem, false /*isLightClient*/)
+	vm.toClose = append(vm.toClose, func() error {
+		filters.CloseAPI(filterAPI)
+		return nil
+	})
 
 	// Standard Ethereum APIs are documented at: https://ethereum.org/developers/docs/apis/json-rpc
 	// Geth-specific APIs are documented at: https://geth.ethereum.org/docs/interacting-with-geth/rpc

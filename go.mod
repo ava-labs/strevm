@@ -5,8 +5,8 @@ go 1.24.12
 tool github.com/go-task/task/v3/cmd/task
 
 require (
-	github.com/ava-labs/avalanchego v1.14.2-0.20260112194842-874bc6c9d305
-	github.com/ava-labs/libevm v1.13.15-0.20260128154530-b4a7f35411fb
+	github.com/ava-labs/avalanchego v1.14.2-0.20260123184805-18c4dbe2714e
+	github.com/ava-labs/libevm v1.13.15-0.20260128160829-e673c7097059
 	github.com/google/go-cmp v0.7.0
 	github.com/holiman/uint256 v1.2.4
 	github.com/stretchr/testify v1.11.1
