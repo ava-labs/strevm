@@ -120,9 +120,11 @@ func TestBlockGetters(t *testing.T) {
 			testRPCGetter(ctx, t, "BlockByNumber", sut.BlockByNumber, ethB.Number(), ethB, cmpOpts...)
 			testRPCGetter(ctx, t, "HeaderByHash", sut.HeaderByHash, ethB.Hash(), ethB.Header(), cmpOpts...)
 			testRPCGetter(ctx, t, "HeaderByNumber", sut.HeaderByNumber, ethB.Number(), ethB.Header(), cmpOpts...)
+			testRPCGetter(ctx, t, "TransactionCount", sut.TransactionCount, ethB.Hash(), uint(len(ethB.Transactions())), cmpOpts)
 
 			t.Run("TransactionByHash", func(t *testing.T) {
-				for _, want := range ethB.Transactions() {
+				blockNum := rpc.BlockNumber(ethB.NumberU64()) //nolint:gosec // definitely won't overflow
+				for i, want := range ethB.Transactions() {
 					t.Run(want.Hash().String(), func(t *testing.T) {
 						got, isPending, err := sut.TransactionByHash(ctx, want.Hash())
 						require.NoError(t, err)
@@ -131,6 +133,15 @@ func TestBlockGetters(t *testing.T) {
 							t.Errorf("Diff (-want +got):\n%s", diff)
 						}
 					})
+
+					txIndex := uint(i) //nolint:gosec // definitely won't overflow
+					hexInd := hexutil.Uint(txIndex)
+					marshaled, err := want.MarshalBinary()
+					require.NoErrorf(t, err, "%T.MarshalBinary()", want)
+					testRPCMethod(ctx, t, sut, "eth_getTransactionByBlockHashAndIndex", want, ethB.Hash(), hexInd)
+					testRPCMethod(ctx, t, sut, "eth_getRawTransactionByBlockHashAndIndex", hexutil.Bytes(marshaled), ethB.Hash(), hexInd)
+					testRPCMethod(ctx, t, sut, "eth_getTransactionByBlockNumberAndIndex", want, blockNum, hexInd)
+					testRPCMethod(ctx, t, sut, "eth_getRawTransactionByBlockNumberAndIndex", hexutil.Bytes(marshaled), blockNum, hexInd)
 				}
 			})
 		})
@@ -151,8 +162,19 @@ func TestBlockGetters(t *testing.T) {
 			t.Run(tt.num.String(), func(t *testing.T) {
 				testRPCGetter(ctx, t, "BlockByNumber", sut.BlockByNumber, big.NewInt(tt.num.Int64()), tt.want.EthBlock(), cmpOpts...)
 				testRPCGetter(ctx, t, "HeaderByNumber", sut.HeaderByNumber, big.NewInt(tt.num.Int64()), tt.want.Header(), cmpOpts...)
+				testRPCMethod(ctx, t, sut, "eth_getBlockTransactionCountByNumber", hexutil.Uint(len(tt.want.EthBlock().Transactions())), tt.num)
+
+				for i, want := range tt.want.EthBlock().Transactions() {
+					hexIdx := hexutil.Uint(i) //nolint:gosec // definitely won't overflow
+					marshaled, err := want.MarshalBinary()
+					require.NoErrorf(t, err, "%T.MarshalBinary()", want)
+					testRPCMethod(ctx, t, sut, "eth_getTransactionByBlockNumberAndIndex", want, tt.num, hexIdx)
+					testRPCMethod(ctx, t, sut, "eth_getRawTransactionByBlockNumberAndIndex", hexutil.Bytes(marshaled), tt.num, hexIdx)
+				}
 			})
 		}
+
+		testRPCMethod(ctx, t, sut, "eth_blockNumber", hexutil.Uint64(executed.Height()))
 	})
 }
 
@@ -174,6 +196,12 @@ func testRPCMethod[T any](ctx context.Context, t *testing.T, sut *SUT, method st
 		var got T
 		t.Logf("%T.CallContext(ctx, %T, %q, %v...)", sut.rpcClient, got, method, args)
 		require.NoError(t, sut.CallContext(ctx, &got, method, args...))
-		assert.Equal(t, want, got)
+		opts := []cmp.Option{
+			cmpopts.EquateEmpty(),
+			cmputils.TransactionsByHash(),
+		}
+		if diff := cmp.Diff(want, got, opts...); diff != "" {
+			t.Errorf("Diff (-want +got):\n%s", diff)
+		}
 	})
 }
