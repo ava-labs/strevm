@@ -54,6 +54,13 @@ func (vm *VM) ethRPCServer() (*rpc.Server, error) {
 		// - net_peerCount
 		// - net_version
 		{"net", newNetAPI(vm.peers, vm.exec.ChainConfig().ChainID.Uint64())},
+		// Geth-specific APIs:
+		// - txpool_content
+		// - txpool_contentFrom
+		// - txpool_inspect
+		// - txpool_status
+		{"txpool", ethapi.NewTxPoolAPI(b)},
+
 		// Standard Ethereum node APIs:
 		// - eth_blockNumber
 		// - eth_getBlockByHash
@@ -147,8 +154,12 @@ func (b *ethAPIBackend) UnprotectedAllowed() bool {
 	return false
 }
 
-func (b *ethAPIBackend) CurrentBlock() *types.Header {
+func (b *ethAPIBackend) CurrentHeader() *types.Header {
 	return types.CopyHeader(b.vm.exec.LastExecuted().Header())
+}
+
+func (b *ethAPIBackend) CurrentBlock() *types.Header {
+	return b.CurrentHeader()
 }
 
 func (b *ethAPIBackend) GetTd(context.Context, common.Hash) *big.Int {
@@ -228,6 +239,18 @@ func (b *ethAPIBackend) resolveBlockNumber(bn rpc.BlockNumber) (uint64, error) {
 		return 0, fmt.Errorf("%w: block %d", errFutureBlockNotResolved, n)
 	}
 	return n, nil
+}
+
+func (b *ethAPIBackend) Stats() (pending int, queued int) {
+	return b.Set.Pool.Stats()
+}
+
+func (b *ethAPIBackend) TxPoolContent() (map[common.Address][]*types.Transaction, map[common.Address][]*types.Transaction) {
+	return b.Set.Pool.Content()
+}
+
+func (b *ethAPIBackend) TxPoolContentFrom(addr common.Address) ([]*types.Transaction, []*types.Transaction) {
+	return b.Set.Pool.ContentFrom(addr)
 }
 
 func (b *ethAPIBackend) SubscribeChainEvent(ch chan<- core.ChainEvent) event.Subscription {
