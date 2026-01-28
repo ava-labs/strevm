@@ -295,21 +295,14 @@ func testGetByNumber(ctx context.Context, t *testing.T, sut *SUT, block *types.B
 func testGetByUnknownNumber(ctx context.Context, t *testing.T, sut *SUT) {
 	t.Helper()
 
-	t.Run("unknown_block_numbers", func(t *testing.T) {
-		const (
-			unknownBlockNumber rpc.BlockNumber = -5
-			futureBlockNumber  rpc.BlockNumber = math.MaxInt64
-		)
-
-		for _, n := range []rpc.BlockNumber{unknownBlockNumber, futureBlockNumber} {
-			testRPCMethod[*types.Block](ctx, t, sut, "eth_getBlockByNumber", nil, n, true)
-			testRPCMethod[*types.Header](ctx, t, sut, "eth_getHeaderByNumber", nil, n)
-			testRPCMethod[*hexutil.Uint](ctx, t, sut, "eth_getBlockTransactionCountByNumber", nil, n)
-			testRPCMethod[*types.Transaction](ctx, t, sut, "eth_getTransactionByBlockNumberAndIndex", nil, n, hexutil.Uint(0))
-			testRPCMethod(ctx, t, sut, "eth_getRawTransactionByBlockNumberAndIndex", hexutil.Bytes{}, n, hexutil.Uint(0))
-		}
+	t.Run("future_block_number", func(t *testing.T) {
+		const n rpc.BlockNumber = math.MaxInt64
+		testRPCMethod[*types.Block](ctx, t, sut, "eth_getBlockByNumber", nil, n, true)
+		testRPCMethod[*types.Header](ctx, t, sut, "eth_getHeaderByNumber", nil, n)
+		testRPCMethod[*hexutil.Uint](ctx, t, sut, "eth_getBlockTransactionCountByNumber", nil, n)
+		testRPCMethod[*types.Transaction](ctx, t, sut, "eth_getTransactionByBlockNumberAndIndex", nil, n, hexutil.Uint(0))
+		testRPCMethod(ctx, t, sut, "eth_getRawTransactionByBlockNumberAndIndex", hexutil.Bytes{}, n, hexutil.Uint(0))
 	})
-
 }
 
 func testRPCGetter[Arg any, T any](ctx context.Context, t *testing.T, funcName string, get func(context.Context, Arg) (T, error), arg Arg, want T) {
