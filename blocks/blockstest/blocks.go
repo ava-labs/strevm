@@ -11,9 +11,7 @@ import (
 	"math"
 	"math/big"
 	"slices"
-	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/ava-labs/avalanchego/utils/logging"
 	"github.com/ava-labs/avalanchego/vms/components/gas"
@@ -29,7 +27,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/ava-labs/strevm/blocks"
-	"github.com/ava-labs/strevm/gastime"
+	"github.com/ava-labs/strevm/hook/hookstest"
 	"github.com/ava-labs/strevm/saetest"
 )
 
@@ -124,16 +122,8 @@ func NewGenesis(tb testing.TB, db ethdb.Database, config *params.ChainConfig, al
 	require.NoErrorf(tb, tdb.Commit(hash, true), "%T.Commit(core.SetupGenesisBlock(...))", tdb)
 
 	b := NewBlock(tb, gen.ToBlock(), nil, nil)
-	require.NoErrorf(tb, b.MarkExecuted(
-		db,
-		gastime.New(gen.Timestamp, conf.gasTarget, conf.gasExcess),
-		time.Time{},
-		new(big.Int),
-		nil,
-		b.SettledStateRoot(),
-		new(atomic.Pointer[blocks.Block]),
-	), "%T.MarkExecuted()", b)
-	require.NoErrorf(tb, b.MarkSynchronous(), "%T.MarkSynchronous()", b)
+	h := &hookstest.Stub{Target: conf.gasTarget}
+	require.NoErrorf(tb, b.MarkSynchronous(h, db, conf.gasExcess), "%T.MarkSynchronous()", b)
 	return b
 }
 
