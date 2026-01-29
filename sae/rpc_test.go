@@ -30,6 +30,60 @@ import (
 	"github.com/ava-labs/strevm/saetest"
 )
 
+type rpcTest struct {
+	method string
+	args   []any
+	want   any
+}
+
+func (s *SUT) testRPC(ctx context.Context, t *testing.T, tcs ...rpcTest) {
+	t.Helper()
+	opts := []cmp.Option{
+		cmpopts.EquateEmpty(),
+		cmputils.TransactionsByHash(),
+		cmputils.HexutilBigs(),
+	}
+
+	for _, tc := range tcs {
+		t.Run(tc.method, func(t *testing.T) {
+			got := reflect.New(reflect.TypeOf(tc.want))
+			t.Logf("%T.CallContext(ctx, %T, %q, %v...)", s.rpcClient, &tc.want /*i.e. the type*/, tc.method, tc.args)
+			require.NoError(t, s.CallContext(ctx, got.Interface(), tc.method, tc.args...))
+			if diff := cmp.Diff(tc.want, got.Elem().Interface(), opts...); diff != "" {
+				t.Errorf("Diff (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+// testRPCGetter allows testing of RPC methods for which the return types are
+// difficult to unmarshal but there exists a helper such as [ethclient.Client].
+// [SUT.testRPC] SHOULD be preferred.
+func testRPCGetter[
+	Arg any,
+	T interface {
+		// Only add extra types if JSON unmarshalling from RPC methods directly
+		// into the type will fail.
+		*types.Block | *types.Header
+	},
+](ctx context.Context, t *testing.T, underlyingRPCMethod string, get func(context.Context, Arg) (T, error), arg Arg, want T) {
+	t.Helper()
+	opts := []cmp.Option{
+		cmputils.Blocks(),
+		cmputils.Headers(),
+		cmpopts.EquateEmpty(),
+	}
+
+	t.Run(underlyingRPCMethod, func(t *testing.T) {
+		got, err := get(ctx, arg)
+		t.Logf("%s(%v)", underlyingRPCMethod, arg)
+		require.NoErrorf(t, err, "%s(%v)", underlyingRPCMethod, arg)
+		if diff := cmp.Diff(want, got, opts...); diff != "" {
+			t.Errorf("%s(%v) diff (-want +got):\n%s", underlyingRPCMethod, arg, diff)
+		}
+	})
+}
+
 func TestSubscriptions(t *testing.T) {
 	ctx, sut := newSUT(t, 1)
 
@@ -263,14 +317,20 @@ func TestEthGetters(t *testing.T) {
 func (sut *SUT) testGetByHash(ctx context.Context, t *testing.T, want *types.Block) {
 	t.Helper()
 
-	testRPCGetter(ctx, t, "BlockByHash", sut.BlockByHash, want.Hash(), want)
-	testRPCGetter(ctx, t, "HeaderByHash", sut.HeaderByHash, want.Hash(), want.Header())
-	testRPCGetter(ctx, t, "TransactionCount", sut.TransactionCount, want.Hash(), uint(len(want.Transactions())))
-	sut.testRPC(ctx, t, rpcTest{
-		method: "eth_getUncleCountByBlockHash",
-		args:   []any{want.Hash()},
-		want:   hexutil.Uint(0),
-	})
+	testRPCGetter(ctx, t, "eth_getBlockByHash", sut.BlockByHash, want.Hash(), want)
+	testRPCGetter(ctx, t, "eth_getBlockByHash", sut.HeaderByHash, want.Hash(), want.Header())
+	sut.testRPC(ctx, t, []rpcTest{
+		{
+			method: "eth_getUncleCountByBlockHash",
+			args:   []any{want.Hash()},
+			want:   hexutil.Uint(0),
+		},
+		{
+			method: "eth_getBlockTransactionCountByHash",
+			args:   []any{want.Hash()},
+			want:   hexutil.Uint(len(want.Transactions())),
+		},
+	}...)
 
 	for i, wantTx := range want.Transactions() {
 		txIdx := hexutil.Uint(i) //nolint:gosec // definitely won't overflow
@@ -321,8 +381,8 @@ func (sut *SUT) testGetByHash(ctx context.Context, t *testing.T, want *types.Blo
 // carried by the [types.Block].
 func (sut *SUT) testGetByNumber(ctx context.Context, t *testing.T, want *types.Block, n rpc.BlockNumber) {
 	t.Helper()
-	testRPCGetter(ctx, t, "BlockByNumber", sut.BlockByNumber, big.NewInt(n.Int64()), want)
-	testRPCGetter(ctx, t, "HeaderByNumber", sut.HeaderByNumber, big.NewInt(n.Int64()), want.Header())
+	testRPCGetter(ctx, t, "eth_getBlockByNumber", sut.BlockByNumber, big.NewInt(n.Int64()), want)
+	testRPCGetter(ctx, t, "eth_getBlockByNumber", sut.HeaderByNumber, big.NewInt(n.Int64()), want.Header())
 
 	sut.testRPC(ctx, t, []rpcTest{
 		{
@@ -453,48 +513,4 @@ func TestGetByUnknownNumber(t *testing.T) {
 			},
 		}...)
 	})
-}
-
-func testRPCGetter[Arg any, T any](ctx context.Context, t *testing.T, funcName string, get func(context.Context, Arg) (T, error), arg Arg, want T) {
-	t.Helper()
-	opts := []cmp.Option{
-		cmputils.Blocks(),
-		cmputils.Headers(),
-		cmpopts.EquateEmpty(),
-	}
-
-	t.Run(funcName, func(t *testing.T) {
-		got, err := get(ctx, arg)
-		t.Logf("%s(ctx, %v)", funcName, arg)
-		require.NoErrorf(t, err, "%s(%v)", funcName, arg)
-		if diff := cmp.Diff(want, got, opts...); diff != "" {
-			t.Errorf("%s(%v) diff (-want +got):\n%s", funcName, arg, diff)
-		}
-	})
-}
-
-type rpcTest struct {
-	method string
-	args   []any
-	want   any
-}
-
-func (s *SUT) testRPC(ctx context.Context, t *testing.T, tcs ...rpcTest) {
-	t.Helper()
-	opts := []cmp.Option{
-		cmpopts.EquateEmpty(),
-		cmputils.TransactionsByHash(),
-		cmputils.HexutilBigs(),
-	}
-
-	for _, tc := range tcs {
-		t.Run(tc.method, func(t *testing.T) {
-			got := reflect.New(reflect.TypeOf(tc.want))
-			t.Logf("%T.CallContext(ctx, %T, %q, %v...)", s.rpcClient, &tc.want /*i.e. the type*/, tc.method, tc.args)
-			require.NoError(t, s.CallContext(ctx, got.Interface(), tc.method, tc.args...))
-			if diff := cmp.Diff(tc.want, got.Elem().Interface(), opts...); diff != "" {
-				t.Errorf("Diff (-want +got):\n%s", diff)
-			}
-		})
-	}
 }
