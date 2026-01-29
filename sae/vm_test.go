@@ -495,6 +495,17 @@ func TestIntegration(t *testing.T) {
 	})
 }
 
+func TestEmptyChainConfig(t *testing.T) {
+	_, sut := newSUT(t, 1, options.Func[sutConfig](func(c *sutConfig) {
+		c.genesis.Config = &params.ChainConfig{
+			ChainID: big.NewInt(42),
+		}
+	}))
+	for range 5 {
+		sut.runConsensusLoop(t, sut.lastAcceptedBlock(t))
+	}
+}
+
 func TestSyntacticBlockChecks(t *testing.T) {
 	ctx, sut := newSUT(t, 0)
 
