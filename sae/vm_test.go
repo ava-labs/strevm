@@ -5,6 +5,7 @@ package sae
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"math/big"
 	"math/rand/v2"
@@ -14,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ava-labs/avalanchego/database/memdb"
 	"github.com/ava-labs/avalanchego/ids"
 	"github.com/ava-labs/avalanchego/snow"
 	"github.com/ava-labs/avalanchego/snow/consensus/snowman"
@@ -25,6 +27,7 @@ import (
 	"github.com/ava-labs/avalanchego/utils/logging"
 	"github.com/ava-labs/avalanchego/utils/set"
 	"github.com/ava-labs/libevm/common"
+	"github.com/ava-labs/libevm/core"
 	"github.com/ava-labs/libevm/core/rawdb"
 	"github.com/ava-labs/libevm/core/state"
 	"github.com/ava-labs/libevm/core/txpool"
@@ -36,7 +39,6 @@ import (
 	"github.com/ava-labs/libevm/log"
 	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/rpc"
-	"github.com/ava-labs/libevm/triedb"
 	"github.com/holiman/uint256"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -45,6 +47,7 @@ import (
 	"github.com/ava-labs/strevm/adaptor"
 	"github.com/ava-labs/strevm/blocks"
 	"github.com/ava-labs/strevm/blocks/blockstest"
+	"github.com/ava-labs/strevm/hook"
 	"github.com/ava-labs/strevm/hook/hookstest"
 	saeparams "github.com/ava-labs/strevm/params"
 	"github.com/ava-labs/strevm/saetest"
@@ -78,7 +81,7 @@ type SUT struct {
 	genesis *blocks.Block
 	wallet  *saetest.Wallet
 	db      ethdb.Database
-	hooks   *hookstest.Stub
+	hooks   hook.Points
 	logger  *saetest.TBLogger
 
 	validators *validatorstest.State
@@ -87,12 +90,9 @@ type SUT struct {
 
 type (
 	sutConfig struct {
-		vmConfig       Config
-		chainConfig    *params.ChainConfig
-		hooks          *hookstest.Stub
-		logLevel       logging.Level
-		alloc          types.GenesisAlloc
-		genesisOptions []blockstest.GenesisOption
+		vmConfig Config
+		logLevel logging.Level
+		genesis  core.Genesis
 	}
 	sutOption = options.Option[sutConfig]
 )
@@ -111,28 +111,25 @@ func newSUT(tb testing.TB, numAccounts uint, opts ...sutOption) (context.Context
 	conf := options.ApplyTo(&sutConfig{
 		vmConfig: Config{
 			MempoolConfig: mempoolConf,
-		},
-		chainConfig: saetest.ChainConfig(),
-		hooks: &hookstest.Stub{
-			Target: 100e6,
-			TB:     tb,
+			Hooks: &hookstest.Stub{
+				Target: 100e6,
+			},
 		},
 		logLevel: logging.Debug,
-		alloc:    saetest.MaxAllocFor(keys.Addresses()...),
-		genesisOptions: []blockstest.GenesisOption{
-			blockstest.WithTimestamp(saeparams.TauSeconds),
+		genesis: core.Genesis{
+			Config:     saetest.ChainConfig(),
+			Alloc:      saetest.MaxAllocFor(keys.Addresses()...),
+			Timestamp:  saeparams.TauSeconds,
+			Difficulty: big.NewInt(0), // irrelevant but required
 		},
 	}, opts...)
 
-	vm := NewVM(conf.vmConfig)
-	snow := adaptor.Convert(&SinceGenesis{VM: vm})
+	vm := NewSinceGenesis(conf.vmConfig)
+	snow := adaptor.Convert(vm)
 	tb.Cleanup(func() {
 		ctx := context.WithoutCancel(tb.Context())
 		require.NoError(tb, snow.Shutdown(ctx), "Shutdown()")
 	})
-
-	db := rawdb.NewMemoryDatabase()
-	genesis := blockstest.NewGenesis(tb, db, conf.chainConfig, conf.alloc, conf.genesisOptions...)
 
 	logger := saetest.NewTBLogger(tb, conf.logLevel)
 	ctx := logger.CancelOnError(tb.Context())
@@ -145,9 +142,17 @@ func newSUT(tb testing.TB, numAccounts uint, opts ...sutOption) (context.Context
 		},
 	}
 
-	// TODO(arr4n) change this to use [SinceGenesis.Initialize] via the `snow` variable.
-	require.NoError(tb, vm.Init(snowCtx, conf.hooks, conf.chainConfig, db, &triedb.Config{}, genesis, sender), "Init()")
-	_ = snow.Initialize
+	mdb := memdb.New()
+	require.NoError(tb, snow.Initialize(
+		ctx,
+		snowCtx,
+		mdb,
+		marshalJSON(tb, conf.genesis),
+		nil, // upgrade bytes
+		nil, // config bytes (not ChainConfig)
+		nil, // Fxs
+		sender,
+	), "Initialize()")
 
 	handlers, err := snow.CreateHandlers(ctx)
 	require.NoErrorf(tb, err, "%T.CreateHandlers()", snow)
@@ -164,19 +169,26 @@ func newSUT(tb testing.TB, numAccounts uint, opts ...sutOption) (context.Context
 		ChainVM:   snow,
 		Client:    client,
 		rpcClient: rpcClient,
-		rawVM:     vm,
-		genesis:   genesis,
+		rawVM:     vm.VM,
+		genesis:   vm.last.settled.Load(),
 		wallet: saetest.NewWalletWithKeyChain(
 			keys,
-			types.LatestSigner(conf.chainConfig),
+			types.LatestSigner(conf.genesis.Config),
 		),
-		db:     db,
-		hooks:  conf.hooks,
+		db:     newEthDB(mdb),
+		hooks:  conf.vmConfig.Hooks,
 		logger: logger,
 
 		validators: validators,
 		sender:     sender,
 	}
+}
+
+func marshalJSON(tb testing.TB, v any) []byte {
+	tb.Helper()
+	buf, err := json.Marshal(v)
+	require.NoErrorf(tb, err, "json.Marshal(%T)", v)
+	return buf
 }
 
 // CallContext propagates its arguments to and from [SUT.rpcClient.CallContext].
@@ -204,7 +216,8 @@ func (t *vmTime) advance(d time.Duration) {
 
 // withVMTime returns an option to configure a new SUT's "now" function along
 // with a struct to access and set the time at nanosecond resolution.
-func withVMTime(startTime time.Time) (sutOption, *vmTime) {
+func withVMTime(tb testing.TB, startTime time.Time) (sutOption, *vmTime) {
+	tb.Helper()
 	t := &vmTime{
 		Time: startTime,
 	}
@@ -212,16 +225,13 @@ func withVMTime(startTime time.Time) (sutOption, *vmTime) {
 		// TODO(StephenButtolph) unify the time functions provided in the config
 		// and the hooks.
 		c.vmConfig.Now = t.now
-		c.hooks.Now = t.now
+
+		h, ok := c.vmConfig.Hooks.(*hookstest.Stub)
+		require.Truef(tb, ok, "%T.vmConfig.Hooks of type %T is not %T", c, c.vmConfig.Hooks, h)
+		h.Now = t.now
 	})
 
 	return opt, t
-}
-
-func withGenesisOpts(opts ...blockstest.GenesisOption) sutOption {
-	return options.Func[sutConfig](func(c *sutConfig) {
-		c.genesisOptions = append(c.genesisOptions, opts...)
-	})
 }
 
 func (s *SUT) nodeID() ids.NodeID {
@@ -486,6 +496,17 @@ func TestIntegration(t *testing.T) {
 	})
 }
 
+func TestEmptyChainConfig(t *testing.T) {
+	_, sut := newSUT(t, 1, options.Func[sutConfig](func(c *sutConfig) {
+		c.genesis.Config = &params.ChainConfig{
+			ChainID: big.NewInt(42),
+		}
+	}))
+	for range 5 {
+		sut.runConsensusLoop(t, sut.lastAcceptedBlock(t))
+	}
+}
+
 func TestSyntacticBlockChecks(t *testing.T) {
 	ctx, sut := newSUT(t, 0)
 
@@ -531,7 +552,7 @@ func TestAcceptBlock(t *testing.T) {
 		require.Zero(t, blocks.InMemoryBlockCount(), "initial in-memory block count")
 	}, 100*time.Millisecond, time.Millisecond)
 
-	opt, vmTime := withVMTime(time.Unix(saeparams.TauSeconds, 0))
+	opt, vmTime := withVMTime(t, time.Unix(saeparams.TauSeconds, 0))
 
 	ctx, sut := newSUT(t, 1, opt)
 	// Causes [VM.AcceptBlock] to wait until the block has executed.
@@ -580,7 +601,9 @@ func TestAcceptBlock(t *testing.T) {
 
 func TestSemanticBlockChecks(t *testing.T) {
 	const now = 1e6
-	ctx, sut := newSUT(t, 1, withGenesisOpts(blockstest.WithTimestamp(now)))
+	ctx, sut := newSUT(t, 1, options.Func[sutConfig](func(c *sutConfig) {
+		c.genesis.Timestamp = now
+	}))
 	sut.rawVM.config.Now = func() time.Time {
 		return time.Unix(now, 0)
 	}

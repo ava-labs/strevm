@@ -9,10 +9,12 @@ import (
 
 	"github.com/ava-labs/avalanchego/utils/logging"
 	"github.com/ava-labs/libevm/core/types"
+	"github.com/ava-labs/libevm/ethdb"
 	"github.com/google/go-cmp/cmp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/ava-labs/strevm/hook/hookstest"
 	"github.com/ava-labs/strevm/saetest"
 )
 
@@ -34,7 +36,7 @@ func newBlock(tb testing.TB, eth *types.Block, parent, lastSettled *Block) *Bloc
 	return b
 }
 
-func newChain(tb testing.TB, startHeight, total uint64, lastSettledAtHeight map[uint64]uint64) []*Block {
+func newChain(tb testing.TB, db ethdb.Database, startHeight, total uint64, lastSettledAtHeight map[uint64]uint64) []*Block {
 	tb.Helper()
 
 	var (
@@ -65,7 +67,11 @@ func newChain(tb testing.TB, startHeight, total uint64, lastSettledAtHeight map[
 		byNum[n] = b
 		blocks = append(blocks, b)
 		if synchronous {
-			require.NoError(tb, b.MarkSynchronous(), "MarkSynchronous()")
+			// The target and excess are irrelevant for the purposes of
+			// [newChain], and non-zero sub-second time for genesis is
+			// unnecessary.
+			h := &hookstest.Stub{Target: 1}
+			require.NoError(tb, b.MarkSynchronous(h, db, 0), "MarkSynchronous()")
 		}
 
 		parent = byNum[n]

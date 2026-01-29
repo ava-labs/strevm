@@ -4,6 +4,7 @@
 package gastime
 
 import (
+	"math"
 	"testing"
 	"time"
 
@@ -23,7 +24,7 @@ func TestTargetUpdateTiming(t *testing.T) {
 		initialTarget gas.Gas = 1_600_000
 		initialExcess         = 1_234_567_890
 	)
-	tm := New(initialTime, initialTarget, initialExcess)
+	tm := New(time.Unix(initialTime, 0), initialTarget, initialExcess)
 	initialRate := tm.Rate()
 
 	const (
@@ -73,8 +74,9 @@ func FuzzWorstCasePrice(f *testing.F) {
 	) {
 		initTarget = max(initTarget, 1)
 
-		worstcase := New(initTimestamp, gas.Gas(initTarget), gas.Gas(initExcess))
-		actual := New(initTimestamp, gas.Gas(initTarget), gas.Gas(initExcess))
+		initUnix := int64(min(initTimestamp, math.MaxInt64)) //nolint:gosec // I can't believe I have to be explicit about this!
+		worstcase := New(time.Unix(initUnix, 0), gas.Gas(initTarget), gas.Gas(initExcess))
+		actual := New(time.Unix(initUnix, 0), gas.Gas(initTarget), gas.Gas(initExcess))
 
 		blocks := []struct {
 			time   uint64

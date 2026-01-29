@@ -405,6 +405,10 @@ func (b *ethAPIBackend) GetTransaction(ctx context.Context, txHash common.Hash) 
 	return true, tx, blockHash, blockNumber, index, nil
 }
 
+func (b *ethAPIBackend) GetPoolTransaction(txHash common.Hash) *types.Transaction {
+	return b.Set.Pool.Get(txHash)
+}
+
 type canonicalReader[T any] func(ethdb.Reader, common.Hash, uint64) *T
 
 func readByNumber[T any](b *ethAPIBackend, n rpc.BlockNumber, read canonicalReader[T]) (*T, error) {

@@ -50,12 +50,16 @@ func (tm *Time) establishInvariants() {
 	tm.Time.SetRateInvariants(&tm.target, &tm.excess)
 }
 
-// New returns a new [Time], set from a Unix timestamp. The consumption of
+// New returns a new [Time], derived from a [time.Time]. The consumption of
 // `target` * [TargetToRate] units of [gas.Gas] is equivalent to a tick of 1
 // second. Targets are clamped to [MaxTarget].
-func New(unixSeconds uint64, target, startingExcess gas.Gas) *Time {
+func New(at time.Time, target, startingExcess gas.Gas) *Time {
 	target = clampTarget(target)
-	return makeTime(proxytime.New(unixSeconds, rateOf(target)), target, startingExcess)
+	tm := proxytime.Of[gas.Gas](at)
+	// [proxytime.Time.SetRate] is documented as never returning an error when
+	// no invariants have been registered.
+	_ = tm.SetRate(rateOf(target))
+	return makeTime(tm, target, startingExcess)
 }
 
 // SubSecond scales the value returned by [hook.Points.SubSecondBlockTime] to
