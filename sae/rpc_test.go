@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"math"
 	"math/big"
+	"reflect"
 	"testing"
 	"time"
 
@@ -479,63 +480,20 @@ type rpcTest struct {
 
 func (s *SUT) testRPC(ctx context.Context, t *testing.T, tcs ...rpcTest) {
 	t.Helper()
-
-	// DO NOT MERGE without revisting this. It's GROSS, but at least for now it
-	// contains all of the [testRPCMethod] calls in the same location.
+	opts := []cmp.Option{
+		cmpopts.EquateEmpty(),
+		cmputils.TransactionsByHash(),
+		cmputils.HexutilBigs(),
+	}
 
 	for _, tc := range tcs {
-		switch want := tc.want.(type) {
-		case bool:
-			testRPCMethod(ctx, t, s, tc.method, want, tc.args)
-		case hexutil.Bytes:
-			testRPCMethod(ctx, t, s, tc.method, want, tc.args)
-		case *hexutil.Uint:
-			testRPCMethod(ctx, t, s, tc.method, want, tc.args)
-		case hexutil.Uint:
-			testRPCMethod(ctx, t, s, tc.method, want, tc.args)
-		case hexutil.Uint64:
-			testRPCMethod(ctx, t, s, tc.method, want, tc.args)
-		case string:
-			testRPCMethod(ctx, t, s, tc.method, want, tc.args)
-		case *types.Block:
-			testRPCMethod(ctx, t, s, tc.method, want, tc.args)
-		case *types.Header:
-			testRPCMethod(ctx, t, s, tc.method, want, tc.args)
-		case *types.Transaction:
-			testRPCMethod(ctx, t, s, tc.method, want, tc.args)
-		case map[string]hexutil.Uint:
-			testRPCMethod(ctx, t, s, tc.method, want, tc.args)
-		case map[string]map[string]map[string]string:
-			testRPCMethod(ctx, t, s, tc.method, want, tc.args)
-		case map[string]map[string]*ethapi.RPCTransaction:
-			testRPCMethod(ctx, t, s, tc.method, want, tc.args)
-		case map[string]map[string]map[string]*ethapi.RPCTransaction:
-			testRPCMethod(ctx, t, s, tc.method, want, tc.args)
-		default:
-			// If this happens, just add the relevant case above. This is necessary
-			// to allow use of the generic [testRPCMethod] function without
-			// reflection.
-			t.Fatalf("Unsupported return type %T for testing RPC method %q", want, tc.method)
-		}
+		t.Run(tc.method, func(t *testing.T) {
+			got := reflect.New(reflect.TypeOf(tc.want))
+			t.Logf("%T.CallContext(ctx, %T, %q, %v...)", s.rpcClient, &tc.want /*i.e. the type*/, tc.method, tc.args)
+			require.NoError(t, s.CallContext(ctx, got.Interface(), tc.method, tc.args...))
+			if diff := cmp.Diff(tc.want, got.Elem().Interface(), opts...); diff != "" {
+				t.Errorf("Diff (-want +got):\n%s", diff)
+			}
+		})
 	}
-}
-
-// testRPCMethod SHOULD NOT be used directly. Prefer a test table of
-// [rpcMethodTest] instances, invoked via [SUT.testRPCMethods].
-func testRPCMethod[T any](ctx context.Context, t *testing.T, sut *SUT, method string, want T, args []any) {
-	t.Helper()
-	t.Run(method, func(t *testing.T) {
-		var got T
-		t.Logf("%T.CallContext(ctx, %T, %q, %v...)", sut.rpcClient, &got, method, args)
-		require.NoError(t, sut.CallContext(ctx, &got, method, args...))
-
-		opts := []cmp.Option{
-			cmpopts.EquateEmpty(),
-			cmputils.TransactionsByHash(),
-			cmputils.HexutilBigs(),
-		}
-		if diff := cmp.Diff(want, got, opts...); diff != "" {
-			t.Errorf("Diff (-want +got):\n%s", diff)
-		}
-	})
 }
