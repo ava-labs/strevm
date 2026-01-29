@@ -123,9 +123,9 @@ func newSUT(tb testing.TB, numAccounts uint, opts ...sutOption) (context.Context
 		useLibEVMTBLogger: true,
 		genesis: core.Genesis{
 			Config:     saetest.ChainConfig(),
+			Alloc:      saetest.MaxAllocFor(keys.Addresses()...),
 			Timestamp:  saeparams.TauSeconds,
 			Difficulty: big.NewInt(0), // irrelevant but required
-			Alloc:      saetest.MaxAllocFor(keys.Addresses()...),
 		},
 	}, opts...)
 

@@ -272,7 +272,7 @@ func TestP2PIntegration(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			logger := saetest.NewTBLogger(t, logging.Warn)
+			logger := saetest.NewTBLogger(t, logging.Debug)
 			ctx = logger.CancelOnError(ctx)
 
 			sendID := ids.GenerateTestNodeID()
