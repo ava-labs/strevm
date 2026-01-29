@@ -23,6 +23,7 @@ import (
 	"github.com/ava-labs/libevm/libevm"
 	"github.com/ava-labs/libevm/libevm/ethapi"
 	libevmhookstest "github.com/ava-labs/libevm/libevm/hookstest"
+	"github.com/ava-labs/libevm/libevm/options"
 	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/rpc"
 	"github.com/google/go-cmp/cmp"
@@ -555,13 +556,20 @@ func (sut *SUT) testGetByUnknownNumber(ctx context.Context, t *testing.T) {
 	}...)
 }
 
+// withDebugAPI returns a sutOption that enables the debug API.
+func withDebugAPI() sutOption {
+	return options.Func[sutConfig](func(c *sutConfig) {
+		c.vmConfig.RPCConfig.EnableDebugAPI = true
+	})
+}
+
 // These are smoke tests that verify RPC calls succeed, not that profiling
 // data is correct (that's Go stdlib's responsibility), so we do not check the
 // files themselves.
 //
 // Reference: https://geth.ethereum.org/docs/interacting-with-geth/rpc/ns-debug
 func TestDebugProfilingNamespace(t *testing.T) {
-	ctx, sut := newSUT(t, 1)
+	ctx, sut := newSUT(t, 1, withDebugAPI())
 	tmpDir := t.TempDir()
 
 	// Data inspection methods return variable data

@@ -68,8 +68,14 @@ type Config struct {
 	Hooks         hook.Points
 	MempoolConfig legacypool.Config
 	TrieDBConfig  *triedb.Config
+	RPCConfig     RPCConfig
 
 	Now func() time.Time // defaults to [time.Now] if nil
+}
+
+type RPCConfig struct {
+	// Eables the debug namespace which provides Go runtime profiling APIs
+	EnableDebugAPI bool
 }
 
 // NewVM returns a new [VM] that is ready for use immediately upon return.
