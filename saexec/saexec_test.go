@@ -74,8 +74,7 @@ type SUT struct {
 func newSUT(tb testing.TB, hooks *saehookstest.Stub) (context.Context, SUT) {
 	tb.Helper()
 
-	log.SetDefault(log.NewLogger(ethtest.NewTBLogHandler(tb, slog.LevelError)))
-	logger := saetest.NewTBLogger(tb, logging.Warn)
+	logger := saetest.NewTBLogger(tb, logging.Debug)
 	ctx := logger.CancelOnError(tb.Context())
 
 	config := saetest.ChainConfig()
@@ -97,6 +96,10 @@ func newSUT(tb testing.TB, hooks *saehookstest.Stub) (context.Context, SUT) {
 		require.NoErrorf(tb, e.Close(), "%T.Close()", e)
 	})
 
+	// Enable libevm TB logger after VM initialization to avoid harmless
+	// warnings about snapshot generation and transaction pool initialization.
+	enableLibEVMTBLogger(tb)
+
 	return ctx, SUT{
 		Executor: e,
 		chain:    chain,
@@ -108,6 +111,16 @@ func newSUT(tb testing.TB, hooks *saehookstest.Stub) (context.Context, SUT) {
 
 func defaultHooks() *saehookstest.Stub {
 	return &saehookstest.Stub{Target: 1e6}
+}
+
+// enableLibEVMTBLogger sets an [ethtest.NewTBLogHandler] as the default logger
+// until `tb` cleanup occurs.
+func enableLibEVMTBLogger(tb testing.TB) {
+	old := log.Root()
+	tb.Cleanup(func() {
+		log.SetDefault(old)
+	})
+	log.SetDefault(log.NewLogger(ethtest.NewTBLogHandler(tb, slog.LevelWarn)))
 }
 
 func TestImmediateShutdownNonBlocking(t *testing.T) {

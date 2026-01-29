@@ -10,6 +10,7 @@ import (
 	"math"
 	"math/big"
 	"math/rand/v2"
+	"os"
 	"path/filepath"
 	"slices"
 	"testing"
@@ -72,8 +73,7 @@ func newWallet(tb testing.TB, numAccounts uint) *saetest.Wallet {
 
 func newSUT(t *testing.T, numAccounts uint) SUT {
 	t.Helper()
-	log.SetDefault(log.NewLogger(ethtest.NewTBLogHandler(t, slog.LevelError)))
-	logger := saetest.NewTBLogger(t, logging.Warn)
+	logger := saetest.NewTBLogger(t, logging.Debug)
 
 	wallet := newWallet(t, numAccounts)
 	config := saetest.ChainConfig()
@@ -96,11 +96,36 @@ func newSUT(t *testing.T, numAccounts uint) SUT {
 		assert.NoErrorf(t, pool.Close(), "%T.Close()", pool)
 	})
 
+	// Enable libevm TB logger after VM initialization to avoid harmless
+	// warnings about snapshot generation and transaction pool initialization.
+	enableLibEVMTBLogger(t)
+
 	return SUT{
 		Set:    set,
 		chain:  chain,
 		wallet: wallet,
 		exec:   exec,
+	}
+}
+
+// enableLibEVMTBLogger sets an [ethtest.NewTBLogHandler] as the default logger
+// until `t` cleanup occurs.
+func enableLibEVMTBLogger(t *testing.T) {
+	old := log.Root()
+	t.Cleanup(func() {
+		log.SetDefault(old)
+	})
+	log.SetDefault(log.NewLogger(ethtest.NewTBLogHandler(t, slog.LevelWarn)))
+}
+
+// disableLibEVMTBLogger temporarily disables the libevm TB logger.
+// Returns a function to re-enable it.
+func disableLibEVMTBLogger() func(*testing.T) {
+	old := log.Root()
+	log.SetDefault(log.NewLogger(log.NewTerminalHandlerWithLevel(os.Stderr, slog.LevelError, false)))
+	return func(t *testing.T) {
+		log.SetDefault(old)
+		enableLibEVMTBLogger(t)
 	}
 }
 
@@ -265,6 +290,11 @@ func TestP2PIntegration(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			logger := saetest.NewTBLogger(t, logging.Debug)
 			ctx = logger.CancelOnError(ctx)
+
+			// Disable libevm logger during multi-VM initialization to avoid
+			// harmless warnings, then re-enable after.
+			restore := disableLibEVMTBLogger()
+			defer restore(t)
 
 			sendID := ids.GenerateTestNodeID()
 			recvID := ids.GenerateTestNodeID()

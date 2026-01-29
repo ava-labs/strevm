@@ -94,12 +94,10 @@ type SUT struct {
 type (
 	sutConfig struct {
 		vmConfig          Config
-		chainConfig       *params.ChainConfig
-		hooks             *hookstest.Stub
 		logLevel          logging.Level
-		useLibEVMTBLogger bool
-		alloc             types.GenesisAlloc
+		genesis           core.Genesis
 		genesisOptions    []blockstest.GenesisOption
+		useLibEVMTBLogger bool
 	}
 	sutOption = options.Option[sutConfig]
 )
@@ -115,6 +113,7 @@ func newSUT(tb testing.TB, numAccounts uint, opts ...sutOption) (context.Context
 
 	keys := saetest.NewUNSAFEKeyChain(tb, numAccounts)
 
+	alloc := saetest.MaxAllocFor(keys.Addresses()...)
 	conf := options.ApplyTo(&sutConfig{
 		vmConfig: Config{
 			MempoolConfig: mempoolConf,
@@ -124,7 +123,13 @@ func newSUT(tb testing.TB, numAccounts uint, opts ...sutOption) (context.Context
 		},
 		logLevel:          logging.Debug,
 		useLibEVMTBLogger: true,
-		alloc:             saetest.MaxAllocFor(keys.Addresses()...),
+		genesis: core.Genesis{
+			Config:     saetest.ChainConfig(),
+			Timestamp:  saeparams.TauSeconds,
+			Difficulty: big.NewInt(0),
+			GasLimit:   params.GenesisGasLimit,
+			Alloc:      alloc,
+		},
 		genesisOptions: []blockstest.GenesisOption{
 			blockstest.WithTimestamp(saeparams.TauSeconds),
 		},
