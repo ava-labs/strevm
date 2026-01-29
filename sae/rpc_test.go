@@ -52,7 +52,7 @@ func TestWeb3Namespace(t *testing.T) {
 	)
 
 	ctx, sut := newSUT(t, 1)
-	sut.testRPCMethods(ctx, t, []rpcMethodTest{
+	sut.testRPC(ctx, t, []rpcTest{
 		{
 			method: "web3_clientVersion",
 			want:   version.GetVersions().String(),
@@ -68,7 +68,7 @@ func TestWeb3Namespace(t *testing.T) {
 func TestNetNamespace(t *testing.T) {
 	testRPCMethodsWithPeers := func(sut *SUT, wantPeerCount hexutil.Uint) {
 		t.Helper()
-		sut.testRPCMethods(sut.context(t), t, []rpcMethodTest{
+		sut.testRPC(sut.context(t), t, []rpcTest{
 			{
 				method: "net_listening",
 				want:   true,
@@ -140,7 +140,7 @@ func TestTxPoolNamespace(t *testing.T) {
 		)
 	}
 
-	sut.testRPCMethods(ctx, t, []rpcMethodTest{
+	sut.testRPC(ctx, t, []rpcTest{
 		{
 			method: "txpool_content",
 			want: map[string]map[string]map[string]*ethapi.RPCTransaction{
@@ -253,7 +253,7 @@ func TestEthGetters(t *testing.T) {
 			})
 		}
 
-		sut.testRPCMethods(ctx, t, rpcMethodTest{
+		sut.testRPC(ctx, t, rpcTest{
 			method: "eth_blockNumber",
 			want:   hexutil.Uint64(executed.Height()),
 		})
@@ -266,7 +266,7 @@ func testGetByHash(ctx context.Context, t *testing.T, sut *SUT, want *types.Bloc
 	testRPCGetter(ctx, t, "BlockByHash", sut.BlockByHash, want.Hash(), want)
 	testRPCGetter(ctx, t, "HeaderByHash", sut.HeaderByHash, want.Hash(), want.Header())
 	testRPCGetter(ctx, t, "TransactionCount", sut.TransactionCount, want.Hash(), uint(len(want.Transactions())))
-	sut.testRPCMethods(ctx, t, rpcMethodTest{
+	sut.testRPC(ctx, t, rpcTest{
 		method: "eth_getUncleCountByBlockHash",
 		args:   []any{want.Hash()},
 		want:   hexutil.Uint(0),
@@ -277,7 +277,7 @@ func testGetByHash(ctx context.Context, t *testing.T, sut *SUT, want *types.Bloc
 		marshaled, err := wantTx.MarshalBinary()
 		require.NoErrorf(t, err, "%T.MarshalBinary()", wantTx)
 
-		sut.testRPCMethods(ctx, t, []rpcMethodTest{
+		sut.testRPC(ctx, t, []rpcTest{
 			{
 				method: "eth_getTransactionByHash",
 				args:   []any{wantTx.Hash()},
@@ -302,7 +302,7 @@ func testGetByHash(ctx context.Context, t *testing.T, sut *SUT, want *types.Bloc
 	}
 
 	outOfBoundsIndex := hexutil.Uint(len(want.Transactions()) + 1) //nolint:gosec // Known to not overflow
-	sut.testRPCMethods(ctx, t, []rpcMethodTest{
+	sut.testRPC(ctx, t, []rpcTest{
 		{
 			method: "eth_getTransactionByBlockHashAndIndex",
 			args:   []any{want.Hash(), outOfBoundsIndex},
@@ -322,7 +322,7 @@ func testGetByNumber(ctx context.Context, t *testing.T, sut *SUT, block *types.B
 	testRPCGetter(ctx, t, "eth_getBlockByNumber", sut.BlockByNumber, big.NewInt(number), block)
 	testRPCGetter(ctx, t, "eth_getBlockByNumber", sut.HeaderByNumber, big.NewInt(number), block.Header())
 
-	sut.testRPCMethods(ctx, t, []rpcMethodTest{
+	sut.testRPC(ctx, t, []rpcTest{
 		{
 			method: "eth_getBlockTransactionCountByNumber",
 			args:   []any{n},
@@ -340,7 +340,7 @@ func testGetByNumber(ctx context.Context, t *testing.T, sut *SUT, block *types.B
 		marshaled, err := wantTx.MarshalBinary()
 		require.NoErrorf(t, err, "%T.MarshalBinary()", wantTx)
 
-		sut.testRPCMethods(ctx, t, []rpcMethodTest{
+		sut.testRPC(ctx, t, []rpcTest{
 			{
 				method: "eth_getTransactionByBlockNumberAndIndex",
 				args:   []any{n, txIdx},
@@ -355,7 +355,7 @@ func testGetByNumber(ctx context.Context, t *testing.T, sut *SUT, block *types.B
 	}
 
 	outOfBoundsIndex := hexutil.Uint(len(block.Transactions()) + 1) //nolint:gosec // Known to not overflow
-	sut.testRPCMethods(ctx, t, []rpcMethodTest{
+	sut.testRPC(ctx, t, []rpcTest{
 		{
 			method: "eth_getTransactionByBlockNumberAndIndex",
 			args:   []any{n, outOfBoundsIndex},
@@ -373,7 +373,7 @@ func TestGetByUnknownHash(t *testing.T) {
 	ctx, sut := newSUT(t, 0)
 
 	t.Run("non_existent_block_hash", func(t *testing.T) {
-		sut.testRPCMethods(ctx, t, []rpcMethodTest{
+		sut.testRPC(ctx, t, []rpcTest{
 			{
 				method: "eth_getBlockByHash",
 				args:   []any{common.Hash{}, true},
@@ -403,7 +403,7 @@ func TestGetByUnknownHash(t *testing.T) {
 	})
 
 	t.Run("non_existent_transaction_hash", func(t *testing.T) {
-		sut.testRPCMethods(ctx, t, []rpcMethodTest{
+		sut.testRPC(ctx, t, []rpcTest{
 			{
 				method: "eth_getTransactionByHash",
 				args:   []any{common.Hash{}},
@@ -423,7 +423,7 @@ func TestGetByUnknownNumber(t *testing.T) {
 
 	t.Run("future_block_number", func(t *testing.T) {
 		const n rpc.BlockNumber = math.MaxInt64
-		sut.testRPCMethods(ctx, t, []rpcMethodTest{
+		sut.testRPC(ctx, t, []rpcTest{
 			{
 				method: "eth_getBlockByNumber",
 				args:   []any{n, true},
@@ -471,13 +471,13 @@ func testRPCGetter[Arg any, T any](ctx context.Context, t *testing.T, funcName s
 	})
 }
 
-type rpcMethodTest struct {
+type rpcTest struct {
 	method string
 	args   []any
 	want   any
 }
 
-func (s *SUT) testRPCMethods(ctx context.Context, t *testing.T, tcs ...rpcMethodTest) {
+func (s *SUT) testRPC(ctx context.Context, t *testing.T, tcs ...rpcTest) {
 	t.Helper()
 
 	// DO NOT MERGE without revisting this. It's GROSS, but at least for now it
