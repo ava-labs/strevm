@@ -175,6 +175,7 @@ func (l *TBLogger) log(lvl logging.Level, msg string, fields ...zap.Field) {
 // Call this AFTER initialization to avoid harmless init warnings from snapshot
 // loading, txpool reset, etc.
 func EnableLibEVMTBLogger(tb testing.TB) {
+	tb.Helper()
 	old := log.Root()
 	tb.Cleanup(func() {
 		log.SetDefault(old)
