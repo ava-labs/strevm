@@ -393,9 +393,12 @@ func TestGetLogs(t *testing.T) {
 		})
 	}
 
-	onDisk := make([]*blocks.Block, bloomSectionSize)
-	for i := range onDisk {
-		onDisk[i] = sut.createAndAcceptBlock(t, createLog(t))
+	// Create enough blocks to ensure some are indexed
+	// Since a block after this will be settled, these are all settled as well,
+	// and moved to disk.
+	indexed := make([]*blocks.Block, bloomSectionSize)
+	for i := range indexed {
+		indexed[i] = sut.createAndAcceptBlock(t, createLog(t))
 	}
 
 	settled := sut.createAndAcceptBlock(t, createLog(t))
@@ -437,9 +440,9 @@ func TestGetLogs(t *testing.T) {
 		{
 			name: "on_disk",
 			query: ethereum.FilterQuery{
-				BlockHash: utils.PointerTo(onDisk[0].Hash()),
+				BlockHash: utils.PointerTo(indexed[0].Hash()),
 			},
-			wantCount: len(onDisk[0].EthBlock().Transactions()),
+			wantCount: len(indexed[0].EthBlock().Transactions()),
 		},
 		{
 			name: "in_memory",
@@ -460,8 +463,8 @@ func TestGetLogs(t *testing.T) {
 		{
 			name: "indexed",
 			query: ethereum.FilterQuery{
-				FromBlock: onDisk[0].Number(),
-				ToBlock:   onDisk[len(onDisk)-1].Number(),
+				FromBlock: indexed[0].Number(),
+				ToBlock:   indexed[len(indexed)-1].Number(),
 				Addresses: []common.Address{precompile},
 			},
 			wantCount: int(bloomSectionSize),

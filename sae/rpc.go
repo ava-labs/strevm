@@ -150,7 +150,7 @@ func (s *netAPI) Version() string {
 var _ core.ChainIndexerChain = (*ethAPIBackend)(nil)
 
 type rpcConfig struct {
-	bloomSectionSize uint64
+	bloomSectionSize uint64 // Number of blocks per bloom section
 }
 
 type ethAPIBackend struct {
@@ -186,6 +186,7 @@ func (b *ethAPIBackend) ServiceFilter(ctx context.Context, session *bloombits.Ma
 // HeaderBloom retrieves the bloom filter for a given header.
 // The bloom actually stored in the header is the bloom of the receipts that the block settled, not the
 // bloom of the transactions in the block, so we must retrieve the blocks receipts from the database.
+// The [*filters.FilterAPI] relies on this method, although not in [ethapi.Backend] directly.
 // TODO: should we cache this? Store blooms separately?
 func (b *ethAPIBackend) HeaderBloom(header *types.Header) types.Bloom {
 	receipts := rawdb.ReadRawReceipts(b.ChainDb(), header.Hash(), header.Number.Uint64())

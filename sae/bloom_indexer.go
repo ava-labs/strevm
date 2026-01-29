@@ -51,6 +51,8 @@ type bloomIndexer struct {
 
 // newBloomIndexer returns a chain indexer that generates bloom bits data for the
 // canonical chain for fast logs filtering.
+// It must be started with [bloomIndexer.Start] before use, and closed with
+// [bloomIndexer.Close] when no longer needed to avoid resource leaks.
 func newBloomIndexer(db ethdb.Database, size uint64) *bloomIndexer {
 	if size == 0 || size > math.MaxInt32 {
 		size = params.BloomBitsBlocks
@@ -105,16 +107,21 @@ func (b *bloomIndexer) Start(backend ethapi.Backend) {
 	}
 }
 
+// Close stops the bloom indexer and releases all its resources.
 func (b *bloomIndexer) Close() error {
 	close(b.closeBloomHandler)
 	return b.idx.Close()
 }
 
+// status returns the size of each bloom section and the number of sections
+// indexed so far.
 func (b *bloomIndexer) status() (uint64, uint64) {
 	sections, _, _ := b.idx.Sections()
 	return b.size, sections
 }
 
+// spawnFilter starts goroutines to multiplex bloom bit retrieval requests for
+// a specific filter onto the global bloom servicing goroutines.
 func (b *bloomIndexer) spawnFilter(ctx context.Context, session *bloombits.MatcherSession) {
 	for i := 0; i < bloomFilterThreads; i++ {
 		go session.Multiplex(bloomRetrievalBatch, bloomRetrievalWait, b.bloomRequests)
@@ -123,7 +130,7 @@ func (b *bloomIndexer) spawnFilter(ctx context.Context, session *bloombits.Match
 
 var _ core.ChainIndexerBackend = (*bloomBackend)(nil)
 
-// bloomBackend implements a core.ChainIndexer, building up a rotated bloom bits index
+// bloomBackend implements a core.ChainIndexerBackend, building up a rotated bloom bits index
 // for the Ethereum header bloom filters, permitting blazing fast filtering.
 type bloomBackend struct {
 	size    uint64               // section size to generate bloombits for
@@ -133,16 +140,14 @@ type bloomBackend struct {
 	head    common.Hash          // Head is the hash of the last header processed
 }
 
-// Reset implements core.ChainIndexerBackend, starting a new bloombits index
-// section.
+// Reset starts a new bloombits index section.
 func (b *bloomBackend) Reset(ctx context.Context, section uint64, lastSectionHead common.Hash) error {
 	gen, err := bloombits.NewGenerator(uint(b.size))
 	b.gen, b.section, b.head = gen, section, common.Hash{}
 	return err
 }
 
-// Process implements core.ChainIndexerBackend, adding a new header's bloom into
-// the index.
+// Process adds a new header's bloom into the index.
 func (b *bloomBackend) Process(ctx context.Context, header *types.Header) error {
 	receipts := rawdb.ReadRawReceipts(b.db, header.Hash(), header.Number.Uint64())
 	bloom := types.CreateBloom(receipts)
@@ -151,8 +156,7 @@ func (b *bloomBackend) Process(ctx context.Context, header *types.Header) error 
 	return err
 }
 
-// Commit implements core.ChainIndexerBackend, finalizing the bloom section and
-// writing it out into the database.
+// Commit finalizes the bloom section and writes it out into the database.
 func (b *bloomBackend) Commit() error {
 	batch := b.db.NewBatchWithSize((int(b.size) / 8) * types.BloomBitLength) //nolint:gosec // size checked at constructor
 	for i := 0; i < types.BloomBitLength; i++ {
