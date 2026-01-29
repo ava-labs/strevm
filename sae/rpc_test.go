@@ -260,10 +260,17 @@ func TestTxPoolNamespace(t *testing.T) {
 	}...)
 }
 
-func TestBlockGetters(t *testing.T) {
+func TestEthGetters(t *testing.T) {
 	opt, vmTime := withVMTime(t, time.Unix(saeparams.TauSeconds, 0))
 
 	ctx, sut := newSUT(t, 1, opt)
+
+	t.Run("unknown_hashes", func(t *testing.T) {
+		sut.testGetByUnknownHash(ctx, t)
+	})
+	t.Run("unknown_numbers", func(t *testing.T) {
+		sut.testGetByUnknownNumber(ctx, t)
+	})
 
 	// The named block "pending" is the last to be enqueued but yet to be
 	// executed. Although unlikely to be useful in practice, it still needs to
@@ -293,6 +300,7 @@ func TestBlockGetters(t *testing.T) {
 	var zeroAddr common.Address
 
 	genesis := sut.lastAcceptedBlock(t)
+
 	// Once a block is settled, its ancestors are only accessible from the
 	// database.
 	onDisk := sut.createAndAcceptBlock(t, createTx(t, zeroAddr))
@@ -411,6 +419,48 @@ func (sut *SUT) testGetByHash(ctx context.Context, t *testing.T, want *types.Blo
 	}...)
 }
 
+func (sut *SUT) testGetByUnknownHash(ctx context.Context, t *testing.T) {
+	t.Helper()
+
+	sut.testRPC(ctx, t, []rpcTest{
+		{
+			method: "eth_getBlockByHash",
+			args:   []any{common.Hash{}, true},
+			want:   (*types.Block)(nil),
+		},
+		{
+			method: "eth_getHeaderByHash",
+			args:   []any{common.Hash{}},
+			want:   (*types.Header)(nil),
+		},
+		{
+			method: "eth_getBlockTransactionCountByHash",
+			args:   []any{common.Hash{}},
+			want:   (*hexutil.Uint)(nil),
+		},
+		{
+			method: "eth_getTransactionByBlockHashAndIndex",
+			args:   []any{common.Hash{}, hexutil.Uint(0)},
+			want:   (*types.Transaction)(nil),
+		},
+		{
+			method: "eth_getRawTransactionByBlockHashAndIndex",
+			args:   []any{common.Hash{}, hexutil.Uint(0)},
+			want:   hexutil.Bytes(nil),
+		},
+		{
+			method: "eth_getTransactionByHash",
+			args:   []any{common.Hash{}},
+			want:   (*types.Transaction)(nil),
+		},
+		{
+			method: "eth_getRawTransactionByHash",
+			args:   []any{common.Hash{}},
+			want:   hexutil.Bytes(nil),
+		},
+	}...)
+}
+
 // testGetByNumber accepts a block-number override to allow testing via named
 // blocks, e.g. [rpc.LatestBlockNumber], not only via the specific number
 // carried by the [types.Block].
@@ -470,86 +520,35 @@ func (sut *SUT) testGetByNumber(ctx context.Context, t *testing.T, want *types.B
 	}...)
 }
 
-func TestGetByUnknownHash(t *testing.T) {
-	ctx, sut := newSUT(t, 0)
+func (sut *SUT) testGetByUnknownNumber(ctx context.Context, t *testing.T) {
+	t.Helper()
 
-	t.Run("non_existent_block_hash", func(t *testing.T) {
-		sut.testRPC(ctx, t, []rpcTest{
-			{
-				method: "eth_getBlockByHash",
-				args:   []any{common.Hash{}, true},
-				want:   (*types.Block)(nil),
-			},
-			{
-				method: "eth_getHeaderByHash",
-				args:   []any{common.Hash{}},
-				want:   (*types.Header)(nil),
-			},
-			{
-				method: "eth_getBlockTransactionCountByHash",
-				args:   []any{common.Hash{}},
-				want:   (*hexutil.Uint)(nil),
-			},
-			{
-				method: "eth_getTransactionByBlockHashAndIndex",
-				args:   []any{common.Hash{}, hexutil.Uint(0)},
-				want:   (*types.Transaction)(nil),
-			},
-			{
-				method: "eth_getRawTransactionByBlockHashAndIndex",
-				args:   []any{common.Hash{}, hexutil.Uint(0)},
-				want:   hexutil.Bytes(nil),
-			},
-		}...)
-	})
-
-	t.Run("non_existent_transaction_hash", func(t *testing.T) {
-		sut.testRPC(ctx, t, []rpcTest{
-			{
-				method: "eth_getTransactionByHash",
-				args:   []any{common.Hash{}},
-				want:   (*types.Transaction)(nil),
-			},
-			{
-				method: "eth_getRawTransactionByHash",
-				args:   []any{common.Hash{}},
-				want:   hexutil.Bytes(nil),
-			},
-		}...)
-	})
-}
-
-func TestGetByUnknownNumber(t *testing.T) {
-	ctx, sut := newSUT(t, 0)
-
-	t.Run("future_block_number", func(t *testing.T) {
-		const n rpc.BlockNumber = math.MaxInt64
-		sut.testRPC(ctx, t, []rpcTest{
-			{
-				method: "eth_getBlockByNumber",
-				args:   []any{n, true},
-				want:   (*types.Block)(nil),
-			},
-			{
-				method: "eth_getHeaderByNumber",
-				args:   []any{n},
-				want:   (*types.Header)(nil),
-			},
-			{
-				method: "eth_getBlockTransactionCountByNumber",
-				args:   []any{n},
-				want:   (*hexutil.Uint)(nil),
-			},
-			{
-				method: "eth_getTransactionByBlockNumberAndIndex",
-				args:   []any{n, hexutil.Uint(0)},
-				want:   (*types.Transaction)(nil),
-			},
-			{
-				method: "eth_getRawTransactionByBlockNumberAndIndex",
-				args:   []any{n, hexutil.Uint(0)},
-				want:   hexutil.Bytes(nil),
-			},
-		}...)
-	})
+	const n rpc.BlockNumber = math.MaxInt64
+	sut.testRPC(ctx, t, []rpcTest{
+		{
+			method: "eth_getBlockByNumber",
+			args:   []any{n, true},
+			want:   (*types.Block)(nil),
+		},
+		{
+			method: "eth_getHeaderByNumber",
+			args:   []any{n},
+			want:   (*types.Header)(nil),
+		},
+		{
+			method: "eth_getBlockTransactionCountByNumber",
+			args:   []any{n},
+			want:   (*hexutil.Uint)(nil),
+		},
+		{
+			method: "eth_getTransactionByBlockNumberAndIndex",
+			args:   []any{n, hexutil.Uint(0)},
+			want:   (*types.Transaction)(nil),
+		},
+		{
+			method: "eth_getRawTransactionByBlockNumberAndIndex",
+			args:   []any{n, hexutil.Uint(0)},
+			want:   hexutil.Bytes(nil),
+		},
+	}...)
 }
