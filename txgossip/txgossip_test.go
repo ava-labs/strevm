@@ -72,7 +72,7 @@ func newWallet(tb testing.TB, numAccounts uint) *saetest.Wallet {
 
 func newSUT(t *testing.T, numAccounts uint) SUT {
 	t.Helper()
-	logger := saetest.NewTBLogger(t, logging.Debug)
+	logger := saetest.NewTBLogger(t, logging.Warn)
 
 	wallet := newWallet(t, numAccounts)
 	config := saetest.ChainConfig()
@@ -272,7 +272,7 @@ func TestP2PIntegration(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			logger := saetest.NewTBLogger(t, logging.Debug)
+			logger := saetest.NewTBLogger(t, logging.Warn)
 			ctx = logger.CancelOnError(ctx)
 
 			sendID := ids.GenerateTestNodeID()
