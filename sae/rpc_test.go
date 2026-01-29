@@ -40,8 +40,9 @@ func (s *SUT) testRPC(ctx context.Context, t *testing.T, tcs ...rpcTest) {
 	t.Helper()
 	opts := []cmp.Option{
 		cmpopts.EquateEmpty(),
-		cmputils.TransactionsByHash(),
+		cmputils.Headers(),
 		cmputils.HexutilBigs(),
+		cmputils.TransactionsByHash(),
 	}
 
 	for _, tc := range tcs {
@@ -64,7 +65,7 @@ func testRPCGetter[
 	T interface {
 		// Only add extra types if JSON unmarshalling from RPC methods directly
 		// into the type will fail.
-		*types.Block | *types.Header
+		*types.Block
 	},
 ](ctx context.Context, t *testing.T, underlyingRPCMethod string, get func(context.Context, Arg) (T, error), arg Arg, want T) {
 	t.Helper()
@@ -318,8 +319,12 @@ func (sut *SUT) testGetByHash(ctx context.Context, t *testing.T, want *types.Blo
 	t.Helper()
 
 	testRPCGetter(ctx, t, "eth_getBlockByHash", sut.BlockByHash, want.Hash(), want)
-	testRPCGetter(ctx, t, "eth_getBlockByHash", sut.HeaderByHash, want.Hash(), want.Header())
 	sut.testRPC(ctx, t, []rpcTest{
+		{
+			method: "eth_getBlockByHash",
+			args:   []any{want.Hash(), false},
+			want:   want.Header(),
+		},
 		{
 			method: "eth_getUncleCountByBlockHash",
 			args:   []any{want.Hash()},
@@ -382,9 +387,13 @@ func (sut *SUT) testGetByHash(ctx context.Context, t *testing.T, want *types.Blo
 func (sut *SUT) testGetByNumber(ctx context.Context, t *testing.T, want *types.Block, n rpc.BlockNumber) {
 	t.Helper()
 	testRPCGetter(ctx, t, "eth_getBlockByNumber", sut.BlockByNumber, big.NewInt(n.Int64()), want)
-	testRPCGetter(ctx, t, "eth_getBlockByNumber", sut.HeaderByNumber, big.NewInt(n.Int64()), want.Header())
 
 	sut.testRPC(ctx, t, []rpcTest{
+		{
+			method: "eth_getBlockByNumber",
+			args:   []any{n, false},
+			want:   want.Header(),
+		},
 		{
 			method: "eth_getBlockTransactionCountByNumber",
 			args:   []any{n},
