@@ -26,8 +26,12 @@ func (tm *Time) BeforeBlock(hooks hook.Points, h *types.Header) {
 func (tm *Time) AfterBlock(used gas.Gas, hooks hook.Points, h *types.Header) error {
 	tm.Tick(used)
 	cfg := hooks.GasConfigAfter(h)
+
+	// Set target first as we use the target to calculate the excess scaling factor.
+	if err := tm.SetTarget(cfg.Target); err != nil {
+		return fmt.Errorf("%T.SetTarget() after block: %w", tm, err)
+	}
 	// TargetToExcessScaling and MinPrice are optional, so we apply them as options.
-	// Apply options first to avoid setting target if config is invalid.
 	var opts []Option
 	if cfg.TargetToExcessScaling != nil {
 		opts = append(opts, WithTargetToExcessScaling(*cfg.TargetToExcessScaling))
@@ -41,8 +45,5 @@ func (tm *Time) AfterBlock(used gas.Gas, hooks hook.Points, h *types.Header) err
 		}
 	}
 
-	if err := tm.SetTarget(cfg.Target); err != nil {
-		return fmt.Errorf("%T.SetTarget() after block: %w", tm, err)
-	}
 	return nil
 }

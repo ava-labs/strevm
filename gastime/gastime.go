@@ -7,7 +7,6 @@ package gastime
 import (
 	"errors"
 	"math"
-	"sort"
 	"time"
 
 	"github.com/ava-labs/avalanchego/vms/components/gas"
@@ -184,20 +183,12 @@ func (tm *Time) setConfig(cfg config) error {
 	}
 
 	currentPrice := tm.Price()
-	tm.config = cfg
-	targetPrice := currentPrice
-	if currentPrice < cfg.minPrice {
-		// M increased AND price is below new minimum -> bump to new M
-		targetPrice = cfg.minPrice
-		tm.excess = 0
-		return nil
-	}
-
 	// Calculate new K with new scaling and current target
 	newK := excessScalingFactorOf(cfg.targetToExcessScaling, tm.target)
 	// Find excess that produces targetPrice with new config
-	newExcess := findExcessForPrice(targetPrice, cfg.minPrice, newK)
+	newExcess := findExcessForPrice(currentPrice, cfg.minPrice, newK)
 	tm.excess = newExcess
+	tm.config = cfg
 	return nil
 }
 
@@ -233,8 +224,18 @@ func excessScalingFactorOf(scaling, target gas.Gas) gas.Gas {
 	return scaling * target
 }
 
-// findExcessForPrice uses binary search to find an excess value that produces
-// targetPrice with the given minPrice and excessScalingFactor (K).
+// maxExcessSearchCap returns the maximum excess that findExcessForPrice searches:
+// min(45*K, MaxUint64) so that e^(x/K) does not overflow.
+func maxExcessSearchCap(k gas.Gas) gas.Gas {
+	const maxExcessMultiplier = 45 // ≈ ceil(ln(MaxUint64))
+	if k > math.MaxUint64/gas.Gas(maxExcessMultiplier) {
+		return math.MaxUint64
+	}
+	return gas.Gas(maxExcessMultiplier) * k
+}
+
+// findExcessForPrice uses binary search over uint64 to find an excess value
+// that produces targetPrice with the given minPrice and excessScalingFactor (K).
 //
 // The price formula is: P = M * e^(x / K), where:
 //   - P is the price (targetPrice)
@@ -242,24 +243,24 @@ func excessScalingFactorOf(scaling, target gas.Gas) gas.Gas {
 //   - x is the excess
 //   - K is the excessScalingFactor
 func findExcessForPrice(targetPrice, minPrice gas.Price, k gas.Gas) gas.Gas {
-	// These should never happen, but just in case.
-	if targetPrice <= minPrice || k == 0 {
+	// If the target price is less than the minimum price, or the excess scaling factor is 0 or MaxUint64,
+	// return 0.
+	if targetPrice <= minPrice || k == 0 || k == math.MaxUint64 {
 		return 0
 	}
 
-	const maxExcessMultiplier = 45 // ≈ ln(MaxUint64)
-
-	// normally maxTargetExcess can be math.MaxInt64 but sort.Search takes an int, so we cap it at math.MaxInt64.
-	// P = M × e^(x / K) for price to not overflow, so x/K must be < ln(MaxUint64), M is neglected
-	// to avoid calculating ln(M).
-	maxTargetExcess := gas.Gas(math.MaxInt64)
-	if k < math.MaxInt64/maxExcessMultiplier {
-		maxTargetExcess = maxExcessMultiplier * k
+	// Binary search over [0, maxExcessSearchCap(k)] for smallest excess where price >= targetPrice.
+	maxTargetExcess := maxExcessSearchCap(k)
+	lo, hi := uint64(0), uint64(maxTargetExcess)
+	for lo < hi {
+		mid := lo + (hi-lo)>>1 // avoid overflow
+		if gas.CalculatePrice(minPrice, gas.Gas(mid), k) >= targetPrice {
+			hi = mid
+		} else {
+			lo = mid + 1
+		}
 	}
-	// Use binary search to find the smallest excess where price >= targetPrice
-	return gas.Gas(sort.Search(int(maxTargetExcess), func(i int) bool {
-		return gas.CalculatePrice(minPrice, gas.Gas(i), k) >= targetPrice
-	}))
+	return gas.Gas(lo)
 }
 
 // BaseFee is equivalent to [Time.Price], returning the result as a uint256 for

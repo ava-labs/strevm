@@ -572,6 +572,21 @@ func FuzzPriceInvarianceAfterBlock(f *testing.F) {
 			newM:    1,
 			newKonT: 50,
 		},
+		// MaxUint64 scaling with MinPrice decrease
+		{
+			T: 1e6, M: 26, KonT: math.MaxUint64/uint64(1e6) - 100,
+			x:       1e6,
+			newT:    1e6,
+			newM:    1,
+			newKonT: math.MaxUint64/uint64(1e6) - 10,
+		},
+		{
+			T: 1e6, M: 26, KonT: math.MaxInt64/uint64(1e6) - 100,
+			x:       1e6,
+			newT:    1e6,
+			newM:    1,
+			newKonT: math.MaxInt64/uint64(2e6) - 10,
+		},
 	} {
 		f.Add(s.T, s.x, s.M, s.KonT, s.newT, s.newM, s.newKonT)
 	}
@@ -614,6 +629,16 @@ func FuzzPriceInvarianceAfterBlock(f *testing.F) {
 		want := initPrice
 		if p := *hooks.GasConfig.MinPrice; p > initPrice {
 			want = p
+		} else {
+			// When K is at MaxUint64 we skip scaling and price stays at M.
+			// When required excess for continuity exceeds the search cap, findExcessForPrice
+			// returns that cap and the resulting price is M * e^(cap/K).
+			newK := excessScalingFactorOf(gas.Gas(newScaling), gas.Gas(newTarget))
+			cap := maxExcessSearchCap(gas.Gas(newK))
+			requiredApproxExcess := float64(newK) * math.Log(float64(initPrice)/float64(newMinPrice))
+			if requiredApproxExcess > float64(cap) {
+				want = gas.CalculatePrice(gas.Price(newMinPrice), cap, gas.Gas(newK))
+			}
 		}
 
 		got := tm.Price()
@@ -626,11 +651,12 @@ func FuzzPriceInvarianceAfterBlock(f *testing.F) {
 		var diff uint64
 		diff = uint64(abs(int64(got) - int64(want)))
 
-		// Allow difference of 1 or 0.0001% of the price, whichever is larger
+		// Allow difference of 1 or 0.001% of the price, whichever is larger
 		tolerance := max(uint64(1), uint64(want)/1_000_000)
 		if diff > tolerance {
 			t.Logf("Target: %d -> %d", initTarget, newTarget)
 			t.Logf("Excess: %v (unchanged)", excess)
+			t.Logf("Price: %d -> %d", initPrice, got)
 			t.Logf("MinPrice: %d -> %d", initMinPrice, newMinPrice)
 			t.Logf("TargetToExcessScaling: %d -> %d", initScaling, newScaling)
 			t.Errorf("AfterBlock([0 gas consumed]) -> %T.Price() got %d want %d (diff %d > tolerance %d)", tm, got, want, diff, tolerance)
