@@ -37,24 +37,24 @@ type Time struct {
 }
 
 // An Option configures the [Time] created by [New].
-type Option = options.Option[Config]
+type Option = options.Option[config]
 
 // WithTargetToExcessScaling overrides the target to excess scaling ratio.
 func WithTargetToExcessScaling(s gas.Gas) Option {
-	return options.Func[Config](func(c *Config) {
-		c.TargetToExcessScaling = s
+	return options.Func[config](func(c *config) {
+		c.targetToExcessScaling = s
 	})
 }
 
 // WithMinPrice overrides minimum gas price.
 func WithMinPrice(p gas.Price) Option {
-	return options.Func[Config](func(c *Config) {
-		c.MinPrice = p
+	return options.Func[config](func(c *config) {
+		c.minPrice = p
 	})
 }
 
 // makeTime is a constructor shared by [New] and [Time.Clone].
-func makeTime(t *proxytime.Time[gas.Gas], target, excess gas.Gas, c Config) *Time {
+func makeTime(t *proxytime.Time[gas.Gas], target, excess gas.Gas, c config) *Time {
 	tm := &Time{
 		TimeMarshaler: TimeMarshaler{
 			Time:   t,
@@ -78,9 +78,9 @@ func (tm *Time) establishInvariants() {
 // [DefaultTargetToExcessScaling] respectively, but can be overridden with
 // [WithMinPrice] and [WithTargetToExcessScaling].
 func New(unixSeconds uint64, target, startingExcess gas.Gas, opts ...Option) (*Time, error) {
-	cfg := &Config{
-		TargetToExcessScaling: DefaultTargetToExcessScaling,
-		MinPrice:              DefaultMinPrice,
+	cfg := &config{
+		targetToExcessScaling: DefaultTargetToExcessScaling,
+		minPrice:              DefaultMinPrice,
 	}
 	options.ApplyTo(cfg, opts...)
 	if err := cfg.validate(); err != nil {
@@ -156,11 +156,11 @@ var (
 	errMinPriceZero              = errors.New("minPrice must be non-zero")
 )
 
-func (c *Config) validate() error {
-	if c.TargetToExcessScaling == 0 {
+func (c *config) validate() error {
+	if c.targetToExcessScaling == 0 {
 		return errTargetToExcessScalingZero
 	}
-	if c.MinPrice == 0 {
+	if c.minPrice == 0 {
 		return errMinPriceZero
 	}
 	return nil
@@ -173,7 +173,7 @@ func (c *Config) validate() error {
 //   - M decreases: Scale excess to maintain current price
 //   - M increases AND current price >= new M: Scale excess to maintain current price
 //   - M increases AND current price < new M: Price bumps to new M (excess becomes 0)
-func (tm *Time) setConfig(cfg Config) error {
+func (tm *Time) setConfig(cfg config) error {
 	// No change, skip recalculation
 	// We should never see this case as in SetOpts should only be called if config has changed.
 	if cfg.Equal(tm.config) {
@@ -186,17 +186,17 @@ func (tm *Time) setConfig(cfg Config) error {
 	currentPrice := tm.Price()
 	tm.config = cfg
 	targetPrice := currentPrice
-	if currentPrice < cfg.MinPrice {
+	if currentPrice < cfg.minPrice {
 		// M increased AND price is below new minimum -> bump to new M
-		targetPrice = cfg.MinPrice
+		targetPrice = cfg.minPrice
 		tm.excess = 0
 		return nil
 	}
 
 	// Calculate new K with new scaling and current target
-	newK := excessScalingFactorOf(cfg.TargetToExcessScaling, tm.target)
+	newK := excessScalingFactorOf(cfg.targetToExcessScaling, tm.target)
 	// Find excess that produces targetPrice with new config
-	newExcess := findExcessForPrice(targetPrice, cfg.MinPrice, newK)
+	newExcess := findExcessForPrice(targetPrice, cfg.minPrice, newK)
 	tm.excess = newExcess
 	return nil
 }
@@ -212,13 +212,13 @@ func (tm *Time) SetOpts(opts ...Option) error {
 
 // Price returns the price of a unit of gas, i.e. the "base fee".
 func (tm *Time) Price() gas.Price {
-	return gas.CalculatePrice(tm.config.MinPrice, tm.excess, tm.excessScalingFactor())
+	return gas.CalculatePrice(tm.config.minPrice, tm.excess, tm.excessScalingFactor())
 }
 
 // excessScalingFactor returns the K variable of ACP-103/176, i.e.
 // [config.targetToExcessScaling] * T, capped at [math.MaxUint64].
 func (tm *Time) excessScalingFactor() gas.Gas {
-	return excessScalingFactorOf(tm.config.TargetToExcessScaling, tm.target)
+	return excessScalingFactorOf(tm.config.targetToExcessScaling, tm.target)
 }
 
 // excessScalingFactorOf returns scaling * target, capped at [math.MaxUint64].

@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ava-labs/avalanchego/vms/components/gas"
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core/state"
 	"github.com/ava-labs/libevm/core/types"
@@ -24,7 +23,6 @@ import (
 type Stub struct {
 	Now       func() time.Time
 	GasConfig hook.GasConfig
-	Target    gas.Gas
 	Ops       []hook.Op
 	TB        testing.TB
 }

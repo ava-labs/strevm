@@ -12,18 +12,18 @@ import (
 
 //go:generate go run github.com/StephenButtolph/canoto/canoto $GOFILE
 
-type Config struct {
-	TargetToExcessScaling gas.Gas   `canoto:"uint,1"`
-	MinPrice              gas.Price `canoto:"uint,2"`
+type config struct {
+	targetToExcessScaling gas.Gas   `canoto:"uint,1"`
+	minPrice              gas.Price `canoto:"uint,2"`
 
 	canotoData canotoData_config
 }
 
 // Equal returns true if the logical fields of c and other are equal.
 // It ignores canoto internal fields.
-func (c Config) Equal(other Config) bool {
-	return c.TargetToExcessScaling == other.TargetToExcessScaling &&
-		c.MinPrice == other.MinPrice
+func (c config) Equal(other config) bool {
+	return c.targetToExcessScaling == other.targetToExcessScaling &&
+		c.minPrice == other.minPrice
 }
 
 // A TimeMarshaler can marshal a time to and from canoto. It is of limited use
@@ -32,7 +32,7 @@ type TimeMarshaler struct { //nolint:tagliatelle // TODO(arr4n) submit linter bu
 	*proxytime.Time[gas.Gas] `canoto:"pointer,1"`
 	target                   gas.Gas `canoto:"uint,2"`
 	excess                   gas.Gas `canoto:"uint,3"`
-	config                   Config  `canoto:"value,4"`
+	config                   config  `canoto:"value,4"`
 
 	// The nocopy is important, not only for canoto, but because of the use of
 	// pointers in [Time.establishInvariants]. See [Time.Clone].
@@ -62,11 +62,11 @@ func (tm *Time) UnmarshalCanotoFrom(r canoto.Reader) error {
 	}
 	// Apply defaults for backward compatibility with old serialized data
 	// that doesn't include the config field.
-	if tm.config.TargetToExcessScaling == 0 {
-		tm.config.TargetToExcessScaling = DefaultTargetToExcessScaling
+	if tm.config.targetToExcessScaling == 0 {
+		tm.config.targetToExcessScaling = DefaultTargetToExcessScaling
 	}
-	if tm.config.MinPrice == 0 {
-		tm.config.MinPrice = DefaultMinPrice
+	if tm.config.minPrice == 0 {
+		tm.config.minPrice = DefaultMinPrice
 	}
 	tm.establishInvariants()
 	return nil

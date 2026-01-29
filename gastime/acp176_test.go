@@ -23,8 +23,8 @@ func TestNilOptsPreserveConfig(t *testing.T) {
 	tm, err := New(42, 1_000_000, 100_000_000)
 	require.NoError(t, err)
 
-	initialScaling := tm.config.TargetToExcessScaling
-	initialMinPrice := tm.config.MinPrice
+	initialScaling := tm.config.targetToExcessScaling
+	initialMinPrice := tm.config.minPrice
 	initialPrice := tm.Price()
 
 	hooks := &hookstest.Stub{
@@ -32,8 +32,8 @@ func TestNilOptsPreserveConfig(t *testing.T) {
 	}
 	require.NoError(t, tm.AfterBlock(0, hooks, &types.Header{Time: 42}))
 
-	assert.Equal(t, initialScaling, tm.config.TargetToExcessScaling)
-	assert.Equal(t, initialMinPrice, tm.config.MinPrice)
+	assert.Equal(t, initialScaling, tm.config.targetToExcessScaling)
+	assert.Equal(t, initialMinPrice, tm.config.minPrice)
 	assert.Equal(t, initialPrice, tm.Price())
 }
 
@@ -57,8 +57,8 @@ func TestInvalidConfigRejected(t *testing.T) {
 			tm, err := New(42, target, 0)
 			require.NoError(t, err)
 
-			initialScaling := tm.config.TargetToExcessScaling
-			initialMinPrice := tm.config.MinPrice
+			initialScaling := tm.config.targetToExcessScaling
+			initialMinPrice := tm.config.minPrice
 
 			err = tm.AfterBlock(0, &hookstest.Stub{
 				GasConfig: hook.GasConfig{
@@ -70,8 +70,8 @@ func TestInvalidConfigRejected(t *testing.T) {
 			require.Error(t, err)
 
 			// Config unchanged after rejected update
-			assert.Equal(t, initialScaling, tm.config.TargetToExcessScaling)
-			assert.Equal(t, initialMinPrice, tm.config.MinPrice)
+			assert.Equal(t, initialScaling, tm.config.targetToExcessScaling)
+			assert.Equal(t, initialMinPrice, tm.config.minPrice)
 		})
 	}
 }

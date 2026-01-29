@@ -65,9 +65,9 @@ func TestUnmarshalBackwardCompatibility(t *testing.T) {
 	require.NoError(t, restored.UnmarshalCanoto(data))
 
 	// Verify defaults were applied
-	assert.Equal(t, gas.Gas(DefaultTargetToExcessScaling), restored.config.TargetToExcessScaling,
+	assert.Equal(t, gas.Gas(DefaultTargetToExcessScaling), restored.config.targetToExcessScaling,
 		"TargetToExcessScaling should default to %d", DefaultTargetToExcessScaling)
-	assert.Equal(t, gas.Price(DefaultMinPrice), restored.config.MinPrice,
+	assert.Equal(t, gas.Price(DefaultMinPrice), restored.config.minPrice,
 		"MinPrice should default to %d", DefaultMinPrice)
 
 	// Verify the Time is functional
@@ -397,7 +397,7 @@ func TestExcessScalingFactor(t *testing.T) {
 		require.NoError(t, err)
 		require.NoErrorf(t, tm.SetTarget(1), "%T.SetTarget(1)", tm)
 		// Set the scaling to 0 directly to test the edge case of forced 0 scaling.
-		tm.config.TargetToExcessScaling = 0
+		tm.config.targetToExcessScaling = 0
 		assert.Equal(t, gas.Gas(max), tm.excessScalingFactor())
 	})
 }
