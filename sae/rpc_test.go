@@ -232,8 +232,8 @@ func TestEthGetters(t *testing.T) {
 	for _, b := range []*blocks.Block{genesis, onDisk, settled, executed} {
 		t.Run(fmt.Sprintf("block_num_%d", b.Height()), func(t *testing.T) {
 			ethB := b.EthBlock()
-			testGetByHash(ctx, t, sut, ethB)
-			testGetByNumber(ctx, t, sut, ethB, rpc.BlockNumber(b.Number().Int64()))
+			sut.testGetByHash(ctx, t, ethB)
+			sut.testGetByNumber(ctx, t, ethB, rpc.BlockNumber(b.Number().Int64()))
 		})
 	}
 
@@ -250,7 +250,7 @@ func TestEthGetters(t *testing.T) {
 
 		for _, tt := range tests {
 			t.Run(tt.num.String(), func(t *testing.T) {
-				testGetByNumber(ctx, t, sut, tt.want.EthBlock(), tt.num)
+				sut.testGetByNumber(ctx, t, tt.want.EthBlock(), tt.num)
 			})
 		}
 
@@ -261,7 +261,7 @@ func TestEthGetters(t *testing.T) {
 	})
 }
 
-func testGetByHash(ctx context.Context, t *testing.T, sut *SUT, want *types.Block) {
+func (sut *SUT) testGetByHash(ctx context.Context, t *testing.T, want *types.Block) {
 	t.Helper()
 
 	testRPCGetter(ctx, t, "BlockByHash", sut.BlockByHash, want.Hash(), want)
@@ -317,17 +317,19 @@ func testGetByHash(ctx context.Context, t *testing.T, sut *SUT, want *types.Bloc
 	}...)
 }
 
-func testGetByNumber(ctx context.Context, t *testing.T, sut *SUT, block *types.Block, n rpc.BlockNumber) {
+// testGetByNumber accepts a block-number override to allow testing via named
+// blocks, e.g. [rpc.LatestBlockNumber], not only via the specific number
+// carried by the [types.Block].
+func (sut *SUT) testGetByNumber(ctx context.Context, t *testing.T, want *types.Block, n rpc.BlockNumber) {
 	t.Helper()
-	number := n.Int64()
-	testRPCGetter(ctx, t, "eth_getBlockByNumber", sut.BlockByNumber, big.NewInt(number), block)
-	testRPCGetter(ctx, t, "eth_getBlockByNumber", sut.HeaderByNumber, big.NewInt(number), block.Header())
+	testRPCGetter(ctx, t, "BlockByNumber", sut.BlockByNumber, big.NewInt(n.Int64()), want)
+	testRPCGetter(ctx, t, "HeaderByNumber", sut.HeaderByNumber, big.NewInt(n.Int64()), want.Header())
 
 	sut.testRPC(ctx, t, []rpcTest{
 		{
 			method: "eth_getBlockTransactionCountByNumber",
 			args:   []any{n},
-			want:   hexutil.Uint(len(block.Transactions())),
+			want:   hexutil.Uint(len(want.Transactions())),
 		},
 		{
 			method: "eth_getUncleCountByBlockNumber",
@@ -336,7 +338,7 @@ func testGetByNumber(ctx context.Context, t *testing.T, sut *SUT, block *types.B
 		},
 	}...)
 
-	for i, wantTx := range block.Transactions() {
+	for i, wantTx := range want.Transactions() {
 		txIdx := hexutil.Uint(i) //nolint:gosec // definitely won't overflow
 		marshaled, err := wantTx.MarshalBinary()
 		require.NoErrorf(t, err, "%T.MarshalBinary()", wantTx)
@@ -355,7 +357,7 @@ func testGetByNumber(ctx context.Context, t *testing.T, sut *SUT, block *types.B
 		}...)
 	}
 
-	outOfBoundsIndex := hexutil.Uint(len(block.Transactions()) + 1) //nolint:gosec // Known to not overflow
+	outOfBoundsIndex := hexutil.Uint(len(want.Transactions()) + 1) //nolint:gosec // Known to not overflow
 	sut.testRPC(ctx, t, []rpcTest{
 		{
 			method: "eth_getTransactionByBlockNumberAndIndex",
