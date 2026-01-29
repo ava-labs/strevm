@@ -12,11 +12,15 @@ import (
 	"time"
 
 	"github.com/ava-labs/avalanchego/version"
+	ethereum "github.com/ava-labs/libevm"
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/common/hexutil"
 	"github.com/ava-labs/libevm/core/types"
+	"github.com/ava-labs/libevm/core/vm"
 	"github.com/ava-labs/libevm/crypto"
+	"github.com/ava-labs/libevm/libevm"
 	"github.com/ava-labs/libevm/libevm/ethapi"
+	"github.com/ava-labs/libevm/libevm/hookstest"
 	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/rpc"
 	"github.com/google/go-cmp/cmp"
@@ -222,6 +226,102 @@ func TestEthGetters(t *testing.T) {
 
 	testGetByUnknownHash(ctx, t, sut)
 	testGetByUnknownNumber(ctx, t, sut)
+}
+
+func TestGetLogs(t *testing.T) {
+	opt, vmTime := withVMTime(time.Unix(saeparams.TauSeconds, 0))
+
+	ctx, sut := newSUT(t, 1, opt)
+	genesis := sut.lastAcceptedBlock(t)
+
+	precompile := common.Address{'p', 'r', 'e'}
+	stub := &hookstest.Stub{
+		PrecompileOverrides: map[common.Address]libevm.PrecompiledContract{
+			precompile: vm.NewStatefulPrecompile(func(env vm.PrecompileEnvironment, input []byte) (ret []byte, err error) {
+				env.StateDB().AddLog(&types.Log{
+					Address: precompile,
+				})
+				return nil, nil
+			}),
+		},
+	}
+	stub.Register(t)
+
+	createLog := func(t *testing.T) *types.Transaction {
+		t.Helper()
+		return sut.wallet.SetNonceAndSign(t, 0, &types.LegacyTx{
+			To:       &precompile,
+			GasPrice: big.NewInt(1),
+			Gas:      1e6,
+		})
+	}
+	createTx := func(t *testing.T) *types.Transaction {
+		t.Helper()
+		return sut.wallet.SetNonceAndSign(t, 0, &types.DynamicFeeTx{
+			To:        &common.Address{},
+			Gas:       params.TxGas,
+			GasFeeCap: big.NewInt(1),
+		})
+	}
+
+	// Once a block is settled, its ancestors are only accessible from the
+	// database.
+	onDisk := sut.createAndAcceptBlock(t, createLog(t))
+
+	settled := sut.createAndAcceptBlock(t, createLog(t))
+	require.NoErrorf(t, settled.WaitUntilExecuted(ctx), "%T.WaitUntilSettled()", settled)
+	vmTime.set(settled.ExecutedByGasTime().AsTime().Add(saeparams.Tau)) // ensure it will be settled
+
+	noLogs := sut.createAndAcceptBlock(t, createTx(t))
+
+	executed := sut.createAndAcceptBlock(t, createLog(t))
+	require.NoErrorf(t, executed.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", executed)
+
+	t.Run("genesis", func(t *testing.T) {
+		hash := genesis.Header().Hash()
+		logs, err := sut.FilterLogs(ctx, ethereum.FilterQuery{BlockHash: &hash})
+		require.NoError(t, err, "GetLogs(...)")
+		require.Empty(t, logs, "expected no logs from genesis")
+	})
+
+	t.Run("no_logs", func(t *testing.T) {
+		hash := noLogs.Header().Hash()
+		logs, err := sut.FilterLogs(ctx, ethereum.FilterQuery{BlockHash: &hash})
+		require.NoError(t, err, "GetLogs(...)")
+		require.Empty(t, logs, "expected no logs from block with no logs")
+	})
+
+	t.Run("nonexistent_block", func(t *testing.T) {
+		nonexistentHash := common.HexToHash("0xdeadbeef")
+		_, err := sut.FilterLogs(ctx, ethereum.FilterQuery{BlockHash: &nonexistentHash})
+		require.ErrorContainsf(t, err, "unknown block", "%T.GetLogs(...)", sut.Client)
+	})
+
+	t.Run("on_disk", func(t *testing.T) {
+		hash := onDisk.Header().Hash()
+		logs, err := sut.FilterLogs(ctx, ethereum.FilterQuery{BlockHash: &hash})
+		require.NoError(t, err, "GetLogs(...)")
+		require.Len(t, logs, len(onDisk.EthBlock().Transactions()), "expected logs from on-disk block")
+	})
+
+	t.Run("in_memory", func(t *testing.T) {
+		hash := executed.Header().Hash()
+		logs, err := sut.FilterLogs(ctx, ethereum.FilterQuery{BlockHash: &hash})
+		require.NoError(t, err, "GetLogs(...)")
+		require.Len(t, logs, len(executed.EthBlock().Transactions()), "expected logs from in-memory block")
+	})
+
+	t.Run("multiple_blocks", func(t *testing.T) {
+		from := settled.Number()
+		to := executed.Number()
+		logs, err := sut.FilterLogs(ctx, ethereum.FilterQuery{
+			FromBlock: from,
+			ToBlock:   to,
+			Addresses: []common.Address{precompile},
+		})
+		require.NoError(t, err, "GetLogs(...)")
+		require.Len(t, logs, 2, "expected logs from settled and executed blocks")
+	})
 }
 
 func testGetByHash(ctx context.Context, t *testing.T, sut *SUT, want *types.Block) {

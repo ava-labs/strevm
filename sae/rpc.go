@@ -213,6 +213,22 @@ func (b *ethAPIBackend) GetPoolTransaction(txHash common.Hash) *types.Transactio
 	return b.Set.Pool.Get(txHash)
 }
 
+var errInvalidArguments = errors.New("invalid arguments")
+
+func (b *ethAPIBackend) GetBody(ctx context.Context, hash common.Hash, number rpc.BlockNumber) (*types.Body, error) {
+	if number < 0 || hash == (common.Hash{}) {
+		return nil, errInvalidArguments
+	}
+	if block, ok := b.vm.blocks.Load(hash); ok {
+		return block.EthBlock().Body(), nil
+	}
+	return rawdb.ReadBody(b.vm.db, hash, uint64(number)), nil //nolint:gosec // Non-negative check performed above
+}
+
+func (b *ethAPIBackend) GetLogs(ctx context.Context, blockHash common.Hash, number uint64) ([][]*types.Log, error) {
+	return rawdb.ReadLogs(b.vm.db, blockHash, number), nil
+}
+
 type canonicalReader[T any] func(ethdb.Reader, common.Hash, uint64) *T
 
 func readByNumber[T any](b *ethAPIBackend, n rpc.BlockNumber, read canonicalReader[T]) (*T, error) {
