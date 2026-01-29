@@ -60,8 +60,35 @@ func (vm *VM) ethRPCServer() (*rpc.Server, error) {
 		// - net_peerCount
 		// - net_version
 		{"net", newNetAPI(vm.peers, vm.exec.ChainConfig().ChainID.Uint64())},
+		// Geth-specific APIs:
+		// - txpool_content
+		// - txpool_contentFrom
+		// - txpool_inspect
+		// - txpool_status
+		{"txpool", ethapi.NewTxPoolAPI(b)},
 
+		// Standard Ethereum node APIs:
+		// - eth_blockNumber
+		// - eth_getBlockByHash
+		// - eth_getBlockByNumber
+		// - eth_getUncleCountByBlockHash
+		// - eth_getUncleCountByBlockNumber
+		//
+		// Geth-specific APIs:
+		// - eth_getHeaderByHash
+		// - eth_getHeaderByNumber
 		{"eth", ethapi.NewBlockChainAPI(b)},
+		// Standard Ethereum node APIs:
+		// - eth_getBlockTransactionCountByHash
+		// - eth_getBlockTransactionCountByNumber
+		// - eth_getTransactionByBlockHashAndIndex
+		// - eth_getTransactionByBlockNumberAndIndex
+		// - eth_getTransactionByHash
+		//
+		// Undocumented APIs:
+		// - eth_getRawTransactionByHash
+		// - eth_getRawTransactionByBlockHashAndIndex
+		// - eth_getRawTransactionByBlockNumberAndIndex
 		{"eth", ethapi.NewTransactionAPI(b, new(ethapi.AddrLocker))},
 		{"eth", filterAPI},
 	}
@@ -140,8 +167,12 @@ func (b *ethAPIBackend) UnprotectedAllowed() bool {
 	return false
 }
 
-func (b *ethAPIBackend) CurrentBlock() *types.Header {
+func (b *ethAPIBackend) CurrentHeader() *types.Header {
 	return types.CopyHeader(b.vm.exec.LastExecuted().Header())
+}
+
+func (b *ethAPIBackend) CurrentBlock() *types.Header {
+	return b.CurrentHeader()
 }
 
 func (b *ethAPIBackend) GetTd(context.Context, common.Hash) *big.Int {
@@ -156,6 +187,32 @@ func (b *ethAPIBackend) BlockByNumber(ctx context.Context, n rpc.BlockNumber) (*
 	return readByNumber(b, n, rawdb.ReadBlock)
 }
 
+func (b *ethAPIBackend) HeaderByHash(ctx context.Context, hash common.Hash) (*types.Header, error) {
+	if b, ok := b.vm.blocks.Load(hash); ok {
+		return b.Header(), nil
+	}
+	return readByHash(b, hash, rawdb.ReadHeader), nil
+}
+
+func (b *ethAPIBackend) BlockByHash(ctx context.Context, hash common.Hash) (*types.Block, error) {
+	if b, ok := b.vm.blocks.Load(hash); ok {
+		return b.EthBlock(), nil
+	}
+	return readByHash(b, hash, rawdb.ReadBlock), nil
+}
+
+func (b *ethAPIBackend) GetTransaction(ctx context.Context, txHash common.Hash) (exists bool, tx *types.Transaction, blockHash common.Hash, blockNumber uint64, index uint64, err error) {
+	tx, blockHash, blockNumber, index = rawdb.ReadTransaction(b.vm.db, txHash)
+	if tx == nil {
+		return false, nil, common.Hash{}, 0, 0, nil
+	}
+	return true, tx, blockHash, blockNumber, index, nil
+}
+
+func (b *ethAPIBackend) GetPoolTransaction(txHash common.Hash) *types.Transaction {
+	return b.Set.Pool.Get(txHash)
+}
+
 type canonicalReader[T any] func(ethdb.Reader, common.Hash, uint64) *T
 
 func readByNumber[T any](b *ethAPIBackend, n rpc.BlockNumber, read canonicalReader[T]) (*T, error) {
@@ -165,11 +222,15 @@ func readByNumber[T any](b *ethAPIBackend, n rpc.BlockNumber, read canonicalRead
 	} else if err != nil {
 		return nil, err
 	}
-	return read(
-		b.vm.db,
-		rawdb.ReadCanonicalHash(b.vm.db, num),
-		num,
-	), nil
+	return read(b.vm.db, rawdb.ReadCanonicalHash(b.vm.db, num), num), nil
+}
+
+func readByHash[T any](b *ethAPIBackend, hash common.Hash, read canonicalReader[T]) *T {
+	num := rawdb.ReadHeaderNumber(b.vm.db, hash)
+	if num == nil {
+		return nil
+	}
+	return read(b.vm.db, hash, *num)
 }
 
 var errFutureBlockNotResolved = errors.New("not accepted yet")
@@ -195,6 +256,18 @@ func (b *ethAPIBackend) resolveBlockNumber(bn rpc.BlockNumber) (uint64, error) {
 		return 0, fmt.Errorf("%w: block %d", errFutureBlockNotResolved, n)
 	}
 	return n, nil
+}
+
+func (b *ethAPIBackend) Stats() (pending int, queued int) {
+	return b.Set.Pool.Stats()
+}
+
+func (b *ethAPIBackend) TxPoolContent() (map[common.Address][]*types.Transaction, map[common.Address][]*types.Transaction) {
+	return b.Set.Pool.Content()
+}
+
+func (b *ethAPIBackend) TxPoolContentFrom(addr common.Address) ([]*types.Transaction, []*types.Transaction) {
+	return b.Set.Pool.ContentFrom(addr)
 }
 
 func (b *ethAPIBackend) SubscribeChainEvent(ch chan<- core.ChainEvent) event.Subscription {
