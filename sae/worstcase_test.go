@@ -133,18 +133,22 @@ func TestWorstCase(t *testing.T) {
 				wantUsed: params.TxGas + 8*params.TxDataNonZeroGasEIP2028,
 			},
 		}
+		var txs []common.Hash
 		for _, tt := range precompileTests {
 			var data []byte
 			if k := tt.keep; k != nil {
 				data = binary.BigEndian.AppendUint64(nil, *k)
 			}
-			sut.mustSendTx(t, sut.wallet.SetNonceAndSign(t, 0, &types.DynamicFeeTx{
+			tx := sut.wallet.SetNonceAndSign(t, 0, &types.DynamicFeeTx{
 				To:        &guzzle,
 				GasFeeCap: big.NewInt(1),
 				Gas:       tt.limit,
 				Data:      data,
-			}))
+			})
+			sut.mustSendTx(t, tx)
+			txs = append(txs, tx.Hash())
 		}
+		sut.requireInMempool(t, txs...)
 
 		b := sut.runConsensusLoop(t, sut.genesis)
 		require.NoError(t, b.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", b)
