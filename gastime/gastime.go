@@ -70,13 +70,13 @@ func (tm *Time) establishInvariants() {
 	tm.Time.SetRateInvariants(&tm.target, &tm.excess)
 }
 
-// New returns a new [Time], set from a Unix timestamp. The consumption of
+// New returns a new [Time], derived from a [time.Time]. The consumption of
 // `target` * [TargetToRate] units of [gas.Gas] is equivalent to a tick of 1
 // second. Targets are clamped to [MaxTarget]. The minPrice and
 // targetToExcessScaling parameters default to [DefaultMinPrice] and
 // [DefaultTargetToExcessScaling] respectively, but can be overridden with
 // [WithMinPrice] and [WithTargetToExcessScaling].
-func New(unixSeconds uint64, target, startingExcess gas.Gas, opts ...Option) (*Time, error) {
+func New(at time.Time, target, startingExcess gas.Gas, opts ...Option) (*Time, error) {
 	cfg := &config{
 		targetToExcessScaling: DefaultTargetToExcessScaling,
 		minPrice:              DefaultMinPrice,
@@ -86,7 +86,9 @@ func New(unixSeconds uint64, target, startingExcess gas.Gas, opts ...Option) (*T
 		return nil, err
 	}
 	target = clampTarget(target)
-	return makeTime(proxytime.New(unixSeconds, rateOf(target)), target, startingExcess, *cfg), nil
+	tm := proxytime.Of[gas.Gas](at)
+	_ = tm.SetRate(rateOf(target))
+	return makeTime(tm, target, startingExcess, *cfg), nil
 }
 
 // SubSecond scales the value returned by [hook.Points.SubSecondBlockTime] to

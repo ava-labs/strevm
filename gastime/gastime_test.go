@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math"
 	"testing"
+	"time"
 
 	"github.com/ava-labs/avalanchego/vms/components/gas"
 	"github.com/google/go-cmp/cmp"
@@ -26,9 +27,8 @@ func (tm *Time) cloneViaCanotoRoundTrip(tb testing.TB) *Time {
 }
 
 func TestClone(t *testing.T) {
-	tm, err := New(42, 1e6, 1e5, WithTargetToExcessScaling(100), WithMinPrice(100))
+	tm, err := New(time.Unix(42, 0), 1e6, 1e5, WithTargetToExcessScaling(100), WithMinPrice(100))
 	require.NoError(t, err)
-	tm.Tick(1)
 
 	if diff := cmp.Diff(tm, tm.Clone(), CmpOpt()); diff != "" {
 		t.Errorf("%T.Clone() diff (-want +got):\n%s", tm, diff)
@@ -43,7 +43,7 @@ func TestClone(t *testing.T) {
 // and MinPrice, ensuring backward compatibility.
 func TestUnmarshalBackwardCompatibility(t *testing.T) {
 	// Create a Time and serialize it
-	tm, err := New(42, 1e6, 1e5)
+	tm, err := New(time.Unix(42, 0), 1e6, 1e5)
 	require.NoError(t, err)
 
 	// Manually create serialized data without config field by using the
@@ -105,6 +105,57 @@ func (tm *Time) requireState(tb testing.TB, desc string, want state, opts ...cmp
 	}
 }
 
+func TestNew(t *testing.T) {
+	frac := func(num, den gas.Gas) (f proxytime.FractionalSecond[gas.Gas]) {
+		f.Numerator = num
+		f.Denominator = den
+		return
+	}
+
+	ignore := cmpopts.IgnoreFields(state{}, "Rate", "Price")
+
+	tests := []struct {
+		name           string
+		unix, nanos    int64
+		target, excess gas.Gas
+		want           state
+	}{
+		{
+			name:   "rate at nanosecond resolution",
+			unix:   42,
+			nanos:  123_456,
+			target: 1e9 / TargetToRate,
+			want: state{
+				UnixTime:           42,
+				ConsumedThisSecond: frac(123_456, 1e9),
+				Target:             1e9 / TargetToRate,
+			},
+		},
+		{
+			name:   "scaling in constructor not applied to starting excess",
+			unix:   100,
+			nanos:  TargetToRate,
+			target: 50 / TargetToRate,
+			excess: 987_654,
+			want: state{
+				UnixTime:           100,
+				ConsumedThisSecond: frac(1, 50),
+				Target:             50 / TargetToRate,
+				Excess:             987_654,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tm := time.Unix(tt.unix, tt.nanos)
+			got, err := New(tm, tt.target, tt.excess)
+			require.NoError(t, err)
+			got.requireState(t, fmt.Sprintf("New(%v, %d, %d)", tm, tt.target, tt.excess), tt.want, ignore)
+		})
+	}
+}
+
 func (tm *Time) mustSetRate(tb testing.TB, rate gas.Gas) {
 	tb.Helper()
 	require.NoErrorf(tb, tm.SetRate(rate), "%T.%T.SetRate(%d)", tm, TimeMarshaler{}, rate)
@@ -117,7 +168,7 @@ func (tm *Time) mustSetTarget(tb testing.TB, target gas.Gas) {
 
 func TestScaling(t *testing.T) {
 	const initExcess = gas.Gas(1_234_567_890)
-	tm, err := New(42, 1.6e6, initExcess)
+	tm, err := New(time.Unix(42, 0), 1.6e6, initExcess)
 	require.NoError(t, err)
 
 	// The initial price isn't important in this test; what we care about is
@@ -194,7 +245,7 @@ func TestScaling(t *testing.T) {
 
 func TestExcess(t *testing.T) {
 	const rate = gas.Gas(3.2e6)
-	tm, err := New(42, rate/2, 0)
+	tm, err := New(time.Unix(42, 0), rate/2, 0)
 	require.NoError(t, err)
 
 	frac := func(num gas.Gas) (f proxytime.FractionalSecond[gas.Gas]) {
@@ -340,7 +391,7 @@ func TestExcessScalingFactor(t *testing.T) {
 		{max, max},        // target clamped to MaxTarget, still overflows
 	}
 	t.Run("default", func(t *testing.T) {
-		tm, err := New(0, 1, 0)
+		tm, err := New(time.Unix(0, 0), 1, 0)
 		require.NoError(t, err)
 		for _, tt := range defaultTests {
 			require.NoErrorf(t, tm.SetTarget(tt.target), "%T.SetTarget(%v)", tm, tt.target)
@@ -380,7 +431,7 @@ func TestExcessScalingFactor(t *testing.T) {
 
 	t.Run("custom scaling", func(t *testing.T) {
 		for _, tt := range customTests {
-			tm, err := New(0, tt.target, 0, WithTargetToExcessScaling(tt.scaling))
+			tm, err := New(time.Unix(0, 0), tt.target, 0, WithTargetToExcessScaling(tt.scaling))
 			require.NoError(t, err)
 			require.NoErrorf(t, tm.SetTarget(tt.target), "%T.SetTarget(%v)", tm, tt.target)
 			assert.Equalf(t, tt.want, tm.excessScalingFactor(), "scaling=%d, T=%d", tt.scaling, tt.target)
@@ -389,11 +440,11 @@ func TestExcessScalingFactor(t *testing.T) {
 
 	t.Run("edge case with forced 0 scaling", func(t *testing.T) {
 		// WithTargetToExcessScaling(0) should be rejected by validation
-		_, err := New(0, 1, 0, WithTargetToExcessScaling(0))
+		_, err := New(time.Unix(0, 0), 1, 0, WithTargetToExcessScaling(0))
 		require.Error(t, err, "New should reject zero scaling")
 
 		// Create a valid instance and force zero scaling directly to test excessScalingFactor safety
-		tm, err := New(0, 1, 0)
+		tm, err := New(time.Unix(0, 0), 1, 0)
 		require.NoError(t, err)
 		require.NoErrorf(t, tm.SetTarget(1), "%T.SetTarget(1)", tm)
 		// Set the scaling to 0 directly to test the edge case of forced 0 scaling.
@@ -416,7 +467,7 @@ func TestMinPrice(t *testing.T) {
 			{1_000_000, 100_000_000, 3}, // excess/K ≈ 1.15, e^1.15 ≈ 3.16
 		}
 		for _, tt := range tests {
-			tm, err := New(0, tt.target, tt.excess)
+			tm, err := New(time.Unix(0, 0), tt.target, tt.excess)
 			require.NoError(t, err)
 			assert.Equalf(t, tt.want, tm.Price(), "target=%d, excess=%d", tt.target, tt.excess)
 		}
@@ -439,14 +490,14 @@ func TestMinPrice(t *testing.T) {
 			{100, 1_000_000, 87_000_000, 271}, // 100 * e^1 ≈ 271
 		}
 		for _, tt := range tests {
-			tm, err := New(0, tt.target, tt.excess, WithMinPrice(tt.minPrice))
+			tm, err := New(time.Unix(0, 0), tt.target, tt.excess, WithMinPrice(tt.minPrice))
 			require.NoError(t, err)
 			assert.Equalf(t, tt.want, tm.Price(), "minPrice=%d, target=%d, excess=%d", tt.minPrice, tt.target, tt.excess)
 		}
 	})
 
 	t.Run("min price updated via SetOpts", func(t *testing.T) {
-		tm, err := New(0, 1_000_000, 0)
+		tm, err := New(time.Unix(0, 0), 1_000_000, 0)
 		require.NoError(t, err)
 		assert.Equal(t, DefaultMinPrice, tm.Price(), "initial price with default minPrice")
 
@@ -464,7 +515,7 @@ func TestMinPrice(t *testing.T) {
 }
 
 func TestTargetClamping(t *testing.T) {
-	tm, err := New(0, MaxTarget+1, 0)
+	tm, err := New(time.Unix(0, 0), MaxTarget+1, 0)
 	require.NoError(t, err)
 	require.Equal(t, MaxTarget, tm.Target(), "tm.Target() clamped by constructor")
 

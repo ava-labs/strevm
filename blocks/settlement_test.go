@@ -58,9 +58,13 @@ func TestSettlementInvariants(t *testing.T) {
 
 	db := rawdb.NewMemoryDatabase()
 	for _, b := range []*Block{b, parent, lastSettled} {
+<<<<<<< HEAD
 		tm, err := gastime.New(b.BuildTime(), 1, 0)
 		require.NoError(t, err)
 		b.markExecutedForTests(t, db, tm)
+=======
+		b.markExecutedForTests(t, db, gastime.New(preciseTime(b.Header(), 0), 1, 0))
+>>>>>>> main
 	}
 
 	t.Run("before_MarkSettled", func(t *testing.T) {
@@ -148,7 +152,7 @@ func TestSettles(t *testing.T) {
 		8: nil,
 		9: {4, 5, 6, 7},
 	}
-	blocks := newChain(t, 0, 10, lastSettledAtHeight)
+	blocks := newChain(t, rawdb.NewMemoryDatabase(), 0, 10, lastSettledAtHeight)
 
 	numsToBlocks := func(nums ...uint64) []*Block {
 		bs := make([]*Block, len(nums))
@@ -209,7 +213,8 @@ func TestSettles(t *testing.T) {
 }
 
 func TestLastToSettleAt(t *testing.T) {
-	blocks := newChain(t, 0, 30, nil)
+	db := rawdb.NewMemoryDatabase()
+	blocks := newChain(t, db, 0, 30, nil)
 	t.Run("helper_invariants", func(t *testing.T) {
 		for i, b := range blocks {
 			require.Equal(t, uint64(i), b.Height()) //nolint:gosec // Slice index won't overflow
@@ -217,9 +222,13 @@ func TestLastToSettleAt(t *testing.T) {
 		}
 	})
 
+<<<<<<< HEAD
 	db := rawdb.NewMemoryDatabase()
 	tm, err := gastime.New(0, 5 /*target*/, 0)
 	require.NoError(t, err)
+=======
+	tm := gastime.New(time.Unix(0, 0), 5 /*target*/, 0)
+>>>>>>> main
 	require.Equal(t, gas.Gas(10), tm.Rate())
 
 	requireTime := func(t *testing.T, sec uint64, numerator gas.Gas) {
