@@ -228,10 +228,11 @@ func TestPriceTrajectory(t *testing.T) {
 		config  hook.GasConfig
 	}
 	simulateBlocks := func(t *testing.T, tm *Time, blocks []block) []gas.Price {
+		t.Helper()
 		prices := make([]gas.Price, 0, len(blocks))
 
 		for _, b := range blocks {
-			header := &types.Header{Time: uint64(b.time.Unix())}
+			header := &types.Header{Time: uint64(b.time.Unix())} //nolint:gosec // Known non-negative
 			hooks := &hookstest.Stub{GasConfig: b.config}
 			tm.BeforeBlock(hooks, header)
 			require.NoError(t, tm.AfterBlock(b.gasUsed, hooks, header))
@@ -403,8 +404,8 @@ func TestPriceTrajectory(t *testing.T) {
 
 		// Price should be approximately maintained after MinPrice decrease
 		// Due to binary search approximation with integer arithmetic, allow 10% tolerance
-		priceDiff := abs(int64(priceAfterChange) - int64(initialPrice))
-		tolerance := max(int64(1), int64(initialPrice)/10) // 10% tolerance
+		priceDiff := absdiff(uint64(priceAfterChange), uint64(initialPrice))
+		tolerance := max(1, initialPrice/10) // 10% tolerance
 		assert.LessOrEqual(t, priceDiff, tolerance,
 			"price should be approximately maintained after MinPrice decrease (got %d, want ~%d, diff %d, tolerance %d)",
 			priceAfterChange, initialPrice, priceDiff, tolerance)
@@ -459,11 +460,11 @@ func TestPriceTrajectory(t *testing.T) {
 	})
 }
 
-func abs(x int64) int64 {
-	if x < 0 {
-		return -x
+func absdiff(x uint64, y uint64) uint64 {
+	if x < y {
+		return y - x
 	}
-	return x
+	return x - y
 }
 
 func FuzzPriceInvarianceAfterBlock(f *testing.F) {
@@ -635,10 +636,10 @@ func FuzzPriceInvarianceAfterBlock(f *testing.F) {
 			// When required excess for continuity exceeds the search cap, findExcessForPrice
 			// returns that cap and the resulting price is M * e^(cap/K).
 			newK := excessScalingFactorOf(gas.Gas(newScaling), gas.Gas(newTarget))
-			cap := maxExcessSearchCap(gas.Gas(newK))
+			cap := maxExcessSearchCap(newK)
 			requiredApproxExcess := float64(newK) * math.Log(float64(initPrice)/float64(newMinPrice))
 			if requiredApproxExcess > float64(cap) {
-				want = gas.CalculatePrice(gas.Price(newMinPrice), cap, gas.Gas(newK))
+				want = gas.CalculatePrice(gas.Price(newMinPrice), cap, newK)
 			}
 		}
 
@@ -649,8 +650,7 @@ func FuzzPriceInvarianceAfterBlock(f *testing.F) {
 		// means the price can differ by at most a factor of e^(1/K), which for practical
 		// K values is negligible. We use a simple absolute difference check for small
 		// prices and relative check for larger ones.
-		var diff uint64
-		diff = uint64(abs(int64(got) - int64(want)))
+		diff := absdiff(uint64(got), uint64(want))
 
 		// Allow difference of 1 or 0.001% of the price, whichever is larger
 		tolerance := max(uint64(1), uint64(want)/1_000_000)

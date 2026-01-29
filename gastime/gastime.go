@@ -335,6 +335,7 @@ func (tm *Time) FastForwardTo(to uint64, toFrac gas.Gas) {
 	tm.excess = intmath.BoundedSubtract(tm.excess, quo, 0)
 }
 
+// GasConfigToOpts converts a hook.GasConfig to a slice of Options.
 func GasConfigToOpts(cfg hook.GasConfig) []Option {
 	var opts []Option
 	if cfg.TargetToExcessScaling != nil {

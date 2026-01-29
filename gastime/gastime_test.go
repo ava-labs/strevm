@@ -67,7 +67,7 @@ func TestUnmarshalBackwardCompatibility(t *testing.T) {
 	// Verify defaults were applied
 	assert.Equal(t, gas.Gas(DefaultTargetToExcessScaling), restored.config.targetToExcessScaling,
 		"TargetToExcessScaling should default to %d", DefaultTargetToExcessScaling)
-	assert.Equal(t, gas.Price(DefaultMinPrice), restored.config.minPrice,
+	assert.Equal(t, DefaultMinPrice, restored.config.minPrice,
 		"MinPrice should default to %d", DefaultMinPrice)
 
 	// Verify the Time is functional
