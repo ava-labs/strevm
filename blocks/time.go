@@ -18,9 +18,13 @@ import (
 // the value, combined with the regular timestamp to provide a full-resolution
 // block time.
 func PreciseTime(hooks hook.Points, hdr *types.Header) time.Time {
+	return preciseTime(hdr, hooks.SubSecondBlockTime(hdr))
+}
+
+func preciseTime(hdr *types.Header, subSec time.Duration) time.Time {
 	return time.Unix(
 		int64(hdr.Time), //nolint:gosec // Won't overflow for a few millennia
-		int64(hooks.SubSecondBlockTime(hdr)),
+		subSec.Nanoseconds(),
 	)
 }
 

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math"
 	"testing"
+	"time"
 
 	"github.com/ava-labs/avalanchego/vms/components/gas"
 	"github.com/google/go-cmp/cmp"
@@ -26,8 +27,7 @@ func (tm *Time) cloneViaCanotoRoundTrip(tb testing.TB) *Time {
 }
 
 func TestClone(t *testing.T) {
-	tm := New(42, 1e6, 1e5)
-	tm.Tick(1)
+	tm := New(time.Unix(42, 1), 1e6, 1e5)
 
 	if diff := cmp.Diff(tm, tm.Clone(), CmpOpt()); diff != "" {
 		t.Errorf("%T.Clone() diff (-want +got):\n%s", tm, diff)
@@ -66,6 +66,56 @@ func (tm *Time) requireState(tb testing.TB, desc string, want state, opts ...cmp
 	}
 }
 
+func TestNew(t *testing.T) {
+	frac := func(num, den gas.Gas) (f proxytime.FractionalSecond[gas.Gas]) {
+		f.Numerator = num
+		f.Denominator = den
+		return
+	}
+
+	ignore := cmpopts.IgnoreFields(state{}, "Rate", "Price")
+
+	tests := []struct {
+		name           string
+		unix, nanos    int64
+		target, excess gas.Gas
+		want           state
+	}{
+		{
+			name:   "rate at nanosecond resolution",
+			unix:   42,
+			nanos:  123_456,
+			target: 1e9 / TargetToRate,
+			want: state{
+				UnixTime:           42,
+				ConsumedThisSecond: frac(123_456, 1e9),
+				Target:             1e9 / TargetToRate,
+			},
+		},
+		{
+			name:   "scaling in constructor not applied to starting excess",
+			unix:   100,
+			nanos:  TargetToRate,
+			target: 50 / TargetToRate,
+			excess: 987_654,
+			want: state{
+				UnixTime:           100,
+				ConsumedThisSecond: frac(1, 50),
+				Target:             50 / TargetToRate,
+				Excess:             987_654,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tm := time.Unix(tt.unix, tt.nanos)
+			got := New(tm, tt.target, tt.excess)
+			got.requireState(t, fmt.Sprintf("New(%v, %d, %d)", tm, tt.target, tt.excess), tt.want, ignore)
+		})
+	}
+}
+
 func (tm *Time) mustSetRate(tb testing.TB, rate gas.Gas) {
 	tb.Helper()
 	require.NoErrorf(tb, tm.SetRate(rate), "%T.%T.SetRate(%d)", tm, TimeMarshaler{}, rate)
@@ -78,7 +128,7 @@ func (tm *Time) mustSetTarget(tb testing.TB, target gas.Gas) {
 
 func TestScaling(t *testing.T) {
 	const initExcess = gas.Gas(1_234_567_890)
-	tm := New(42, 1.6e6, initExcess)
+	tm := New(time.Unix(42, 0), 1.6e6, initExcess)
 
 	// The initial price isn't important in this test; what we care about is
 	// that it's invariant under scaling of the target etc.
@@ -154,7 +204,7 @@ func TestScaling(t *testing.T) {
 
 func TestExcess(t *testing.T) {
 	const rate = gas.Gas(3.2e6)
-	tm := New(42, rate/2, 0)
+	tm := New(time.Unix(42, 0), rate/2, 0)
 
 	frac := func(num gas.Gas) (f proxytime.FractionalSecond[gas.Gas]) {
 		f.Numerator = num
@@ -298,7 +348,7 @@ func TestExcessScalingFactor(t *testing.T) {
 		{max, max},
 	}
 
-	tm := New(0, 1, 0)
+	tm := New(time.Unix(0, 0), 1, 0)
 	for _, tt := range tests {
 		require.NoErrorf(t, tm.SetTarget(tt.target), "%T.SetTarget(%v)", tm, tt.target)
 		assert.Equalf(t, tt.want, tm.excessScalingFactor(), "T = %d", tt.target)
@@ -306,7 +356,7 @@ func TestExcessScalingFactor(t *testing.T) {
 }
 
 func TestTargetClamping(t *testing.T) {
-	tm := New(0, MaxTarget+1, 0)
+	tm := New(time.Unix(0, 0), MaxTarget+1, 0)
 	require.Equal(t, MaxTarget, tm.Target(), "tm.Target() clamped by constructor")
 
 	tests := []struct {
