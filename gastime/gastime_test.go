@@ -27,8 +27,7 @@ func (tm *Time) cloneViaCanotoRoundTrip(tb testing.TB) *Time {
 }
 
 func TestClone(t *testing.T) {
-	tm := New(time.Unix(42, 0), 1e6, 1e5)
-	tm.Tick(1)
+	tm := New(time.Unix(42, 1), 1e6, 1e5)
 
 	if diff := cmp.Diff(tm, tm.Clone(), CmpOpt()); diff != "" {
 		t.Errorf("%T.Clone() diff (-want +got):\n%s", tm, diff)
