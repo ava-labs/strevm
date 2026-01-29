@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ava-labs/avalanchego/utils"
 	"github.com/ava-labs/avalanchego/version"
 	ethereum "github.com/ava-labs/libevm"
 	"github.com/ava-labs/libevm/common"
@@ -277,51 +278,69 @@ func TestGetLogs(t *testing.T) {
 	executed := sut.createAndAcceptBlock(t, createLog(t))
 	require.NoErrorf(t, executed.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", executed)
 
-	t.Run("genesis", func(t *testing.T) {
-		hash := genesis.Header().Hash()
-		logs, err := sut.FilterLogs(ctx, ethereum.FilterQuery{BlockHash: &hash})
-		require.NoError(t, err, "GetLogs(...)")
-		require.Empty(t, logs, "expected no logs from genesis")
-	})
+	tests := []struct {
+		name            string
+		query           ethereum.FilterQuery
+		wantCount       int
+		wantErrContains string
+	}{
+		{
+			name: "genesis",
+			query: ethereum.FilterQuery{
+				BlockHash: utils.PointerTo(genesis.Hash()),
+			},
+			wantCount: 0,
+		},
+		{
+			name: "no_logs",
+			query: ethereum.FilterQuery{
+				BlockHash: utils.PointerTo(noLogs.Hash()),
+			},
+			wantCount: 0,
+		},
+		{
+			name: "nonexistent_block",
+			query: ethereum.FilterQuery{
+				BlockHash: utils.PointerTo(common.HexToHash("0xdeadbeef")),
+			},
+			wantErrContains: "unknown block",
+		},
+		{
+			name: "on_disk",
+			query: ethereum.FilterQuery{
+				BlockHash: utils.PointerTo(onDisk.Hash()),
+			},
+			wantCount: len(onDisk.EthBlock().Transactions()),
+		},
+		{
+			name: "in_memory",
+			query: ethereum.FilterQuery{
+				BlockHash: utils.PointerTo(executed.Hash()),
+			},
+			wantCount: len(executed.EthBlock().Transactions()),
+		},
+		{
+			name: "multiple_blocks",
+			query: ethereum.FilterQuery{
+				FromBlock: settled.Number(),
+				ToBlock:   executed.Number(),
+				Addresses: []common.Address{precompile},
+			},
+			wantCount: 2,
+		},
+	}
 
-	t.Run("no_logs", func(t *testing.T) {
-		hash := noLogs.Header().Hash()
-		logs, err := sut.FilterLogs(ctx, ethereum.FilterQuery{BlockHash: &hash})
-		require.NoError(t, err, "GetLogs(...)")
-		require.Empty(t, logs, "expected no logs from block with no logs")
-	})
-
-	t.Run("nonexistent_block", func(t *testing.T) {
-		nonexistentHash := common.HexToHash("0xdeadbeef")
-		_, err := sut.FilterLogs(ctx, ethereum.FilterQuery{BlockHash: &nonexistentHash})
-		require.ErrorContainsf(t, err, "unknown block", "%T.GetLogs(...)", sut.Client)
-	})
-
-	t.Run("on_disk", func(t *testing.T) {
-		hash := onDisk.Header().Hash()
-		logs, err := sut.FilterLogs(ctx, ethereum.FilterQuery{BlockHash: &hash})
-		require.NoError(t, err, "GetLogs(...)")
-		require.Len(t, logs, len(onDisk.EthBlock().Transactions()), "expected logs from on-disk block")
-	})
-
-	t.Run("in_memory", func(t *testing.T) {
-		hash := executed.Header().Hash()
-		logs, err := sut.FilterLogs(ctx, ethereum.FilterQuery{BlockHash: &hash})
-		require.NoError(t, err, "GetLogs(...)")
-		require.Len(t, logs, len(executed.EthBlock().Transactions()), "expected logs from in-memory block")
-	})
-
-	t.Run("multiple_blocks", func(t *testing.T) {
-		from := settled.Number()
-		to := executed.Number()
-		logs, err := sut.FilterLogs(ctx, ethereum.FilterQuery{
-			FromBlock: from,
-			ToBlock:   to,
-			Addresses: []common.Address{precompile},
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			logs, err := sut.FilterLogs(ctx, tt.query)
+			if tt.wantErrContains != "" {
+				require.ErrorContains(t, err, tt.wantErrContains, "eth_getLogs(...)")
+				return
+			}
+			require.NoErrorf(t, err, "eth_getLogs(...)")
+			require.Lenf(t, logs, tt.wantCount, "eth_getLogs(...)")
 		})
-		require.NoError(t, err, "GetLogs(...)")
-		require.Len(t, logs, 2, "expected logs from settled and executed blocks")
-	})
+	}
 }
 
 func testGetByHash(ctx context.Context, t *testing.T, sut *SUT, want *types.Block) {
