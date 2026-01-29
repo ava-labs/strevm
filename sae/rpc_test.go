@@ -257,7 +257,7 @@ func TestTxPoolNamespace(t *testing.T) {
 	}...)
 }
 
-func TestEthGetters(t *testing.T) {
+func TestBlockGetters(t *testing.T) {
 	opt, vmTime := withVMTime(time.Unix(saeparams.TauSeconds, 0))
 
 	ctx, sut := newSUT(t, 1, opt)
