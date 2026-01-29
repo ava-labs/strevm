@@ -4,6 +4,7 @@
 package sae
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/ava-labs/avalanchego/version"
@@ -13,10 +14,10 @@ import (
 func TestSinceGenesisBeforeInit(t *testing.T) {
 	ctx := t.Context()
 	sut := NewSinceGenesis(Config{})
-	t.Run("Version", func(t *testing.T) {
+	t.Run(fmt.Sprintf("%T.Version", sut), func(t *testing.T) {
 		got, err := sut.Version(ctx)
 		require.NoError(t, err)
 		require.Equal(t, version.Current.String(), got)
 	})
-	require.NoErrorf(t, sut.Shutdown(t.Context()), "%T.Shutdown()")
+	require.NoErrorf(t, sut.Shutdown(t.Context()), "%T.Shutdown()", sut)
 }
