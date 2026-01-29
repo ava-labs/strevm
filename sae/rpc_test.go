@@ -16,8 +16,11 @@ import (
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/common/hexutil"
 	"github.com/ava-labs/libevm/core/types"
+	"github.com/ava-labs/libevm/core/vm"
 	"github.com/ava-labs/libevm/crypto"
+	"github.com/ava-labs/libevm/libevm"
 	"github.com/ava-labs/libevm/libevm/ethapi"
+	libevmhookstest "github.com/ava-labs/libevm/libevm/hookstest"
 	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/rpc"
 	"github.com/google/go-cmp/cmp"
@@ -269,29 +272,49 @@ func TestEthGetters(t *testing.T) {
 		sut.testGetByUnknownNumber(ctx, t)
 	})
 
-	createTx := func(t *testing.T) *types.Transaction {
+	// The named block "pending" is the last to be enqueued but yet to be
+	// executed. Although unlikely to be useful in practice, it still needs to
+	// be tested.
+	blockingPrecompile := common.Address{'b', 'l', 'o', 'c', 'k'}
+	unblockPrecompile := make(chan struct{})
+	t.Cleanup(func() { close(unblockPrecompile) })
+
+	libevmHooks := &libevmhookstest.Stub{
+		PrecompileOverrides: map[common.Address]libevm.PrecompiledContract{
+			blockingPrecompile: vm.NewStatefulPrecompile(func(vm.PrecompileEnvironment, []byte) ([]byte, error) {
+				<-unblockPrecompile
+				return nil, nil
+			}),
+		},
+	}
+	libevmHooks.Register(t)
+
+	createTx := func(t *testing.T, to common.Address) *types.Transaction {
 		t.Helper()
 		return sut.wallet.SetNonceAndSign(t, 0, &types.DynamicFeeTx{
-			To:        &common.Address{},
+			To:        &to,
 			Gas:       params.TxGas,
 			GasFeeCap: big.NewInt(1),
 		})
 	}
+	var zeroAddr common.Address
 
 	genesis := sut.lastAcceptedBlock(t)
 
 	// Once a block is settled, its ancestors are only accessible from the
 	// database.
-	onDisk := sut.createAndAcceptBlock(t, createTx(t))
+	onDisk := sut.createAndAcceptBlock(t, createTx(t, zeroAddr))
 
-	settled := sut.createAndAcceptBlock(t, createTx(t))
+	settled := sut.createAndAcceptBlock(t, createTx(t, zeroAddr))
 	require.NoErrorf(t, settled.WaitUntilExecuted(ctx), "%T.WaitUntilSettled()", settled)
 	vmTime.set(settled.ExecutedByGasTime().AsTime().Add(saeparams.Tau)) // ensure it will be settled
 
-	executed := sut.createAndAcceptBlock(t, createTx(t))
+	executed := sut.createAndAcceptBlock(t, createTx(t, zeroAddr))
 	require.NoErrorf(t, executed.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", executed)
 
-	for _, b := range []*blocks.Block{genesis, onDisk, settled, executed} {
+	pending := sut.createAndAcceptBlock(t, createTx(t, blockingPrecompile))
+
+	for _, b := range []*blocks.Block{genesis, onDisk, settled, executed, pending} {
 		t.Run(fmt.Sprintf("block_num_%d", b.Height()), func(t *testing.T) {
 			ethB := b.EthBlock()
 			sut.testGetByHash(ctx, t, ethB)
@@ -300,12 +323,19 @@ func TestEthGetters(t *testing.T) {
 	}
 
 	t.Run("named_blocks", func(t *testing.T) {
+		// [ethclient.Client.BlockByNumber] isn't compatible with pending blocks as
+		// the geth RPC server strips fields that the client then expects to find.
+		sut.testRPC(ctx, t, rpcTest{
+			method: "eth_getHeaderByNumber",
+			args:   []any{rpc.PendingBlockNumber},
+			want:   pending.Header(),
+		})
+
 		tests := []struct {
 			num  rpc.BlockNumber
 			want *blocks.Block
 		}{
 			{rpc.LatestBlockNumber, executed},
-			// TODO(arr4n) add a test for pending
 			{rpc.SafeBlockNumber, settled},
 			{rpc.FinalizedBlockNumber, settled},
 		}
