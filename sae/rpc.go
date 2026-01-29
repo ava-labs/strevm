@@ -71,6 +71,8 @@ func (vm *VM) ethRPCServer() (*rpc.Server, error) {
 		// - eth_blockNumber
 		// - eth_getBlockByHash
 		// - eth_getBlockByNumber
+		// - eth_getUncleCountByBlockHash
+		// - eth_getUncleCountByBlockNumber
 		//
 		// Geth-specific APIs:
 		// - eth_getHeaderByHash
@@ -82,6 +84,11 @@ func (vm *VM) ethRPCServer() (*rpc.Server, error) {
 		// - eth_getTransactionByBlockHashAndIndex
 		// - eth_getTransactionByBlockNumberAndIndex
 		// - eth_getTransactionByHash
+		//
+		// Undocumented APIs:
+		// - eth_getRawTransactionByHash
+		// - eth_getRawTransactionByBlockHashAndIndex
+		// - eth_getRawTransactionByBlockNumberAndIndex
 		{"eth", ethapi.NewTransactionAPI(b, new(ethapi.AddrLocker))},
 		{"eth", filterAPI},
 	}
@@ -200,6 +207,10 @@ func (b *ethAPIBackend) GetTransaction(ctx context.Context, txHash common.Hash) 
 		return false, nil, common.Hash{}, 0, 0, nil
 	}
 	return true, tx, blockHash, blockNumber, index, nil
+}
+
+func (b *ethAPIBackend) GetPoolTransaction(txHash common.Hash) *types.Transaction {
+	return b.Set.Pool.Get(txHash)
 }
 
 type canonicalReader[T any] func(ethdb.Reader, common.Hash, uint64) *T
