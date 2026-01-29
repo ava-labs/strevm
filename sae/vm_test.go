@@ -96,7 +96,6 @@ type (
 		vmConfig          Config
 		logLevel          logging.Level
 		genesis           core.Genesis
-		genesisOptions    []blockstest.GenesisOption
 		useLibEVMTBLogger bool
 	}
 	sutOption = options.Option[sutConfig]
@@ -113,7 +112,6 @@ func newSUT(tb testing.TB, numAccounts uint, opts ...sutOption) (context.Context
 
 	keys := saetest.NewUNSAFEKeyChain(tb, numAccounts)
 
-	alloc := saetest.MaxAllocFor(keys.Addresses()...)
 	conf := options.ApplyTo(&sutConfig{
 		vmConfig: Config{
 			MempoolConfig: mempoolConf,
@@ -126,12 +124,8 @@ func newSUT(tb testing.TB, numAccounts uint, opts ...sutOption) (context.Context
 		genesis: core.Genesis{
 			Config:     saetest.ChainConfig(),
 			Timestamp:  saeparams.TauSeconds,
-			Difficulty: big.NewInt(0),
-			GasLimit:   params.GenesisGasLimit,
-			Alloc:      alloc,
-		},
-		genesisOptions: []blockstest.GenesisOption{
-			blockstest.WithTimestamp(saeparams.TauSeconds),
+			Difficulty: big.NewInt(0), // irrelevant but required
+			Alloc:      saetest.MaxAllocFor(keys.Addresses()...),
 		},
 	}, opts...)
 
@@ -247,12 +241,6 @@ func withVMTime(tb testing.TB, startTime time.Time) (sutOption, *vmTime) {
 	})
 
 	return opt, t
-}
-
-func withGenesisOpts(opts ...blockstest.GenesisOption) sutOption {
-	return options.Func[sutConfig](func(c *sutConfig) {
-		c.genesisOptions = append(c.genesisOptions, opts...)
-	})
 }
 
 // enableLibEVMTBLogger sets an [ethtest.NewTBLogHandler] as the default logger
