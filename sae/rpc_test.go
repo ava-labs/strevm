@@ -200,7 +200,6 @@ func TestTxPoolNamespace(t *testing.T) {
 			},
 		},
 	}...)
-
 }
 
 func TestEthGetters(t *testing.T) {
