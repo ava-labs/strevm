@@ -8,7 +8,9 @@ import (
 	"fmt"
 	"math"
 	"math/big"
+	"path/filepath"
 	"reflect"
+	"runtime/debug"
 	"testing"
 	"time"
 
@@ -549,6 +551,116 @@ func (sut *SUT) testGetByUnknownNumber(ctx context.Context, t *testing.T) {
 			method: "eth_getRawTransactionByBlockNumberAndIndex",
 			args:   []any{n, hexutil.Uint(0)},
 			want:   hexutil.Bytes(nil),
+		},
+	}...)
+}
+
+// These are smoke tests that verify RPC calls succeed, not that profiling
+// data is correct (that's Go stdlib's responsibility), so we do not check the
+// files themselves.
+//
+// Reference: https://geth.ethereum.org/docs/interacting-with-geth/rpc/ns-debug
+func TestDebugProfilingNamespace(t *testing.T) {
+	ctx, sut := newSUT(t, 1)
+	tmpDir := t.TempDir()
+
+	// Data inspection methods return variable data
+	var memStats map[string]any
+	require.NoError(t, sut.CallContext(ctx, &memStats, "debug_memStats"))
+	require.NotEmpty(t, memStats)
+
+	var gcStats debug.GCStats
+	require.NoError(t, sut.CallContext(ctx, &gcStats, "debug_gcStats"))
+
+	var stacks string
+	require.NoError(t, sut.CallContext(ctx, &stacks, "debug_stacks"))
+	require.Contains(t, stacks, "goroutine")
+
+	sut.testRPC(ctx, t, []rpcTest{
+		// Configuration setters
+		{
+			method: "debug_setBlockProfileRate",
+			args:   []any{1},
+			want:   (*struct{})(nil),
+		},
+		{
+			method: "debug_setMutexProfileFraction",
+			args:   []any{1},
+			want:   (*struct{})(nil),
+		},
+		{
+			method: "debug_verbosity",
+			args:   []any{3},
+			want:   (*struct{})(nil),
+		},
+		{
+			method: "debug_vmodule",
+			args:   []any{""},
+			want:   (*struct{})(nil),
+		},
+		{
+			method: "debug_freeOSMemory",
+			want:   (*struct{})(nil),
+		},
+		{
+			method: "debug_setGCPercent",
+			args:   []any{100},
+			want:   100,
+		},
+		// File profiling methods
+		{
+			method: "debug_writeMemProfile",
+			args:   []any{filepath.Join(tmpDir, "mem.prof")},
+			want:   (*struct{})(nil),
+		},
+		{
+			method: "debug_writeBlockProfile",
+			args:   []any{filepath.Join(tmpDir, "block.prof")},
+			want:   (*struct{})(nil),
+		},
+		{
+			method: "debug_writeMutexProfile",
+			args:   []any{filepath.Join(tmpDir, "mutex.prof")},
+			want:   (*struct{})(nil),
+		},
+		{
+			method: "debug_blockProfile",
+			args:   []any{filepath.Join(tmpDir, "block2.prof"), 1},
+			want:   (*struct{})(nil),
+		},
+		{
+			method: "debug_mutexProfile",
+			args:   []any{filepath.Join(tmpDir, "mutex2.prof"), 1},
+			want:   (*struct{})(nil),
+		},
+		{
+			method: "debug_cpuProfile",
+			args:   []any{filepath.Join(tmpDir, "cpu.prof"), 1},
+			want:   (*struct{})(nil),
+		},
+		{
+			method: "debug_goTrace",
+			args:   []any{filepath.Join(tmpDir, "trace.out"), 1},
+			want:   (*struct{})(nil),
+		},
+		// Start/stop pairs
+		{
+			method: "debug_startCPUProfile",
+			args:   []any{filepath.Join(tmpDir, "cpu2.prof")},
+			want:   (*struct{})(nil),
+		},
+		{
+			method: "debug_stopCPUProfile",
+			want:   (*struct{})(nil),
+		},
+		{
+			method: "debug_startGoTrace",
+			args:   []any{filepath.Join(tmpDir, "trace2.out")},
+			want:   (*struct{})(nil),
+		},
+		{
+			method: "debug_stopGoTrace",
+			want:   (*struct{})(nil),
 		},
 	}...)
 }
