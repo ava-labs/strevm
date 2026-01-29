@@ -32,13 +32,7 @@ func (tm *Time) AfterBlock(used gas.Gas, hooks hook.Points, h *types.Header) err
 		return fmt.Errorf("%T.SetTarget() after block: %w", tm, err)
 	}
 	// TargetToExcessScaling and MinPrice are optional, so we apply them as options.
-	var opts []Option
-	if cfg.TargetToExcessScaling != nil {
-		opts = append(opts, WithTargetToExcessScaling(*cfg.TargetToExcessScaling))
-	}
-	if cfg.MinPrice != nil {
-		opts = append(opts, WithMinPrice(*cfg.MinPrice))
-	}
+	opts := GasConfigToOpts(cfg)
 	if len(opts) > 0 {
 		if err := tm.SetOpts(opts...); err != nil {
 			return err

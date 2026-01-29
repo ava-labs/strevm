@@ -86,11 +86,17 @@ func (b *Block) MarkSynchronous(hooks hook.Points, db ethdb.Database, excessAfte
 	if baseFee == nil { // genesis blocks
 		baseFee = new(big.Int)
 	}
-	execTime := gastime.New(
+	gasConfig := hooks.GasConfigAfter(b.Header())
+	opts := gastime.GasConfigToOpts(gasConfig)
+	execTime, err := gastime.New(
 		PreciseTime(hooks, b.Header()),
-		hooks.GasTargetAfter(b.Header()), // target _after_ is a requirement of [Block.MarkExecuted]
+		gasConfig.Target, // target _after_ is a requirement of [Block.MarkExecuted]
 		excessAfter,
+		opts...,
 	)
+	if err != nil {
+		return err
+	}
 	// Receipts of a synchronous block have already been "settled" by the block
 	// itself. As the only reason to pass receipts here is for later settlement
 	// in another block, there is no need to pass anything meaningful as it

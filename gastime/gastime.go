@@ -334,3 +334,14 @@ func (tm *Time) FastForwardTo(to uint64, toFrac gas.Gas) {
 	quo, _, _ := intmath.MulDiv(frac.Numerator, T, R) // overflow is impossible as T/R < 1
 	tm.excess = intmath.BoundedSubtract(tm.excess, quo, 0)
 }
+
+func GasConfigToOpts(cfg hook.GasConfig) []Option {
+	var opts []Option
+	if cfg.TargetToExcessScaling != nil {
+		opts = append(opts, WithTargetToExcessScaling(*cfg.TargetToExcessScaling))
+	}
+	if cfg.MinPrice != nil {
+		opts = append(opts, WithMinPrice(*cfg.MinPrice))
+	}
+	return opts
+}
