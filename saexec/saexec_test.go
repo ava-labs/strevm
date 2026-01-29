@@ -96,10 +96,6 @@ func newSUT(tb testing.TB, hooks *saehookstest.Stub) (context.Context, SUT) {
 		require.NoErrorf(tb, e.Close(), "%T.Close()", e)
 	})
 
-	// Enable libevm TB logger after VM initialization to avoid harmless
-	// warnings about snapshot generation and transaction pool initialization.
-	enableLibEVMTBLogger(tb)
-
 	return ctx, SUT{
 		Executor: e,
 		chain:    chain,
