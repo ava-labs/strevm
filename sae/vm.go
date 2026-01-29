@@ -292,7 +292,7 @@ func (vm *VM) Shutdown(context.Context) error {
 }
 
 // Version reports the VM's version.
-func (vm *VM) Version(context.Context) (string, error) {
+func (*VM) Version(context.Context) (string, error) {
 	return version.Current.String(), nil
 }
 
