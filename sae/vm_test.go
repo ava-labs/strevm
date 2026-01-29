@@ -36,7 +36,6 @@ import (
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/ethclient"
 	"github.com/ava-labs/libevm/ethdb"
-	"github.com/ava-labs/libevm/libevm/ethtest"
 	"github.com/ava-labs/libevm/libevm/options"
 	"github.com/ava-labs/libevm/log"
 	"github.com/ava-labs/libevm/params"
@@ -45,7 +44,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
-	"golang.org/x/exp/slog"
 
 	"github.com/ava-labs/strevm/adaptor"
 	"github.com/ava-labs/strevm/blocks"
@@ -169,7 +167,7 @@ func newSUT(tb testing.TB, numAccounts uint, opts ...sutOption) (context.Context
 	tb.Cleanup(client.Close)
 
 	if conf.useLibEVMTBLogger {
-		enableLibEVMTBLogger(tb)
+		saetest.EnableLibEVMTBLogger(tb)
 	}
 
 	validators, ok := snowCtx.ValidatorState.(*validatorstest.State)
@@ -243,17 +241,7 @@ func withVMTime(tb testing.TB, startTime time.Time) (sutOption, *vmTime) {
 	return opt, t
 }
 
-// enableLibEVMTBLogger sets an [ethtest.NewTBLogHandler] as the default logger
-// until `tb` cleanup occurs.
-func enableLibEVMTBLogger(tb testing.TB) {
-	old := log.Root()
-	tb.Cleanup(func() {
-		log.SetDefault(old)
-	})
-	log.SetDefault(log.NewLogger(ethtest.NewTBLogHandler(tb, slog.LevelWarn)))
-}
-
-// withoutLibEVMTBLogger disables the use of an [ethtest.NewTBLogHandler] when
+// withoutLibEVMTBLogger disables the use of [saetest.EnableLibEVMTBLogger] when
 // constructing a new [SUT]. This SHOULD be used sparingly.
 //
 // We generally enforce warnings as errors because in tests they amount to smoke

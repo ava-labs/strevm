@@ -18,6 +18,8 @@ import (
 	"github.com/ava-labs/avalanchego/version"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/ava-labs/strevm/saetest"
 )
 
 type networkedSUTs struct {
@@ -39,7 +41,7 @@ func newNetworkedSUTs(tb testing.TB, numValidators, numNonValidators int) *netwo
 	// However, the creation of a network means that all later VMs would trigger
 	// the same warning, so we delay enabling until later.
 	opt := withoutLibEVMTBLogger()
-	defer enableLibEVMTBLogger(tb)
+	defer saetest.EnableLibEVMTBLogger(tb)
 
 	net := &networkedSUTs{
 		validators:    make(map[ids.NodeID]*SUT, numValidators),
