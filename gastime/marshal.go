@@ -19,6 +19,13 @@ type Config struct {
 	canotoData canotoData_config
 }
 
+// Equal returns true if the logical fields of c and other are equal.
+// It ignores canoto internal fields.
+func (c Config) Equal(other Config) bool {
+	return c.TargetToExcessScaling == other.TargetToExcessScaling &&
+		c.MinPrice == other.MinPrice
+}
+
 // A TimeMarshaler can marshal a time to and from canoto. It is of limited use
 // by itself and MUST only be used via a wrapping [Time].
 type TimeMarshaler struct { //nolint:tagliatelle // TODO(arr4n) submit linter bug report
@@ -47,10 +54,19 @@ func (tm *Time) UnmarshalCanoto(bytes []byte) error {
 }
 
 // UnmarshalCanotoFrom populates the [TimeMarshaler] from the reader and then
-// reestablishes invariants.
+// reestablishes invariants. If config fields are zero (e.g., old serialized
+// data without config), defaults are applied for backward compatibility.
 func (tm *Time) UnmarshalCanotoFrom(r canoto.Reader) error {
 	if err := tm.TimeMarshaler.UnmarshalCanotoFrom(r); err != nil {
 		return err
+	}
+	// Apply defaults for backward compatibility with old serialized data
+	// that doesn't include the config field.
+	if tm.config.TargetToExcessScaling == 0 {
+		tm.config.TargetToExcessScaling = DefaultTargetToExcessScaling
+	}
+	if tm.config.MinPrice == 0 {
+		tm.config.MinPrice = DefaultMinPrice
 	}
 	tm.establishInvariants()
 	return nil

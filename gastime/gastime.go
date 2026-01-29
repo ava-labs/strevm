@@ -7,6 +7,7 @@ package gastime
 import (
 	"errors"
 	"math"
+	"sort"
 	"time"
 
 	"github.com/ava-labs/avalanchego/vms/components/gas"
@@ -165,16 +166,48 @@ func (c *Config) validate() error {
 	return nil
 }
 
-// SetOpts applies options to the config, validating before committing.
+// setConfig sets the full config with excess scaling to maintain price continuity.
+//
+// When config changes, excess is scaled to maintain price continuity:
+//   - K changes (via TargetToExcessScaling): Scale excess to maintain current price
+//   - M decreases: Scale excess to maintain current price
+//   - M increases AND current price >= new M: Scale excess to maintain current price
+//   - M increases AND current price < new M: Price bumps to new M (excess becomes 0)
+func (tm *Time) setConfig(cfg Config) error {
+	// No change, skip recalculation
+	// We should never see this case as in SetOpts should only be called if config has changed.
+	if cfg.Equal(tm.config) {
+		return nil
+	}
+	if err := cfg.validate(); err != nil {
+		return err
+	}
+
+	currentPrice := tm.Price()
+	tm.config = cfg
+	targetPrice := currentPrice
+	if currentPrice < cfg.MinPrice {
+		// M increased AND price is below new minimum -> bump to new M
+		targetPrice = cfg.MinPrice
+		tm.excess = 0
+		return nil
+	}
+
+	// Calculate new K with new scaling and current target
+	newK := excessScalingFactorOf(cfg.TargetToExcessScaling, tm.target)
+	// Find excess that produces targetPrice with new config
+	newExcess := findExcessForPrice(targetPrice, cfg.MinPrice, newK)
+	tm.excess = newExcess
+	return nil
+}
+
+// SetOpts applies partial config updates with excess scaling to maintain price continuity.
+// This is convenient for C-Chain where only one parameter (e.g., MinPrice) might change.
 // If validation fails, the config is unchanged.
 func (tm *Time) SetOpts(opts ...Option) error {
 	newCfg := tm.config // copy current
 	options.ApplyTo(&newCfg, opts...)
-	if err := newCfg.validate(); err != nil {
-		return err
-	}
-	tm.config = newCfg
-	return nil
+	return tm.setConfig(newCfg)
 }
 
 // Price returns the price of a unit of gas, i.e. the "base fee".
@@ -185,16 +218,48 @@ func (tm *Time) Price() gas.Price {
 // excessScalingFactor returns the K variable of ACP-103/176, i.e.
 // [config.targetToExcessScaling] * T, capped at [math.MaxUint64].
 func (tm *Time) excessScalingFactor() gas.Gas {
-	// This should never happen as we check for zero in [newCfgWithOptions]
-	// but we'll check anyway to avoid a panic.
-	if tm.config.TargetToExcessScaling == 0 {
+	return excessScalingFactorOf(tm.config.TargetToExcessScaling, tm.target)
+}
+
+// excessScalingFactorOf returns scaling * target, capped at [math.MaxUint64].
+func excessScalingFactorOf(scaling, target gas.Gas) gas.Gas {
+	if scaling == 0 {
 		return math.MaxUint64
 	}
-	overflowThreshold := math.MaxUint64 / tm.config.TargetToExcessScaling
-	if tm.target > overflowThreshold {
+	overflowThreshold := math.MaxUint64 / scaling
+	if target > overflowThreshold {
 		return math.MaxUint64
 	}
-	return tm.config.TargetToExcessScaling * tm.target
+	return scaling * target
+}
+
+// findExcessForPrice uses binary search to find an excess value that produces
+// targetPrice with the given minPrice and excessScalingFactor (K).
+//
+// The price formula is: P = M * e^(x / K), where:
+//   - P is the price (targetPrice)
+//   - M is the minimum price (minPrice)
+//   - x is the excess
+//   - K is the excessScalingFactor
+func findExcessForPrice(targetPrice, minPrice gas.Price, k gas.Gas) gas.Gas {
+	// These should never happen, but just in case.
+	if targetPrice <= minPrice || k == 0 {
+		return 0
+	}
+
+	const maxExcessMultiplier = 45 // ≈ ln(MaxUint64)
+
+	// normally maxTargetExcess can be math.MaxInt64 but sort.Search takes an int, so we cap it at math.MaxInt64.
+	// P = M × e^(x / K) for price to not overflow, so x/K must be < ln(MaxUint64), M is neglected
+	// to avoid calculating ln(M).
+	maxTargetExcess := gas.Gas(math.MaxInt64)
+	if k < math.MaxInt64/maxExcessMultiplier {
+		maxTargetExcess = maxExcessMultiplier * k
+	}
+	// Use binary search to find the smallest excess where price >= targetPrice
+	return gas.Gas(sort.Search(int(maxTargetExcess), func(i int) bool {
+		return gas.CalculatePrice(minPrice, gas.Gas(i), k) >= targetPrice
+	}))
 }
 
 // BaseFee is equivalent to [Time.Price], returning the result as a uint256 for
