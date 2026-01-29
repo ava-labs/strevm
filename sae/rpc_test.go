@@ -317,7 +317,11 @@ func TestBlockGetters(t *testing.T) {
 	t.Run("named_blocks", func(t *testing.T) {
 		// [ethclient.Client.BlockByNumber] isn't compatible with pending blocks as
 		// the geth RPC server strips fields that the client then expects to find.
-		testRPCMethod(ctx, t, sut, "eth_getHeaderByNumber", pending.Header(), rpc.PendingBlockNumber)
+		sut.testRPC(ctx, t, rpcTest{
+			method: "eth_getHeaderByNumber",
+			args:   []any{rpc.PendingBlockNumber},
+			want:   pending.Header(),
+		})
 
 		tests := []struct {
 			num  rpc.BlockNumber
