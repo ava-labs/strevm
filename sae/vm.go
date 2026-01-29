@@ -66,6 +66,7 @@ type VM struct {
 // A Config configures construction of a new [VM].
 type Config struct {
 	MempoolConfig legacypool.Config
+	RPCConfig     rpcConfig
 
 	Now func() time.Time // defaults to [time.Now] if nil
 }

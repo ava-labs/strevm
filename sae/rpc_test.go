@@ -230,9 +230,11 @@ func TestEthGetters(t *testing.T) {
 }
 
 func TestGetLogs(t *testing.T) {
-	opt, vmTime := withVMTime(time.Unix(saeparams.TauSeconds, 0))
+	const bloomSectionSize = 8 // shorten params.BloomBitsBlocks for test speed
+	timeOpt, vmTime := withVMTime(time.Unix(saeparams.TauSeconds, 0))
+	rpcOpt := withRPCConfig(rpcConfig{bloomSectionSize: bloomSectionSize})
 
-	ctx, sut := newSUT(t, 1, opt)
+	ctx, sut := newSUT(t, 1, timeOpt, rpcOpt)
 	genesis := sut.lastAcceptedBlock(t)
 
 	precompile := common.Address{'p', 'r', 'e'}
@@ -265,9 +267,10 @@ func TestGetLogs(t *testing.T) {
 		})
 	}
 
-	// Once a block is settled, its ancestors are only accessible from the
-	// database.
-	onDisk := sut.createAndAcceptBlock(t, createLog(t))
+	onDisk := make([]*blocks.Block, bloomSectionSize)
+	for i := range onDisk {
+		onDisk[i] = sut.createAndAcceptBlock(t, createLog(t))
+	}
 
 	settled := sut.createAndAcceptBlock(t, createLog(t))
 	require.NoErrorf(t, settled.WaitUntilExecuted(ctx), "%T.WaitUntilSettled()", settled)
@@ -308,9 +311,9 @@ func TestGetLogs(t *testing.T) {
 		{
 			name: "on_disk",
 			query: ethereum.FilterQuery{
-				BlockHash: utils.PointerTo(onDisk.Hash()),
+				BlockHash: utils.PointerTo(onDisk[0].Hash()),
 			},
-			wantCount: len(onDisk.EthBlock().Transactions()),
+			wantCount: len(onDisk[0].EthBlock().Transactions()),
 		},
 		{
 			name: "in_memory",
@@ -320,13 +323,22 @@ func TestGetLogs(t *testing.T) {
 			wantCount: len(executed.EthBlock().Transactions()),
 		},
 		{
-			name: "multiple_blocks",
+			name: "unindexed",
 			query: ethereum.FilterQuery{
 				FromBlock: settled.Number(),
 				ToBlock:   executed.Number(),
 				Addresses: []common.Address{precompile},
 			},
 			wantCount: 2,
+		},
+		{
+			name: "indexed",
+			query: ethereum.FilterQuery{
+				FromBlock: onDisk[0].Number(),
+				ToBlock:   onDisk[len(onDisk)-1].Number(),
+				Addresses: []common.Address{precompile},
+			},
+			wantCount: int(bloomSectionSize),
 		},
 	}
 

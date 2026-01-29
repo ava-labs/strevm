@@ -16,6 +16,7 @@ import (
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/common/hexutil"
 	"github.com/ava-labs/libevm/core"
+	"github.com/ava-labs/libevm/core/bloombits"
 	"github.com/ava-labs/libevm/core/rawdb"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/crypto"
@@ -29,11 +30,8 @@ import (
 	"github.com/ava-labs/strevm/txgossip"
 )
 
-func (vm *VM) ethRPCServer() (*rpc.Server, error) {
-	b := &ethAPIBackend{
-		vm:  vm,
-		Set: vm.mempool,
-	}
+func (vm *VM) ethRPCServer(config rpcConfig) (*rpc.Server, error) {
+	b := newEthAPIBackend(config, vm)
 	s := rpc.NewServer()
 
 	// Even if this function errors, we should close API to prevent a goroutine
@@ -42,7 +40,7 @@ func (vm *VM) ethRPCServer() (*rpc.Server, error) {
 	filterAPI := filters.NewFilterAPI(filterSystem, false /*isLightClient*/)
 	vm.toClose = append(vm.toClose, func() error {
 		filters.CloseAPI(filterAPI)
-		return nil
+		return b.bloomIndexer.Close()
 	})
 
 	// Standard Ethereum APIs are documented at: https://ethereum.org/developers/docs/apis/json-rpc
@@ -149,10 +147,53 @@ func (s *netAPI) Version() string {
 	return s.chainID
 }
 
+var _ core.ChainIndexerChain = (*ethAPIBackend)(nil)
+
+type rpcConfig struct {
+	bloomSectionSize uint64
+}
+
 type ethAPIBackend struct {
-	vm             *VM
 	ethapi.Backend // TODO(arr4n) remove in favour of `var _ ethapi.Backend = (*ethAPIBackend)(nil)`
 	*txgossip.Set
+
+	vm           *VM
+	bloomIndexer *bloomIndexer
+}
+
+func newEthAPIBackend(config rpcConfig, vm *VM) *ethAPIBackend {
+	b := &ethAPIBackend{
+		Set:          vm.mempool,
+		vm:           vm,
+		bloomIndexer: newBloomIndexer(vm.db, config.bloomSectionSize),
+	}
+
+	// TODO: if we are state syncing, we need to provide the first block available to the indexer
+	// via [core.ChainIndexer.AddCheckpoint].
+	b.bloomIndexer.Start(b)
+
+	return b
+}
+
+func (b *ethAPIBackend) BloomStatus() (uint64, uint64) {
+	return b.bloomIndexer.status()
+}
+
+func (b *ethAPIBackend) ServiceFilter(ctx context.Context, session *bloombits.MatcherSession) {
+	b.bloomIndexer.spawnFilter(ctx, session)
+}
+
+// HeaderBloom retrieves the bloom filter for a given header.
+// The bloom actually stored in the header is the bloom of the receipts that the block settled, not the
+// bloom of the transactions in the block, so we must retrieve the blocks receipts from the database.
+// TODO: should we cache this? Store blooms separately?
+func (b *ethAPIBackend) HeaderBloom(header *types.Header) types.Bloom {
+	receipts := rawdb.ReadRawReceipts(b.ChainDb(), header.Hash(), header.Number.Uint64())
+	return types.CreateBloom(receipts)
+}
+
+func (b *ethAPIBackend) ChainDb() ethdb.Database {
+	return b.vm.db
 }
 
 func (b *ethAPIBackend) ChainConfig() *params.ChainConfig {

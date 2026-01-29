@@ -218,6 +218,12 @@ func withVMTime(startTime time.Time) (sutOption, *vmTime) {
 	return opt, t
 }
 
+func withRPCConfig(conf rpcConfig) sutOption {
+	return options.Func[sutConfig](func(c *sutConfig) {
+		c.vmConfig.RPCConfig = conf
+	})
+}
+
 func withGenesisOpts(opts ...blockstest.GenesisOption) sutOption {
 	return options.Func[sutConfig](func(c *sutConfig) {
 		c.genesisOptions = append(c.genesisOptions, opts...)

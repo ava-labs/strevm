@@ -18,7 +18,7 @@ const (
 // CreateHandlers returns all VM-specific HTTP handlers to be exposed by the
 // node, keyed by extension.
 func (vm *VM) CreateHandlers(ctx context.Context) (map[string]http.Handler, error) {
-	s, err := vm.ethRPCServer()
+	s, err := vm.ethRPCServer(vm.config.RPCConfig)
 	if err != nil {
 		return nil, err
 	}
