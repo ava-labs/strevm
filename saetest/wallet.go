@@ -83,12 +83,6 @@ func (kc *KeyChain) Addresses() []common.Address {
 	return slices.Clone(kc.addrs)
 }
 
-// PrivateKey returns the private key for the specified account index.
-// Only for use in tests - KeyChain is not suitable for production.
-func (kc *KeyChain) PrivateKey(i int) *ecdsa.PrivateKey {
-	return kc.keys[i]
-}
-
 // SetNonceAndSign overrides the nonce in the `data` with the next one for the
 // account, then signs and returns the transaction. The wallet's record of the
 // account nonce begins at zero and increments after every successful call to
