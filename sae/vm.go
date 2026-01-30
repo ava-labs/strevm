@@ -73,11 +73,9 @@ type Config struct {
 	Now func() time.Time // defaults to [time.Now] if nil
 }
 
-// RPCConfig configures RPC API behavior
+// RPCConfig configures RPC API behavior.
 type RPCConfig struct {
-	// EnableDebugAPI enables the debug namespace which provides Go runtime
-	// profiling APIs
-	EnableDebugAPI bool
+	EnableDebugNamespace bool
 }
 
 // NewVM returns a new [VM] that is ready for use immediately upon return.
