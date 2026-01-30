@@ -18,6 +18,7 @@ import (
 	"github.com/ava-labs/libevm/common/hexutil"
 	"github.com/ava-labs/libevm/core"
 	"github.com/ava-labs/libevm/core/rawdb"
+	"github.com/ava-labs/libevm/core/txpool"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/crypto"
 	"github.com/ava-labs/libevm/eth/filters"
@@ -91,11 +92,14 @@ func (vm *VM) ethRPCServer() (*rpc.Server, error) {
 		// - eth_getTransactionByHash
 		// - eth_sendRawTransaction
 		// - eth_sendTransaction
+		// - eth_sign
+		// - eth_signTransaction
 		//
 		// Undocumented APIs:
-		// - eth_getRawTransactionByHash
 		// - eth_getRawTransactionByBlockHashAndIndex
 		// - eth_getRawTransactionByBlockNumberAndIndex
+		// - eth_getRawTransactionByHash
+		// - eth_pendingTransactions
 		{"eth", ethapi.NewTransactionAPI(b, new(ethapi.AddrLocker))},
 		{"eth", filterAPI},
 	}
@@ -224,6 +228,25 @@ func (b *ethAPIBackend) GetTransaction(ctx context.Context, txHash common.Hash) 
 
 func (b *ethAPIBackend) GetPoolTransaction(txHash common.Hash) *types.Transaction {
 	return b.Set.Pool.Get(txHash)
+}
+
+func (b *ethAPIBackend) GetPoolTransactions() (types.Transactions, error) {
+	pending := b.Pool.Pending(txpool.PendingFilter{})
+
+	var pendingCount int
+	for _, batch := range pending {
+		pendingCount += len(batch)
+	}
+
+	txs := make(types.Transactions, 0, pendingCount)
+	for _, batch := range pending {
+		for _, lazy := range batch {
+			if tx := lazy.Resolve(); tx != nil {
+				txs = append(txs, tx)
+			}
+		}
+	}
+	return txs, nil
 }
 
 func (b *ethAPIBackend) GetPoolNonce(ctx context.Context, addr common.Address) (uint64, error) {
