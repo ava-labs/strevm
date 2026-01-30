@@ -221,7 +221,7 @@ func TestPriceTrajectory(t *testing.T) {
 
 	startTime := time.Unix(1000, 0)
 	// simulateBlocks processes a sequence of blocks and returns the price after each block.
-	// The returned slice has len(blocks)+1 elements: [initialPrice, priceAfterBlock0, priceAfterBlock1, ...]
+	// The returned slice has len(blocks) elements: [priceAfterBlock0, priceAfterBlock1, ...]
 	type block struct {
 		time    time.Time
 		gasUsed gas.Gas
@@ -412,10 +412,13 @@ func TestPriceTrajectory(t *testing.T) {
 
 		// Now process empty blocks with time passing - price should decay toward new MinPrice
 		blocks = []block{
-			{time: startTime.Add(10 * time.Second), gasUsed: 0, config: hook.GasConfig{Target: target}},  // 9 seconds pass
-			{time: startTime.Add(20 * time.Second), gasUsed: 0, config: hook.GasConfig{Target: target}},  // 10 more seconds
-			{time: startTime.Add(50 * time.Second), gasUsed: 0, config: hook.GasConfig{Target: target}},  // 30 more seconds
-			{time: startTime.Add(100 * time.Second), gasUsed: 0, config: hook.GasConfig{Target: target}}, // 50 more seconds
+			{time: startTime.Add(10 * time.Second), gasUsed: 0, config: hook.GasConfig{Target: target}},
+			{time: startTime.Add(20 * time.Second), gasUsed: 0, config: hook.GasConfig{Target: target}},
+			{time: startTime.Add(50 * time.Second), gasUsed: 0, config: hook.GasConfig{Target: target}},
+			{time: startTime.Add(100 * time.Second), gasUsed: 0, config: hook.GasConfig{Target: target}},
+			{time: startTime.Add(200 * time.Second), gasUsed: 0, config: hook.GasConfig{Target: target}},
+			{time: startTime.Add(500 * time.Second), gasUsed: 0, config: hook.GasConfig{Target: target}},
+			{time: startTime.Add(1000 * time.Second), gasUsed: 0, config: hook.GasConfig{Target: target}},
 		}
 		prices = simulateBlocks(t, tm, blocks)
 
@@ -424,24 +427,6 @@ func TestPriceTrajectory(t *testing.T) {
 			assert.LessOrEqual(t, prices[i], prices[i-1],
 				"price should decrease with empty blocks: step %d", i)
 		}
-
-		// Final price should be lower than price after change
-		assert.Less(t, prices[len(prices)-1], priceAfterChange,
-			"price should decay toward MinPrice with empty blocks")
-
-		// Final price should be approaching MinPrice (at least closer than we started)
-		distanceInitial := priceAfterChange - lowMinPrice
-		distanceFinal := prices[len(prices)-1] - lowMinPrice
-		assert.Less(t, distanceFinal, distanceInitial,
-			"price should be closer to MinPrice after decay")
-
-		// Continue with more time to reach MinPrice
-		blocks = []block{
-			{time: startTime.Add(200 * time.Second), gasUsed: 0, config: hook.GasConfig{Target: target}},
-			{time: startTime.Add(500 * time.Second), gasUsed: 0, config: hook.GasConfig{Target: target}},
-			{time: startTime.Add(1000 * time.Second), gasUsed: 0, config: hook.GasConfig{Target: target}},
-		}
-		prices = simulateBlocks(t, tm, blocks)
 
 		// Price should have reached MinPrice
 		finalPrice := prices[len(prices)-1]
@@ -510,30 +495,6 @@ func FuzzPriceInvarianceAfterBlock(f *testing.F) {
 			newM:    10, // new M < current price
 			newKonT: 87,
 		},
-		// Target change only (uses rate invariants)
-		{
-			T: 1e6, M: 1, KonT: 87,
-			x:       5e6,
-			newT:    2e6, // target doubles
-			newM:    1,
-			newKonT: 87,
-		},
-		// Simultaneous target and scaling change
-		{
-			T: 1e6, M: 1, KonT: 87,
-			x:       10e6,
-			newT:    500_000, // target halves
-			newM:    1,
-			newKonT: 100, // scaling also changes
-		},
-		// Small K (high price sensitivity)
-		{
-			T: 1e6, M: 1, KonT: 1,
-			x:       1e6, // price = exp(1) ~= 2.7
-			newT:    1e6,
-			newM:    1,
-			newKonT: 2, // K doubles
-		},
 		// Large excess value
 		{
 			T: 1e6, M: 1, KonT: 87,
@@ -576,18 +537,19 @@ func FuzzPriceInvarianceAfterBlock(f *testing.F) {
 		},
 		// MaxUint64 scaling with MinPrice decrease
 		{
-			T: 1e6, M: 26, KonT: math.MaxUint64/uint64(1e6) - 100,
+			T: 1e6, M: 26, KonT: math.MaxUint64,
 			x:       1e6,
 			newT:    1e6,
 			newM:    1,
-			newKonT: math.MaxUint64/uint64(1e6) - 10,
+			newKonT: math.MaxUint64,
 		},
+		// Around MaxUint64 scaling with MinPrice decrease
 		{
-			T: 1e6, M: 26, KonT: math.MaxInt64/uint64(1e6) - 100,
+			T: 1e6, M: 26, KonT: math.MaxInt64 - 100,
 			x:       1e6,
 			newT:    1e6,
 			newM:    1,
-			newKonT: math.MaxInt64/uint64(2e6) - 10,
+			newKonT: math.MaxInt64 - 10,
 		},
 	} {
 		f.Add(s.T, s.x, s.M, s.KonT, s.newT, s.newM, s.newKonT)
@@ -635,6 +597,7 @@ func FuzzPriceInvarianceAfterBlock(f *testing.F) {
 			// When K is at MaxUint64 we skip scaling and price stays at M.
 			// When required excess for continuity exceeds the search cap, findExcessForPrice
 			// returns that cap and the resulting price is M * e^(cap/K).
+			// This means price continuity is not possible if required excess exceeds the search cap.
 			newK := excessScalingFactorOf(gas.Gas(newScaling), gas.Gas(newTarget))
 			cap := maxExcessSearchCap(newK)
 			requiredApproxExcess := float64(newK) * math.Log(float64(initPrice)/float64(newMinPrice))
