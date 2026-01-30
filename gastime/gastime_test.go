@@ -451,6 +451,14 @@ func TestExcessScalingFactor(t *testing.T) {
 		tm.config.targetToExcessScaling = 0
 		assert.Equal(t, gas.Gas(max), tm.excessScalingFactor())
 	})
+
+	t.Run("edge case with max excess and max scaling", func(t *testing.T) {
+		minPrice := gas.Price(1e6)
+		tm, err := New(time.Unix(0, 0), MaxTarget, math.MaxUint64-1, WithTargetToExcessScaling(math.MaxUint64), WithMinPrice(minPrice))
+		require.NoError(t, err)
+		assert.Equal(t, gas.Gas(max), tm.excessScalingFactor(), "max excess and max scaling should result in max excess scaling factor")
+		assert.Equalf(t, minPrice, tm.Price(), "price %d should be equal to min price: %d", tm.Price(), minPrice)
+	})
 }
 
 func TestMinPrice(t *testing.T) {

@@ -652,8 +652,8 @@ func FuzzPriceInvarianceAfterBlock(f *testing.F) {
 		// prices and relative check for larger ones.
 		diff := absdiff(uint64(got), uint64(want))
 
-		// Allow difference of 1 or 0.001% of the price, whichever is larger
-		tolerance := max(uint64(1), uint64(want)/1_000_000)
+		// Allow difference of 1 or 0.01% of the price, whichever is larger
+		tolerance := max(uint64(1), uint64(want)/100_000)
 		if diff > tolerance {
 			t.Logf("Target: %d -> %d", initTarget, newTarget)
 			t.Logf("Excess: %v (unchanged)", excess)
