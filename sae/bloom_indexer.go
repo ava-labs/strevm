@@ -6,7 +6,6 @@ package sae
 import (
 	"context"
 	"math"
-	"time"
 
 	"github.com/ava-labs/libevm/core"
 	"github.com/ava-labs/libevm/core/bloombits"
@@ -77,25 +76,11 @@ func (b *bloomIndexer) status() (uint64, uint64) {
 	return b.size, sections
 }
 
-const (
-	// bloomFilterThreads is the number of goroutines used locally per filter to
-	// multiplex requests onto the global servicing goroutines.
-	bloomFilterThreads = 3
-
-	// bloomRetrievalBatch is the maximum number of bloom bit retrievals to service
-	// in a single batch.
-	bloomRetrievalBatch = 16
-
-	// bloomRetrievalWait is the maximum time to wait for enough bloom bit requests
-	// to accumulate request an entire batch (avoiding hysteresis).
-	bloomRetrievalWait = time.Duration(0)
-)
-
 // spawnFilter starts goroutines to multiplex bloom bit retrieval requests for
 // a specific filter onto the global bloom servicing goroutines started by [core.StartBloomHandlers].
 func (b *bloomIndexer) spawnFilter(ctx context.Context, session *bloombits.MatcherSession) {
-	for i := 0; i < bloomFilterThreads; i++ {
-		go session.Multiplex(bloomRetrievalBatch, bloomRetrievalWait, b.bloomRequests)
+	for i := 0; i < eth.BloomFilterThreads; i++ {
+		go session.Multiplex(eth.BloomRetrievalBatch, eth.BloomRetrievalWait, b.bloomRequests)
 	}
 }
 
