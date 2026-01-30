@@ -353,10 +353,10 @@ func TestEthGetters(t *testing.T) {
 	})
 }
 
-func TestEthSendTransaction(t *testing.T) {
+func TestEthTransaction(t *testing.T) {
 	var zeroAddr common.Address
 
-	t.Run("eth_sendRawTransaction", func(t *testing.T) {
+	t.Run("eth_sendRawTransaction and eth_pendingTransactions", func(t *testing.T) {
 		ctx, sut := newSUT(t, 1)
 
 		tx := sut.wallet.SetNonceAndSign(t, 0, &types.DynamicFeeTx{
@@ -375,6 +375,15 @@ func TestEthSendTransaction(t *testing.T) {
 		})
 
 		sut.requireInMempool(t, tx.Hash())
+
+		// Verify eth_pendingTransactions returns empty because no accounts are
+		// configured in AccountManager. This is standard geth/libevm behavior
+		// where the method filters results to only transactions from known accounts.
+		sut.syncMempool(t)
+		var pendingTxs []*ethapi.RPCTransaction
+		err = sut.CallContext(ctx, &pendingTxs, "eth_pendingTransactions")
+		require.NoError(t, err)
+		require.Empty(t, pendingTxs, "pendingTransactions filters to known accounts only")
 	})
 
 	t.Run("eth_sendTransaction", func(t *testing.T) {
