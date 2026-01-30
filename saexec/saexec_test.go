@@ -69,6 +69,7 @@ type SUT struct {
 type (
 	sutConfig struct {
 		useLibEVMTBLogger bool
+		snapshotCacheSize int
 	}
 	sutOption = options.Option[sutConfig]
 )
@@ -81,6 +82,7 @@ func newSUT(tb testing.TB, hooks *saehookstest.Stub, opts ...sutOption) (context
 
 	conf := options.ApplyTo(&sutConfig{
 		useLibEVMTBLogger: true, // Default: enable enhanced logging
+		snapshotCacheSize: 0,    // Default: disabled; only enable for snapshot-specific tests
 	}, opts...)
 
 	logger := saetest.NewTBLogger(tb, logging.Warn)
@@ -99,7 +101,7 @@ func newSUT(tb testing.TB, hooks *saehookstest.Stub, opts ...sutOption) (context
 	)
 	chain := blockstest.NewChainBuilder(config, genesis, blockOpts)
 
-	e, err := New(genesis, chain.GetBlock, config, db, tdbConfig, hooks, logger)
+	e, err := New(genesis, chain.GetBlock, config, db, tdbConfig, hooks, logger, conf.snapshotCacheSize)
 	require.NoError(tb, err, "New()")
 	tb.Cleanup(func() {
 		require.NoErrorf(tb, e.Close(), "%T.Close()", e)
@@ -116,6 +118,14 @@ func newSUT(tb testing.TB, hooks *saehookstest.Stub, opts ...sutOption) (context
 		logger:   logger,
 		db:       db,
 	}
+}
+
+// withSnapshots enables snapshots in the test executor with the specified cache
+// size. Use this for tests that specifically test snapshot functionality.
+func withSnapshots(cacheSize int) sutOption {
+	return options.Func[sutConfig](func(c *sutConfig) {
+		c.snapshotCacheSize = cacheSize
+	})
 }
 
 func defaultHooks() *saehookstest.Stub {
@@ -850,7 +860,8 @@ func (e *blockNumSaver) store(h *types.Header) {
 
 func TestSnapshotPersistence(t *testing.T) {
 	// Disable enhanced logging - "Loaded snapshot journal" is expected during snapshot tests.
-	ctx, sut := newSUT(t, defaultHooks(), withoutLibEVMTBLogger())
+	// Enable snapshots since this test specifically tests snapshot persistence.
+	ctx, sut := newSUT(t, defaultHooks(), withoutLibEVMTBLogger(), withSnapshots(128))
 
 	e, chain, wallet := sut.Executor, sut.chain, sut.wallet
 

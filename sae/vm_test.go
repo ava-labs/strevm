@@ -91,10 +91,10 @@ type SUT struct {
 
 type (
 	sutConfig struct {
-		vmConfig          Config
-		logLevel          logging.Level
-		genesis           core.Genesis
-		useLibEVMTBLogger bool
+		vmConfig              Config
+		logLevel              logging.Level
+		genesis               core.Genesis
+		disableLibEVMTBLogger bool
 	}
 	sutOption = options.Option[sutConfig]
 )
@@ -116,9 +116,9 @@ func newSUT(tb testing.TB, numAccounts uint, opts ...sutOption) (context.Context
 			Hooks: &hookstest.Stub{
 				Target: 100e6,
 			},
+			SnapshotCacheSize: 0,
 		},
-		logLevel:          logging.Debug,
-		useLibEVMTBLogger: true,
+		logLevel: logging.Debug,
 		genesis: core.Genesis{
 			Config:     saetest.ChainConfig(),
 			Alloc:      saetest.MaxAllocFor(keys.Addresses()...),
@@ -166,7 +166,7 @@ func newSUT(tb testing.TB, numAccounts uint, opts ...sutOption) (context.Context
 	client := ethclient.NewClient(rpcClient)
 	tb.Cleanup(client.Close)
 
-	if conf.useLibEVMTBLogger {
+	if !conf.disableLibEVMTBLogger {
 		saetest.EnableLibEVMTBLogger(tb)
 	}
 
@@ -249,7 +249,7 @@ func withVMTime(tb testing.TB, startTime time.Time) (sutOption, *vmTime) {
 // when an RPC rejects a tx that exceeds the block gas limit.
 func withoutLibEVMTBLogger() sutOption {
 	return options.Func[sutConfig](func(c *sutConfig) {
-		c.useLibEVMTBLogger = false
+		c.disableLibEVMTBLogger = true
 	})
 }
 
