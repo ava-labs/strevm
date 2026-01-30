@@ -40,8 +40,6 @@ github.com/armon/go-socks5 v0.0.0-20160902184237-e75332964ef5 h1:0CwZNZbxp69SHPd
 github.com/armon/go-socks5 v0.0.0-20160902184237-e75332964ef5/go.mod h1:wHh0iHkYZB8zMSxRWpUBQtwG5a7fFgvEO+odwuTv2gs=
 github.com/ava-labs/avalanchego v1.14.2-0.20260123184805-18c4dbe2714e h1:vmO2RL0wG6QuMxZqSzY13BtR77XsSCcCmiwPKCJkAXI=
 github.com/ava-labs/avalanchego v1.14.2-0.20260123184805-18c4dbe2714e/go.mod h1:aE2RZUWfJwiK+tyVu+fnE5DWOZ0W1TEg5BL3n1rkq7s=
-github.com/ava-labs/libevm v1.13.15-0.20260130151129-5bf0ed381738 h1:rh28Rbxnqx5yaSX12kMd5N/7T9SPX9VrY3hE3LRKb4Y=
-github.com/ava-labs/libevm v1.13.15-0.20260130151129-5bf0ed381738/go.mod h1:oyJdZfpQTc9fVzAbDry+QRYeiCbw8s/kGaDUsEMpb4I=
 github.com/ava-labs/libevm v1.13.15-0.20260130175340-c3d9f415dcc7 h1:2qykLU44u2pZXshnEN5U+rU7sabLjEozgcBqsDMWieM=
 github.com/ava-labs/libevm v1.13.15-0.20260130175340-c3d9f415dcc7/go.mod h1:oyJdZfpQTc9fVzAbDry+QRYeiCbw8s/kGaDUsEMpb4I=
 github.com/aymerick/raymond v2.0.3-0.20180322193309-b565731e1464+incompatible/go.mod h1:osfaiScAUVup+UC9Nfq76eWqDhXlp+4UYaA8uhTBO6g=
