@@ -9,7 +9,6 @@ import (
 	"math/big"
 	"time"
 
-	"github.com/ava-labs/avalanchego/vms/components/gas"
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core/state"
 	"github.com/ava-labs/libevm/core/types"
@@ -21,9 +20,9 @@ import (
 
 // Stub implements [hook.Points].
 type Stub struct {
-	Now    func() time.Time
-	Target gas.Gas
-	Ops    []hook.Op
+	Now       func() time.Time
+	GasConfig hook.GasConfig
+	Ops       []hook.Op
 }
 
 var _ hook.Points = (*Stub)(nil)
@@ -69,9 +68,9 @@ func (s *Stub) BlockRebuilderFrom(b *types.Block) hook.BlockBuilder {
 	}
 }
 
-// GasTargetAfter ignores its argument and always returns [Stub.Target].
-func (s *Stub) GasTargetAfter(*types.Header) gas.Gas {
-	return s.Target
+// GasConfigAfter ignores its argument and always returns [Stub.GasConfig].
+func (s *Stub) GasConfigAfter(*types.Header) hook.GasConfig {
+	return s.GasConfig
 }
 
 // SubSecondBlockTime returns the sub-second time encoded and stored by

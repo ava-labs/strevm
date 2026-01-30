@@ -112,7 +112,9 @@ func newSUT(tb testing.TB, numAccounts uint, opts ...sutOption) (context.Context
 		vmConfig: Config{
 			MempoolConfig: mempoolConf,
 			Hooks: &hookstest.Stub{
-				Target: 100e6,
+				GasConfig: hook.GasConfig{
+					Target: 100e6,
+				},
 			},
 		},
 		logLevel: logging.Debug,
