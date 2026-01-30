@@ -10,34 +10,46 @@ import (
 	"math/big"
 	"strconv"
 	"sync"
+	"time"
 
 	"github.com/ava-labs/avalanchego/network/p2p"
 	"github.com/ava-labs/avalanchego/version"
+	ethereum "github.com/ava-labs/libevm"
+	"github.com/ava-labs/libevm/accounts"
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/common/hexutil"
+	"github.com/ava-labs/libevm/consensus"
 	"github.com/ava-labs/libevm/core"
+	"github.com/ava-labs/libevm/core/bloombits"
 	"github.com/ava-labs/libevm/core/rawdb"
+	"github.com/ava-labs/libevm/core/state"
+	"github.com/ava-labs/libevm/core/txpool"
 	"github.com/ava-labs/libevm/core/types"
+	"github.com/ava-labs/libevm/core/vm"
 	"github.com/ava-labs/libevm/crypto"
 	"github.com/ava-labs/libevm/eth/filters"
+	"github.com/ava-labs/libevm/eth/tracers"
 	"github.com/ava-labs/libevm/ethdb"
 	"github.com/ava-labs/libevm/event"
+	"github.com/ava-labs/libevm/libevm/debug"
 	"github.com/ava-labs/libevm/libevm/ethapi"
 	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/rpc"
+	"go.uber.org/zap"
 
 	"github.com/ava-labs/strevm/txgossip"
 )
 
 func (vm *VM) ethRPCServer() (*rpc.Server, error) {
-	b := &ethAPIBackend{
-		vm:  vm,
-		Set: vm.mempool,
-	}
-	s := rpc.NewServer()
+	accountManager := accounts.NewManager(&accounts.Config{})
+	vm.toClose = append(vm.toClose, accountManager.Close)
 
-	// Even if this function errors, we should close API to prevent a goroutine
-	// from leaking.
+	b := &ethAPIBackend{
+		Set:            vm.mempool,
+		vm:             vm,
+		accountManager: accountManager,
+	}
+
 	filterSystem := filters.NewFilterSystem(b, filters.Config{})
 	filterAPI := filters.NewFilterAPI(filterSystem, false /*isLightClient*/)
 	vm.toClose = append(vm.toClose, func() error {
@@ -68,15 +80,36 @@ func (vm *VM) ethRPCServer() (*rpc.Server, error) {
 		{"txpool", ethapi.NewTxPoolAPI(b)},
 
 		// Standard Ethereum node APIs:
+		// - eth_gasPrice
+		// - eth_syncing
+		//
+		// Undocumented APIs:
+		// - eth_feeHistory
+		// - eth_maxPriorityFeePerGas
+		{"eth", ethapi.NewEthereumAPI(b)},
+		// Standard Ethereum node APIs:
 		// - eth_blockNumber
+		// - eth_call
+		// - eth_chainId
+		// - eth_estimateGas
+		// - eth_getBalance
 		// - eth_getBlockByHash
 		// - eth_getBlockByNumber
+		// - eth_getCode
+		// - eth_getStorageAt
+		// - eth_getUncleByBlockHashAndIndex
+		// - eth_getUncleByBlockNumberAndIndex
 		// - eth_getUncleCountByBlockHash
 		// - eth_getUncleCountByBlockNumber
 		//
 		// Geth-specific APIs:
+		// - eth_createAccessList
 		// - eth_getHeaderByHash
 		// - eth_getHeaderByNumber
+		//
+		// Undocumented APIs:
+		// - eth_getBlockReceipts
+		// - eth_getProof
 		{"eth", ethapi.NewBlockChainAPI(b)},
 		// Standard Ethereum node APIs:
 		// - eth_getBlockTransactionCountByHash
@@ -84,14 +117,114 @@ func (vm *VM) ethRPCServer() (*rpc.Server, error) {
 		// - eth_getTransactionByBlockHashAndIndex
 		// - eth_getTransactionByBlockNumberAndIndex
 		// - eth_getTransactionByHash
+		// - eth_getTransactionCount
+		// - eth_getTransactionReceipt
+		// - eth_sendRawTransaction
+		// - eth_sendTransaction
+		// - eth_sign
+		// - eth_signTransaction
 		//
 		// Undocumented APIs:
-		// - eth_getRawTransactionByHash
+		// - eth_fillTransaction
 		// - eth_getRawTransactionByBlockHashAndIndex
 		// - eth_getRawTransactionByBlockNumberAndIndex
+		// - eth_getRawTransactionByHash
+		// - eth_pendingTransactions
+		// - eth_resend
 		{"eth", ethapi.NewTransactionAPI(b, new(ethapi.AddrLocker))},
+		// Standard Ethereum node APIs:
+		// - eth_getFilterChanges
+		// - eth_getFilterLogs
+		// - eth_getLogs
+		// - eth_newBlockFilter
+		// - eth_newFilter
+		// - eth_newPendingTransactionFilter
+		// - eth_uninstallFilter
+		//
+		// Geth-specific APIs:
+		// - eth_subscribe
+		//  - logs
+		//  - newHeads
+		//  - newPendingTransactions
 		{"eth", filterAPI},
+		// Geth-specific APIs:
+		// - debug_chainDbCompact
+		// - debug_chainDbProperty
+		// - debug_dbAncient
+		// - debug_dbAncients
+		// - debug_dbGet
+		// - debug_getRawBlock
+		// - debug_getRawHeader
+		// - debug_getRawReceipts
+		// - debug_getRawTransaction
+		// - debug_printBlock
+		// - debug_setHead
+		{"debug", ethapi.NewDebugAPI(b)},
+		// Geth-specific APIs:
+		// - debug_intermediateRoots
+		// - debug_standardTraceBadBlockToFile
+		// - debug_standardTraceBlockToFile
+		// - debug_traceBadBlock
+		// - debug_traceBlock
+		// - debug_traceBlockByHash
+		// - debug_traceBlockByNumber
+		// - debug_traceBlockFromFile
+		// - debug_traceCall
+		// - debug_traceChain
+		// - debug_traceTransaction
+		{"debug", tracers.NewAPI(b)},
+		// Geth-specific APIs:
+		// - debug_blockProfile
+		// - debug_cpuProfile
+		// - debug_freeOSMemory
+		// - debug_gcStats
+		// - debug_goTrace
+		// - debug_memStats
+		// - debug_mutexProfile
+		// - debug_setBlockProfileRate
+		// - debug_setGCPercent
+		// - debug_setMutexProfileFraction
+		// - debug_stacks
+		// - debug_startCPUProfile
+		// - debug_startGoTrace
+		// - debug_stopCPUProfile
+		// - debug_stopGoTrace
+		// - debug_verbosity
+		// - debug_vmodule
+		// - debug_writeBlockProfile
+		// - debug_writeMemProfile
+		// - debug_writeMutexProfile
+		{"debug", debug.Handler},
 	}
+	// Unsupported APIs:
+	//
+	// Standard Ethereum node APIs:
+	// - eth_protocolVersion
+	// - eth_coinbase
+	// - eth_mining
+	// - eth_hashrate
+	// - eth_accounts
+	//
+	// Block and state inspection APIs:
+	// - debug_accountRange
+	// - debug_dumpBlock
+	// - debug_getAccessibleState
+	// - debug_getBadBlocks
+	// - debug_getModifiedAccountsByHash
+	// - debug_getModifiedAccountsByNumber
+	// - debug_getTrieFlushInterval
+	// - debug_preimage
+	// - debug_setTrieFlushInterval
+	// - debug_storageRangeAt
+	//
+	// The admin namespace.
+	// The clique namespace.
+	// The les namespace.
+	// The miner namespace.
+	// The personal namespace.
+	//
+	// The graphql service.
+	s := rpc.NewServer()
 	for _, api := range apis {
 		if err := s.RegisterName(api.namespace, api.api); err != nil {
 			return nil, fmt.Errorf("%T.RegisterName(%q, %T): %v", s, api.namespace, api.api, err)
@@ -149,10 +282,16 @@ func (s *netAPI) Version() string {
 	return s.chainID
 }
 
+var (
+	_ filters.Backend = (*ethAPIBackend)(nil)
+	_ ethapi.Backend  = (*ethAPIBackend)(nil)
+	_ tracers.Backend = (*ethAPIBackend)(nil)
+)
+
 type ethAPIBackend struct {
-	vm             *VM
-	ethapi.Backend // TODO(arr4n) remove in favour of `var _ ethapi.Backend = (*ethAPIBackend)(nil)`
 	*txgossip.Set
+	vm             *VM
+	accountManager *accounts.Manager
 }
 
 func (b *ethAPIBackend) ChainConfig() *params.ChainConfig {
@@ -160,11 +299,13 @@ func (b *ethAPIBackend) ChainConfig() *params.ChainConfig {
 }
 
 func (b *ethAPIBackend) RPCTxFeeCap() float64 {
-	return 0 // TODO(arr4n)
+	// TODO(StephenButtolph) Expose this as a config.
+	return 1 // 1 AVAX
 }
 
 func (b *ethAPIBackend) UnprotectedAllowed() bool {
-	return false
+	// TODO(StephenButtolph) Expose this as a config and default to false.
+	return true
 }
 
 func (b *ethAPIBackend) CurrentHeader() *types.Header {
@@ -177,6 +318,53 @@ func (b *ethAPIBackend) CurrentBlock() *types.Header {
 
 func (b *ethAPIBackend) GetTd(context.Context, common.Hash) *big.Int {
 	return big.NewInt(0) // TODO(arr4n)
+}
+
+func (b *ethAPIBackend) SyncProgress() ethereum.SyncProgress {
+	// Avalanchego does not expose APIs until after the node has fully synced.
+	// Just report that syncing is complete.
+	return ethereum.SyncProgress{}
+}
+
+func (b *ethAPIBackend) SuggestGasTipCap(ctx context.Context) (*big.Int, error) {
+	panic(errUnimplemented)
+}
+
+func (b *ethAPIBackend) FeeHistory(ctx context.Context, blockCount uint64, lastBlock rpc.BlockNumber, rewardPercentiles []float64) (*big.Int, [][]*big.Int, []*big.Int, []float64, error) {
+	panic(errUnimplemented)
+}
+
+func (b *ethAPIBackend) ChainDb() ethdb.Database {
+	return b.vm.db
+}
+
+func (b *ethAPIBackend) AccountManager() *accounts.Manager {
+	return b.accountManager
+}
+
+func (b *ethAPIBackend) ExtRPCEnabled() bool {
+	// We never recommend to expose the RPC externally. Additionally, this is
+	// only used as an additional security measure for the personal API, which
+	// we do not support in its entirety.
+	return false
+}
+
+func (b *ethAPIBackend) RPCGasCap() uint64 {
+	// TODO(StephenButtolph) Expose this as a config.
+	return 25_000_000
+}
+
+func (b *ethAPIBackend) RPCEVMTimeout() time.Duration {
+	// TODO(StephenButtolph) Expose this as a config.
+	return 5 * time.Second
+}
+
+func (b *ethAPIBackend) SetHead(number uint64) {
+	// SAE does not support reorgs. We ignore any attempts to override the chain
+	// head.
+	b.vm.log().Warn("ignoring attempt to override the chain head",
+		zap.Uint64("number", number),
+	)
 }
 
 func (b *ethAPIBackend) HeaderByNumber(ctx context.Context, n rpc.BlockNumber) (*types.Header, error) {
@@ -199,6 +387,14 @@ func (b *ethAPIBackend) BlockByHash(ctx context.Context, hash common.Hash) (*typ
 		return b.EthBlock(), nil
 	}
 	return readByHash(b, hash, rawdb.ReadBlock), nil
+}
+
+func (b *ethAPIBackend) HeaderByNumberOrHash(ctx context.Context, blockNrOrHash rpc.BlockNumberOrHash) (*types.Header, error) {
+	panic(errUnimplemented)
+}
+
+func (b *ethAPIBackend) BlockByNumberOrHash(ctx context.Context, blockNrOrHash rpc.BlockNumberOrHash) (*types.Block, error) {
+	panic(errUnimplemented)
 }
 
 func (b *ethAPIBackend) GetTransaction(ctx context.Context, txHash common.Hash) (exists bool, tx *types.Transaction, blockHash common.Hash, blockNumber uint64, index uint64, err error) {
@@ -278,7 +474,7 @@ func (b *ethAPIBackend) SubscribeChainHeadEvent(ch chan<- core.ChainHeadEvent) e
 	return b.vm.exec.SubscribeChainHeadEvent(ch)
 }
 
-func (b *ethAPIBackend) SubscribeChainSideEvent(chan<- core.ChainSideEvent) event.Subscription {
+func (*ethAPIBackend) SubscribeChainSideEvent(chan<- core.ChainSideEvent) event.Subscription {
 	// SAE never reorgs, so there are no side events.
 	return newNoopSubscription()
 }
@@ -287,7 +483,7 @@ func (b *ethAPIBackend) SubscribeNewTxsEvent(ch chan<- core.NewTxsEvent) event.S
 	return b.Set.Pool.SubscribeTransactions(ch, true)
 }
 
-func (b *ethAPIBackend) SubscribeRemovedLogsEvent(chan<- core.RemovedLogsEvent) event.Subscription {
+func (*ethAPIBackend) SubscribeRemovedLogsEvent(chan<- core.RemovedLogsEvent) event.Subscription {
 	// SAE never reorgs, so no logs are ever removed.
 	return newNoopSubscription()
 }
@@ -296,10 +492,85 @@ func (b *ethAPIBackend) SubscribeLogsEvent(ch chan<- []*types.Log) event.Subscri
 	return b.vm.exec.SubscribeLogsEvent(ch)
 }
 
-func (b *ethAPIBackend) SubscribePendingLogsEvent(chan<- []*types.Log) event.Subscription {
+func (*ethAPIBackend) SubscribePendingLogsEvent(chan<- []*types.Log) event.Subscription {
 	// In SAE, "pending" refers to the execution status. There are no logs known
 	// for transactions pending execution.
 	return newNoopSubscription()
+}
+
+func (b *ethAPIBackend) StateAndHeaderByNumber(ctx context.Context, number rpc.BlockNumber) (*state.StateDB, *types.Header, error) {
+	panic(errUnimplemented)
+}
+
+func (b *ethAPIBackend) StateAndHeaderByNumberOrHash(ctx context.Context, blockNrOrHash rpc.BlockNumberOrHash) (*state.StateDB, *types.Header, error) {
+	panic(errUnimplemented)
+}
+
+func (b *ethAPIBackend) PendingBlockAndReceipts() (*types.Block, types.Receipts) {
+	panic(errUnimplemented)
+}
+
+func (b *ethAPIBackend) GetReceipts(ctx context.Context, hash common.Hash) (types.Receipts, error) {
+	panic(errUnimplemented)
+}
+
+func (b *ethAPIBackend) GetEVM(ctx context.Context, msg *core.Message, state *state.StateDB, header *types.Header, vmConfig *vm.Config, blockCtx *vm.BlockContext) *vm.EVM {
+	panic(errUnimplemented)
+}
+
+func (b *ethAPIBackend) GetPoolTransactions() (types.Transactions, error) {
+	pending := b.Pool.Pending(txpool.PendingFilter{})
+
+	var pendingCount int
+	for _, batch := range pending {
+		pendingCount += len(batch)
+	}
+
+	txs := make(types.Transactions, 0, pendingCount)
+	for _, batch := range pending {
+		for _, lazy := range batch {
+			if tx := lazy.Resolve(); tx != nil {
+				txs = append(txs, tx)
+			}
+		}
+	}
+	return txs, nil
+}
+
+func (b *ethAPIBackend) GetPoolTransaction(txHash common.Hash) *types.Transaction {
+	return b.Pool.Get(txHash)
+}
+
+func (b *ethAPIBackend) GetPoolNonce(ctx context.Context, addr common.Address) (uint64, error) {
+	return b.Pool.Nonce(addr), nil
+}
+
+func (b *ethAPIBackend) Engine() consensus.Engine {
+	panic(errUnimplemented)
+}
+
+func (b *ethAPIBackend) GetBody(ctx context.Context, hash common.Hash, number rpc.BlockNumber) (*types.Body, error) {
+	panic(errUnimplemented)
+}
+
+func (b *ethAPIBackend) GetLogs(ctx context.Context, blockHash common.Hash, number uint64) ([][]*types.Log, error) {
+	panic(errUnimplemented)
+}
+
+func (b *ethAPIBackend) BloomStatus() (uint64, uint64) {
+	panic(errUnimplemented)
+}
+
+func (b *ethAPIBackend) ServiceFilter(ctx context.Context, session *bloombits.MatcherSession) {
+	panic(errUnimplemented)
+}
+
+func (b *ethAPIBackend) StateAtBlock(ctx context.Context, block *types.Block, reexec uint64, base *state.StateDB, readOnly bool, preferDisk bool) (*state.StateDB, tracers.StateReleaseFunc, error) {
+	panic(errUnimplemented)
+}
+
+func (b *ethAPIBackend) StateAtTransaction(ctx context.Context, block *types.Block, txIndex int, reexec uint64) (*core.Message, vm.BlockContext, *state.StateDB, tracers.StateReleaseFunc, error) {
+	panic(errUnimplemented)
 }
 
 type noopSubscription struct {
