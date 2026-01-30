@@ -12,7 +12,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ava-labs/avalanchego/utils"
 	"github.com/ava-labs/avalanchego/version"
+	ethereum "github.com/ava-labs/libevm"
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/common/hexutil"
 	"github.com/ava-labs/libevm/core/types"
@@ -351,6 +353,135 @@ func TestEthGetters(t *testing.T) {
 			want:   hexutil.Uint64(executed.Height()),
 		})
 	})
+}
+
+func TestGetLogs(t *testing.T) {
+	const bloomSectionSize = 8 // shorten params.BloomBitsBlocks for test speed
+	timeOpt, vmTime := withVMTime(t, time.Unix(saeparams.TauSeconds, 0))
+	rpcOpt := withRPCConfig(rpcConfig{bloomSectionSize: bloomSectionSize})
+
+	ctx, sut := newSUT(t, 1, timeOpt, rpcOpt)
+	genesis := sut.lastAcceptedBlock(t)
+
+	precompile := common.Address{'p', 'r', 'e'}
+	stub := &libevmhookstest.Stub{
+		PrecompileOverrides: map[common.Address]libevm.PrecompiledContract{
+			precompile: vm.NewStatefulPrecompile(func(env vm.PrecompileEnvironment, input []byte) (ret []byte, err error) {
+				env.StateDB().AddLog(&types.Log{
+					Address: precompile,
+				})
+				return nil, nil
+			}),
+		},
+	}
+	stub.Register(t)
+
+	createLog := func(t *testing.T) *types.Transaction {
+		t.Helper()
+		return sut.wallet.SetNonceAndSign(t, 0, &types.LegacyTx{
+			To:       &precompile,
+			GasPrice: big.NewInt(1),
+			Gas:      1e6,
+		})
+	}
+	createTx := func(t *testing.T) *types.Transaction {
+		t.Helper()
+		return sut.wallet.SetNonceAndSign(t, 0, &types.DynamicFeeTx{
+			To:        &common.Address{},
+			Gas:       params.TxGas,
+			GasFeeCap: big.NewInt(1),
+		})
+	}
+
+	// Create enough blocks to ensure some are indexed
+	// Since a block after this will be settled, these are all settled as well,
+	// and moved to disk.
+	indexed := make([]*blocks.Block, bloomSectionSize)
+	for i := range indexed {
+		indexed[i] = sut.createAndAcceptBlock(t, createLog(t))
+	}
+
+	settled := sut.createAndAcceptBlock(t, createLog(t))
+	require.NoErrorf(t, settled.WaitUntilExecuted(ctx), "%T.WaitUntilSettled()", settled)
+	vmTime.set(settled.ExecutedByGasTime().AsTime().Add(saeparams.Tau)) // ensure it will be settled
+
+	noLogs := sut.createAndAcceptBlock(t, createTx(t))
+
+	executed := sut.createAndAcceptBlock(t, createLog(t))
+	require.NoErrorf(t, executed.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", executed)
+
+	tests := []struct {
+		name            string
+		query           ethereum.FilterQuery
+		wantCount       int
+		wantErrContains string
+	}{
+		{
+			name: "genesis",
+			query: ethereum.FilterQuery{
+				BlockHash: utils.PointerTo(genesis.Hash()),
+			},
+			wantCount: 0,
+		},
+		{
+			name: "no_logs",
+			query: ethereum.FilterQuery{
+				BlockHash: utils.PointerTo(noLogs.Hash()),
+			},
+			wantCount: 0,
+		},
+		{
+			name: "nonexistent_block",
+			query: ethereum.FilterQuery{
+				BlockHash: utils.PointerTo(common.HexToHash("0xdeadbeef")),
+			},
+			wantErrContains: "unknown block",
+		},
+		{
+			name: "on_disk",
+			query: ethereum.FilterQuery{
+				BlockHash: utils.PointerTo(indexed[0].Hash()),
+			},
+			wantCount: len(indexed[0].EthBlock().Transactions()),
+		},
+		{
+			name: "in_memory",
+			query: ethereum.FilterQuery{
+				BlockHash: utils.PointerTo(executed.Hash()),
+			},
+			wantCount: len(executed.EthBlock().Transactions()),
+		},
+		{
+			name: "unindexed",
+			query: ethereum.FilterQuery{
+				FromBlock: settled.Number(),
+				ToBlock:   executed.Number(),
+				Addresses: []common.Address{precompile},
+			},
+			wantCount: 2,
+		},
+		{
+			name: "indexed",
+			query: ethereum.FilterQuery{
+				FromBlock: indexed[0].Number(),
+				ToBlock:   indexed[len(indexed)-1].Number(),
+				Addresses: []common.Address{precompile},
+			},
+			wantCount: int(bloomSectionSize),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			logs, err := sut.FilterLogs(ctx, tt.query)
+			if tt.wantErrContains != "" {
+				require.ErrorContains(t, err, tt.wantErrContains, "eth_getLogs(...)")
+				return
+			}
+			require.NoErrorf(t, err, "eth_getLogs(...)")
+			require.Lenf(t, logs, tt.wantCount, "eth_getLogs(...)")
+		})
+	}
 }
 
 func (sut *SUT) testGetByHash(ctx context.Context, t *testing.T, want *types.Block) {

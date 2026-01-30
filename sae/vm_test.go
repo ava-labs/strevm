@@ -234,6 +234,12 @@ func withVMTime(tb testing.TB, startTime time.Time) (sutOption, *vmTime) {
 	return opt, t
 }
 
+func withRPCConfig(conf rpcConfig) sutOption {
+	return options.Func[sutConfig](func(c *sutConfig) {
+		c.vmConfig.RPCConfig = conf
+	})
+}
+
 func (s *SUT) nodeID() ids.NodeID {
 	return s.rawVM.snowCtx.NodeID
 }
