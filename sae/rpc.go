@@ -30,11 +30,6 @@ import (
 	"github.com/ava-labs/strevm/txgossip"
 )
 
-type api struct {
-	namespace string
-	api       any
-}
-
 func (vm *VM) ethRPCServer() (*rpc.Server, error) {
 	b := &ethAPIBackend{
 		vm:  vm,
@@ -50,6 +45,11 @@ func (vm *VM) ethRPCServer() (*rpc.Server, error) {
 		filters.CloseAPI(filterAPI)
 		return nil
 	})
+
+	type api struct {
+		namespace string
+		api       any
+	}
 
 	// Standard Ethereum APIs are documented at: https://ethereum.org/developers/docs/apis/json-rpc
 	// Geth-specific APIs are documented at: https://geth.ethereum.org/docs/interacting-with-geth/rpc
@@ -96,7 +96,7 @@ func (vm *VM) ethRPCServer() (*rpc.Server, error) {
 		{"eth", filterAPI},
 	}
 
-	if vm.config.RPCConfig.EnableDebugAPI {
+	if vm.config.RPCConfig.EnableDebugNamespace {
 		apis = append(apis, api{
 			// Geth-specific APIs:
 			// - debug_blockProfile

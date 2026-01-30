@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"math"
 	"math/big"
-	"path/filepath"
 	"reflect"
 	"runtime/debug"
 	"testing"
@@ -559,116 +558,58 @@ func (sut *SUT) testGetByUnknownNumber(ctx context.Context, t *testing.T) {
 // withDebugAPI returns a sutOption that enables the debug API.
 func withDebugAPI() sutOption {
 	return options.Func[sutConfig](func(c *sutConfig) {
-		c.vmConfig.RPCConfig.EnableDebugAPI = true
+		c.vmConfig.RPCConfig.EnableDebugNamespace = true
 	})
 }
 
-// These are smoke tests that verify RPC calls succeed, not that profiling
-// data is correct (that's Go stdlib's responsibility), so we do not check the
-// files themselves.
-//
-// Reference: https://geth.ethereum.org/docs/interacting-with-geth/rpc/ns-debug
-func TestDebugProfilingNamespace(t *testing.T) {
-	ctx, sut := newSUT(t, 1, withDebugAPI())
-	tmpDir := t.TempDir()
+func TestDebugNamespace(t *testing.T) {
+	ctx, sut := newSUT(t, 0, withDebugAPI())
 
-	// Data inspection methods return variable data
-	var memStats map[string]any
-	require.NoError(t, sut.CallContext(ctx, &memStats, "debug_memStats"))
-	require.NotEmpty(t, memStats)
+	// The debug namespace is handled entirely by upstream code that doesn't
+	// depend in any way on SAE. We therefore only need an integration test, not
+	// to exercise every method because such unit testing is the responsibility
+	// of the source.
+	//
+	// Reference: https://geth.ethereum.org/docs/interacting-with-geth/rpc/ns-debug
+	// Every method is listed below:
+	//
+	// - debug_blockProfile
+	// - debug_cpuProfile
+	// - debug_freeOSMemory
+	// - debug_gcStats
+	// - debug_goTrace
+	// - debug_memStats
+	// - debug_mutexProfile
+	// - debug_setBlockProfileRate
+	// - debug_setGCPercent
+	// - debug_setMutexProfileFraction
+	// - debug_stacks
+	// - debug_startCPUProfile
+	// - debug_startGoTrace
+	// - debug_stopCPUProfile
+	// - debug_stopGoTrace
+	// - debug_verbosity
+	// - debug_vmodule
+	// - debug_writeBlockProfile
+	// - debug_writeMemProfile
+	// - debug_writeMutexProfile
 
-	var gcStats debug.GCStats
-	require.NoError(t, sut.CallContext(ctx, &gcStats, "debug_gcStats"))
+	const firstArg = 100
+	beforeTest := debug.SetGCPercent(firstArg)
+	defer debug.SetGCPercent(beforeTest)
 
-	var stacks string
-	require.NoError(t, sut.CallContext(ctx, &stacks, "debug_stacks"))
-	require.Contains(t, stacks, "goroutine")
-
+	const m = "debug_setGCPercent"
 	sut.testRPC(ctx, t, []rpcTest{
-		// Configuration setters
+		// Invariant: each call returns the input argument of the last.
 		{
-			method: "debug_setBlockProfileRate",
-			args:   []any{1},
-			want:   (*struct{})(nil),
+			method: m,
+			args:   []any{42},
+			want:   firstArg,
 		},
 		{
-			method: "debug_setMutexProfileFraction",
-			args:   []any{1},
-			want:   (*struct{})(nil),
-		},
-		{
-			method: "debug_verbosity",
-			args:   []any{3},
-			want:   (*struct{})(nil),
-		},
-		{
-			method: "debug_vmodule",
-			args:   []any{""},
-			want:   (*struct{})(nil),
-		},
-		{
-			method: "debug_freeOSMemory",
-			want:   (*struct{})(nil),
-		},
-		{
-			method: "debug_setGCPercent",
-			args:   []any{100},
-			want:   100,
-		},
-		// File profiling methods
-		{
-			method: "debug_writeMemProfile",
-			args:   []any{filepath.Join(tmpDir, "mem.prof")},
-			want:   (*struct{})(nil),
-		},
-		{
-			method: "debug_writeBlockProfile",
-			args:   []any{filepath.Join(tmpDir, "block.prof")},
-			want:   (*struct{})(nil),
-		},
-		{
-			method: "debug_writeMutexProfile",
-			args:   []any{filepath.Join(tmpDir, "mutex.prof")},
-			want:   (*struct{})(nil),
-		},
-		{
-			method: "debug_blockProfile",
-			args:   []any{filepath.Join(tmpDir, "block2.prof"), 1},
-			want:   (*struct{})(nil),
-		},
-		{
-			method: "debug_mutexProfile",
-			args:   []any{filepath.Join(tmpDir, "mutex2.prof"), 1},
-			want:   (*struct{})(nil),
-		},
-		{
-			method: "debug_cpuProfile",
-			args:   []any{filepath.Join(tmpDir, "cpu.prof"), 1},
-			want:   (*struct{})(nil),
-		},
-		{
-			method: "debug_goTrace",
-			args:   []any{filepath.Join(tmpDir, "trace.out"), 1},
-			want:   (*struct{})(nil),
-		},
-		// Start/stop pairs
-		{
-			method: "debug_startCPUProfile",
-			args:   []any{filepath.Join(tmpDir, "cpu2.prof")},
-			want:   (*struct{})(nil),
-		},
-		{
-			method: "debug_stopCPUProfile",
-			want:   (*struct{})(nil),
-		},
-		{
-			method: "debug_startGoTrace",
-			args:   []any{filepath.Join(tmpDir, "trace2.out")},
-			want:   (*struct{})(nil),
-		},
-		{
-			method: "debug_stopGoTrace",
-			want:   (*struct{})(nil),
+			method: m,
+			args:   []any{0},
+			want:   42,
 		},
 	}...)
 }
