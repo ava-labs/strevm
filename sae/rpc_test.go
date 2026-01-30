@@ -409,7 +409,6 @@ func TestEthSigningAPIs(t *testing.T) {
 	// is configured. This is intended behavior - we do not want to store private keys on the node.
 	// These methods are supported to ensure compatibility with standard Ethereum tooling, but they
 	// require external account management.
-
 	t.Run("eth_sign", func(t *testing.T) {
 		ctx, sut := newSUT(t, 1)
 
