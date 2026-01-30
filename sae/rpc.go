@@ -40,7 +40,7 @@ func (vm *VM) ethRPCServer(config rpcConfig) (*rpc.Server, error) {
 	filterAPI := filters.NewFilterAPI(filterSystem, false /*isLightClient*/)
 	vm.toClose = append(vm.toClose, func() error {
 		filters.CloseAPI(filterAPI)
-		return b.bloomIndexer.Close()
+		return b.bloomIndexer.close()
 	})
 
 	// Standard Ethereum APIs are documented at: https://ethereum.org/developers/docs/apis/json-rpc
@@ -170,7 +170,7 @@ func newEthAPIBackend(config rpcConfig, vm *VM) *ethAPIBackend {
 
 	// TODO: if we are state syncing, we need to provide the first block available to the indexer
 	// via [core.ChainIndexer.AddCheckpoint].
-	b.bloomIndexer.Start(b)
+	b.bloomIndexer.start(b)
 
 	return b
 }
