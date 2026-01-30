@@ -23,6 +23,8 @@ import (
 )
 
 func TestIntegration(t *testing.T) {
+	saetest.EnableLibEVMTBLogger(t)
+
 	const (
 		numAccounts           = 2
 		numBlocks             = 3
@@ -41,7 +43,10 @@ func TestIntegration(t *testing.T) {
 	// tested with the builder, then we would have a circular argument for
 	// correctness.
 	bc, err := core.NewBlockChain(
-		db, nil,
+		db,
+		&core.CacheConfig{
+			SnapshotNoBuild: true, // Disable snapshot to avoid warning in tests
+		},
 		&core.Genesis{
 			Config: config,
 			Alloc:  alloc,

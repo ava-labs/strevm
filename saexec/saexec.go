@@ -62,15 +62,16 @@ func New(
 	triedbConfig *triedb.Config,
 	hooks hook.Points,
 	log logging.Logger,
+	snapshotCacheSize int,
 ) (*Executor, error) {
 	cache := state.NewDatabaseWithConfig(db, triedbConfig)
-	snapConf := snapshot.Config{
-		CacheSize:  128, // MB
-		AsyncBuild: true,
-	}
-	snaps, err := snapshot.New(snapConf, db, cache.TrieDB(), lastExecuted.PostExecutionStateRoot())
-	if err != nil {
-		return nil, err
+	var snaps *snapshot.Tree
+	if snapshotCacheSize > 0 {
+		snapConf := snapshot.Config{
+			CacheSize:  snapshotCacheSize,
+			AsyncBuild: true,
+		}
+		snaps, _ = snapshot.New(snapConf, db, cache.TrieDB(), lastExecuted.PostExecutionStateRoot())
 	}
 
 	e := &Executor{
@@ -98,17 +99,21 @@ func (e *Executor) Close() error {
 	close(e.quit)
 	<-e.done
 
-	// We don't use [snapshot.Tree.Journal] because re-orgs are impossible under
-	// SAE so we don't mind flattening all snapshot layers to disk. Note that
-	// calling `Cap([disk root], 0)` returns an error when it's actually a
-	// no-op, so we ignore it.
-	if root := e.LastExecuted().PostExecutionStateRoot(); root != e.snaps.DiskRoot() {
-		if err := e.snaps.Cap(root, 0); err != nil {
-			return fmt.Errorf("snapshot.Tree.Cap([last post-execution state root], 0): %v", err)
+	// If snapshot initialization failed (e.g., fresh database with NoBuild: true),
+	// snaps may be nil. In that case, skip snapshot cleanup.
+	if e.snaps != nil {
+		// We don't use [snapshot.Tree.Journal] because re-orgs are impossible under
+		// SAE so we don't mind flattening all snapshot layers to disk. Note that
+		// calling `Cap([disk root], 0)` returns an error when it's actually a
+		// no-op, so we ignore it.
+		if root := e.LastExecuted().PostExecutionStateRoot(); root != e.snaps.DiskRoot() {
+			if err := e.snaps.Cap(root, 0); err != nil {
+				return fmt.Errorf("snapshot.Tree.Cap([last post-execution state root], 0): %v", err)
+			}
 		}
+		e.snaps.Release()
 	}
 
-	e.snaps.Release()
 	return nil
 }
 
