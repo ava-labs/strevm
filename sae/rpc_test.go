@@ -353,6 +353,42 @@ func TestEthGetters(t *testing.T) {
 	})
 }
 
+func TestEthSigningAPIs(t *testing.T) {
+	// eth_sign and eth_signTransaction should fail with "unknown account" since no keystore
+	// is configured. This is intended behavior - we do not want to store private keys on the node.
+	// These methods are supported to ensure compatibility with standard Ethereum tooling, but they
+	// require external account management.
+
+	t.Run("eth_sign", func(t *testing.T) {
+		ctx, sut := newSUT(t, 1)
+
+		addr := sut.wallet.Addresses()[0]
+		data := hexutil.Bytes("test message")
+
+		var signature hexutil.Bytes
+		err := sut.CallContext(ctx, &signature, "eth_sign", addr, data)
+		require.ErrorContains(t, err, "unknown account")
+	})
+
+	t.Run("eth_signTransaction", func(t *testing.T) {
+		ctx, sut := newSUT(t, 1)
+
+		var zeroAddr common.Address
+		addr := sut.wallet.Addresses()[0]
+
+		var signedTx hexutil.Bytes
+		err := sut.CallContext(ctx, &signedTx, "eth_signTransaction", map[string]any{
+			"from":     addr,
+			"to":       zeroAddr,
+			"gas":      hexutil.Uint64(params.TxGas),
+			"gasPrice": hexutil.Big(*big.NewInt(1)),
+			"value":    hexutil.Big(*big.NewInt(100)),
+			"nonce":    hexutil.Uint64(0),
+		})
+		require.ErrorContains(t, err, "unknown account")
+	})
+}
+
 func (sut *SUT) testGetByHash(ctx context.Context, t *testing.T, want *types.Block) {
 	t.Helper()
 
