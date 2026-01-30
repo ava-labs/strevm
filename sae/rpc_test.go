@@ -9,6 +9,7 @@ import (
 	"math"
 	"math/big"
 	"reflect"
+	"runtime/debug"
 	"testing"
 	"time"
 
@@ -21,6 +22,7 @@ import (
 	"github.com/ava-labs/libevm/libevm"
 	"github.com/ava-labs/libevm/libevm/ethapi"
 	libevmhookstest "github.com/ava-labs/libevm/libevm/hookstest"
+	"github.com/ava-labs/libevm/libevm/options"
 	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/rpc"
 	"github.com/google/go-cmp/cmp"
@@ -549,6 +551,65 @@ func (sut *SUT) testGetByUnknownNumber(ctx context.Context, t *testing.T) {
 			method: "eth_getRawTransactionByBlockNumberAndIndex",
 			args:   []any{n, hexutil.Uint(0)},
 			want:   hexutil.Bytes(nil),
+		},
+	}...)
+}
+
+// withDebugAPI returns a sutOption that enables the debug API.
+func withDebugAPI() sutOption {
+	return options.Func[sutConfig](func(c *sutConfig) {
+		c.vmConfig.RPCConfig.EnableDebugNamespace = true
+	})
+}
+
+func TestDebugNamespace(t *testing.T) {
+	ctx, sut := newSUT(t, 0, withDebugAPI())
+
+	// The debug namespace is handled entirely by upstream code that doesn't
+	// depend in any way on SAE. We therefore only need an integration test, not
+	// to exercise every method because such unit testing is the responsibility
+	// of the source.
+	//
+	// Reference: https://geth.ethereum.org/docs/interacting-with-geth/rpc/ns-debug
+	// Every method is listed below:
+	//
+	// - debug_blockProfile
+	// - debug_cpuProfile
+	// - debug_freeOSMemory
+	// - debug_gcStats
+	// - debug_goTrace
+	// - debug_memStats
+	// - debug_mutexProfile
+	// - debug_setBlockProfileRate
+	// - debug_setGCPercent
+	// - debug_setMutexProfileFraction
+	// - debug_stacks
+	// - debug_startCPUProfile
+	// - debug_startGoTrace
+	// - debug_stopCPUProfile
+	// - debug_stopGoTrace
+	// - debug_verbosity
+	// - debug_vmodule
+	// - debug_writeBlockProfile
+	// - debug_writeMemProfile
+	// - debug_writeMutexProfile
+
+	const firstArg = 100
+	beforeTest := debug.SetGCPercent(firstArg)
+	defer debug.SetGCPercent(beforeTest)
+
+	const m = "debug_setGCPercent"
+	sut.testRPC(ctx, t, []rpcTest{
+		// Invariant: each call returns the input argument of the last.
+		{
+			method: m,
+			args:   []any{42},
+			want:   firstArg,
+		},
+		{
+			method: m,
+			args:   []any{0},
+			want:   42,
 		},
 	}...)
 }

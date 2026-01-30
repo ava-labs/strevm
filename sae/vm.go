@@ -68,8 +68,14 @@ type Config struct {
 	Hooks         hook.Points
 	MempoolConfig legacypool.Config
 	TrieDBConfig  *triedb.Config
+	RPCConfig     RPCConfig
 
 	Now func() time.Time // defaults to [time.Now] if nil
+}
+
+// RPCConfig configures RPC API behavior.
+type RPCConfig struct {
+	EnableDebugNamespace bool
 }
 
 // NewVM returns a new [VM] that is ready for use immediately upon return.
