@@ -147,11 +147,14 @@ func (s *netAPI) Version() string {
 	return s.chainID
 }
 
-var _ core.ChainIndexerChain = (*ethAPIBackend)(nil)
-
 type rpcConfig struct {
 	bloomSectionSize uint64 // Number of blocks per bloom section
 }
+
+var (
+	_ core.ChainIndexerChain  = (*ethAPIBackend)(nil)
+	_ filters.BloomFromHeader = (*ethAPIBackend)(nil)
+)
 
 type ethAPIBackend struct {
 	ethapi.Backend // TODO(arr4n) remove in favour of `var _ ethapi.Backend = (*ethAPIBackend)(nil)`

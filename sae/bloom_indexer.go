@@ -29,8 +29,9 @@ type bloomIndexer struct {
 
 // newBloomIndexer returns a chain indexer that generates bloom bits data for the
 // canonical chain for fast logs filtering.
-// It must be started with [bloomIndexer.Start] before use, and closed with
-// [bloomIndexer.Close] when no longer needed to avoid resource leaks.
+// It must be started with [bloomIndexer.start] before use, and closed with
+// [bloomIndexer.close] when no longer needed to avoid resource leaks.
+// If size is zero, the default section size defined by [params.BloomBitsBlocks] is used.
 func newBloomIndexer(db ethdb.Database, size uint64) *bloomIndexer {
 	if size == 0 || size > math.MaxInt32 {
 		size = params.BloomBitsBlocks
@@ -40,19 +41,16 @@ func newBloomIndexer(db ethdb.Database, size uint64) *bloomIndexer {
 		db:           db,
 	}
 	table := rawdb.NewTable(db, string(rawdb.BloomBitsIndexPrefix))
-
-	idx := &bloomIndexer{
+	return &bloomIndexer{
 		idx:               core.NewChainIndexer(db, table, backend, size, 0, core.BloomThrottling, "bloombits"),
 		db:                db,
 		size:              size,
 		bloomRequests:     make(chan chan *bloombits.Retrieval),
 		closeBloomHandler: make(chan struct{}),
 	}
-
-	return idx
 }
 
-// Start starts a batch of goroutines to accept bloom bit database
+// start starts a batch of goroutines to accept bloom bit database
 // retrievals from possibly a range of filters and serving the data to satisfy,
 // as well as the indexer to begin retrieving chain events.
 func (b *bloomIndexer) start(backend ethapi.Backend) {
@@ -66,7 +64,7 @@ func (b *bloomIndexer) start(backend ethapi.Backend) {
 	)
 }
 
-// Close stops the bloom indexer and releases all its resources.
+// close stops the bloom indexer and releases all its resources.
 func (b *bloomIndexer) close() error {
 	close(b.closeBloomHandler)
 	return b.idx.Close()
