@@ -13,6 +13,7 @@ import (
 
 	"github.com/ava-labs/avalanchego/network/p2p"
 	"github.com/ava-labs/avalanchego/version"
+	"github.com/ava-labs/libevm/accounts"
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/common/hexutil"
 	"github.com/ava-labs/libevm/core"
@@ -30,9 +31,13 @@ import (
 )
 
 func (vm *VM) ethRPCServer() (*rpc.Server, error) {
+	vm.accountManager = accounts.NewManager(&accounts.Config{})
+	vm.toClose = append(vm.toClose, vm.accountManager.Close)
+
 	b := &ethAPIBackend{
-		vm:  vm,
-		Set: vm.mempool,
+		vm:             vm,
+		Set:            vm.mempool,
+		accountManager: vm.accountManager,
 	}
 	s := rpc.NewServer()
 
@@ -150,9 +155,11 @@ func (s *netAPI) Version() string {
 }
 
 type ethAPIBackend struct {
-	vm             *VM
-	ethapi.Backend // TODO(arr4n) remove in favour of `var _ ethapi.Backend = (*ethAPIBackend)(nil)`
 	*txgossip.Set
+	vm             *VM
+	accountManager *accounts.Manager
+
+	ethapi.Backend // TODO(arr4n) remove in favour of `var _ ethapi.Backend = (*ethAPIBackend)(nil)`
 }
 
 func (b *ethAPIBackend) ChainConfig() *params.ChainConfig {
@@ -165,6 +172,10 @@ func (b *ethAPIBackend) RPCTxFeeCap() float64 {
 
 func (b *ethAPIBackend) UnprotectedAllowed() bool {
 	return false
+}
+
+func (b *ethAPIBackend) AccountManager() *accounts.Manager {
+	return b.accountManager
 }
 
 func (b *ethAPIBackend) CurrentHeader() *types.Header {
@@ -211,6 +222,10 @@ func (b *ethAPIBackend) GetTransaction(ctx context.Context, txHash common.Hash) 
 
 func (b *ethAPIBackend) GetPoolTransaction(txHash common.Hash) *types.Transaction {
 	return b.Set.Pool.Get(txHash)
+}
+
+func (b *ethAPIBackend) GetPoolNonce(ctx context.Context, addr common.Address) (uint64, error) {
+	return b.Set.Pool.Nonce(addr), nil
 }
 
 type canonicalReader[T any] func(ethdb.Reader, common.Hash, uint64) *T

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/ava-labs/avalanchego/version"
+	"github.com/ava-labs/libevm/accounts/keystore"
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/common/hexutil"
 	"github.com/ava-labs/libevm/core/types"
@@ -551,4 +552,57 @@ func (sut *SUT) testGetByUnknownNumber(ctx context.Context, t *testing.T) {
 			want:   hexutil.Bytes(nil),
 		},
 	}...)
+}
+
+func TestEthSendRawTransaction(t *testing.T) {
+	ctx, sut := newSUT(t, 1)
+
+	tx := sut.wallet.SetNonceAndSign(t, 0, &types.DynamicFeeTx{
+		To:        &common.Address{1, 2, 3},
+		Gas:       params.TxGas,
+		GasFeeCap: big.NewInt(1),
+		Value:     big.NewInt(100),
+	})
+	rawTx, err := tx.MarshalBinary()
+	require.NoErrorf(t, err, "%T.MarshalBinary()", tx)
+
+	sut.testRPC(ctx, t, rpcTest{
+		method: "eth_sendRawTransaction",
+		args:   []any{hexutil.Bytes(rawTx)},
+		want:   tx.Hash(),
+	})
+
+	sut.syncMempool(t)
+	require.Truef(t, sut.rawVM.mempool.Pool.Has(tx.Hash()), "transaction not in mempool")
+}
+
+func TestEthSendTransaction(t *testing.T) {
+	ctx, sut := newSUT(t, 1)
+
+	// Import the wallet's key (which already has balance) into a keystore
+	keystoreDir := t.TempDir()
+	ks := keystore.NewKeyStore(keystoreDir, keystore.LightScryptN, keystore.LightScryptP)
+	account, err := ks.ImportECDSA(sut.wallet.PrivateKey(0), "")
+	require.NoErrorf(t, err, "ImportECDSA")
+	require.NoErrorf(t, ks.Unlock(account, ""), "Unlock")
+
+	// Add keystore to account manager
+	sut.rawVM.accountManager.AddBackend(ks)
+
+	// Test eth_sendTransaction (node signs with managed key)
+	// Note: Using CallContext because we need custom validation - we don't know
+	// the tx hash beforehand since the node signs it.
+	var signedTxHash common.Hash
+	err = sut.CallContext(ctx, &signedTxHash, "eth_sendTransaction", map[string]any{
+		"from":     account.Address,
+		"to":       common.Address{4, 5, 6},
+		"gas":      hexutil.Uint64(params.TxGas),
+		"gasPrice": hexutil.Big(*big.NewInt(1)),
+		"value":    hexutil.Big(*big.NewInt(200)),
+	})
+	require.NoErrorf(t, err, "eth_sendTransaction")
+	require.NotEqualf(t, common.Hash{}, signedTxHash, "should return non-zero hash")
+
+	sut.syncMempool(t)
+	require.Truef(t, sut.rawVM.mempool.Pool.Has(signedTxHash), "eth_sendTransaction tx not in mempool")
 }
