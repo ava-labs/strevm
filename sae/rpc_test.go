@@ -554,11 +554,13 @@ func (sut *SUT) testGetByUnknownNumber(ctx context.Context, t *testing.T) {
 }
 
 func TestEthSendTransaction(t *testing.T) {
+	var zeroAddr common.Address
+
 	t.Run("eth_sendRawTransaction", func(t *testing.T) {
 		ctx, sut := newSUT(t, 1)
 
 		tx := sut.wallet.SetNonceAndSign(t, 0, &types.DynamicFeeTx{
-			To:        &common.Address{1, 2, 3},
+			To:        &zeroAddr,
 			Gas:       params.TxGas,
 			GasFeeCap: big.NewInt(1),
 			Value:     big.NewInt(100),
@@ -578,12 +580,13 @@ func TestEthSendTransaction(t *testing.T) {
 	t.Run("eth_sendTransaction", func(t *testing.T) {
 		ctx, sut := newSUT(t, 1)
 
-		// eth_sendTransaction should fail with "unknown account" since no keystore is configured
-		// this is intended because we don't want to store private keys on the node
+		// eth_sendTransaction should fail with "unknown account" since no keystore is configured.
+		// This is intended behavior and the extent of our 'support' of this method - we do not
+		// want to store private keys on the node.
 		var txHash common.Hash
 		err := sut.CallContext(ctx, &txHash, "eth_sendTransaction", map[string]any{
 			"from":     sut.wallet.Addresses()[0],
-			"to":       common.Address{4, 5, 6},
+			"to":       zeroAddr,
 			"gas":      hexutil.Uint64(params.TxGas),
 			"gasPrice": hexutil.Big(*big.NewInt(1)),
 			"value":    hexutil.Big(*big.NewInt(200)),
