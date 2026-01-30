@@ -31,13 +31,13 @@ import (
 )
 
 func (vm *VM) ethRPCServer() (*rpc.Server, error) {
-	vm.accountManager = accounts.NewManager(&accounts.Config{})
-	vm.toClose = append(vm.toClose, vm.accountManager.Close)
+	accountManager := accounts.NewManager(&accounts.Config{})
+	vm.toClose = append(vm.toClose, accountManager.Close)
 
 	b := &ethAPIBackend{
 		vm:             vm,
 		Set:            vm.mempool,
-		accountManager: vm.accountManager,
+		accountManager: accountManager,
 	}
 	s := rpc.NewServer()
 

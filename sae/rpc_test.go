@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/ava-labs/avalanchego/version"
-	"github.com/ava-labs/libevm/accounts/keystore"
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/common/hexutil"
 	"github.com/ava-labs/libevm/core/types"
@@ -579,25 +578,16 @@ func TestEthSendTransaction(t *testing.T) {
 	t.Run("eth_sendTransaction", func(t *testing.T) {
 		ctx, sut := newSUT(t, 1)
 
-		// Import the wallet's key (which already has balance) into a keystore
-		ks := keystore.NewKeyStore(t.TempDir(), keystore.LightScryptN, keystore.LightScryptP)
-		account, err := ks.ImportECDSA(sut.wallet.PrivateKey(0), "")
-		require.NoErrorf(t, err, "ImportECDSA")
-		require.NoErrorf(t, ks.Unlock(account, ""), "Unlock")
-		sut.rawVM.accountManager.AddBackend(ks)
-
-		// CallContext required because the tx hash is unknown until the node signs
+		// eth_sendTransaction should fail with "unknown account" since no keystore is configured
+		// this is intended because we don't want to store private keys on the node
 		var txHash common.Hash
-		err = sut.CallContext(ctx, &txHash, "eth_sendTransaction", map[string]any{
-			"from":     account.Address,
+		err := sut.CallContext(ctx, &txHash, "eth_sendTransaction", map[string]any{
+			"from":     sut.wallet.Addresses()[0],
 			"to":       common.Address{4, 5, 6},
 			"gas":      hexutil.Uint64(params.TxGas),
 			"gasPrice": hexutil.Big(*big.NewInt(1)),
 			"value":    hexutil.Big(*big.NewInt(200)),
 		})
-		require.NoErrorf(t, err, "eth_sendTransaction")
-		require.NotEqualf(t, common.Hash{}, txHash, "should return non-zero hash")
-
-		sut.requireInMempool(t, txHash)
+		require.ErrorContains(t, err, "unknown account")
 	})
 }
