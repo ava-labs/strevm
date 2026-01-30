@@ -171,12 +171,12 @@ func (c *config) validate() error {
 //
 // When config changes, excess is scaled to maintain price continuity:
 //   - K changes (via TargetToExcessScaling): Scale excess to maintain current price
+//   - TargetToExcessScaling is MaxUint64: Set excess to 0 for fixed price mode and update config
 //   - M decreases: Scale excess to maintain current price
 //   - M increases AND current price >= new M: Scale excess to maintain current price
 //   - M increases AND current price < new M: Price bumps to new M (excess becomes 0)
 func (tm *Time) setConfig(cfg config) error {
 	// No change, skip recalculation
-	// We should never see this case as in SetOpts should only be called if config has changed.
 	if cfg.Equal(tm.config) {
 		return nil
 	}
@@ -208,6 +208,8 @@ func (tm *Time) SetOpts(opts ...Option) error {
 // exponential approximation from producing e^(x/K) ≈ e^1 when excess is also
 // very large.
 func (tm *Time) Price() gas.Price {
+	// We need to check explicitly this edge case since excess can be very large and the fake
+	// exponential approximation can produce e^(x/K) ≈ e^1, which would cause the price to change.
 	if tm.config.targetToExcessScaling == math.MaxUint64 {
 		return tm.config.minPrice
 	}
@@ -255,6 +257,7 @@ func findExcessForPrice(targetPrice, minPrice gas.Price, targetToExcessScaling g
 	// Check edge cases:
 	// If the target price is less than the minimum price, or the target to excess scaling ratio is 0 or MaxUint64,
 	// return 0.
+	// Even though we return 0 for excess it won't avoid accumulating excess in the long run.
 	if targetPrice <= minPrice ||
 		targetToExcessScaling == math.MaxUint64 ||
 		targetToExcessScaling == 0 {
