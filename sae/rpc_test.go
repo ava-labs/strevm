@@ -346,10 +346,16 @@ func TestEthGetters(t *testing.T) {
 			})
 		}
 
-		sut.testRPC(ctx, t, rpcTest{
-			method: "eth_blockNumber",
-			want:   hexutil.Uint64(executed.Height()),
-		})
+		sut.testRPC(ctx, t, []rpcTest{
+			{
+				method: "eth_blockNumber",
+				want:   hexutil.Uint64(executed.Height()),
+			},
+			{
+				method: "eth_chainId",
+				want:   (*hexutil.Big)(saetest.ChainConfig().ChainID),
+			},
+		}...)
 	})
 }
 
