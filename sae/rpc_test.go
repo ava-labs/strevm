@@ -91,17 +91,50 @@ func testRPCGetter[
 func TestSubscriptions(t *testing.T) {
 	ctx, sut := newSUT(t, 1)
 
-	newHeads := make(chan *types.Header, 1)
-	sub, err := sut.SubscribeNewHead(ctx, newHeads)
-	require.NoError(t, err, "SubscribeNewHead(...)")
-	// The subscription is closed in a defer rather than via t.Cleanup to ensure
-	// that is is closed before the rest of the SUT is torn down. Otherwise,
-	// there could be a goroutine leak.
-	defer sub.Unsubscribe()
+	// Subscriptions are closed in defer (not t.Cleanup) to avoid goroutine
+	// leaks from subscriptions outliving the SUT.
 
-	b := sut.runConsensusLoop(t, sut.lastAcceptedBlock(t))
-	got := <-newHeads
-	require.Equalf(t, b.Hash(), got.Hash(), "%T.Hash() from %T.SubscribeNewHead(...)", got, sut.Client)
+	t.Run("newHeads", func(t *testing.T) {
+		ch := make(chan *types.Header, 1)
+		sub, err := sut.SubscribeNewHead(ctx, ch)
+		require.NoError(t, err, "SubscribeNewHead()")
+		defer sub.Unsubscribe()
+
+		b := sut.runConsensusLoop(t, sut.lastAcceptedBlock(t))
+		got := <-ch
+		require.Equal(t, b.Hash(), got.Hash(), "header hash from newHeads subscription")
+	})
+
+	t.Run("newPendingTransactions", func(t *testing.T) {
+		ch := make(chan common.Hash, 1)
+		sub, err := sut.rpcClient.EthSubscribe(ctx, ch, "newPendingTransactions")
+		require.NoError(t, err, "EthSubscribe(newPendingTransactions)")
+		defer sub.Unsubscribe()
+
+		tx := sut.wallet.SetNonceAndSign(t, 0, &types.DynamicFeeTx{
+			To:        &sut.wallet.Addresses()[0],
+			Gas:       params.TxGas,
+			GasFeeCap: big.NewInt(1),
+		})
+		sut.mustSendTx(t, tx)
+
+		got := <-ch
+		require.Equal(t, tx.Hash(), got, "tx hash from newPendingTransactions subscription")
+	})
+
+	t.Run("logs", func(t *testing.T) {
+		ch := make(chan types.Log, 1)
+		sub, err := sut.rpcClient.EthSubscribe(ctx, ch, "logs", map[string]any{})
+		require.NoError(t, err, "EthSubscribe(logs)")
+		defer sub.Unsubscribe()
+		// Subscription creation verifies the backend works. Full log emission
+		// testing would require contract deployment, which is out of scope here.
+		// TODO(JonathanOppenheimer): Add contract deployment and log emission testing.
+	})
+
+	// SAE's no-op subscriptions (chainSide, removedLogs, pendingLogs) are backend
+	// methods for ethapi.Backend compliance but are not exposed via RPC since SAE
+	// never reorgs.
 }
 
 func TestWeb3Namespace(t *testing.T) {
