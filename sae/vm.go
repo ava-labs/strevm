@@ -67,7 +67,7 @@ type VM struct {
 type Config struct {
 	Hooks         hook.Points
 	MempoolConfig legacypool.Config
-	RPCConfig     rpcConfig
+	RPCConfig     RPCConfig
 	TrieDBConfig  *triedb.Config
 
 	Now func() time.Time // defaults to [time.Now] if nil

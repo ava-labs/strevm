@@ -358,7 +358,7 @@ func TestEthGetters(t *testing.T) {
 func TestGetLogs(t *testing.T) {
 	const bloomSectionSize = 8 // shorten params.BloomBitsBlocks for test speed
 	timeOpt, vmTime := withVMTime(t, time.Unix(saeparams.TauSeconds, 0))
-	rpcOpt := withRPCConfig(rpcConfig{bloomSectionSize: bloomSectionSize})
+	rpcOpt := withBloomSectionSize(bloomSectionSize)
 
 	ctx, sut := newSUT(t, 1, timeOpt, rpcOpt)
 	genesis := sut.lastAcceptedBlock(t)
