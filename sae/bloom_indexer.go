@@ -87,7 +87,7 @@ func (b *bloomIndexer) spawnFilter(ctx context.Context, session *bloombits.Match
 var _ core.ChainIndexerBackend = (*bloomBackend)(nil)
 
 // bloomBackend implements a core.ChainIndexerBackend, building up a rotated bloom bits index
-// for the Ethereum header bloom filters, permitting blazing fast filtering.
+// for the Ethereum header bloom filters, permitting fast filtering.
 type bloomBackend struct {
 	*core.BloomIndexer
 	db ethdb.Database // database instance to write index data and metadata into
