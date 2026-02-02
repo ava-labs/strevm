@@ -88,6 +88,8 @@ func (vm *VM) ethRPCServer(config RPCConfig) (*rpc.Server, error) {
 		// - eth_getRawTransactionByBlockHashAndIndex
 		// - eth_getRawTransactionByBlockNumberAndIndex
 		{"eth", ethapi.NewTransactionAPI(b, new(ethapi.AddrLocker))},
+		// Standard Ethereum node APIS:
+		// - eth_getLogs
 		{"eth", filterAPI},
 	}
 	for _, api := range apis {
@@ -186,7 +188,7 @@ func (b *ethAPIBackend) ServiceFilter(ctx context.Context, session *bloombits.Ma
 	b.bloomIndexer.ServiceFilter(ctx, session)
 }
 
-// HeaderBloom retrieves the bloom filter for a given header.
+// OverrideHeaderBloom retrieves the bloom filter for a given header.
 // The bloom actually stored in the header is the bloom of the receipts that the block settled, not the
 // bloom of the transactions in the block, so we must retrieve the blocks receipts from the database.
 // The [*filters.FilterAPI] relies on this method, although not in [ethapi.Backend] directly.
