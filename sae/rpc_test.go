@@ -260,6 +260,14 @@ func TestTxPoolNamespace(t *testing.T) {
 	}...)
 }
 
+func TestChainID(t *testing.T) {
+	ctx, sut := newSUT(t, 1)
+	sut.testRPC(ctx, t, rpcTest{
+		method: "eth_chainId",
+		want:   hexutil.Uint64(saetest.ChainConfig().ChainID.Uint64()),
+	})
+}
+
 func TestEthGetters(t *testing.T) {
 	opt, vmTime := withVMTime(t, time.Unix(saeparams.TauSeconds, 0))
 
@@ -346,16 +354,10 @@ func TestEthGetters(t *testing.T) {
 			})
 		}
 
-		sut.testRPC(ctx, t, []rpcTest{
-			{
-				method: "eth_blockNumber",
-				want:   hexutil.Uint64(executed.Height()),
-			},
-			{
-				method: "eth_chainId",
-				want:   (*hexutil.Big)(saetest.ChainConfig().ChainID),
-			},
-		}...)
+		sut.testRPC(ctx, t, rpcTest{
+			method: "eth_blockNumber",
+			want:   hexutil.Uint64(executed.Height()),
+		})
 	})
 }
 
