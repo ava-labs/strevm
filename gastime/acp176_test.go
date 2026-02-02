@@ -295,8 +295,8 @@ func TestPriceTrajectory(t *testing.T) {
 		// With TargetToExcessScaling = MaxUint64, price stays at MinPrice
 		// regardless of gas usage
 		const (
-			initialExcess = gas.Gas(1_000_000)
-			minPrice      = gas.Price(100)
+			initialExcess = gas.Gas(1e9)
+			minPrice      = gas.Price(1e11) // 100 gwei
 		)
 
 		tm, err := New(startTime, target, initialExcess,
@@ -305,7 +305,7 @@ func TestPriceTrajectory(t *testing.T) {
 		require.NoError(t, err)
 
 		initialPrice := tm.Price()
-		assert.Equal(t, minPrice, initialPrice, "with MaxUint64 scaling, price should equal MinPrice")
+		assert.Equal(t, minPrice, initialPrice, "with MaxUint64 scaling, price %d should equal MinPrice %d", initialPrice, minPrice)
 
 		// Process blocks with varying gas usage
 		blocks := []block{
@@ -319,7 +319,7 @@ func TestPriceTrajectory(t *testing.T) {
 
 		// All prices should be equal to MinPrice
 		for i, p := range prices {
-			assert.Equal(t, minPrice, p, "price at step %d should equal MinPrice", i)
+			assert.Equal(t, minPrice, p, "price %d at step %d should equal MinPrice %d", p, i, minPrice)
 		}
 	})
 
@@ -338,7 +338,7 @@ func TestPriceTrajectory(t *testing.T) {
 		require.NoError(t, err)
 
 		// Price should be at MinPrice
-		assert.Equal(t, minPrice, tm.Price())
+		assert.Equal(t, minPrice, tm.Price(), "price %d should equal MinPrice %d", tm.Price(), minPrice)
 
 		// Process some blocks with high gas usage (excess accumulates but price stays static)
 		blocks := []block{
@@ -347,7 +347,7 @@ func TestPriceTrajectory(t *testing.T) {
 		}
 		prices := simulateBlocks(t, tm, blocks)
 		for _, p := range prices {
-			assert.Equal(t, minPrice, p, "price should stay at MinPrice with MaxUint64 scaling")
+			assert.Equal(t, minPrice, p, "price %d should stay at MinPrice %d with MaxUint64 scaling", p, minPrice)
 		}
 
 		priceBeforeTransition := tm.Price()
@@ -366,12 +366,12 @@ func TestPriceTrajectory(t *testing.T) {
 
 		// Price continuity: first price after transition should be close to priceBeforeTransition
 		// (which is MinPrice since we were in fixed mode)
-		assert.Equal(t, priceBeforeTransition, prices[0], "price continuity at transition")
+		assert.Equal(t, priceBeforeTransition, prices[0], "price %d continuity at transition should equal priceBeforeTransition %d", prices[0], priceBeforeTransition)
 
 		// After several blocks with high gas usage, price should have increased
 		finalPrice := prices[len(prices)-1]
 		assert.Greater(t, finalPrice, minPrice,
-			"price should increase after transitioning to normal scaling with high gas usage")
+			"price %d should increase after transitioning to normal scaling with high gas usage", finalPrice, minPrice)
 	})
 
 	t.Run("min_price_decrease_trajectory", func(t *testing.T) {
@@ -550,6 +550,14 @@ func FuzzPriceInvarianceAfterBlock(f *testing.F) {
 			newT:    1e6,
 			newM:    1,
 			newKonT: math.MaxInt64 - 10,
+		},
+		// MaxUint64 scaling with high excess min price at 11 gwei
+		{
+			T: 1e6, M: 1e12, KonT: 87,
+			x:       1e9,
+			newT:    1e6,
+			newM:    1e12,
+			newKonT: math.MaxUint64,
 		},
 	} {
 		f.Add(s.T, s.x, s.M, s.KonT, s.newT, s.newM, s.newKonT)
