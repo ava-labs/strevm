@@ -599,10 +599,9 @@ func FuzzPriceInvarianceAfterBlock(f *testing.F) {
 		require.NoError(t, tm.AfterBlock(gasUsed, hooks, nil), "AfterBlock()")
 
 		want := initPrice
-		if p := *hooks.GasConfig.MinPrice; p > initPrice {
+		if p := *hooks.GasConfig.MinPrice; p > initPrice || newScaling == math.MaxUint64 {
 			want = p
 		} else {
-			// When K is at MaxUint64 we skip scaling and price stays at M.
 			// When required excess for continuity exceeds the search cap, findExcessForPrice
 			// returns that cap and the resulting price is M * e^(cap/K).
 			// This means price continuity is not possible if required excess exceeds the search cap.
