@@ -39,6 +39,7 @@ type Time struct {
 type Option = options.Option[config]
 
 // WithTargetToExcessScaling overrides the target to excess scaling ratio.
+// Setting TargetToExcessScaling to [math.MaxUint64] will result in fixed price mode.
 func WithTargetToExcessScaling(s gas.Gas) Option {
 	return options.Func[config](func(c *config) {
 		c.targetToExcessScaling = s
@@ -208,7 +209,7 @@ func (tm *Time) SetOpts(opts ...Option) error {
 // exponential approximation from producing e^(x/K) ≈ e^1 when excess is also
 // very large.
 func (tm *Time) Price() gas.Price {
-	// We need to check explicitly this edge case since excess can be very large and the fake
+	// We need to check explicitly this edge case since even with max scaling, excess can be very large and the fake
 	// exponential approximation can produce e^(x/K) ≈ e^1, which would cause the price to change.
 	if tm.config.targetToExcessScaling == math.MaxUint64 {
 		return tm.config.minPrice
@@ -234,8 +235,9 @@ func excessScalingFactorOf(scaling, target gas.Gas) gas.Gas {
 	return scaling * target
 }
 
-// maxExcessSearchCap returns the maximum excess that findExcessForPrice searches:
-// min(45*K, MaxUint64) because x = ln(P/M) * K, implies x <= ln(MaxUint64/M) * K.
+// maxExcessSearchCap returns the maximum possible x to be searched for.
+// Because x = ln(P/M) * K, we know x <= ln(MaxUint64/M) * K <= 45 * K
+// However, if 45 * K would overflow, MaxUint64 is returned
 func maxExcessSearchCap(k gas.Gas) gas.Gas {
 	const maxExcessMultiplier = 45 // ≈ ceil(ln(MaxUint64))
 	if k > math.MaxUint64/gas.Gas(maxExcessMultiplier) {
@@ -253,14 +255,13 @@ func maxExcessSearchCap(k gas.Gas) gas.Gas {
 //   - x is the excess
 //   - targetToExcessScaling is the target to excess scaling ratio
 //   - target is the target gas consumption per second
+//
+// Thus we are solving for: x = K * ln(P / m)
 func findExcessForPrice(targetPrice, minPrice gas.Price, targetToExcessScaling gas.Gas, target gas.Gas) gas.Gas {
 	// Check edge cases:
-	// If the target price is less than the minimum price, or the target to excess scaling ratio is 0 or MaxUint64,
-	// return 0.
-	// Even though we return 0 for excess it won't avoid accumulating excess in the long run.
-	if targetPrice <= minPrice ||
-		targetToExcessScaling == math.MaxUint64 ||
-		targetToExcessScaling == 0 {
+	// If the target price is less than the minimum price or MaxUint64, return 0.
+	// Note: Even though we return 0 for excess it won't avoid accumulating excess in the long run.
+	if targetPrice <= minPrice || targetToExcessScaling == math.MaxUint64 {
 		return 0
 	}
 

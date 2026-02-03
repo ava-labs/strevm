@@ -27,7 +27,7 @@ func (tm *Time) AfterBlock(used gas.Gas, hooks hook.Points, h *types.Header) err
 	tm.Tick(used)
 	cfg := hooks.GasConfigAfter(h)
 
-	// Set target first as we use the target to calculate the excess scaling factor.
+	// Set target before [SetOpts] as we use the new target to calculate the excess scaling factor in [SetOpts].
 	if err := tm.SetTarget(cfg.Target); err != nil {
 		return fmt.Errorf("%T.SetTarget() after block: %w", tm, err)
 	}
