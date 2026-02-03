@@ -261,11 +261,17 @@ func TestTxPoolNamespace(t *testing.T) {
 }
 
 func TestChainID(t *testing.T) {
-	ctx, sut := newSUT(t, 1)
-	sut.testRPC(ctx, t, rpcTest{
-		method: "eth_chainId",
-		want:   hexutil.Uint64(saetest.ChainConfig().ChainID.Uint64()),
-	})
+for id := range uint64(2) {
+		ctx, sut := newSUT(t, 0, options.Func[sutConfig](func(c *sutConfig) {
+			c.genesis.Config = &params.ChainConfig{
+				ChainID: new(big.Int).SetUint64(id),
+			}
+		}))
+		sut.testRPC(ctx, t, rpcTest{
+			method: "eth_chainId",
+			want:   hexutil.Uint64(id),
+		})
+	}
 }
 
 func TestEthGetters(t *testing.T) {
