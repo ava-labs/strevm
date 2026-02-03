@@ -21,6 +21,7 @@ import (
 	"github.com/ava-labs/libevm/libevm"
 	"github.com/ava-labs/libevm/libevm/ethapi"
 	libevmhookstest "github.com/ava-labs/libevm/libevm/hookstest"
+	"github.com/ava-labs/libevm/libevm/options"
 	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/rpc"
 	"github.com/google/go-cmp/cmp"
@@ -261,7 +262,7 @@ func TestTxPoolNamespace(t *testing.T) {
 }
 
 func TestChainID(t *testing.T) {
-for id := range uint64(2) {
+	for id := range uint64(2) {
 		ctx, sut := newSUT(t, 0, options.Func[sutConfig](func(c *sutConfig) {
 			c.genesis.Config = &params.ChainConfig{
 				ChainID: new(big.Int).SetUint64(id),
