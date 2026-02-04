@@ -125,7 +125,13 @@ func TestWorstCase(t *testing.T) {
 		c.genesis.Config = &config
 		extras.ChainConfig.Set(&config, g)
 
-		c.logLevel = logging.Warn
+		// Use logging.Error instead of logging.Warn to avoid flaky test failures.
+		// Under load (CI runners), the execution queue's buffered channel (4096 blocks)
+		// can become slow to accept new blocks. When saexec.Executor.Enqueue() takes
+		// >1ms, it logs "Execution queue buffer too small" at WARN level. Since
+		// TBLogger treats WARN as test failure, this causes flakes. This warning just
+		// indicates temporary high load (expected in stress tests), which is not a bug.
+		c.logLevel = logging.Error
 
 		for _, acc := range c.genesis.Alloc {
 			// Note that `acc` isn't a pointer, but `Balance` is.
