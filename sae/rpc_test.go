@@ -571,28 +571,6 @@ func TestDebugNamespace(t *testing.T) {
 	// of the source.
 	//
 	// Reference: https://geth.ethereum.org/docs/interacting-with-geth/rpc/ns-debug
-	// Every method is listed below:
-	//
-	// - debug_blockProfile
-	// - debug_cpuProfile
-	// - debug_freeOSMemory
-	// - debug_gcStats
-	// - debug_goTrace
-	// - debug_memStats
-	// - debug_mutexProfile
-	// - debug_setBlockProfileRate
-	// - debug_setGCPercent
-	// - debug_setMutexProfileFraction
-	// - debug_stacks
-	// - debug_startCPUProfile
-	// - debug_startGoTrace
-	// - debug_stopCPUProfile
-	// - debug_stopGoTrace
-	// - debug_verbosity
-	// - debug_vmodule
-	// - debug_writeBlockProfile
-	// - debug_writeMemProfile
-	// - debug_writeMutexProfile
 
 	const firstArg = 100
 	beforeTest := debug.SetGCPercent(firstArg)
