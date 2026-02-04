@@ -91,14 +91,11 @@ func testRPCGetter[
 func TestSubscriptions(t *testing.T) {
 	ctx, sut := newSUT(t, 1)
 
-	// Subscriptions are closed in defer (not t.Cleanup) to avoid goroutine
-	// leaks from subscriptions outliving the SUT.
-
 	t.Run("newHeads", func(t *testing.T) {
 		ch := make(chan *types.Header, 1)
 		sub, err := sut.SubscribeNewHead(ctx, ch)
 		require.NoError(t, err, "SubscribeNewHead()")
-		defer sub.Unsubscribe()
+		t.Cleanup(sub.Unsubscribe)
 
 		b := sut.runConsensusLoop(t, sut.lastAcceptedBlock(t))
 		got := <-ch
@@ -109,7 +106,7 @@ func TestSubscriptions(t *testing.T) {
 		ch := make(chan common.Hash, 1)
 		sub, err := sut.rpcClient.EthSubscribe(ctx, ch, "newPendingTransactions")
 		require.NoError(t, err, "EthSubscribe(newPendingTransactions)")
-		defer sub.Unsubscribe()
+		t.Cleanup(sub.Unsubscribe)
 
 		tx := sut.wallet.SetNonceAndSign(t, 0, &types.DynamicFeeTx{
 			To:        &sut.wallet.Addresses()[0],
@@ -126,7 +123,7 @@ func TestSubscriptions(t *testing.T) {
 	// 	ch := make(chan types.Log, 1)
 	// 	sub, err := sut.rpcClient.EthSubscribe(ctx, ch, "logs", map[string]any{})
 	// 	require.NoError(t, err, "EthSubscribe(logs)")
-	// 	defer sub.Unsubscribe()
+	// 	t.Cleanup(sub.Unsubscribe)
 
 	// 	// TODO(JonathanOppenheimer): Add contract deployment and log emission testing.
 	// })
