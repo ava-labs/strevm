@@ -179,59 +179,36 @@ func TestTxPoolNamespace(t *testing.T) {
 		queuedAccount  = 1
 	)
 	pendingTx := makeTx(pendingAccount)
-	pendingRPCTx := ethapi.NewRPCPendingTransaction(pendingTx, nil, saetest.ChainConfig())
-
 	_ = makeTx(queuedAccount) // skip the nonce to gap the mempool
 	queuedTx := makeTx(queuedAccount)
-	queuedRPCTx := ethapi.NewRPCPendingTransaction(queuedTx, nil, saetest.ChainConfig())
 
 	sut.mustSendTx(t, pendingTx)
 	sut.mustSendTx(t, queuedTx)
 	sut.syncMempool(t)
-
-
 	backend := &ethAPIBackend{
 		vm:  sut.rawVM,
 		Set: sut.rawVM.mempool,
 	}
 	libevmTxPoolAPI := ethapi.NewTxPoolAPI(backend)
+	wantContent := libevmTxPoolAPI.Content()
+	wantContentFromPending := libevmTxPoolAPI.ContentFrom(addresses[pendingAccount])
+	wantContentFromQueued := libevmTxPoolAPI.ContentFrom(addresses[queuedAccount])
 	wantInspect := libevmTxPoolAPI.Inspect()
 
 	sut.testRPC(ctx, t, []rpcTest{
 		{
 			method: "txpool_content",
-			want: map[string]map[string]map[string]*ethapi.RPCTransaction{
-				"pending": {
-					addresses[pendingAccount].Hex(): {
-						"0": pendingRPCTx,
-					},
-				},
-				"queued": {
-					addresses[queuedAccount].Hex(): {
-						"1": queuedRPCTx,
-					},
-				},
-			},
+			want:   wantContent,
 		},
 		{
 			method: "txpool_contentFrom",
 			args:   []any{addresses[pendingAccount]},
-			want: map[string]map[string]*ethapi.RPCTransaction{
-				"pending": {
-					"0": pendingRPCTx,
-				},
-				"queued": {},
-			},
+			want:   wantContentFromPending,
 		},
 		{
 			method: "txpool_contentFrom",
 			args:   []any{addresses[queuedAccount]},
-			want: map[string]map[string]*ethapi.RPCTransaction{
-				"pending": {},
-				"queued": {
-					"1": queuedRPCTx,
-				},
-			},
+			want:   wantContentFromQueued,
 		},
 		{
 			method: "txpool_inspect",
