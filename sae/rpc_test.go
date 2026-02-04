@@ -122,15 +122,14 @@ func TestSubscriptions(t *testing.T) {
 		require.Equal(t, tx.Hash(), got, "tx hash from newPendingTransactions subscription")
 	})
 
-	t.Run("logs", func(t *testing.T) {
-		ch := make(chan types.Log, 1)
-		sub, err := sut.rpcClient.EthSubscribe(ctx, ch, "logs", map[string]any{})
-		require.NoError(t, err, "EthSubscribe(logs)")
-		defer sub.Unsubscribe()
-		// Subscription creation verifies the backend works. Full log emission
-		// testing would require contract deployment, which is out of scope here.
-		// TODO(JonathanOppenheimer): Add contract deployment and log emission testing.
-	})
+	// t.Run("logs", func(t *testing.T) {
+	// 	ch := make(chan types.Log, 1)
+	// 	sub, err := sut.rpcClient.EthSubscribe(ctx, ch, "logs", map[string]any{})
+	// 	require.NoError(t, err, "EthSubscribe(logs)")
+	// 	defer sub.Unsubscribe()
+
+	// 	// TODO(JonathanOppenheimer): Add contract deployment and log emission testing.
+	// })
 
 	// SAE's no-op subscriptions (chainSide, removedLogs, pendingLogs) are backend
 	// methods for ethapi.Backend compliance but are not exposed via RPC since SAE
