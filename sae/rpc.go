@@ -92,7 +92,6 @@ func (vm *VM) ethRPCServer() (*rpc.Server, error) {
 		{"eth", ethapi.NewTransactionAPI(b, new(ethapi.AddrLocker))},
 		// Geth-specific APIs:
 		// - eth_subscribe
-		//  - logs
 		//  - newHeads
 		//  - newPendingTransactions
 		{"eth", filterAPI},
