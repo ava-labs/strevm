@@ -379,14 +379,19 @@ func (sut *SUT) testGetByHash(ctx context.Context, t *testing.T, want *types.Blo
 			want:   want.Header(),
 		},
 		{
-			method: "eth_getUncleCountByBlockHash",
-			args:   []any{want.Hash()},
-			want:   hexutil.Uint(0),
-		},
-		{
 			method: "eth_getBlockTransactionCountByHash",
 			args:   []any{want.Hash()},
 			want:   hexutil.Uint(len(want.Transactions())),
+		},
+		{
+			method: "eth_getUncleByBlockHashAndIndex",
+			args:   []any{want.Hash(), hexutil.Uint(0)},
+			want:   (map[string]any)(nil), // SAE never has uncles (no reorgs)
+		},
+		{
+			method: "eth_getUncleCountByBlockHash",
+			args:   []any{want.Hash()},
+			want:   hexutil.Uint(0), // SAE never has uncles (no reorgs)
 		},
 	}...)
 
@@ -495,9 +500,14 @@ func (sut *SUT) testGetByNumber(ctx context.Context, t *testing.T, want *types.B
 			want:   hexutil.Uint(len(want.Transactions())),
 		},
 		{
+			method: "eth_getUncleByBlockNumberAndIndex",
+			args:   []any{n, hexutil.Uint(0)},
+			want:   (map[string]any)(nil), // SAE never has uncles (no reorgs)
+		},
+		{
 			method: "eth_getUncleCountByBlockNumber",
 			args:   []any{n},
-			want:   hexutil.Uint(0),
+			want:   hexutil.Uint(0), // SAE never has uncles (no reorgs)
 		},
 	}...)
 
