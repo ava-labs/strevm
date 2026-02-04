@@ -547,10 +547,14 @@ func TestSyntacticBlockChecks(t *testing.T) {
 }
 
 func TestAcceptBlock(t *testing.T) {
+	// Wait for GC finalizers from previous tests to run. Blocks are tracked via
+	// runtime.AddCleanup, which runs asynchronously during GC. In CI environments,
+	// finalizers can take longer to run, so we use a generous timeout to ensure
+	// we start with a clean block count. Zero!
 	require.EventuallyWithT(t, func(t *assert.CollectT) {
 		runtime.GC()
 		require.Zero(t, blocks.InMemoryBlockCount(), "initial in-memory block count")
-	}, 100*time.Millisecond, time.Millisecond)
+	}, 5*time.Second, 50*time.Millisecond)
 
 	opt, vmTime := withVMTime(t, time.Unix(saeparams.TauSeconds, 0))
 
