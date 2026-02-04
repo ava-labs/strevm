@@ -72,8 +72,11 @@ func (vm *VM) ethRPCServer() (*rpc.Server, error) {
 		{"eth", ethapi.NewEthereumAPI(b)},
 		// Standard Ethereum node APIs:
 		// - eth_blockNumber
+		// - eth_chainId
 		// - eth_getBlockByHash
 		// - eth_getBlockByNumber
+		// - eth_getUncleByBlockHashAndIndex
+		// - eth_getUncleByBlockNumberAndIndex
 		// - eth_getUncleCountByBlockHash
 		// - eth_getUncleCountByBlockNumber
 		//
