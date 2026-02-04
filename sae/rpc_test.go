@@ -189,16 +189,13 @@ func TestTxPoolNamespace(t *testing.T) {
 	sut.mustSendTx(t, queuedTx)
 	sut.syncMempool(t)
 
-	// TODO: This formatting is copied from libevm, consider exposing it somehow
-	// or removing the dependency on the exact format.
-	txToSummary := func(tx *types.Transaction) string {
-		return fmt.Sprintf("%s: %d wei + %d gas × %d wei",
-			tx.To(),
-			tx.Value().Uint64(),
-			tx.Gas(),
-			tx.GasFeeCap().Uint64(),
-		)
+
+	backend := &ethAPIBackend{
+		vm:  sut.rawVM,
+		Set: sut.rawVM.mempool,
 	}
+	libevmTxPoolAPI := ethapi.NewTxPoolAPI(backend)
+	wantInspect := libevmTxPoolAPI.Inspect()
 
 	sut.testRPC(ctx, t, []rpcTest{
 		{
@@ -238,18 +235,7 @@ func TestTxPoolNamespace(t *testing.T) {
 		},
 		{
 			method: "txpool_inspect",
-			want: map[string]map[string]map[string]string{
-				"pending": {
-					addresses[pendingAccount].Hex(): {
-						"0": txToSummary(pendingTx),
-					},
-				},
-				"queued": {
-					addresses[queuedAccount].Hex(): {
-						"1": txToSummary(queuedTx),
-					},
-				},
-			},
+			want:   wantInspect,
 		},
 		{
 			method: "txpool_status",
