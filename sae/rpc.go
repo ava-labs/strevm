@@ -32,15 +32,16 @@ import (
 	"github.com/ava-labs/strevm/txgossip"
 )
 
-func (vm *VM) ethRPCServer() (*rpc.Server, error) {
-	accountManager := accounts.NewManager(&accounts.Config{})
-	vm.toClose = append(vm.toClose, accountManager.Close)
-
-	b := &ethAPIBackend{
-		vm:             vm,
-		Set:            vm.mempool,
-		accountManager: accountManager,
+// APIBackend returns an API backend backed by the VM.
+func (vm *VM) APIBackend() ethapi.Backend {
+	return &ethAPIBackend{
+		vm:  vm,
+		Set: vm.mempool,
 	}
+}
+
+func (vm *VM) ethRPCServer() (*rpc.Server, error) {
+	b := vm.APIBackend()
 	s := rpc.NewServer()
 
 	// Even if this function errors, we should close API to prevent a goroutine

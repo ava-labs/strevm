@@ -198,7 +198,7 @@ func TestTxPoolNamespace(t *testing.T) {
 			tx.To(),
 			tx.Value().Uint64(),
 			tx.Gas(),
-			tx.GasFeeCap().Uint64(),
+			tx.GasPrice(),
 		)
 	}
 
