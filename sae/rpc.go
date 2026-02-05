@@ -35,13 +35,15 @@ import (
 // APIBackend returns an API backend backed by the VM.
 func (vm *VM) APIBackend() ethapi.Backend {
 	return &ethAPIBackend{
-		vm:  vm,
-		Set: vm.mempool,
+		Set:            vm.mempool,
+		vm:             vm,
+		accountManager: accounts.NewManager(&accounts.Config{}),
 	}
 }
 
 func (vm *VM) ethRPCServer() (*rpc.Server, error) {
-	b := vm.APIBackend()
+	b := vm.APIBackend().(*ethAPIBackend)
+	vm.toClose = append(vm.toClose, b.accountManager.Close)
 	s := rpc.NewServer()
 
 	// Even if this function errors, we should close API to prevent a goroutine
