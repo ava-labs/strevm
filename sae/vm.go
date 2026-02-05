@@ -75,7 +75,7 @@ type Config struct {
 
 // RPCConfig configures RPC API behavior.
 type RPCConfig struct {
-	EnableDebugNamespace bool
+	EnableProfiling bool
 }
 
 // NewVM returns a new [VM] that is ready for use immediately upon return.
