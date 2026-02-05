@@ -90,9 +90,8 @@ func testRPCGetter[
 }
 
 func TestSubscriptions(t *testing.T) {
-	ctx, sut := newSUT(t, 1)
-
 	t.Run("newHeads", func(t *testing.T) {
+		ctx, sut := newSUT(t, 1)
 		ch := make(chan *types.Header, 1)
 		sub, err := sut.SubscribeNewHead(ctx, ch)
 		require.NoError(t, err, "SubscribeNewHead()")
@@ -104,6 +103,7 @@ func TestSubscriptions(t *testing.T) {
 	})
 
 	t.Run("newPendingTransactions", func(t *testing.T) {
+		ctx, sut := newSUT(t, 1)
 		ch := make(chan common.Hash, 1)
 		sub, err := sut.rpcClient.EthSubscribe(ctx, ch, "newPendingTransactions")
 		require.NoError(t, err, "EthSubscribe(newPendingTransactions)")
@@ -121,6 +121,7 @@ func TestSubscriptions(t *testing.T) {
 	})
 
 	// t.Run("logs", func(t *testing.T) {
+	//  ctx, sut := newSUT(t, 1)
 	// 	ch := make(chan types.Log, 1)
 	// 	sub, err := sut.rpcClient.EthSubscribe(ctx, ch, "logs", map[string]any{})
 	// 	require.NoError(t, err, "EthSubscribe(logs)")
