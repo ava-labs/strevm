@@ -6,7 +6,7 @@ tool github.com/go-task/task/v3/cmd/task
 
 require (
 	github.com/ava-labs/avalanchego v1.14.2-0.20260123184805-18c4dbe2714e
-	github.com/ava-labs/libevm v1.13.15-0.20260129161139-eac9ffc93f68
+	github.com/ava-labs/libevm v1.13.15-0.20260205105415-139d4d7b0484
 	github.com/google/go-cmp v0.7.0
 	github.com/holiman/uint256 v1.2.4
 	github.com/stretchr/testify v1.11.1
