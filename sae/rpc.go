@@ -78,7 +78,9 @@ func (vm *VM) ethRPCServer() (*rpc.Server, error) {
 		// - txpool_inspect
 		// - txpool_status
 		{"txpool", ethapi.NewTxPoolAPI(b)},
-
+		// Standard Ethereum node APIs:
+		// - eth_syncing
+		{"eth", ethapi.NewEthereumAPI(b)},
 		// Standard Ethereum node APIs:
 		// - eth_gasPrice
 		// - eth_syncing
@@ -535,10 +537,6 @@ func (b *ethAPIBackend) GetPoolTransactions() (types.Transactions, error) {
 		}
 	}
 	return txs, nil
-}
-
-func (b *ethAPIBackend) GetPoolTransaction(txHash common.Hash) *types.Transaction {
-	return b.Pool.Get(txHash)
 }
 
 func (b *ethAPIBackend) GetPoolNonce(ctx context.Context, addr common.Address) (uint64, error) {
