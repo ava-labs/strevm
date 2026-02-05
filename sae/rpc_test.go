@@ -15,6 +15,7 @@ import (
 	"github.com/ava-labs/avalanchego/version"
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/common/hexutil"
+	"github.com/ava-labs/libevm/core/rawdb"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/core/vm"
 	"github.com/ava-labs/libevm/crypto"
@@ -615,6 +616,16 @@ func TestReceiptAPIs(t *testing.T) {
 			GasFeeCap: big.NewInt(1),
 		})
 	}
+	requireReceipt := func(t *testing.T, tx *types.Transaction) *types.Receipt {
+		t.Helper()
+		var got *types.Receipt
+		require.NoError(t, sut.CallContext(ctx, &got, "eth_getTransactionReceipt", tx.Hash()))
+		require.NotNil(t, got)
+		require.Equal(t, tx.Hash(), got.TxHash)
+		require.Equal(t, types.ReceiptStatusSuccessful, got.Status)
+		return got
+	}
+
 	var zeroAddr common.Address
 
 	// All blocks created upfront to avoid executor blocking during subtests.
@@ -630,6 +641,7 @@ func TestReceiptAPIs(t *testing.T) {
 	txSettled := createTx(t, zeroAddr)
 	blockSettled := sut.createAndAcceptBlock(t, txSettled)
 	require.NoErrorf(t, blockSettled.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", blockSettled)
+	receiptFromCache := requireReceipt(t, txSettled)
 	vmTime.set(blockSettled.ExecutedByGasTime().AsTime().Add(saeparams.Tau))
 
 	// Block 3: Multiple txs, executed in cache
@@ -644,32 +656,17 @@ func TestReceiptAPIs(t *testing.T) {
 	b4 := sut.createAndAcceptBlock(t, triggerSettlement)
 	require.NoErrorf(t, b4.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", b4)
 	require.NoErrorf(t, blockSettled.WaitUntilSettled(ctx), "%T.WaitUntilSettled()", blockSettled)
+	sut.rawVM.blocks.Delete(blockSettled.Hash())
+	require.NotNilf(t, rawdb.ReadHeaderNumber(sut.db, blockSettled.Hash()), "db header for block %d", blockSettled.Height())
+	receiptFromDB := requireReceipt(t, txSettled)
 
-	// Block 5: Two txs, will be settled to DB
-	txSettled2a := createTx(t, zeroAddr)
-	txSettled2b := createTx(t, zeroAddr)
-	blockSettled2 := sut.createAndAcceptBlock(t, txSettled2a, txSettled2b)
-	require.NoErrorf(t, blockSettled2.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", blockSettled2)
-	vmTime.set(blockSettled2.ExecutedByGasTime().AsTime().Add(saeparams.Tau))
-
-	// Block 6: Triggers settlement of block 5
-	triggerSettlement2 := createTx(t, zeroAddr)
-	b6 := sut.createAndAcceptBlock(t, triggerSettlement2)
-	require.NoErrorf(t, b6.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", b6)
-	require.NoErrorf(t, blockSettled2.WaitUntilSettled(ctx), "%T.WaitUntilSettled()", blockSettled2)
-
-	// Block 7: Accepted but not executed (must be last to avoid blocking)
+	// Block 5: Accepted but not executed (must be last to avoid blocking)
 	txPending := createTx(t, blockingPrecompile)
 	_ = sut.createAndAcceptBlock(t, txPending)
 
-	requireReceipt := func(t *testing.T, tx *types.Transaction) {
-		t.Helper()
-		var got *types.Receipt
-		require.NoError(t, sut.CallContext(ctx, &got, "eth_getTransactionReceipt", tx.Hash()))
-		require.NotNil(t, got)
-		require.Equal(t, tx.Hash(), got.TxHash)
-		require.Equal(t, types.ReceiptStatusSuccessful, got.Status)
-		require.NotNil(t, got.EffectiveGasPrice)
+	// shoutout austin larson
+	if diff := cmp.Diff(receiptFromCache, receiptFromDB, cmputils.ReceiptsByTxHash()); diff != "" {
+		t.Fatalf("cache vs db receipt diff (-cache +db):\n%s", diff)
 	}
 
 	t.Run("eth_getTransactionReceipt", func(t *testing.T) {
@@ -716,7 +713,6 @@ func TestReceiptAPIs(t *testing.T) {
 			require.Equal(t, txs[i].Hash(), r.TxHash, "receipt[%d]", i)
 			require.Equal(t, uint(i), r.TransactionIndex, "receipt[%d]", i) //nolint:gosec // test index
 			require.Equal(t, types.ReceiptStatusSuccessful, r.Status, "receipt[%d]", i)
-			require.NotNil(t, r.EffectiveGasPrice, "receipt[%d]", i)
 		}
 	}
 

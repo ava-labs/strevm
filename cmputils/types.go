@@ -6,6 +6,7 @@
 package cmputils
 
 import (
+	"bytes"
 	"math/big"
 
 	"github.com/ava-labs/libevm/common/hexutil"
@@ -47,11 +48,78 @@ func TransactionsByHash() cmp.Option {
 }
 
 // ReceiptsByTxHash returns a [cmp.Comparer] for [types.Receipt] pointers,
-// equating them by transaction hash alone.
+// equating them by transaction hash and derived fields used by RPC clients.
 func ReceiptsByTxHash() cmp.Option {
+	return ComparerWithNilCheck(func(r, s *types.Receipt) bool {
+		if r.TxHash != s.TxHash ||
+			r.Type != s.Type ||
+			!bytes.Equal(r.PostState, s.PostState) ||
+			r.Status != s.Status ||
+			r.CumulativeGasUsed != s.CumulativeGasUsed ||
+			r.Bloom != s.Bloom ||
+			r.ContractAddress != s.ContractAddress ||
+			r.GasUsed != s.GasUsed ||
+			r.BlobGasUsed != s.BlobGasUsed ||
+			r.BlockHash != s.BlockHash ||
+			r.TransactionIndex != s.TransactionIndex {
+			return false
+		}
+		if (r.EffectiveGasPrice == nil) != (s.EffectiveGasPrice == nil) ||
+			(r.BlockNumber == nil) != (s.BlockNumber == nil) ||
+			(r.BlobGasPrice == nil) != (s.BlobGasPrice == nil) {
+			return false
+		}
+		if r.EffectiveGasPrice != nil && r.EffectiveGasPrice.Cmp(s.EffectiveGasPrice) != 0 {
+			return false
+		}
+		if r.BlockNumber != nil && r.BlockNumber.Cmp(s.BlockNumber) != 0 {
+			return false
+		}
+		if r.BlobGasPrice != nil && r.BlobGasPrice.Cmp(s.BlobGasPrice) != 0 {
+			return false
+		}
+		if len(r.Logs) != len(s.Logs) {
+			return false
+		}
+		for i := range r.Logs {
+			if !logsEqual(r.Logs[i], s.Logs[i]) {
+				return false
+			}
+		}
+		return true
+	})
+}
+
+// ReceiptsByTxHashOnly returns a [cmp.Comparer] for [types.Receipt] pointers,
+// equating them by transaction hash alone.
+func ReceiptsByTxHashOnly() cmp.Option {
 	return ComparerWithNilCheck(func(r, s *types.Receipt) bool {
 		return r.TxHash == s.TxHash
 	})
+}
+
+func logsEqual(a, b *types.Log) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	if a.Address != b.Address ||
+		a.BlockNumber != b.BlockNumber ||
+		a.TxHash != b.TxHash ||
+		a.TxIndex != b.TxIndex ||
+		a.BlockHash != b.BlockHash ||
+		a.Index != b.Index ||
+		a.Removed != b.Removed {
+		return false
+	}
+	if !bytes.Equal(a.Data, b.Data) || len(a.Topics) != len(b.Topics) {
+		return false
+	}
+	for i := range a.Topics {
+		if a.Topics[i] != b.Topics[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // Blocks returns a set of [cmp.Options] for comparing [types.Block] values.

@@ -158,7 +158,7 @@ func TestReceiptPropagation(t *testing.T) {
 	for _, b := range chain.AllExceptGenesis() {
 		got = append(got, b.Receipts())
 	}
-	if diff := cmp.Diff(want, got, cmputils.ReceiptsByTxHash()); diff != "" {
+	if diff := cmp.Diff(want, got, cmputils.ReceiptsByTxHashOnly()); diff != "" {
 		t.Errorf("%T diff (-want +got):\n%s", got, diff)
 	}
 }

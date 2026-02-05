@@ -161,6 +161,7 @@ func (e *Executor) execute(b *blocks.Block, logger logging.Logger) error {
 		// consensus. This changes the hash, which is what is copied to receipts
 		// and logs.
 		receipt.BlockHash = b.Hash()
+		receipt.EffectiveGasPrice = baseFee.ToBig()
 		for _, l := range receipt.Logs {
 			l.BlockHash = b.Hash()
 		}
