@@ -42,7 +42,10 @@ func (vm *VM) APIBackend() ethapi.Backend {
 }
 
 func (vm *VM) ethRPCServer() (*rpc.Server, error) {
-	b := vm.APIBackend().(*ethAPIBackend)
+	b, ok := vm.APIBackend().(*ethAPIBackend)
+	if !ok {
+		return nil, errors.New("APIBackend returned unexpected type")
+	}
 	vm.toClose = append(vm.toClose, b.accountManager.Close)
 	s := rpc.NewServer()
 
