@@ -592,7 +592,7 @@ func (sut *SUT) testGetByUnknownNumber(ctx context.Context, t *testing.T) {
 // withDebugAPI returns a sutOption that enables the debug API.
 func withDebugAPI() sutOption {
 	return options.Func[sutConfig](func(c *sutConfig) {
-		c.vmConfig.RPCConfig.EnableDebugNamespace = true
+		c.vmConfig.RPCConfig.EnableProfiling = true
 	})
 }
 
