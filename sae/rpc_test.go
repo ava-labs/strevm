@@ -660,10 +660,6 @@ func TestReceiptAPIs(t *testing.T) {
 	txPending := createTx(t, blockingPrecompile)
 	_ = sut.createAndAcceptBlock(t, txPending)
 
-	// requireReceipt fetches a transaction receipt via CallContext and
-	// asserts the tx hash and success status. CallContext is used instead of
-	// testRPC because we only assert a subset of receipt fields -- we don't
-	// know the full expected receipt (gasUsed, blockHash, etc.) upfront.
 	requireReceipt := func(t *testing.T, tx *types.Transaction) {
 		t.Helper()
 		var got *types.Receipt
@@ -679,8 +675,14 @@ func TestReceiptAPIs(t *testing.T) {
 			name string
 			tx   *types.Transaction
 		}{
-			{"executed_in_cache", txExecutedInCache},
-			{"settled_in_db", txSettled},
+			{
+				"executed_in_cache", 
+				txExecutedInCache,
+			},
+			{
+				"settled_in_db", 
+				txSettled,
+			},
 		} {
 			t.Run(tc.name, func(t *testing.T) {
 				requireReceipt(t, tc.tx)
@@ -702,9 +704,6 @@ func TestReceiptAPIs(t *testing.T) {
 		}...)
 	})
 
-	// requireBlockReceipts fetches block receipts via CallContext and asserts
-	// each receipt matches the corresponding transaction. CallContext is
-	// justified because we verify per-receipt fields across a slice.
 	requireBlockReceipts := func(t *testing.T, blockID any, txs []*types.Transaction) {
 		t.Helper()
 		var got []*types.Receipt
@@ -726,9 +725,21 @@ func TestReceiptAPIs(t *testing.T) {
 			id   any
 			txs  []*types.Transaction
 		}{
-			{"executed_in_cache", blockMultiTxs.Hash(), multiTxs},
-			{"executed_in_cache_by_number", hexutil.Uint64(blockMultiTxs.Height()), multiTxs},
-			{"settled_in_db", blockSettled2.Hash(), []*types.Transaction{txSettled2a, txSettled2b}},
+			{
+				"executed_in_cache",
+				blockMultiTxs.Hash(),
+				multiTxs,
+			},
+			{
+				"executed_in_cache_by_number",
+				hexutil.Uint64(blockMultiTxs.Height()),
+				multiTxs,
+			},
+			{
+				"settled_in_db",
+				blockSettled2.Hash(),
+				[]*types.Transaction{txSettled2a, txSettled2b},
+			},
 		} {
 			t.Run(tc.name, func(t *testing.T) {
 				requireBlockReceipts(t, tc.id, tc.txs)

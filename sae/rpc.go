@@ -220,23 +220,11 @@ func (b *ethAPIBackend) BlockByHash(ctx context.Context, hash common.Hash) (*typ
 }
 
 func (b *ethAPIBackend) BlockByNumberOrHash(ctx context.Context, blockNrOrHash rpc.BlockNumberOrHash) (*types.Block, error) {
-	if blockNr, ok := blockNrOrHash.Number(); ok {
-		return b.BlockByNumber(ctx, blockNr)
-	}
-	if hash, ok := blockNrOrHash.Hash(); ok {
-		return b.BlockByHash(ctx, hash)
-	}
-	return nil, errors.New("invalid arguments; neither block nor hash specified")
+	return readByNumberOrHash(ctx, blockNrOrHash, b.BlockByNumber, b.BlockByHash)
 }
 
 func (b *ethAPIBackend) HeaderByNumberOrHash(ctx context.Context, blockNrOrHash rpc.BlockNumberOrHash) (*types.Header, error) {
-	if blockNr, ok := blockNrOrHash.Number(); ok {
-		return b.HeaderByNumber(ctx, blockNr)
-	}
-	if hash, ok := blockNrOrHash.Hash(); ok {
-		return b.HeaderByHash(ctx, hash)
-	}
-	return nil, errors.New("invalid arguments; neither block nor hash specified")
+	return readByNumberOrHash(ctx, blockNrOrHash, b.HeaderByNumber, b.HeaderByHash)
 }
 
 func (b *ethAPIBackend) GetTransaction(ctx context.Context, txHash common.Hash) (exists bool, tx *types.Transaction, blockHash common.Hash, blockNumber uint64, index uint64, err error) {
@@ -271,7 +259,24 @@ func readByHash[T any](b *ethAPIBackend, hash common.Hash, read canonicalReader[
 	return read(b.vm.db, hash, *num)
 }
 
+func readByNumberOrHash[T any](
+	ctx context.Context,
+	blockNrOrHash rpc.BlockNumberOrHash,
+	byNum func(context.Context, rpc.BlockNumber) (*T, error),
+	byHash func(context.Context, common.Hash) (*T, error),
+) (*T, error) {
+	if blockNr, ok := blockNrOrHash.Number(); ok {
+		return byNum(ctx, blockNr)
+	}
+	if hash, ok := blockNrOrHash.Hash(); ok {
+		return byHash(ctx, hash)
+	}
+	return nil, errNoBlockNorHash
+}
+
 var errFutureBlockNotResolved = errors.New("not accepted yet")
+
+var errNoBlockNorHash = errors.New("invalid arguments; neither block nor hash specified")
 
 func (b *ethAPIBackend) resolveBlockNumber(bn rpc.BlockNumber) (uint64, error) {
 	head := b.vm.last.accepted.Load().Height()
