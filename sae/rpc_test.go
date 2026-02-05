@@ -643,6 +643,7 @@ func TestReceiptAPIs(t *testing.T) {
 	triggerSettlement := createTx(t, zeroAddr)
 	b4 := sut.createAndAcceptBlock(t, triggerSettlement)
 	require.NoErrorf(t, b4.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", b4)
+	require.NoErrorf(t, blockSettled.WaitUntilSettled(ctx), "%T.WaitUntilSettled()", blockSettled)
 
 	// Block 5: Two txs, will be settled to DB
 	txSettled2a := createTx(t, zeroAddr)
@@ -655,6 +656,7 @@ func TestReceiptAPIs(t *testing.T) {
 	triggerSettlement2 := createTx(t, zeroAddr)
 	b6 := sut.createAndAcceptBlock(t, triggerSettlement2)
 	require.NoErrorf(t, b6.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", b6)
+	require.NoErrorf(t, blockSettled2.WaitUntilSettled(ctx), "%T.WaitUntilSettled()", blockSettled2)
 
 	// Block 7: Accepted but not executed (must be last to avoid blocking)
 	txPending := createTx(t, blockingPrecompile)
@@ -667,6 +669,7 @@ func TestReceiptAPIs(t *testing.T) {
 		require.NotNil(t, got)
 		require.Equal(t, tx.Hash(), got.TxHash)
 		require.Equal(t, types.ReceiptStatusSuccessful, got.Status)
+		require.NotNil(t, got.EffectiveGasPrice)
 	}
 
 	t.Run("eth_getTransactionReceipt", func(t *testing.T) {
@@ -713,6 +716,7 @@ func TestReceiptAPIs(t *testing.T) {
 			require.Equal(t, txs[i].Hash(), r.TxHash, "receipt[%d]", i)
 			require.Equal(t, uint(i), r.TransactionIndex, "receipt[%d]", i) //nolint:gosec // test index
 			require.Equal(t, types.ReceiptStatusSuccessful, r.Status, "receipt[%d]", i)
+			require.NotNil(t, r.EffectiveGasPrice, "receipt[%d]", i)
 		}
 	}
 
@@ -737,8 +741,8 @@ func TestReceiptAPIs(t *testing.T) {
 			},
 			{
 				"settled_in_db",
-				blockSettled2.Hash(),
-				[]*types.Transaction{txSettled2a, txSettled2b},
+				blockSettled.Hash(),
+				[]*types.Transaction{txSettled},
 			},
 		} {
 			t.Run(tc.name, func(t *testing.T) {

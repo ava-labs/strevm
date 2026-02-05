@@ -16,6 +16,7 @@ import (
 	ethereum "github.com/ava-labs/libevm"
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/common/hexutil"
+	"github.com/ava-labs/libevm/consensus/misc/eip4844"
 	"github.com/ava-labs/libevm/core"
 	"github.com/ava-labs/libevm/core/rawdb"
 	"github.com/ava-labs/libevm/core/types"
@@ -351,7 +352,18 @@ func (b *ethAPIBackend) GetReceipts(ctx context.Context, hash common.Hash) (type
 		if !block.Executed() {
 			return nil, nil
 		}
-		return block.Receipts(), nil
+		receipts := block.Receipts()
+
+		// cache vs db derived receipts are inconsistent
+		var blobGasPrice *big.Int
+		header := block.Header()
+		if header.ExcessBlobGas != nil {
+			blobGasPrice = eip4844.CalcBlobFee(*header.ExcessBlobGas)
+		}
+		if err := receipts.DeriveFields(b.vm.exec.ChainConfig(), hash, block.NumberU64(), header.Time, header.BaseFee, blobGasPrice, block.Transactions()); err != nil {
+			return nil, err
+		}
+		return receipts, nil
 	}
 
 	number := rawdb.ReadHeaderNumber(b.vm.db, hash)
