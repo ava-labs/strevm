@@ -6,11 +6,15 @@ package hookstest
 
 import (
 	"encoding/binary"
+	"encoding/json"
+	"fmt"
 	"math/big"
 	"time"
 
+	"github.com/ava-labs/avalanchego/snow"
 	"github.com/ava-labs/avalanchego/vms/components/gas"
 	"github.com/ava-labs/libevm/common"
+	"github.com/ava-labs/libevm/core"
 	"github.com/ava-labs/libevm/core/state"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/params"
@@ -96,3 +100,12 @@ func (*Stub) BeforeExecutingBlock(params.Rules, *state.StateDB, *types.Block) er
 
 // AfterExecutingBlock is a no-op.
 func (*Stub) AfterExecutingBlock(*state.StateDB, *types.Block, types.Receipts) {}
+
+// ParseGenesis parses genesisBytes as JSON with no further modifications.
+func (*Stub) ParseGenesis(_ *snow.Context, genesisBytes []byte) (*core.Genesis, error) {
+	genesis := new(core.Genesis)
+	if err := json.Unmarshal(genesisBytes, genesis); err != nil {
+		return nil, fmt.Errorf("parsing genesis: %w", err)
+	}
+	return genesis, nil
+}
