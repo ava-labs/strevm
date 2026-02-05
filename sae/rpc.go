@@ -32,6 +32,8 @@ import (
 )
 
 // APIBackend returns an API backend backed by the VM.
+// This must later be closed with [CloseBackend] to cancel
+// all running goroutines.
 func (vm *VM) APIBackend(config RPCConfig) ethapi.Backend {
 	b := &ethAPIBackend{
 		vm:  vm,
@@ -45,6 +47,9 @@ func (vm *VM) APIBackend(config RPCConfig) ethapi.Backend {
 	return b
 }
 
+// CloseBackend frees any resources started by the [ethapi.Backend].
+// It must be called once the consumer is done with `backend` if provided by
+// [VM.APIBackend]
 func CloseBackend(backend ethapi.Backend) error {
 	b, ok := backend.(*ethAPIBackend)
 	if !ok {
