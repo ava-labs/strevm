@@ -676,11 +676,11 @@ func TestReceiptAPIs(t *testing.T) {
 			tx   *types.Transaction
 		}{
 			{
-				"executed_in_cache", 
+				"executed_in_cache",
 				txExecutedInCache,
 			},
 			{
-				"settled_in_db", 
+				"settled_in_db",
 				txSettled,
 			},
 		} {
