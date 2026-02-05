@@ -77,6 +77,27 @@ func SubSecond(hooks hook.Points, hdr *types.Header, rate gas.Gas) gas.Gas {
 	return g
 }
 
+// OfBlock is equivalent to [New] except that it derives the Unix timestamp and
+// gas target from the headers of a block and its parent. The constructed [Time]
+// derives its [proxytime.FractionalSecond] from the sub-second block time
+// provided by the hooks.
+func OfBlock(hooks hook.Points, hdr, parent *types.Header, startingExcess gas.Gas) *Time {
+	target := hooks.GasTargetAfter(parent)
+	return newT(
+		hdr.Time,
+		SubSecond(hooks, hdr, SafeRateOfTarget(target)),
+		target,
+		startingExcess,
+	)
+}
+
+func newT(unixSeconds uint64, frac, target, startingExcess gas.Gas) *Time {
+	target = clampTarget(target)
+	tm := proxytime.New(unixSeconds, rateOf(target))
+	tm.Tick(frac)
+	return makeTime(tm, target, startingExcess)
+}
+
 // TargetToRate is the ratio between [Time.Target] and [proxytime.Time.Rate].
 const TargetToRate = 2
 

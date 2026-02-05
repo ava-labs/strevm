@@ -20,8 +20,9 @@ import (
 
 func newEthBlock(num, time uint64, parent *types.Block) *types.Block {
 	hdr := &types.Header{
-		Number: new(big.Int).SetUint64(num),
-		Time:   time,
+		Number:  new(big.Int).SetUint64(num),
+		Time:    time,
+		BaseFee: big.NewInt(0),
 	}
 	if parent != nil {
 		hdr.ParentHash = parent.Hash()

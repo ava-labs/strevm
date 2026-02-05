@@ -20,6 +20,7 @@ import (
 	"github.com/ava-labs/libevm/params"
 
 	"github.com/ava-labs/strevm/hook"
+	"github.com/ava-labs/strevm/proxytime"
 	"github.com/ava-labs/strevm/saetest"
 )
 
@@ -108,4 +109,12 @@ func (*Stub) ParseGenesis(_ *snow.Context, genesisBytes []byte) (*core.Genesis, 
 		return nil, fmt.Errorf("parsing genesis: %w", err)
 	}
 	return genesis, nil
+}
+
+// NowFunc returns a function suitable for use in a [Stub], sourcing the current
+// time from `src` at nanosecond resolution.
+func NowFunc(src func() time.Time) func() *proxytime.Time[gas.Gas] {
+	return func() *proxytime.Time[gas.Gas] {
+		return proxytime.Of[gas.Gas](src())
+	}
 }

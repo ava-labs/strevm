@@ -499,7 +499,10 @@ func TestCompareDifferentRates(t *testing.T) {
 		a, b := tt.tm, tt.u
 		want := tt.want
 
-		assert.Equalf(t, want, a.Compare(b), "Time{%s}.Compare(%s)", a, b)
-		assert.Equalf(t, -want, b.Compare(a), "Time{%s}.Compare(%s)", b, a)
+		for range 2 {
+			assert.Equalf(t, want, a.Compare(b), "Time{%s}.Compare(%s)", a.String(), b.String())
+			a, b = b, a
+			want = -want
+		}
 	}
 }
