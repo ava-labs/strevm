@@ -49,6 +49,7 @@ func (e *Executor) Enqueue(ctx context.Context, block *blocks.Block) error {
 			queueCap := cap(e.queue)
 
 			// Only warn if buffer is actually near capacity (>80% full)
+			// If this happens then increase the channel's buffer size.
 			if float64(queueLen) > 0.8*float64(queueCap) {
 				e.log.Warn(
 					"Execution queue buffer too small",
