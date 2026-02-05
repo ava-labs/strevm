@@ -587,3 +587,176 @@ func (sut *SUT) testGetByUnknownNumber(ctx context.Context, t *testing.T) {
 		},
 	}...)
 }
+
+func TestReceiptAPIs(t *testing.T) {
+	opt, vmTime := withVMTime(t, time.Unix(saeparams.TauSeconds, 0))
+	ctx, sut := newSUT(t, 1, opt)
+
+	// Blocking precompile creates accepted-but-not-executed blocks
+	blockingPrecompile := common.Address{'b', 'l', 'o', 'c', 'k'}
+	unblockPrecompile := make(chan struct{})
+	t.Cleanup(func() { close(unblockPrecompile) })
+
+	libevmHooks := &libevmhookstest.Stub{
+		PrecompileOverrides: map[common.Address]libevm.PrecompiledContract{
+			blockingPrecompile: vm.NewStatefulPrecompile(func(vm.PrecompileEnvironment, []byte) ([]byte, error) {
+				<-unblockPrecompile
+				return nil, nil
+			}),
+		},
+	}
+	libevmHooks.Register(t)
+
+	createTx := func(t *testing.T, to common.Address) *types.Transaction {
+		t.Helper()
+		return sut.wallet.SetNonceAndSign(t, 0, &types.DynamicFeeTx{
+			To:        &to,
+			Gas:       params.TxGas,
+			GasFeeCap: big.NewInt(1),
+		})
+	}
+	var zeroAddr common.Address
+
+	// All blocks created upfront to avoid executor blocking during subtests.
+
+	genesis := sut.lastAcceptedBlock(t)
+
+	// Block 1: Executed, still in cache (not yet settled)
+	txExecutedInCache := createTx(t, zeroAddr)
+	blockExecutedInCache := sut.createAndAcceptBlock(t, txExecutedInCache)
+	require.NoErrorf(t, blockExecutedInCache.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", blockExecutedInCache)
+
+	// Block 2: Will be settled to DB
+	txSettled := createTx(t, zeroAddr)
+	blockSettled := sut.createAndAcceptBlock(t, txSettled)
+	require.NoErrorf(t, blockSettled.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", blockSettled)
+	vmTime.set(blockSettled.ExecutedByGasTime().AsTime().Add(saeparams.Tau))
+
+	// Block 3: Multiple txs, executed in cache
+	txMulti1 := createTx(t, zeroAddr)
+	txMulti2 := createTx(t, zeroAddr)
+	txMulti3 := createTx(t, zeroAddr)
+	blockMultiTxs := sut.createAndAcceptBlock(t, txMulti1, txMulti2, txMulti3)
+	require.NoErrorf(t, blockMultiTxs.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", blockMultiTxs)
+
+	// Block 4: Triggers settlement of block 2
+	triggerSettlement := createTx(t, zeroAddr)
+	b4 := sut.createAndAcceptBlock(t, triggerSettlement)
+	require.NoErrorf(t, b4.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", b4)
+
+	// Block 5: Two txs, will be settled to DB
+	txSettled2a := createTx(t, zeroAddr)
+	txSettled2b := createTx(t, zeroAddr)
+	blockSettled2 := sut.createAndAcceptBlock(t, txSettled2a, txSettled2b)
+	require.NoErrorf(t, blockSettled2.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", blockSettled2)
+	vmTime.set(blockSettled2.ExecutedByGasTime().AsTime().Add(saeparams.Tau))
+
+	// Block 6: Triggers settlement of block 5
+	triggerSettlement2 := createTx(t, zeroAddr)
+	b6 := sut.createAndAcceptBlock(t, triggerSettlement2)
+	require.NoErrorf(t, b6.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", b6)
+
+	// Block 7: Accepted but not executed (must be last to avoid blocking)
+	txPending := createTx(t, blockingPrecompile)
+	_ = sut.createAndAcceptBlock(t, txPending)
+
+	// requireReceipt fetches a transaction receipt via CallContext and
+	// asserts the tx hash and success status. CallContext is used instead of
+	// testRPC because we only assert a subset of receipt fields -- we don't
+	// know the full expected receipt (gasUsed, blockHash, etc.) upfront.
+	requireReceipt := func(t *testing.T, tx *types.Transaction) {
+		t.Helper()
+		var got *types.Receipt
+		require.NoError(t, sut.CallContext(ctx, &got, "eth_getTransactionReceipt", tx.Hash()))
+		require.NotNil(t, got)
+		require.Equal(t, tx.Hash(), got.TxHash)
+		require.Equal(t, types.ReceiptStatusSuccessful, got.Status)
+	}
+
+	t.Run("eth_getTransactionReceipt", func(t *testing.T) {
+		// Receipts found via cache and DB code paths
+		for _, tc := range []struct {
+			name string
+			tx   *types.Transaction
+		}{
+			{"executed_in_cache", txExecutedInCache},
+			{"settled_in_db", txSettled},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				requireReceipt(t, tc.tx)
+			})
+		}
+
+		// Nil returns: not-yet-executed and nonexistent transactions
+		sut.testRPC(ctx, t, []rpcTest{
+			{
+				method: "eth_getTransactionReceipt",
+				args:   []any{txPending.Hash()},
+				want:   (*types.Receipt)(nil),
+			},
+			{
+				method: "eth_getTransactionReceipt",
+				args:   []any{common.Hash{}},
+				want:   (*types.Receipt)(nil),
+			},
+		}...)
+	})
+
+	// requireBlockReceipts fetches block receipts via CallContext and asserts
+	// each receipt matches the corresponding transaction. CallContext is
+	// justified because we verify per-receipt fields across a slice.
+	requireBlockReceipts := func(t *testing.T, blockID any, txs []*types.Transaction) {
+		t.Helper()
+		var got []*types.Receipt
+		require.NoError(t, sut.CallContext(ctx, &got, "eth_getBlockReceipts", blockID))
+		require.Len(t, got, len(txs))
+		for i, r := range got {
+			require.Equal(t, txs[i].Hash(), r.TxHash, "receipt[%d]", i)
+			require.Equal(t, uint(i), r.TransactionIndex, "receipt[%d]", i) //nolint:gosec // test index
+			require.Equal(t, types.ReceiptStatusSuccessful, r.Status, "receipt[%d]", i)
+		}
+	}
+
+	t.Run("eth_getBlockReceipts", func(t *testing.T) {
+		multiTxs := []*types.Transaction{txMulti1, txMulti2, txMulti3}
+
+		// Receipts found via cache and DB code paths
+		for _, tc := range []struct {
+			name string
+			id   any
+			txs  []*types.Transaction
+		}{
+			{"executed_in_cache", blockMultiTxs.Hash(), multiTxs},
+			{"executed_in_cache_by_number", hexutil.Uint64(blockMultiTxs.Height()), multiTxs},
+			{"settled_in_db", blockSettled2.Hash(), []*types.Transaction{txSettled2a, txSettled2b}},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				requireBlockReceipts(t, tc.id, tc.txs)
+			})
+		}
+
+		// Verify by-hash and by-number return equivalent receipts
+		t.Run("hash_equals_number", func(t *testing.T) {
+			var byHash, byNum []*types.Receipt
+			require.NoError(t, sut.CallContext(ctx, &byHash, "eth_getBlockReceipts", blockMultiTxs.Hash()))
+			require.NoError(t, sut.CallContext(ctx, &byNum, "eth_getBlockReceipts", hexutil.Uint64(blockMultiTxs.Height())))
+			if diff := cmp.Diff(byHash, byNum, cmputils.ReceiptsByTxHash()); diff != "" {
+				t.Errorf("by-hash vs by-number diff (-hash +num):\n%s", diff)
+			}
+		})
+
+		// Nil/empty returns
+		sut.testRPC(ctx, t, []rpcTest{
+			{
+				method: "eth_getBlockReceipts",
+				args:   []any{common.HexToHash("0xdeadbeef")},
+				want:   ([]*types.Receipt)(nil),
+			},
+			{
+				method: "eth_getBlockReceipts",
+				args:   []any{genesis.Hash()},
+				want:   []*types.Receipt{},
+			},
+		}...)
+	})
+}

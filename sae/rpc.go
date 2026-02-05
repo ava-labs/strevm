@@ -80,6 +80,7 @@ func (vm *VM) ethRPCServer() (*rpc.Server, error) {
 		// - eth_chainId
 		// - eth_getBlockByHash
 		// - eth_getBlockByNumber
+		// - eth_getBlockReceipts
 		// - eth_getUncleByBlockHashAndIndex
 		// - eth_getUncleByBlockNumberAndIndex
 		// - eth_getUncleCountByBlockHash
@@ -95,6 +96,7 @@ func (vm *VM) ethRPCServer() (*rpc.Server, error) {
 		// - eth_getTransactionByBlockHashAndIndex
 		// - eth_getTransactionByBlockNumberAndIndex
 		// - eth_getTransactionByHash
+		// - eth_getTransactionReceipt
 		//
 		// Undocumented APIs:
 		// - eth_getRawTransactionByHash
@@ -217,6 +219,26 @@ func (b *ethAPIBackend) BlockByHash(ctx context.Context, hash common.Hash) (*typ
 	return readByHash(b, hash, rawdb.ReadBlock), nil
 }
 
+func (b *ethAPIBackend) BlockByNumberOrHash(ctx context.Context, blockNrOrHash rpc.BlockNumberOrHash) (*types.Block, error) {
+	if blockNr, ok := blockNrOrHash.Number(); ok {
+		return b.BlockByNumber(ctx, blockNr)
+	}
+	if hash, ok := blockNrOrHash.Hash(); ok {
+		return b.BlockByHash(ctx, hash)
+	}
+	return nil, errors.New("invalid arguments; neither block nor hash specified")
+}
+
+func (b *ethAPIBackend) HeaderByNumberOrHash(ctx context.Context, blockNrOrHash rpc.BlockNumberOrHash) (*types.Header, error) {
+	if blockNr, ok := blockNrOrHash.Number(); ok {
+		return b.HeaderByNumber(ctx, blockNr)
+	}
+	if hash, ok := blockNrOrHash.Hash(); ok {
+		return b.HeaderByHash(ctx, hash)
+	}
+	return nil, errors.New("invalid arguments; neither block nor hash specified")
+}
+
 func (b *ethAPIBackend) GetTransaction(ctx context.Context, txHash common.Hash) (exists bool, tx *types.Transaction, blockHash common.Hash, blockNumber uint64, index uint64, err error) {
 	tx, blockHash, blockNumber, index = rawdb.ReadTransaction(b.vm.db, txHash)
 	if tx == nil {
@@ -316,6 +338,25 @@ func (b *ethAPIBackend) SubscribePendingLogsEvent(chan<- []*types.Log) event.Sub
 	// In SAE, "pending" refers to the execution status. There are no logs known
 	// for transactions pending execution.
 	return newNoopSubscription()
+}
+
+func (b *ethAPIBackend) GetReceipts(ctx context.Context, hash common.Hash) (types.Receipts, error) {
+	if block, ok := b.vm.blocks.Load(hash); ok {
+		if !block.Executed() {
+			return nil, nil
+		}
+		return block.Receipts(), nil
+	}
+
+	number := rawdb.ReadHeaderNumber(b.vm.db, hash)
+	if number == nil {
+		return nil, nil
+	}
+	header := rawdb.ReadHeader(b.vm.db, hash, *number)
+	if header == nil {
+		return nil, nil
+	}
+	return rawdb.ReadReceipts(b.vm.db, hash, *number, header.Time, b.vm.exec.ChainConfig()), nil
 }
 
 type noopSubscription struct {
