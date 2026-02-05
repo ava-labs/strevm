@@ -160,7 +160,6 @@ func newSUT(tb testing.TB, numAccounts uint, opts ...sutOption) (context.Context
 	tb.Cleanup(server.Close)
 	rpcClient, err := rpc.Dial("ws://" + server.Listener.Addr().String())
 	require.NoErrorf(tb, err, "rpc.Dial(http.NewServer(%T.CreateHandlers()))", snow)
-	tb.Cleanup(rpcClient.Close)
 	client := ethclient.NewClient(rpcClient)
 	tb.Cleanup(client.Close)
 
