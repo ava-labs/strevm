@@ -31,9 +31,8 @@ import (
 	"github.com/ava-labs/strevm/txgossip"
 )
 
-// APIBackend returns an API backend backed by the VM.
-// This must later be closed with [CloseBackend] to cancel
-// all running goroutines.
+// APIBackend returns an API backend backed by the [VM].
+// All goroutines created will be closed when the [VM] is shutdown.
 func (vm *VM) APIBackend(config RPCConfig) ethapi.Backend {
 	b := &ethAPIBackend{
 		vm:  vm,
@@ -43,20 +42,9 @@ func (vm *VM) APIBackend(config RPCConfig) ethapi.Backend {
 	// TODO: if we are state syncing, we need to provide the first block available to the indexer
 	// via [core.ChainIndexer.AddCheckpoint].
 	b.bloomIndexer = filters.NewBloomIndexerService(b, config.BloomSectionSize)
+	vm.toClose = append(vm.toClose, b.bloomIndexer.Close)
 
 	return b
-}
-
-// CloseBackend frees any resources started by the [ethapi.Backend].
-// It must be called once the consumer is done with `backend` if provided by
-// [VM.APIBackend]
-func CloseBackend(backend ethapi.Backend) error {
-	b, ok := backend.(*ethAPIBackend)
-	if !ok {
-		return nil
-	}
-
-	return b.bloomIndexer.Close()
 }
 
 func (vm *VM) ethRPCServer(config RPCConfig) (*rpc.Server, error) {
@@ -69,7 +57,7 @@ func (vm *VM) ethRPCServer(config RPCConfig) (*rpc.Server, error) {
 	filterAPI := filters.NewFilterAPI(filterSystem, false /*isLightClient*/)
 	vm.toClose = append(vm.toClose, func() error {
 		filters.CloseAPI(filterAPI)
-		return CloseBackend(b)
+		return nil
 	})
 
 	// Standard Ethereum APIs are documented at: https://ethereum.org/developers/docs/apis/json-rpc
@@ -188,10 +176,7 @@ type RPCConfig struct {
 	BloomSectionSize uint64 // Number of blocks per bloom section
 }
 
-var (
-	_ core.ChainIndexerChain = (*ethAPIBackend)(nil)
-	_ filters.BloomOverrider = (*ethAPIBackend)(nil)
-)
+var _ filters.IndexerServiceProvider = (*ethAPIBackend)(nil)
 
 type ethAPIBackend struct {
 	ethapi.Backend // TODO(arr4n) remove in favour of `var _ ethapi.Backend = (*ethAPIBackend)(nil)`
