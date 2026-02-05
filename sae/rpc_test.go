@@ -23,6 +23,7 @@ import (
 	"github.com/ava-labs/libevm/libevm"
 	"github.com/ava-labs/libevm/libevm/ethapi"
 	libevmhookstest "github.com/ava-labs/libevm/libevm/hookstest"
+	"github.com/ava-labs/libevm/libevm/options"
 	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/rpc"
 	"github.com/google/go-cmp/cmp"
@@ -197,7 +198,7 @@ func TestTxPoolNamespace(t *testing.T) {
 			tx.To(),
 			tx.Value().Uint64(),
 			tx.Gas(),
-			tx.GasFeeCap().Uint64(),
+			tx.GasPrice(),
 		)
 	}
 
@@ -260,6 +261,30 @@ func TestTxPoolNamespace(t *testing.T) {
 			},
 		},
 	}...)
+}
+
+func TestEthSyncing(t *testing.T) {
+	ctx, sut := newSUT(t, 1)
+	// Avalanchego does not expose APIs until after the node has fully synced,
+	// so eth_syncing always returns false (not syncing).
+	sut.testRPC(ctx, t, rpcTest{
+		method: "eth_syncing",
+		want:   false,
+	})
+}
+
+func TestChainID(t *testing.T) {
+	for id := range uint64(2) {
+		ctx, sut := newSUT(t, 0, options.Func[sutConfig](func(c *sutConfig) {
+			c.genesis.Config = &params.ChainConfig{
+				ChainID: new(big.Int).SetUint64(id),
+			}
+		}))
+		sut.testRPC(ctx, t, rpcTest{
+			method: "eth_chainId",
+			want:   hexutil.Uint64(id),
+		})
+	}
 }
 
 func TestEthGetters(t *testing.T) {
@@ -495,14 +520,19 @@ func (sut *SUT) testGetByHash(ctx context.Context, t *testing.T, want *types.Blo
 			want:   want.Header(),
 		},
 		{
-			method: "eth_getUncleCountByBlockHash",
-			args:   []any{want.Hash()},
-			want:   hexutil.Uint(0),
-		},
-		{
 			method: "eth_getBlockTransactionCountByHash",
 			args:   []any{want.Hash()},
 			want:   hexutil.Uint(len(want.Transactions())),
+		},
+		{
+			method: "eth_getUncleByBlockHashAndIndex",
+			args:   []any{want.Hash(), hexutil.Uint(0)},
+			want:   (map[string]any)(nil), // SAE never has uncles (no reorgs)
+		},
+		{
+			method: "eth_getUncleCountByBlockHash",
+			args:   []any{want.Hash()},
+			want:   hexutil.Uint(0), // SAE never has uncles (no reorgs)
 		},
 	}...)
 
@@ -611,9 +641,14 @@ func (sut *SUT) testGetByNumber(ctx context.Context, t *testing.T, want *types.B
 			want:   hexutil.Uint(len(want.Transactions())),
 		},
 		{
+			method: "eth_getUncleByBlockNumberAndIndex",
+			args:   []any{n, hexutil.Uint(0)},
+			want:   (map[string]any)(nil), // SAE never has uncles (no reorgs)
+		},
+		{
 			method: "eth_getUncleCountByBlockNumber",
 			args:   []any{n},
-			want:   hexutil.Uint(0),
+			want:   hexutil.Uint(0), // SAE never has uncles (no reorgs)
 		},
 	}...)
 

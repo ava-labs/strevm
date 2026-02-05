@@ -553,10 +553,12 @@ func TestSyntacticBlockChecks(t *testing.T) {
 }
 
 func TestAcceptBlock(t *testing.T) {
+	// We use a generous timeout because GC finalizers from previous tests take
+	// a long time to run in resource constrained environments.
 	require.EventuallyWithT(t, func(t *assert.CollectT) {
 		runtime.GC()
 		require.Zero(t, blocks.InMemoryBlockCount(), "initial in-memory block count")
-	}, 100*time.Millisecond, time.Millisecond)
+	}, 5*time.Second, 50*time.Millisecond)
 
 	opt, vmTime := withVMTime(t, time.Unix(saeparams.TauSeconds, 0))
 

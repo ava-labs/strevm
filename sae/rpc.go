@@ -13,6 +13,7 @@ import (
 
 	"github.com/ava-labs/avalanchego/network/p2p"
 	"github.com/ava-labs/avalanchego/version"
+	ethereum "github.com/ava-labs/libevm"
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/common/hexutil"
 	"github.com/ava-labs/libevm/core"
@@ -30,8 +31,31 @@ import (
 	"github.com/ava-labs/strevm/txgossip"
 )
 
+// APIBackend returns an API backend backed by the VM.
+func (vm *VM) APIBackend(config RPCConfig) ethapi.Backend {
+	b := &ethAPIBackend{
+		vm:  vm,
+		Set: vm.mempool,
+	}
+
+	// TODO: if we are state syncing, we need to provide the first block available to the indexer
+	// via [core.ChainIndexer.AddCheckpoint].
+	b.bloomIndexer = filters.NewBloomIndexerService(b, config.BloomSectionSize)
+
+	return b
+}
+
+func CloseBackend(backend ethapi.Backend) error {
+	b, ok := backend.(*ethAPIBackend)
+	if !ok {
+		return nil
+	}
+
+	return b.bloomIndexer.Close()
+}
+
 func (vm *VM) ethRPCServer(config RPCConfig) (*rpc.Server, error) {
-	b := newEthAPIBackend(config, vm)
+	b := vm.APIBackend(config)
 	s := rpc.NewServer()
 
 	// Even if this function errors, we should close API to prevent a goroutine
@@ -40,7 +64,7 @@ func (vm *VM) ethRPCServer(config RPCConfig) (*rpc.Server, error) {
 	filterAPI := filters.NewFilterAPI(filterSystem, false /*isLightClient*/)
 	vm.toClose = append(vm.toClose, func() error {
 		filters.CloseAPI(filterAPI)
-		return b.bloomIndexer.Close()
+		return CloseBackend(b)
 	})
 
 	// Standard Ethereum APIs are documented at: https://ethereum.org/developers/docs/apis/json-rpc
@@ -64,11 +88,16 @@ func (vm *VM) ethRPCServer(config RPCConfig) (*rpc.Server, error) {
 		// - txpool_inspect
 		// - txpool_status
 		{"txpool", ethapi.NewTxPoolAPI(b)},
-
+		// Standard Ethereum node APIs:
+		// - eth_syncing
+		{"eth", ethapi.NewEthereumAPI(b)},
 		// Standard Ethereum node APIs:
 		// - eth_blockNumber
+		// - eth_chainId
 		// - eth_getBlockByHash
 		// - eth_getBlockByNumber
+		// - eth_getUncleByBlockHashAndIndex
+		// - eth_getUncleByBlockNumberAndIndex
 		// - eth_getUncleCountByBlockHash
 		// - eth_getUncleCountByBlockNumber
 		//
@@ -167,19 +196,6 @@ type ethAPIBackend struct {
 	bloomIndexer *filters.BloomIndexerService
 }
 
-func newEthAPIBackend(config RPCConfig, vm *VM) *ethAPIBackend {
-	b := &ethAPIBackend{
-		Set: vm.mempool,
-		vm:  vm,
-	}
-
-	// TODO: if we are state syncing, we need to provide the first block available to the indexer
-	// via [core.ChainIndexer.AddCheckpoint].
-	b.bloomIndexer = filters.NewBloomIndexerService(b, config.BloomSectionSize)
-
-	return b
-}
-
 func (b *ethAPIBackend) BloomStatus() (uint64, uint64) {
 	return b.bloomIndexer.BloomStatus()
 }
@@ -224,6 +240,11 @@ func (b *ethAPIBackend) CurrentBlock() *types.Header {
 
 func (b *ethAPIBackend) GetTd(context.Context, common.Hash) *big.Int {
 	return big.NewInt(0) // TODO(arr4n)
+}
+
+func (b *ethAPIBackend) SyncProgress() ethereum.SyncProgress {
+	// Avalanchego does not expose APIs until after the node has fully synced.
+	return ethereum.SyncProgress{}
 }
 
 func (b *ethAPIBackend) HeaderByNumber(ctx context.Context, n rpc.BlockNumber) (*types.Header, error) {
