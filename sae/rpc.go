@@ -212,6 +212,7 @@ func (s *netAPI) Version() string {
 // RPCConfig provides options for initialization of RPCs for the node.
 type RPCConfig struct {
 	BloomSectionSize uint64 // Number of blocks per bloom section
+	EnableProfiling  bool
 }
 
 var (

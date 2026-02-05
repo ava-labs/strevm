@@ -69,14 +69,8 @@ type Config struct {
 	MempoolConfig legacypool.Config
 	RPCConfig     RPCConfig
 	TrieDBConfig  *triedb.Config
-	RPCConfig     RPCConfig
 
 	Now func() time.Time // defaults to [time.Now] if nil
-}
-
-// RPCConfig configures RPC API behavior.
-type RPCConfig struct {
-	EnableProfiling bool
 }
 
 // NewVM returns a new [VM] that is ready for use immediately upon return.
