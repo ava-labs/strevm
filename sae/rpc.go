@@ -290,6 +290,7 @@ func (s *netAPI) Version() string {
 
 var _ APIBackend = (*ethAPIBackend)(nil)
 
+// TODO: Rename to apiBackend
 type ethAPIBackend struct {
 	*txgossip.Set
 	vm             *VM
