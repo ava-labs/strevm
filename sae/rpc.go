@@ -13,6 +13,7 @@ import (
 
 	"github.com/ava-labs/avalanchego/network/p2p"
 	"github.com/ava-labs/avalanchego/version"
+	ethereum "github.com/ava-labs/libevm"
 	"github.com/ava-labs/libevm/accounts"
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/common/hexutil"
@@ -31,15 +32,20 @@ import (
 	"github.com/ava-labs/strevm/txgossip"
 )
 
-func (vm *VM) ethRPCServer() (*rpc.Server, error) {
+// APIBackend returns an API backend backed by the VM.
+func (vm *VM) APIBackend() ethapi.Backend {
 	accountManager := accounts.NewManager(&accounts.Config{})
 	vm.toClose = append(vm.toClose, accountManager.Close)
 
-	b := &ethAPIBackend{
-		vm:             vm,
+	return &ethAPIBackend{
 		Set:            vm.mempool,
+		vm:             vm,
 		accountManager: accountManager,
 	}
+}
+
+func (vm *VM) ethRPCServer() (*rpc.Server, error) {
+	b := vm.APIBackend()
 	s := rpc.NewServer()
 
 	// Even if this function errors, we should close API to prevent a goroutine
@@ -72,11 +78,16 @@ func (vm *VM) ethRPCServer() (*rpc.Server, error) {
 		// - txpool_inspect
 		// - txpool_status
 		{"txpool", ethapi.NewTxPoolAPI(b)},
-
+		// Standard Ethereum node APIs:
+		// - eth_syncing
+		{"eth", ethapi.NewEthereumAPI(b)},
 		// Standard Ethereum node APIs:
 		// - eth_blockNumber
+		// - eth_chainId
 		// - eth_getBlockByHash
 		// - eth_getBlockByNumber
+		// - eth_getUncleByBlockHashAndIndex
+		// - eth_getUncleByBlockNumberAndIndex
 		// - eth_getUncleCountByBlockHash
 		// - eth_getUncleCountByBlockNumber
 		//
@@ -194,6 +205,11 @@ func (b *ethAPIBackend) CurrentBlock() *types.Header {
 
 func (b *ethAPIBackend) GetTd(context.Context, common.Hash) *big.Int {
 	return big.NewInt(0) // TODO(arr4n)
+}
+
+func (b *ethAPIBackend) SyncProgress() ethereum.SyncProgress {
+	// Avalanchego does not expose APIs until after the node has fully synced.
+	return ethereum.SyncProgress{}
 }
 
 func (b *ethAPIBackend) HeaderByNumber(ctx context.Context, n rpc.BlockNumber) (*types.Header, error) {
