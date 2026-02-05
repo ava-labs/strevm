@@ -290,6 +290,16 @@ func TestTxPoolNamespace(t *testing.T) {
 	}...)
 }
 
+func TestEthSyncing(t *testing.T) {
+	ctx, sut := newSUT(t, 1)
+	// Avalanchego does not expose APIs until after the node has fully synced,
+	// so eth_syncing always returns false (not syncing).
+	sut.testRPC(ctx, t, rpcTest{
+		method: "eth_syncing",
+		want:   false,
+	})
+}
+
 func TestChainID(t *testing.T) {
 	for id := range uint64(2) {
 		ctx, sut := newSUT(t, 0, options.Func[sutConfig](func(c *sutConfig) {
