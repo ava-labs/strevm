@@ -124,7 +124,7 @@ func (vm *VM) buildBlock(
 	}
 
 	// Underflow of Add(-tau) is prevented by the above check.
-	lastSettled, ok, err := blocks.LastToSettleAt(vm.hooks(), bTime.Add(-saeparams.Tau), parent)
+	lastSettled, ok, err := blocks.LastToSettleAt(vm.hooks(), bTime.Add(-saeparams.TauSeconds), parent)
 	if err != nil {
 		return nil, err
 	}
