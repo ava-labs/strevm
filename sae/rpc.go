@@ -40,15 +40,19 @@ import (
 	"github.com/ava-labs/strevm/txgossip"
 )
 
-func (vm *VM) ethRPCServer() (*rpc.Server, error) {
-	accountManager := accounts.NewManager(&accounts.Config{})
-	vm.toClose = append(vm.toClose, accountManager.Close)
+type APIBackend interface {
+	filters.Backend
+	ethapi.Backend
+	tracers.Backend
+}
 
-	b := &ethAPIBackend{
-		Set:            vm.mempool,
-		vm:             vm,
-		accountManager: accountManager,
-	}
+// APIBackend returns an API backend backed by the VM.
+func (vm *VM) APIBackend() APIBackend {
+	return vm.apiBackend
+}
+
+func (vm *VM) ethRPCServer() (*rpc.Server, error) {
+	b := vm.APIBackend()
 
 	filterSystem := filters.NewFilterSystem(b, filters.Config{})
 	filterAPI := filters.NewFilterAPI(filterSystem, false /*isLightClient*/)
@@ -284,11 +288,7 @@ func (s *netAPI) Version() string {
 	return s.chainID
 }
 
-var (
-	_ filters.Backend = (*ethAPIBackend)(nil)
-	_ ethapi.Backend  = (*ethAPIBackend)(nil)
-	_ tracers.Backend = (*ethAPIBackend)(nil)
-)
+var _ APIBackend = (*ethAPIBackend)(nil)
 
 type ethAPIBackend struct {
 	*txgossip.Set

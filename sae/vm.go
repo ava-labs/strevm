@@ -19,6 +19,7 @@ import (
 	"github.com/ava-labs/avalanchego/utils/bloom"
 	"github.com/ava-labs/avalanchego/utils/logging"
 	"github.com/ava-labs/avalanchego/version"
+	"github.com/ava-labs/libevm/accounts"
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core"
 	"github.com/ava-labs/libevm/core/rawdb"
@@ -56,9 +57,10 @@ type VM struct {
 		accepted, settled atomic.Pointer[blocks.Block]
 	}
 
-	exec    *saexec.Executor
-	mempool *txgossip.Set
-	newTxs  chan struct{}
+	exec       *saexec.Executor
+	mempool    *txgossip.Set
+	newTxs     chan struct{}
+	apiBackend APIBackend
 
 	toClose [](func() error)
 }
@@ -207,6 +209,17 @@ func NewVM(
 			wg.Wait()
 			return nil
 		})
+	}
+
+	{ // ==========  API Backend  ==========
+		accountManager := accounts.NewManager(&accounts.Config{})
+		vm.toClose = append(vm.toClose, accountManager.Close)
+
+		vm.apiBackend = &ethAPIBackend{
+			Set:            vm.mempool,
+			vm:             vm,
+			accountManager: accountManager,
+		}
 	}
 
 	return vm, nil
