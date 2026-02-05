@@ -30,8 +30,8 @@ import (
 	"github.com/ava-labs/strevm/txgossip"
 )
 
-// EthAPIBackend returns an API backend backed by the VM.
-func (vm *VM) EthAPIBackend() ethapi.Backend {
+// APIBackend returns an API backend backed by the VM.
+func (vm *VM) APIBackend() ethapi.Backend {
 	return &ethAPIBackend{
 		vm:  vm,
 		Set: vm.mempool,
@@ -39,7 +39,7 @@ func (vm *VM) EthAPIBackend() ethapi.Backend {
 }
 
 func (vm *VM) ethRPCServer() (*rpc.Server, error) {
-	b := vm.EthAPIBackend()
+	b := vm.APIBackend()
 	s := rpc.NewServer()
 
 	// Even if this function errors, we should close API to prevent a goroutine
