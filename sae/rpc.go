@@ -45,7 +45,7 @@ func (vm *VM) APIBackend(config RPCConfig) ethapi.Backend {
 	return b
 }
 
-func CloseBackend(backend ethapi.Backend) error {
+func closeBackend(backend ethapi.Backend) error {
 	b, ok := backend.(*ethAPIBackend)
 	if !ok {
 		return nil
@@ -64,7 +64,7 @@ func (vm *VM) ethRPCServer(config RPCConfig) (*rpc.Server, error) {
 	filterAPI := filters.NewFilterAPI(filterSystem, false /*isLightClient*/)
 	vm.toClose = append(vm.toClose, func() error {
 		filters.CloseAPI(filterAPI)
-		return CloseBackend(b)
+		return closeBackend(b)
 	})
 
 	// Standard Ethereum APIs are documented at: https://ethereum.org/developers/docs/apis/json-rpc
