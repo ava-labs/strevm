@@ -259,10 +259,6 @@ func (b *ethAPIBackend) GetPoolTransactions() (types.Transactions, error) {
 	return txs, nil
 }
 
-func (b *ethAPIBackend) GetPoolNonce(ctx context.Context, addr common.Address) (uint64, error) {
-	return b.Set.Pool.Nonce(addr), nil
-}
-
 type canonicalReader[T any] func(ethdb.Reader, common.Hash, uint64) *T
 
 func readByNumber[T any](b *ethAPIBackend, n rpc.BlockNumber, read canonicalReader[T]) (*T, error) {
