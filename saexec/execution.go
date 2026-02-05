@@ -55,6 +55,22 @@ func (e *Executor) Enqueue(ctx context.Context, block *blocks.Block) error {
 		case <-e.done:
 			// `e.done` can also close due to [Executor.execute] errors.
 			return errExecutorClosed
+
+		case <-time.After(warnAfter):
+			queueLen := len(e.queue)
+			queueCap := cap(e.queue)
+
+			// If this happens then increase the channel's buffer size.
+			if float64(queueLen) > 0.8*float64(queueCap) {
+				e.log.Warn(
+					"Execution queue buffer too small",
+					zap.Duration("wait", warnAfter),
+					zap.Uint64("block_height", block.Height()),
+					zap.Int("queue_length", queueLen),
+					zap.Int("queue_capacity", queueCap),
+				)
+			}
+			warnAfter *= 2
 		}
 	}
 }
