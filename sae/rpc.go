@@ -351,9 +351,7 @@ func (b *ethAPIBackend) GetReceipts(ctx context.Context, hash common.Hash) (type
 		if !block.Executed() {
 			return nil, nil
 		}
-		receipts := block.Receipts()
-
-		return receipts, nil
+		return block.Receipts(), nil
 	}
 
 	number := rawdb.ReadHeaderNumber(b.vm.db, hash)

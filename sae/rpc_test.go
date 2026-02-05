@@ -591,7 +591,7 @@ func (sut *SUT) testGetByUnknownNumber(ctx context.Context, t *testing.T) {
 
 func TestReceiptAPIs(t *testing.T) {
 	opt, vmTime := withVMTime(t, time.Unix(saeparams.TauSeconds, 0))
-	ctx, sut := newSUT(t, 1, opt)
+	ctx, sut := newSUT(t, 5, opt)
 
 	// Blocking precompile creates accepted-but-not-executed blocks
 	blockingPrecompile := common.Address{'b', 'l', 'o', 'c', 'k'}
@@ -608,9 +608,9 @@ func TestReceiptAPIs(t *testing.T) {
 	}
 	libevmHooks.Register(t)
 
-	createTx := func(t *testing.T, to common.Address) *types.Transaction {
+	createTx := func(t *testing.T, account int, to common.Address) *types.Transaction {
 		t.Helper()
-		return sut.wallet.SetNonceAndSign(t, 0, &types.DynamicFeeTx{
+		return sut.wallet.SetNonceAndSign(t, account, &types.DynamicFeeTx{
 			To:        &to,
 			Gas:       params.TxGas,
 			GasFeeCap: big.NewInt(1),
@@ -633,26 +633,26 @@ func TestReceiptAPIs(t *testing.T) {
 	genesis := sut.lastAcceptedBlock(t)
 
 	// Block 1: Executed, still in cache (not yet settled)
-	txExecutedInCache := createTx(t, zeroAddr)
+	txExecutedInCache := createTx(t, 0, zeroAddr)
 	blockExecutedInCache := sut.createAndAcceptBlock(t, txExecutedInCache)
 	require.NoErrorf(t, blockExecutedInCache.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", blockExecutedInCache)
 
 	// Block 2: Will be settled to DB
-	txSettled := createTx(t, zeroAddr)
+	txSettled := createTx(t, 1, zeroAddr)
 	blockSettled := sut.createAndAcceptBlock(t, txSettled)
 	require.NoErrorf(t, blockSettled.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", blockSettled)
 	receiptFromCache := requireReceipt(t, txSettled)
 	vmTime.set(blockSettled.ExecutedByGasTime().AsTime().Add(saeparams.Tau))
 
 	// Block 3: Multiple txs, executed in cache
-	txMulti1 := createTx(t, zeroAddr)
-	txMulti2 := createTx(t, zeroAddr)
-	txMulti3 := createTx(t, zeroAddr)
+	txMulti1 := createTx(t, 2, zeroAddr)
+	txMulti2 := createTx(t, 2, zeroAddr)
+	txMulti3 := createTx(t, 2, zeroAddr)
 	blockMultiTxs := sut.createAndAcceptBlock(t, txMulti1, txMulti2, txMulti3)
 	require.NoErrorf(t, blockMultiTxs.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", blockMultiTxs)
 
 	// Block 4: Triggers settlement of block 2
-	triggerSettlement := createTx(t, zeroAddr)
+	triggerSettlement := createTx(t, 3, zeroAddr)
 	b4 := sut.createAndAcceptBlock(t, triggerSettlement)
 	require.NoErrorf(t, b4.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", b4)
 	require.NoErrorf(t, blockSettled.WaitUntilSettled(ctx), "%T.WaitUntilSettled()", blockSettled)
@@ -661,7 +661,7 @@ func TestReceiptAPIs(t *testing.T) {
 	receiptFromDB := requireReceipt(t, txSettled)
 
 	// Block 5: Accepted but not executed (must be last to avoid blocking)
-	txPending := createTx(t, blockingPrecompile)
+	txPending := createTx(t, 4, blockingPrecompile)
 	_ = sut.createAndAcceptBlock(t, txPending)
 
 	// shoutout austin larson
