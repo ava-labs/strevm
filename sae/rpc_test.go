@@ -34,6 +34,8 @@ import (
 	"github.com/ava-labs/strevm/saetest"
 )
 
+var zeroAddr common.Address
+
 type rpcTest struct {
 	method string
 	args   []any
@@ -312,7 +314,6 @@ func TestEthGetters(t *testing.T) {
 			GasFeeCap: big.NewInt(1),
 		})
 	}
-	var zeroAddr common.Address
 
 	genesis := sut.lastAcceptedBlock(t)
 
@@ -368,90 +369,69 @@ func TestEthGetters(t *testing.T) {
 	})
 }
 
-func TestEthTransaction(t *testing.T) {
-	var zeroAddr common.Address
+func TestEthPendingTransactions(t *testing.T) {
+	ctx, sut := newSUT(t, 1)
 
-	t.Run("eth_sendRawTransaction and eth_pendingTransactions", func(t *testing.T) {
-		ctx, sut := newSUT(t, 1)
-
-		tx := sut.wallet.SetNonceAndSign(t, 0, &types.DynamicFeeTx{
-			To:        &zeroAddr,
-			Gas:       params.TxGas,
-			GasFeeCap: big.NewInt(1),
-			Value:     big.NewInt(100),
-		})
-		rawTx, err := tx.MarshalBinary()
-		require.NoErrorf(t, err, "%T.MarshalBinary()", tx)
-
-		sut.testRPC(ctx, t, rpcTest{
-			method: "eth_sendRawTransaction",
-			args:   []any{hexutil.Bytes(rawTx)},
-			want:   tx.Hash(),
-		})
-
-		sut.requireInMempool(t, tx.Hash())
-
-		// Verify eth_pendingTransactions returns empty because no accounts are
-		// configured in AccountManager. This is standard geth/libevm behavior
-		// where the method filters results to only transactions from known accounts.
-		sut.syncMempool(t)
-		var pendingTxs []*ethapi.RPCTransaction
-		err = sut.CallContext(ctx, &pendingTxs, "eth_pendingTransactions")
-		require.NoError(t, err)
-		require.Empty(t, pendingTxs, "pendingTransactions filters to known accounts only")
+	tx := sut.wallet.SetNonceAndSign(t, 0, &types.DynamicFeeTx{
+		To:        &zeroAddr,
+		Gas:       params.TxGas,
+		GasFeeCap: big.NewInt(1),
+		Value:     big.NewInt(100),
 	})
+	sut.mustSendTx(t, tx)
+	sut.requireInMempool(t, tx.Hash())
 
-	t.Run("eth_sendTransaction", func(t *testing.T) {
-		ctx, sut := newSUT(t, 1)
-
-		// eth_sendTransaction should fail with "unknown account" since no keystore is configured.
-		// This is intended behavior and the extent of our 'support' of this method - we do not
-		// want to store private keys on the node.
-		var txHash common.Hash
-		err := sut.CallContext(ctx, &txHash, "eth_sendTransaction", map[string]any{
-			"from":     sut.wallet.Addresses()[0],
-			"to":       zeroAddr,
-			"gas":      hexutil.Uint64(params.TxGas),
-			"gasPrice": hexutil.Big(*big.NewInt(1)),
-			"value":    hexutil.Big(*big.NewInt(200)),
-		})
-		require.ErrorContains(t, err, "unknown account")
+	// eth_pendingTransactions filters results to only transactions from
+	// accounts configured in the AccountManager, which is always empty.
+	sut.testRPC(ctx, t, rpcTest{
+		method: "eth_pendingTransactions",
+		want:   []*ethapi.RPCTransaction{},
 	})
 }
 
+// SAE doesn't really support APIs that require a key on the node, as there is
+// no way to add keys. But, we want to ensure the methods error gracefully.
 func TestEthSigningAPIs(t *testing.T) {
-	// eth_sign and eth_signTransaction should fail with "unknown account" since no keystore
-	// is configured. This is intended behavior - we do not want to store private keys on the node.
-	// These methods are supported to ensure compatibility with standard Ethereum tooling, but they
-	// require external account management.
-	t.Run("eth_sign", func(t *testing.T) {
-		ctx, sut := newSUT(t, 1)
+	ctx, sut := newSUT(t, 1)
 
-		addr := sut.wallet.Addresses()[0]
-		data := hexutil.Bytes("test message")
-
-		var signature hexutil.Bytes
-		err := sut.CallContext(ctx, &signature, "eth_sign", addr, data)
-		require.ErrorContains(t, err, "unknown account")
-	})
-
-	t.Run("eth_signTransaction", func(t *testing.T) {
-		ctx, sut := newSUT(t, 1)
-
-		var zeroAddr common.Address
-		addr := sut.wallet.Addresses()[0]
-
-		var signedTx hexutil.Bytes
-		err := sut.CallContext(ctx, &signedTx, "eth_signTransaction", map[string]any{
-			"from":     addr,
-			"to":       zeroAddr,
-			"gas":      hexutil.Uint64(params.TxGas),
-			"gasPrice": hexutil.Big(*big.NewInt(1)),
-			"value":    hexutil.Big(*big.NewInt(100)),
-			"nonce":    hexutil.Uint64(0),
+	txFields := map[string]any{
+		"from":     zeroAddr,
+		"to":       zeroAddr,
+		"gas":      hexutil.Uint64(params.TxGas),
+		"gasPrice": hexutil.Big(*big.NewInt(1)),
+		"value":    hexutil.Big(*big.NewInt(100)),
+		"nonce":    hexutil.Uint64(0),
+	}
+	tests := []struct {
+		method string
+		args   []any
+	}{
+		{
+			method: "eth_sign",
+			args: []any{
+				zeroAddr,
+				hexutil.Bytes("test message"),
+			},
+		},
+		{
+			method: "eth_signTransaction",
+			args: []any{
+				txFields,
+			},
+		},
+		{
+			method: "eth_sendTransaction",
+			args: []any{
+				txFields,
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.method, func(t *testing.T) {
+			err := sut.CallContext(ctx, &struct{}{}, test.method, test.args...)
+			require.ErrorContains(t, err, "unknown account")
 		})
-		require.ErrorContains(t, err, "unknown account")
-	})
+	}
 }
 
 func (sut *SUT) testGetByHash(ctx context.Context, t *testing.T, want *types.Block) {
