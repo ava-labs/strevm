@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ava-labs/avalanchego/database"
 	"github.com/ava-labs/avalanchego/database/memdb"
 	"github.com/ava-labs/avalanchego/ids"
 	"github.com/ava-labs/avalanchego/snow"
@@ -80,6 +81,7 @@ type SUT struct {
 	rawVM   *VM
 	genesis *blocks.Block
 	wallet  *saetest.Wallet
+	avaDB   database.Database
 	db      ethdb.Database
 	hooks   hook.Points
 	logger  *saetest.TBLogger
@@ -93,6 +95,7 @@ type (
 		vmConfig Config
 		logLevel logging.Level
 		genesis  core.Genesis
+		db       database.Database
 	}
 	sutOption = options.Option[sutConfig]
 )
@@ -122,6 +125,7 @@ func newSUT(tb testing.TB, numAccounts uint, opts ...sutOption) (context.Context
 			Timestamp:  saeparams.TauSeconds,
 			Difficulty: big.NewInt(0), // irrelevant but required
 		},
+		db: memdb.New(),
 	}, opts...)
 
 	vm := NewSinceGenesis(conf.vmConfig)
@@ -142,11 +146,10 @@ func newSUT(tb testing.TB, numAccounts uint, opts ...sutOption) (context.Context
 		},
 	}
 
-	mdb := memdb.New()
 	require.NoError(tb, snow.Initialize(
 		ctx,
 		snowCtx,
-		mdb,
+		conf.db,
 		marshalJSON(tb, conf.genesis),
 		nil, // upgrade bytes
 		nil, // config bytes (not ChainConfig)
@@ -175,7 +178,8 @@ func newSUT(tb testing.TB, numAccounts uint, opts ...sutOption) (context.Context
 			keys,
 			types.LatestSigner(conf.genesis.Config),
 		),
-		db:     newEthDB(mdb),
+		avaDB:  conf.db,
+		db:     newEthDB(conf.db),
 		hooks:  conf.vmConfig.Hooks,
 		logger: logger,
 

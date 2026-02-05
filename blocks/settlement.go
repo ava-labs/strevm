@@ -7,13 +7,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math/big"
 	"slices"
 	"sync/atomic"
 	"time"
 
 	"github.com/ava-labs/avalanchego/vms/components/gas"
-	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/ethdb"
 	"go.uber.org/zap"
 
@@ -82,21 +80,26 @@ func (b *Block) markSettled(lastSettled *atomic.Pointer[Block]) error {
 // otherwise be considered identical.
 func (b *Block) MarkSynchronous(hooks hook.Points, db ethdb.Database, excessAfter gas.Gas) error {
 	ethB := b.EthBlock()
-	baseFee := ethB.BaseFee()
-	if baseFee == nil { // genesis blocks
-		baseFee = new(big.Int)
-	}
-	execTime := gastime.New(
-		PreciseTime(hooks, b.Header()),
-		hooks.GasTargetAfter(b.Header()), // target _after_ is a requirement of [Block.MarkExecuted]
-		excessAfter,
-	)
 	// Receipts of a synchronous block have already been "settled" by the block
 	// itself. As the only reason to pass receipts here is for later settlement
 	// in another block, there is no need to pass anything meaningful as it
 	// would also require them to be received as an argument to MarkSynchronous.
-	var rs types.Receipts
-	if err := b.MarkExecuted(db, execTime, time.Time{}, baseFee, rs, ethB.Root(), new(atomic.Pointer[Block])); err != nil {
+	e := &executionResults{
+		byGas: *gastime.New(
+			PreciseTime(hooks, b.Header()),
+			hooks.GasTargetAfter(b.Header()), // target _after_ is a requirement of [Block.MarkExecuted]
+			excessAfter,
+		),
+		receiptRoot:   b.b.ReceiptHash(),
+		stateRootPost: ethB.Root(),
+	}
+	if err := e.setBaseFee(ethB.BaseFee()); err != nil {
+		return err
+	}
+	if err := e.persist(db, ethB.NumberU64()); err != nil {
+		return err
+	}
+	if err := b.markExecuted(e, nil); err != nil {
 		return err
 	}
 	b.synchronous = true
