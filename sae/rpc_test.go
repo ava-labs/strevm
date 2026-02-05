@@ -32,6 +32,7 @@ import (
 	"github.com/ava-labs/strevm/cmputils"
 	saeparams "github.com/ava-labs/strevm/params"
 	"github.com/ava-labs/strevm/saetest"
+	"github.com/ava-labs/strevm/saetest/escrow"
 )
 
 type rpcTest struct {
@@ -120,15 +121,38 @@ func TestSubscriptions(t *testing.T) {
 		require.Equal(t, tx.Hash(), got, "tx hash from newPendingTransactions subscription")
 	})
 
-	// t.Run("logs", func(t *testing.T) {
-	//  ctx, sut := newSUT(t, 1)
-	// 	ch := make(chan types.Log, 1)
-	// 	sub, err := sut.rpcClient.EthSubscribe(ctx, ch, "logs", map[string]any{})
-	// 	require.NoError(t, err, "EthSubscribe(logs)")
-	// 	t.Cleanup(sub.Unsubscribe)
+	t.Run("logs", func(t *testing.T) {
+		ctx, sut := newSUT(t, 1)
+		ch := make(chan types.Log, 2)
+		sub, err := sut.rpcClient.EthSubscribe(ctx, ch, "logs", map[string]any{})
+		require.NoError(t, err, "EthSubscribe(logs)")
+		t.Cleanup(sub.Unsubscribe)
 
-	// 	// TODO(JonathanOppenheimer): Add contract deployment and log emission testing.
-	// })
+		deployTx := sut.wallet.SetNonceAndSign(t, 0, &types.LegacyTx{
+			Data:     escrow.CreationCode(),
+			GasPrice: big.NewInt(1),
+			Gas:      3e6,
+		})
+		contractAddr := crypto.CreateAddress(sut.wallet.Addresses()[0], deployTx.Nonce())
+		sut.mustSendTx(t, deployTx)
+		sut.runConsensusLoop(t, sut.lastAcceptedBlock(t))
+
+		depositTx := sut.wallet.SetNonceAndSign(t, 0, &types.LegacyTx{
+			To:       &contractAddr,
+			Value:    big.NewInt(100),
+			Data:     escrow.CallDataToDeposit(sut.wallet.Addresses()[0]),
+			GasPrice: big.NewInt(1),
+			Gas:      1e6,
+		})
+		sut.mustSendTx(t, depositTx)
+		sut.runConsensusLoop(t, sut.lastAcceptedBlock(t))
+
+		got := <-ch
+		require.Equal(t, contractAddr, got.Address, "log contract address")
+		require.Equal(t, depositTx.Hash(), got.TxHash, "log transaction hash")
+		require.Len(t, got.Topics, 1, "log topics count")
+		require.Equal(t, crypto.Keccak256Hash([]byte("Deposit(address,uint256)")), got.Topics[0], "log event signature")
+	})
 
 	// SAE's no-op subscriptions (chainSide, removedLogs, pendingLogs) are backend
 	// methods for ethapi.Backend compliance but are not exposed via RPC since SAE

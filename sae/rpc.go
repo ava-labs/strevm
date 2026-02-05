@@ -100,6 +100,7 @@ func (vm *VM) ethRPCServer() (*rpc.Server, error) {
 		// - eth_subscribe
 		//  - newHeads
 		//  - newPendingTransactions
+		//  - logs
 		{"eth", filterAPI},
 	}
 	for _, api := range apis {
