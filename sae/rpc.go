@@ -102,7 +102,7 @@ func (vm *VM) ethRPCServer() (*rpc.Server, error) {
 		{"eth", filterAPI},
 	}
 
-	if vm.config.RPCConfig.EnableDebugNamespace {
+	if vm.config.RPCConfig.EnableProfiling {
 		apis = append(apis, api{
 			// Geth-specific APIs:
 			// - debug_blockProfile
