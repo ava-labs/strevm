@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/ava-labs/avalanchego/ids"
+	"github.com/ava-labs/avalanchego/snow"
 	"github.com/ava-labs/avalanchego/vms/components/gas"
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core"
@@ -25,12 +26,26 @@ import (
 )
 
 // Points define user-injected hook points.
+type Points interface {
+	InitializerPoints
+	BlockPoints
+}
+
+// InitializerPoints define the user-injected hook points for VM initialization.
+type InitializerPoints interface {
+	// ParseGenesis returns the [*core.Genesis] that the VM will use
+	// during initialization.
+	ParseGenesis(ctx *snow.Context, genesisBytes []byte) (*core.Genesis, error)
+}
+
+// BlockPoints define user-injected hook points for block building, execution,
+// and verification.
 //
 // Directly using this interface as a [BlockBuilder] is indicative of this node
 // locally building a block. Calling [Points.BlockRebuilderFrom] with an
 // existing block is indicative of this node reconstructing a block built
 // elsewhere during verification.
-type Points interface {
+type BlockPoints interface {
 	BlockBuilder
 	// BlockRebuilderFrom returns a [BlockBuilder] that will attempt to
 	// reconstruct the provided block. If the provided block is valid for

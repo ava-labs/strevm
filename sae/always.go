@@ -5,7 +5,6 @@ package sae
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 
 	"github.com/ava-labs/avalanchego/database"
@@ -47,9 +46,9 @@ func (vm *SinceGenesis) Initialize(
 	db := newEthDB(avaDB)
 	tdb := triedb.NewDatabase(db, vm.config.TrieDBConfig)
 
-	genesis := new(core.Genesis)
-	if err := json.Unmarshal(genesisBytes, genesis); err != nil {
-		return fmt.Errorf("json.Unmarshal(%T): %v", genesis, err)
+	genesis, err := vm.config.Hooks.ParseGenesis(snowCtx, genesisBytes)
+	if err != nil {
+		return fmt.Errorf("parsing genesis: %w", err)
 	}
 	config, _, err := core.SetupGenesisBlock(db, tdb, genesis)
 	if err != nil {
