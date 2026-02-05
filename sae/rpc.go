@@ -14,11 +14,13 @@ import (
 	"github.com/ava-labs/avalanchego/network/p2p"
 	"github.com/ava-labs/avalanchego/version"
 	ethereum "github.com/ava-labs/libevm"
+	"github.com/ava-labs/libevm/accounts"
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/common/hexutil"
 	"github.com/ava-labs/libevm/core"
 	"github.com/ava-labs/libevm/core/bloombits"
 	"github.com/ava-labs/libevm/core/rawdb"
+	"github.com/ava-labs/libevm/core/txpool"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/crypto"
 	"github.com/ava-labs/libevm/eth/filters"
@@ -35,8 +37,9 @@ import (
 // APIBackend returns an API backend backed by the VM.
 func (vm *VM) APIBackend(config RPCConfig) ethapi.Backend {
 	b := &ethAPIBackend{
-		vm:  vm,
-		Set: vm.mempool,
+		Set:            vm.mempool,
+		vm:             vm,
+		accountManager: accounts.NewManager(&accounts.Config{}),
 	}
 
 	// TODO: if we are state syncing, we need to provide the first block available to the indexer
@@ -56,7 +59,11 @@ func closeBackend(backend ethapi.Backend) error {
 }
 
 func (vm *VM) ethRPCServer(config RPCConfig) (*rpc.Server, error) {
-	b := vm.APIBackend(config)
+	b, ok := vm.APIBackend(config).(*ethAPIBackend)
+	if !ok {
+		return nil, errors.New("APIBackend returned unexpected type")
+	}
+	vm.toClose = append(vm.toClose, b.accountManager.Close)
 	s := rpc.NewServer()
 
 	// Even if this function errors, we should close API to prevent a goroutine
@@ -114,11 +121,16 @@ func (vm *VM) ethRPCServer(config RPCConfig) (*rpc.Server, error) {
 		// - eth_getTransactionByBlockHashAndIndex
 		// - eth_getTransactionByBlockNumberAndIndex
 		// - eth_getTransactionByHash
+		// - eth_sendRawTransaction
+		// - eth_sendTransaction
+		// - eth_sign
+		// - eth_signTransaction
 		//
 		// Undocumented APIs:
-		// - eth_getRawTransactionByHash
 		// - eth_getRawTransactionByBlockHashAndIndex
 		// - eth_getRawTransactionByBlockNumberAndIndex
+		// - eth_getRawTransactionByHash
+		// - eth_pendingTransactions
 		{"eth", ethapi.NewTransactionAPI(b, new(ethapi.AddrLocker))},
 		// Standard Ethereum node APIS:
 		// - eth_getLogs
@@ -224,8 +236,9 @@ type ethAPIBackend struct {
 	ethapi.Backend // TODO(arr4n) remove in favour of `var _ ethapi.Backend = (*ethAPIBackend)(nil)`
 	*txgossip.Set
 
-	vm           *VM
-	bloomIndexer *filters.BloomIndexerService
+	vm             *VM
+	accountManager *accounts.Manager
+	bloomIndexer   *filters.BloomIndexerService
 }
 
 func (b *ethAPIBackend) BloomStatus() (uint64, uint64) {
@@ -260,6 +273,10 @@ func (b *ethAPIBackend) RPCTxFeeCap() float64 {
 
 func (b *ethAPIBackend) UnprotectedAllowed() bool {
 	return false
+}
+
+func (b *ethAPIBackend) AccountManager() *accounts.Manager {
+	return b.accountManager
 }
 
 func (b *ethAPIBackend) CurrentHeader() *types.Header {
@@ -327,6 +344,25 @@ func (b *ethAPIBackend) GetBody(ctx context.Context, hash common.Hash, number rp
 
 func (b *ethAPIBackend) GetLogs(ctx context.Context, blockHash common.Hash, number uint64) ([][]*types.Log, error) {
 	return rawdb.ReadLogs(b.vm.db, blockHash, number), nil
+}
+
+func (b *ethAPIBackend) GetPoolTransactions() (types.Transactions, error) {
+	pending := b.Pool.Pending(txpool.PendingFilter{})
+
+	var pendingCount int
+	for _, batch := range pending {
+		pendingCount += len(batch)
+	}
+
+	txs := make(types.Transactions, 0, pendingCount)
+	for _, batch := range pending {
+		for _, lazy := range batch {
+			if tx := lazy.Resolve(); tx != nil {
+				txs = append(txs, tx)
+			}
+		}
+	}
+	return txs, nil
 }
 
 type canonicalReader[T any] func(ethdb.Reader, common.Hash, uint64) *T
