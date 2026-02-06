@@ -362,18 +362,19 @@ func (b *ethAPIBackend) GetReceipts(ctx context.Context, hash common.Hash) (type
 	}
 	number := *numberPtr
 
-	// The block header contains the minimum base fee from acceptance time,
-	// but execution may use a higher base fee due to dynamic fee adjustments
-	// during the τ delay. If execution results are missing, the block was
-	// accepted but not yet executed, so receipts are unavailable.
-	baseFee, err := blocks.ReadBaseFeeFromExecutionResults(b.vm.db, number)
-	if err != nil {
+	receipts := rawdb.ReadRawReceipts(b.vm.db, hash, number)
+	if receipts == nil {
+		// The block is known but has not completed execution yet, so no
+		// receipts are available.
 		return nil, nil
 	}
 
-	receipts := rawdb.ReadRawReceipts(b.vm.db, hash, number)
-	if receipts == nil {
-		return nil, nil
+	// The block header contains the minimum base fee from acceptance time,
+	// but execution may use a higher base fee due to dynamic fee adjustments
+	// during the τ delay.
+	baseFee, err := blocks.ReadBaseFeeFromExecutionResults(b.vm.db, number)
+	if err != nil {
+		return nil, fmt.Errorf("reading execution-result base fee: %w", err)
 	}
 
 	body := rawdb.ReadBody(b.vm.db, hash, number)

@@ -458,7 +458,6 @@ func TestReceiptAPIs(t *testing.T) {
 	}
 
 	t.Run("eth_getTransactionReceipt", func(t *testing.T) {
-		// Receipts found via cache and DB code paths
 		for _, tc := range []struct {
 			name string
 			tx   *types.Transaction
@@ -479,7 +478,6 @@ func TestReceiptAPIs(t *testing.T) {
 			})
 		}
 
-		// Nil returns: not-yet-executed and nonexistent transactions
 		sut.testRPC(ctx, t, []rpcTest{
 			{
 				method: "eth_getTransactionReceipt",
@@ -509,7 +507,6 @@ func TestReceiptAPIs(t *testing.T) {
 	t.Run("eth_getBlockReceipts", func(t *testing.T) {
 		multiTxs := []*types.Transaction{txMulti1, txMulti2, txMulti3}
 
-		// Receipts found via cache and DB code paths
 		for _, tc := range []struct {
 			name string
 			id   any
@@ -536,7 +533,6 @@ func TestReceiptAPIs(t *testing.T) {
 			})
 		}
 
-		// Verify by-hash and by-number return equivalent receipts
 		t.Run("hash_equals_number", func(t *testing.T) {
 			var byHash, byNum []*types.Receipt
 			require.NoError(t, sut.CallContext(ctx, &byHash, "eth_getBlockReceipts", blockMultiTxs.Hash()))
@@ -546,11 +542,10 @@ func TestReceiptAPIs(t *testing.T) {
 			}
 		})
 
-		// Nil/empty returns
 		sut.testRPC(ctx, t, []rpcTest{
 			{
 				method: "eth_getBlockReceipts",
-				args:   []any{common.HexToHash("0xdeadbeef")},
+				args:   []any{common.Hash{}},
 				want:   ([]*types.Receipt)(nil),
 			},
 			{
@@ -561,16 +556,20 @@ func TestReceiptAPIs(t *testing.T) {
 		}...)
 	})
 
-	// Deleting execution results from the DB proves GetReceipts depends on
-	// the execution-time base fee rather than the header's minimum base fee.
+	// Missing or malformed execution results must surface as backend failures.
 	execKey := binary.BigEndian.AppendUint64(
 		[]byte(saeparams.RawDBPrefix+"exec-"),
 		blockSettled.Height(),
 	)
 	require.NoError(t, sut.db.Delete(execKey))
-	var nilReceipt *types.Receipt
-	require.NoError(t, sut.CallContext(ctx, &nilReceipt, "eth_getTransactionReceipt", txSettled.Hash()))
-	require.Nil(t, nilReceipt, "DB receipt path must depend on execution results, not header BaseFee")
+
+	var receipt *types.Receipt
+	err := sut.CallContext(ctx, &receipt, "eth_getTransactionReceipt", txSettled.Hash())
+	require.ErrorContains(t, err, "reading execution-result base fee")
+
+	require.NoError(t, sut.db.Put(execKey, []byte{0x01}))
+	err = sut.CallContext(ctx, &receipt, "eth_getTransactionReceipt", txSettled.Hash())
+	require.ErrorContains(t, err, "reading execution-result base fee")
 }
 
 func (sut *SUT) testGetByHash(ctx context.Context, t *testing.T, want *types.Block) {
