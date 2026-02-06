@@ -27,7 +27,6 @@ var errExecutorClosed = errors.New("saexec.Executor closed")
 // before [blocks.Block.Executed] returns true then there is no guarantee that
 // the block will be executed.
 func (e *Executor) Enqueue(ctx context.Context, block *blocks.Block) error {
-
 	select {
 	case e.queue <- block:
 		e.lastEnqueued.Store(block)
@@ -44,19 +43,15 @@ func (e *Executor) Enqueue(ctx context.Context, block *blocks.Block) error {
 				zap.Int("queue_capacity", size),
 			)
 		}
-
 		return nil
-
 	case <-ctx.Done():
 		return ctx.Err()
-
 	case <-e.quit:
 		return errExecutorClosed
 	case <-e.done:
 		// `e.done` can also close due to [Executor.execute] errors.
 		return errExecutorClosed
 	}
-
 }
 
 func (e *Executor) processQueue() {
