@@ -21,7 +21,6 @@ import (
 	"github.com/ava-labs/avalanchego/version"
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core"
-	"github.com/ava-labs/libevm/core/rawdb"
 	"github.com/ava-labs/libevm/core/txpool"
 	"github.com/ava-labs/libevm/core/txpool/legacypool"
 	"github.com/ava-labs/libevm/core/types"
@@ -75,13 +74,14 @@ type Config struct {
 // NewVM returns a new [VM] that is ready for use immediately upon return.
 // [VM.Shutdown] MUST be called to release resources.
 func NewVM(
+	ctx context.Context,
 	c Config,
 	snowCtx *snow.Context,
 	chainConfig *params.ChainConfig,
 	db ethdb.Database,
 	lastSynchronous *blocks.Block,
 	sender snowcommon.AppSender,
-) (*VM, error) {
+) (_ *VM, retErr error) {
 	if c.Now == nil {
 		c.Now = time.Now
 	}
@@ -93,32 +93,24 @@ func NewVM(
 		db:      db,
 		blocks:  newSMap[common.Hash, *blocks.Block](),
 	}
-	vm.blocks.Store(lastSynchronous.Hash(), lastSynchronous)
-
-	// Disk
-	for _, fn := range [](func(ethdb.KeyValueWriter, common.Hash)){
-		rawdb.WriteHeadBlockHash,
-		rawdb.WriteFinalizedBlockHash,
-	} {
-		fn(db, lastSynchronous.Hash())
-	}
-	rawdb.WriteCanonicalHash(db, lastSynchronous.Hash(), lastSynchronous.NumberU64())
-	// Internal indicators
-	for _, ptr := range []*atomic.Pointer[blocks.Block]{
-		&vm.preference,
-		&vm.last.accepted,
-		&vm.last.settled,
-	} {
-		ptr.Store(lastSynchronous)
-	}
+	defer func() {
+		if retErr != nil {
+			vm.close()
+		}
+	}()
 
 	if err := snowCtx.Metrics.Register("sae", vm.metrics); err != nil {
 		return nil, err
 	}
 
 	{ // ==========  Executor  ==========
+		executeAfter, unexecuted, err := vm.recoverFromDB(lastSynchronous)
+		if err != nil {
+			return nil, err
+		}
+
 		exec, err := saexec.New(
-			lastSynchronous,
+			executeAfter,
 			vm.blockSource,
 			chainConfig,
 			db,
@@ -131,6 +123,25 @@ func NewVM(
 		}
 		vm.exec = exec
 		vm.toClose = append(vm.toClose, exec.Close)
+
+		last := executeAfter
+		for b, err := range unexecuted {
+			if err != nil {
+				return nil, err
+			}
+			if err := exec.Enqueue(ctx, b); err != nil {
+				return nil, err
+			}
+			last = b
+		}
+		if err := last.WaitUntilExecuted(ctx); err != nil {
+			return nil, err
+		}
+	}
+
+	// ==========  Pedantry  ==========
+	if err := vm.rebuildBlocksInMemory(); err != nil {
+		return nil, err
 	}
 
 	{ // ==========  Mempool  ==========
@@ -284,6 +295,10 @@ func (vm *VM) SetState(ctx context.Context, state snow.State) error {
 
 // Shutdown gracefully closes the VM.
 func (vm *VM) Shutdown(context.Context) error {
+	return vm.close()
+}
+
+func (vm *VM) close() error {
 	errs := make([]error, len(vm.toClose))
 	for i, fn := range vm.toClose {
 		errs[i] = fn()

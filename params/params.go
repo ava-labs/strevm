@@ -6,7 +6,9 @@
 // [Streaming Asynchronous Execution]: https://github.com/avalanche-foundation/ACPs/tree/main/ACPs/194-streaming-asynchronous-execution
 package params
 
-import "time"
+import (
+	"time"
+)
 
 // Lambda is the denominator for computing the minimum gas consumed per
 // transaction. For a transaction with gas limit `g`, the minimum consumption is
@@ -21,3 +23,19 @@ const (
 	Tau        = TauSeconds * time.Second
 	TauSeconds = 5
 )
+
+const RawDBPrefix = "\x00\x00-ava-sae-"
+
+const (
+	commitTrieDBEvery     = 1 << commitTrieDBEveryLog2
+	commitTrieDBEveryLog2 = 12
+	commitTrieDBMask      = commitTrieDBEvery - 1
+)
+
+func CommitTrieDB(blockNum uint64) bool {
+	return blockNum > 0 && blockNum&commitTrieDBMask == 0
+}
+
+func LastCommitedTrieDBHeight(atOrBefore uint64) uint64 {
+	return atOrBefore &^ commitTrieDBMask
+}
