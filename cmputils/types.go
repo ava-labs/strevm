@@ -47,9 +47,9 @@ func TransactionsByHash() cmp.Option {
 	})
 }
 
-// ReceiptsByTxHash returns a [cmp.Comparer] for [types.Receipt] pointers,
-// equating them by transaction hash and derived fields used by RPC clients.
-func ReceiptsByTxHash() cmp.Option {
+// Receipts returns a [cmp.Comparer] for [types.Receipt] pointers,
+// comparing transaction hash and derived fields used by RPC clients.
+func Receipts() cmp.Option {
 	return ComparerWithNilCheck(func(r, s *types.Receipt) bool {
 		if r.TxHash != s.TxHash ||
 			r.Type != s.Type ||
@@ -90,9 +90,9 @@ func ReceiptsByTxHash() cmp.Option {
 	})
 }
 
-// ReceiptsByTxHashOnly returns a [cmp.Comparer] for [types.Receipt] pointers,
+// ReceiptsByTxHash returns a [cmp.Comparer] for [types.Receipt] pointers,
 // equating them by transaction hash alone.
-func ReceiptsByTxHashOnly() cmp.Option {
+func ReceiptsByTxHash() cmp.Option {
 	return ComparerWithNilCheck(func(r, s *types.Receipt) bool {
 		return r.TxHash == s.TxHash
 	})
