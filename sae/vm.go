@@ -213,6 +213,9 @@ func NewVM(
 	}
 
 	{ // ==========  API Backend  ==========
+		// Empty account manager provides graceful errors for signing
+		// RPCs (e.g. eth_sign) instead of nil-pointer panics. No
+		// actual account functionality is expected.
 		accountManager := accounts.NewManager(&accounts.Config{})
 		vm.toClose = append(vm.toClose, accountManager.Close)
 
