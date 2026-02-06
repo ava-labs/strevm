@@ -34,14 +34,7 @@ import (
 
 // APIBackend returns an API backend backed by the VM.
 func (vm *VM) APIBackend() ethapi.Backend {
-	accountManager := accounts.NewManager(&accounts.Config{})
-	vm.toClose = append(vm.toClose, accountManager.Close)
-
-	return &ethAPIBackend{
-		Set:            vm.mempool,
-		vm:             vm,
-		accountManager: accountManager,
-	}
+	return vm.apiBackend
 }
 
 func (vm *VM) ethRPCServer() (*rpc.Server, error) {

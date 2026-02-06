@@ -19,6 +19,7 @@ import (
 	"github.com/ava-labs/avalanchego/utils/bloom"
 	"github.com/ava-labs/avalanchego/utils/logging"
 	"github.com/ava-labs/avalanchego/version"
+	"github.com/ava-labs/libevm/accounts"
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core"
 	"github.com/ava-labs/libevm/core/rawdb"
@@ -26,6 +27,7 @@ import (
 	"github.com/ava-labs/libevm/core/txpool/legacypool"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/ethdb"
+	"github.com/ava-labs/libevm/libevm/ethapi"
 	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/triedb"
 	"github.com/prometheus/client_golang/prometheus"
@@ -56,9 +58,10 @@ type VM struct {
 		accepted, settled atomic.Pointer[blocks.Block]
 	}
 
-	exec    *saexec.Executor
-	mempool *txgossip.Set
-	newTxs  chan struct{}
+	exec       *saexec.Executor
+	mempool    *txgossip.Set
+	apiBackend ethapi.Backend
+	newTxs     chan struct{}
 
 	toClose [](func() error)
 }
@@ -207,6 +210,17 @@ func NewVM(
 			wg.Wait()
 			return nil
 		})
+	}
+
+	{ // ==========  API Backend  ==========
+		accountManager := accounts.NewManager(&accounts.Config{})
+		vm.toClose = append(vm.toClose, accountManager.Close)
+
+		vm.apiBackend = &ethAPIBackend{
+			Set:            vm.mempool,
+			vm:             vm,
+			accountManager: accountManager,
+		}
 	}
 
 	return vm, nil
