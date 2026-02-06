@@ -17,6 +17,7 @@ import (
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/common/hexutil"
 	"github.com/ava-labs/libevm/core"
+	"github.com/ava-labs/libevm/consensus/misc/eip4844"
 	"github.com/ava-labs/libevm/core/rawdb"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/crypto"
@@ -27,6 +28,7 @@ import (
 	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/rpc"
 
+	"github.com/ava-labs/strevm/blocks"
 	"github.com/ava-labs/strevm/txgossip"
 )
 
@@ -354,15 +356,55 @@ func (b *ethAPIBackend) GetReceipts(ctx context.Context, hash common.Hash) (type
 		return block.Receipts(), nil
 	}
 
-	number := rawdb.ReadHeaderNumber(b.vm.db, hash)
-	if number == nil {
+	numberPtr := rawdb.ReadHeaderNumber(b.vm.db, hash)
+	if numberPtr == nil {
 		return nil, nil
 	}
-	header := rawdb.ReadHeader(b.vm.db, hash, *number)
+	number := *numberPtr
+
+	// The block header contains the minimum base fee from acceptance time,
+	// but execution may use a higher base fee due to dynamic fee adjustments
+	// during the τ delay.
+	baseFee, err := blocks.ReadBaseFeeFromExecutionResults(b.vm.db, number)
+	if err != nil {
+		return nil, nil
+	}
+
+	receipts := rawdb.ReadRawReceipts(b.vm.db, hash, number)
+	if receipts == nil {
+		return nil, nil
+	}
+
+	body := rawdb.ReadBody(b.vm.db, hash, number)
+	if body == nil {
+		return nil, nil
+	}
+
+	header := rawdb.ReadHeader(b.vm.db, hash, number)
 	if header == nil {
 		return nil, nil
 	}
-	return rawdb.ReadReceipts(b.vm.db, hash, *number, header.Time, b.vm.exec.ChainConfig()), nil
+
+	// Compute blobGasPrice the same way the executor does (saexec/execution.go)
+	// to keep the DB path consistent with the cache path for blob transactions.
+	var blobGasPrice *big.Int
+	if header.ExcessBlobGas != nil {
+		blobGasPrice = eip4844.CalcBlobFee(*header.ExcessBlobGas)
+	}
+
+	if err := receipts.DeriveFields(
+		b.vm.exec.ChainConfig(),
+		hash,
+		number,
+		header.Time,
+		baseFee.ToBig(),
+		blobGasPrice,
+		body.Transactions,
+	); err != nil {
+		return nil, fmt.Errorf("deriving receipt fields: %w", err)
+	}
+
+	return receipts, nil
 }
 
 type noopSubscription struct {
