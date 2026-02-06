@@ -34,7 +34,7 @@ func (e *Executor) Enqueue(ctx context.Context, block *blocks.Block) error {
 
 		size := cap(e.queue)
 		warningThreshold := size - size/16
-		if n := len(e.queue); n > warningThreshold {
+		if n := len(e.queue); n >= warningThreshold {
 			// If this happens then increase the channel's buffer size.
 			e.log.Warn(
 				"Execution queue buffer too small",
