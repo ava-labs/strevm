@@ -21,6 +21,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/ava-labs/strevm/blocks"
+	"github.com/ava-labs/strevm/params"
 )
 
 var errExecutorClosed = errors.New("saexec.Executor closed")
@@ -208,6 +209,12 @@ func (e *Executor) execute(b *blocks.Block, logger logging.Logger) error {
 	root, err := stateDB.Commit(b.NumberU64(), true)
 	if err != nil {
 		return fmt.Errorf("%T.Commit() at end of block %d: %w", stateDB, b.NumberU64(), err)
+	}
+	if num := b.NumberU64(); params.CommitTrieDB(num) {
+		tdb := e.stateCache.TrieDB()
+		if err := tdb.Commit(root, false /* log */); err != nil {
+			return fmt.Errorf("%T.Commit(%#x) at end of block %d: %v", tdb, root, num, err)
+		}
 	}
 	// The strict ordering of the next 3 calls guarantees invariants that MUST
 	// NOT be broken:
