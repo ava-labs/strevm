@@ -8,12 +8,10 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"math/big"
 	"time"
 
 	"github.com/ava-labs/avalanchego/utils/logging"
 	"github.com/ava-labs/avalanchego/vms/components/gas"
-	"github.com/ava-labs/libevm/consensus/misc/eip4844"
 	"github.com/ava-labs/libevm/core"
 	"github.com/ava-labs/libevm/core/state"
 	"github.com/ava-labs/libevm/core/types"
@@ -30,30 +28,32 @@ var errExecutorClosed = errors.New("saexec.Executor closed")
 // before [blocks.Block.Executed] returns true then there is no guarantee that
 // the block will be executed.
 func (e *Executor) Enqueue(ctx context.Context, block *blocks.Block) error {
-	select {
-	case e.queue <- block:
-		e.lastEnqueued.Store(block)
-		e.enqueueEvents.Send(block.EthBlock())
+	warnAfter := time.Millisecond
+	for {
+		select {
+		case e.queue <- block:
+			e.lastEnqueued.Store(block)
+			e.enqueueEvents.Send(block.EthBlock())
+			return nil
 
-		size := cap(e.queue)
-		warningThreshold := size - size/16
-		if n := len(e.queue); n >= warningThreshold {
+		case <-ctx.Done():
+			return ctx.Err()
+
+		case <-e.quit:
+			return errExecutorClosed
+		case <-e.done:
+			// `e.done` can also close due to [Executor.execute] errors.
+			return errExecutorClosed
+
+		case <-time.After(warnAfter):
 			// If this happens then increase the channel's buffer size.
 			e.log.Warn(
 				"Execution queue buffer too small",
+				zap.Duration("wait", warnAfter),
 				zap.Uint64("block_height", block.Height()),
-				zap.Int("queue_length", n),
-				zap.Int("queue_capacity", size),
 			)
+			warnAfter *= 2
 		}
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-e.quit:
-		return errExecutorClosed
-	case <-e.done:
-		// `e.done` can also close due to [Executor.execute] errors.
-		return errExecutorClosed
 	}
 }
 
@@ -157,6 +157,15 @@ func (e *Executor) execute(b *blocks.Block, logger logging.Logger) error {
 		// the queue. It's only worth it if [blocks.LastToSettleAt] regularly
 		// returns false, meaning that execution is blocking consensus.
 
+		// The [types.Header] that we pass to [core.ApplyTransaction] is
+		// modified to reduce gas price from the worst-case value agreed by
+		// consensus. This changes the hash, which is what is copied to receipts
+		// and logs.
+		receipt.BlockHash = b.Hash()
+		for _, l := range receipt.Logs {
+			l.BlockHash = b.Hash()
+		}
+
 		// TODO(arr4n) add a receipt cache to the [executor] to allow API calls
 		// to access them before the end of the block.
 		receipts[ti] = receipt
@@ -179,18 +188,6 @@ func (e *Executor) execute(b *blocks.Block, logger logging.Logger) error {
 			)
 			return err
 		}
-	}
-
-	// The [types.Header] that we pass to [core.ApplyTransaction] is adjusted to
-	// reduce worst‑case gas, which changes the block hash. DeriveFields recomputes
-	// receipt/log metadata (e.g., block hash, effective gas price, etc.) against the final
-	// block header so cached receipts match the DB path.
-	var blobGasPrice *big.Int
-	if header.ExcessBlobGas != nil {
-		blobGasPrice = eip4844.CalcBlobFee(*header.ExcessBlobGas)
-	}
-	if err := receipts.DeriveFields(e.chainConfig, b.Hash(), b.NumberU64(), header.Time, header.BaseFee, blobGasPrice, b.Transactions()); err != nil {
-		return err
 	}
 
 	e.hooks.AfterExecutingBlock(stateDB, b.EthBlock(), receipts)
