@@ -16,8 +16,8 @@ import (
 	ethereum "github.com/ava-labs/libevm"
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/common/hexutil"
-	"github.com/ava-labs/libevm/core"
 	"github.com/ava-labs/libevm/consensus/misc/eip4844"
+	"github.com/ava-labs/libevm/core"
 	"github.com/ava-labs/libevm/core/rawdb"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/crypto"
@@ -364,7 +364,8 @@ func (b *ethAPIBackend) GetReceipts(ctx context.Context, hash common.Hash) (type
 
 	// The block header contains the minimum base fee from acceptance time,
 	// but execution may use a higher base fee due to dynamic fee adjustments
-	// during the τ delay.
+	// during the τ delay. If execution results are missing, the block was
+	// accepted but not yet executed, so receipts are unavailable.
 	baseFee, err := blocks.ReadBaseFeeFromExecutionResults(b.vm.db, number)
 	if err != nil {
 		return nil, nil

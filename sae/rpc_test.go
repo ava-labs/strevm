@@ -453,7 +453,6 @@ func TestReceiptAPIs(t *testing.T) {
 	txPending := createTx(t, 4, blockingPrecompile)
 	_ = sut.createAndAcceptBlock(t, txPending)
 
-	// shoutout austin larson
 	if diff := cmp.Diff(receiptFromCache, receiptFromDB, cmputils.Receipts()); diff != "" {
 		t.Fatalf("cache vs db receipt diff (-cache +db):\n%s", diff)
 	}
