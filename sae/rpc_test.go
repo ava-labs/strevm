@@ -564,8 +564,6 @@ func TestReceiptAPIs(t *testing.T) {
 
 	// Deleting execution results from the DB proves GetReceipts depends on
 	// the execution-time base fee rather than the header's minimum base fee.
-	// The old implementation (rawdb.ReadReceipts) would still return receipts
-	// here because it derives fields from the header alone.
 	execKey := binary.BigEndian.AppendUint64(
 		[]byte(saeparams.RawDBPrefix+"exec-"),
 		blockSettled.Height(),

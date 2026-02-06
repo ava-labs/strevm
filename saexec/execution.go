@@ -30,32 +30,30 @@ var errExecutorClosed = errors.New("saexec.Executor closed")
 // before [blocks.Block.Executed] returns true then there is no guarantee that
 // the block will be executed.
 func (e *Executor) Enqueue(ctx context.Context, block *blocks.Block) error {
-	warnAfter := time.Millisecond
-	for {
-		select {
-		case e.queue <- block:
-			e.lastEnqueued.Store(block)
-			e.enqueueEvents.Send(block.EthBlock())
-			return nil
+	select {
+	case e.queue <- block:
+		e.lastEnqueued.Store(block)
+		e.enqueueEvents.Send(block.EthBlock())
 
-		case <-ctx.Done():
-			return ctx.Err()
-
-		case <-e.quit:
-			return errExecutorClosed
-		case <-e.done:
-			// `e.done` can also close due to [Executor.execute] errors.
-			return errExecutorClosed
-
-		case <-time.After(warnAfter):
+		size := cap(e.queue)
+		warningThreshold := size - size/16
+		if n := len(e.queue); n >= warningThreshold {
 			// If this happens then increase the channel's buffer size.
 			e.log.Warn(
 				"Execution queue buffer too small",
-				zap.Duration("wait", warnAfter),
 				zap.Uint64("block_height", block.Height()),
+				zap.Int("queue_length", n),
+				zap.Int("queue_capacity", size),
 			)
-			warnAfter *= 2
 		}
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-e.quit:
+		return errExecutorClosed
+	case <-e.done:
+		// `e.done` can also close due to [Executor.execute] errors.
+		return errExecutorClosed
 	}
 }
 
