@@ -41,8 +41,8 @@ func (s *Stub) BuildHeader(parent *types.Header) *types.Header {
 	hdr := &types.Header{
 		ParentHash: parent.Hash(),
 		Number:     new(big.Int).Add(parent.Number, common.Big1),
-		Time:       uint64(now.Unix()),                                           //nolint:gosec // Known non-negative
-		Extra:      binary.BigEndian.AppendUint64(nil, uint64(now.UnixMilli())),  //nolint:gosec // Known non-negative
+		Time:       uint64(now.Unix()),                                          //nolint:gosec // Known non-negative
+		Extra:      binary.BigEndian.AppendUint64(nil, uint64(now.UnixMilli())), //nolint:gosec // Known non-negative
 	}
 	return hdr
 }
