@@ -29,7 +29,7 @@ type Stub struct {
 var _ hook.Points = (*Stub)(nil)
 
 // BuildHeader constructs a header that builds on top of the parent header. The
-// `Extra` field SHOULD NOT be modified as it encodes sub-second block time.
+// `Extra` field SHOULD NOT be modified as it encodes the millisecond timestamp.
 func (s *Stub) BuildHeader(parent *types.Header) *types.Header {
 	var now time.Time
 	if s.Now != nil {
@@ -42,7 +42,7 @@ func (s *Stub) BuildHeader(parent *types.Header) *types.Header {
 		ParentHash: parent.Hash(),
 		Number:     new(big.Int).Add(parent.Number, common.Big1),
 		Time:       uint64(now.Unix()),                                           //nolint:gosec // Known non-negative
-		Extra:      binary.BigEndian.AppendUint64(nil, uint64(now.Nanosecond())), //nolint:gosec // Known non-negative
+		Extra:      binary.BigEndian.AppendUint64(nil, uint64(now.UnixMilli())),  //nolint:gosec // Known non-negative
 	}
 	return hdr
 }
@@ -61,10 +61,7 @@ func (*Stub) BuildBlock(
 func (s *Stub) BlockRebuilderFrom(b *types.Block) hook.BlockBuilder {
 	return &Stub{
 		Now: func() time.Time {
-			return time.Unix(
-				int64(b.Time()), //nolint:gosec // Won't overflow for a few millennia
-				s.SubSecondBlockTime(b.Header()).Nanoseconds(),
-			)
+			return time.UnixMilli(int64(s.TimestampMilliseconds(b.Header()))) //nolint:gosec // Won't overflow for a few millennia
 		},
 	}
 }
@@ -74,14 +71,19 @@ func (s *Stub) GasTargetAfter(*types.Header) gas.Gas {
 	return s.Target
 }
 
-// SubSecondBlockTime returns the sub-second time encoded and stored by
+// TimestampMilliseconds returns the millisecond timestamp encoded and stored by
 // [Stub.BuildHeader] in the header's `Extra` field. If said field is empty,
-// SubSecondBlockTime returns 0.
-func (s *Stub) SubSecondBlockTime(hdr *types.Header) time.Duration {
+// TimestampMilliseconds returns [types.Header.Time] * 1000.
+func (s *Stub) TimestampMilliseconds(hdr *types.Header) uint64 {
 	if len(hdr.Extra) == 0 {
-		return 0
+		return hdr.Time * 1000
 	}
-	return time.Duration(binary.BigEndian.Uint64(hdr.Extra)) //nolint:gosec // Test-only code that relies on our own encoding of nanonseconds in [Stub.BuildHeader]
+	return binary.BigEndian.Uint64(hdr.Extra)
+}
+
+// SubSecondBlockTime derives the sub-second time from [Stub.TimestampMilliseconds].
+func (s *Stub) SubSecondBlockTime(hdr *types.Header) time.Duration {
+	return time.Duration(s.TimestampMilliseconds(hdr)%1000) * time.Millisecond //nolint:gosec // Modulus guarantees value < 1000
 }
 
 // EndOfBlockOps ignores its argument and always returns [Stub.Ops].

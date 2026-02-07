@@ -14,11 +14,10 @@ import (
 	"github.com/ava-labs/strevm/proxytime"
 )
 
-// PreciseTime calls [hook.Points.SubSecondBlockTime] on the header and returns
-// the value, combined with the regular timestamp to provide a full-resolution
-// block time.
+// PreciseTime returns the block time at millisecond resolution, as defined by
+// ACP-226, using [hook.Points.TimestampMilliseconds].
 func PreciseTime(hooks hook.Points, hdr *types.Header) time.Time {
-	return preciseTime(hdr, hooks.SubSecondBlockTime(hdr))
+	return time.UnixMilli(int64(hooks.TimestampMilliseconds(hdr))) //nolint:gosec // Won't overflow for a few millennia
 }
 
 func preciseTime(hdr *types.Header, subSec time.Duration) time.Time {

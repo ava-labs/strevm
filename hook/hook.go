@@ -41,6 +41,10 @@ type Points interface {
 	// GasTargetAfter returns the gas target that should go into effect
 	// immediately after the provided block.
 	GasTargetAfter(*types.Header) gas.Gas
+	// TimestampMilliseconds returns the block timestamp in milliseconds,
+	// as defined by ACP-226. Pre-ACP-226 blocks MUST return
+	// [types.Header.Time] * 1000.
+	TimestampMilliseconds(h *types.Header) uint64
 	// SubSecondBlockTime returns the sub-second portion of the block time,
 	// which MUST be non-negative and strictly shorter than a second; i.e. a
 	// value d such that 0 <= d < [time.Second].

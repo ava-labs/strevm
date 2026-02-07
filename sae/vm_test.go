@@ -207,15 +207,15 @@ func (t *vmTime) now() time.Time {
 }
 
 func (t *vmTime) set(n time.Time) {
-	t.Time = n
+	t.Time = n.Truncate(time.Millisecond)
 }
 
 func (t *vmTime) advance(d time.Duration) {
-	t.Time = t.Time.Add(d)
+	t.Time = t.Time.Add(d).Truncate(time.Millisecond)
 }
 
 // withVMTime returns an option to configure a new SUT's "now" function along
-// with a struct to access and set the time at nanosecond resolution.
+// with a struct to access and set the time at millisecond resolution.
 func withVMTime(tb testing.TB, startTime time.Time) (sutOption, *vmTime) {
 	tb.Helper()
 	t := &vmTime{

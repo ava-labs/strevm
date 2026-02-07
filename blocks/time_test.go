@@ -24,17 +24,19 @@ func gasExtractionCmpOpt() cmp.Option {
 
 func TestGasTime(t *testing.T) {
 	const (
-		unix   = 42
-		frac   = 12_345
-		scale  = 250
-		target = 1_000_000_000 / gastime.TargetToRate / scale
-		nanos  = frac * scale
+		unix     = 42
+		subSecMs = 500
+		target   = 500
+		millis   = subSecMs * int64(time.Millisecond)
+		// frac = MulDivCeil(millis, rate, time.Second)
+		// With rate=500 * 2 = 1000: ceil(500_000_000 * 1000 / 1_000_000_000) = 500
+		frac = 500
 	)
 	rate := gastime.SafeRateOfTarget(target)
 
 	hooks := &hookstest.Stub{
 		Now: func() time.Time {
-			return time.Unix(unix, nanos)
+			return time.Unix(unix, millis)
 		},
 		Target: target,
 	}
@@ -52,6 +54,17 @@ func TestGasTime(t *testing.T) {
 	}
 }
 
+func TestPreciseTime_PreACP226Fallback(t *testing.T) {
+	hooks := &hookstest.Stub{}
+	hdr := &types.Header{
+		Time: 42,
+	}
+
+	got := PreciseTime(hooks, hdr)
+	want := time.UnixMilli(42_000)
+	require.Equal(t, want, got)
+}
+
 func FuzzTimeExtraction(f *testing.F) {
 	// There are two different ways that the gas time of a block can be
 	// calculated, both of which result in the same value. While neither can
@@ -60,15 +73,22 @@ func FuzzTimeExtraction(f *testing.F) {
 	// [proxytime.Of] and then [proxytime.Time.SetRate], is more obviously
 	// correct but too general-purpose and requires ignoring/checking a returned
 	// `error`. We can therefore use this equivalence for differential fuzzing.
+	//
+	// ACP-226 provides millisecond precision, so the fuzz input is in
+	// milliseconds (0-999) rather than arbitrary nanoseconds.
 
-	f.Fuzz(func(t *testing.T, unix int64, target uint64, subSec int64) {
-		if subSec < 0 || time.Duration(subSec) >= time.Second {
-			t.Skip("Invalid sub-second value")
+	f.Fuzz(func(t *testing.T, unix int64, target uint64, subSecMs int64) {
+		if unix < 0 {
+			t.Skip("ACP-226 timestamps are non-negative")
+		}
+		if subSecMs < 0 || subSecMs >= 1000 {
+			t.Skip("Invalid sub-second millisecond value")
 		}
 		if target == 0 {
 			t.Skip("Zero target")
 		}
 
+		subSec := subSecMs * int64(time.Millisecond)
 		hooks := &hookstest.Stub{
 			Now: func() time.Time {
 				return time.Unix(unix, subSec)

@@ -332,7 +332,9 @@ func TestEthGetters(t *testing.T) {
 
 	settled := sut.createAndAcceptBlock(t, createTx(t, zeroAddr))
 	require.NoErrorf(t, settled.WaitUntilExecuted(ctx), "%T.WaitUntilSettled()", settled)
-	vmTime.set(settled.ExecutedByGasTime().AsTime().Add(saeparams.Tau)) // ensure it will be settled
+	// Add 1ms to ensure settlement: PreciseTime has ms resolution (ACP-226),
+	// so the gas time's sub-ms fraction must be exceeded by at least 1ms.
+	vmTime.set(settled.ExecutedByGasTime().AsTime().Add(saeparams.Tau + time.Millisecond))
 
 	executed := sut.createAndAcceptBlock(t, createTx(t, zeroAddr))
 	require.NoErrorf(t, executed.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", executed)

@@ -6,6 +6,7 @@ package blocks
 import (
 	"context"
 	"fmt"
+	"math/big"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -13,6 +14,7 @@ import (
 	"github.com/ava-labs/avalanchego/utils/logging"
 	"github.com/ava-labs/avalanchego/vms/components/gas"
 	"github.com/ava-labs/libevm/core/rawdb"
+	"github.com/ava-labs/libevm/core/types"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/stretchr/testify/assert"
@@ -362,6 +364,66 @@ func TestLastToSettleAt(t *testing.T) {
 			if tt.wantOK {
 				require.Equal(t, tt.want.Height(), got.Height(), "LastToSettleAt(%d, [parent height %d])", tt.settleAt, tt.parent.Height())
 			}
+		})
+	}
+}
+
+// TestLastToSettleAt_SubSecondPrecision verifies that LastToSettleAt compares
+// at millisecond granularity, not just whole seconds.
+// TestLastToSettleAt covers the full settlement logic with second-precision
+// timestamps; this test only tests the sub-second boundary.
+func TestLastToSettleAt_SubSecondPrecision(t *testing.T) {
+	db := rawdb.NewMemoryDatabase()
+	hooks := &hookstest.Stub{Target: 5}
+
+	// Chain: genesis(0ms) -> block1(1200ms) -> block2(1500ms)
+	buildEthAt := func(ms uint64, parent *types.Header) *types.Block {
+		hooks.Now = func() time.Time {
+			return time.UnixMilli(int64(ms)) //nolint:gosec // test values
+		}
+		return types.NewBlockWithHeader(hooks.BuildHeader(parent))
+	}
+
+	preGenesis := &types.Header{Number: new(big.Int).SetInt64(-1)}
+	genesis := newBlock(t, buildEthAt(0, preGenesis), nil, nil)
+	require.NoError(t, genesis.MarkSynchronous(hooks, db, 0))
+
+	block1 := newBlock(t, buildEthAt(1200, genesis.Header()), genesis, genesis)
+	block2 := newBlock(t, buildEthAt(1500, block1.Header()), block1, genesis)
+
+	for _, b := range []*Block{block1, block2} {
+		ms := hooks.TimestampMilliseconds(b.Header())
+		execTime := gastime.New(time.UnixMilli(int64(ms)), 5, 0) //nolint:gosec // test values
+		b.markExecutedForTests(t, db, execTime)
+	}
+
+	tests := []struct {
+		name     string
+		settleAt time.Time
+		want     *Block
+	}{
+		{
+			// 1300ms falls between block1(1200ms) and block2(1500ms),
+			// so block1 is the last to settle.
+			name:     "between_sub-second_timestamps",
+			settleAt: time.UnixMilli(1300),
+			want:     block1,
+		},
+		{
+			// A block whose precise time equals the settlement time is
+			// eligible to settle.
+			name:     "equal_to_sub-second_timestamp",
+			settleAt: time.UnixMilli(1500),
+			want:     block2,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok, err := LastToSettleAt(hooks, tt.settleAt, block2)
+			require.NoError(t, err)
+			require.True(t, ok)
+			require.Equal(t, tt.want.Height(), got.Height(), "settled block height")
 		})
 	}
 }
