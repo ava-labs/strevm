@@ -30,7 +30,7 @@ type Stub struct {
 
 var _ hook.Points = (*Stub)(nil)
 
-// Option applies a configuration to [Stub].
+// HookOption applies a configuration to [Stub].
 type HookOption = options.Option[Stub]
 
 // WithGasConfig overrides the default gas config.

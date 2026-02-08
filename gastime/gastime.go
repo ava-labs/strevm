@@ -231,13 +231,13 @@ func (tm *Time) findExcessForPrice(targetPrice gas.Price) gas.Gas {
 	lo, hi := gas.Gas(0), maxExcessSearchCap(k)
 	for lo < hi {
 		mid := lo + (hi-lo)>>1
-		if gas.CalculatePrice(tm.config.minPrice, gas.Gas(mid), k) >= targetPrice {
+		if gas.CalculatePrice(tm.config.minPrice, mid, k) >= targetPrice {
 			hi = mid
 		} else {
 			lo = mid + 1
 		}
 	}
-	return gas.Gas(lo)
+	return lo
 }
 
 // BaseFee is equivalent to [Time.Price], returning the result as a uint256 for

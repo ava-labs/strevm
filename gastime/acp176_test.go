@@ -67,7 +67,7 @@ func TestInvalidConfigRejected(t *testing.T) {
 				target,
 				hookstest.WithGasConfig(tt.config),
 			), &types.Header{Time: 42})
-			require.Error(t, err)
+			require.ErrorIs(t, err, tt.expected)
 
 			// Config unchanged after rejected update
 			assert.Equal(t, initialScaling, tm.config.targetToExcessScaling)
@@ -614,7 +614,7 @@ func FuzzPriceInvarianceAfterBlock(f *testing.F) {
 			newK := excessScalingFactorOf(gas.Gas(newScaling), gas.Gas(newTarget))
 			cap := maxExcessSearchCap(newK)
 			if cap == math.MaxUint64 {
-				want = gas.CalculatePrice(gas.Price(newMinPrice), gas.Gas(cap), newK)
+				want = gas.CalculatePrice(gas.Price(newMinPrice), cap, newK)
 			}
 		}
 
