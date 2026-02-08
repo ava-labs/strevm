@@ -8,7 +8,6 @@ import (
 
 	"github.com/ava-labs/avalanchego/vms/components/gas"
 	"github.com/ava-labs/libevm/core/types"
-
 	"github.com/ava-labs/strevm/hook"
 )
 
@@ -22,22 +21,16 @@ func (tm *Time) BeforeBlock(hooks hook.Points, h *types.Header) {
 }
 
 // AfterBlock is intended to be called after processing a block, with the
-// gas configuration sourced from [hook.Points] and [types.Header].
+// target and gas configuration sourced from [hook.Points] and [types.Header].
 func (tm *Time) AfterBlock(used gas.Gas, hooks hook.Points, h *types.Header) error {
 	tm.Tick(used)
-	cfg := hooks.GasConfigAfter(h)
-
-	// Set target before [SetOpts] as we use the new target to calculate the excess scaling factor in [SetOpts].
-	if err := tm.SetTarget(cfg.Target); err != nil {
+	target := hooks.GasTargetAfter(h)
+	if err := tm.SetTarget(target); err != nil {
 		return fmt.Errorf("%T.SetTarget() after block: %w", tm, err)
 	}
-	// TargetToExcessScaling and MinPrice are optional, so we apply them as options.
-	opts := GasConfigToOpts(cfg)
-	if len(opts) > 0 {
-		if err := tm.SetOpts(opts...); err != nil {
-			return err
-		}
+	cfg := hooks.GasConfigAfter(h)
+	if err := tm.SetConfig(cfg); err != nil {
+		return fmt.Errorf("%T.SetConfig() after block: %w", tm, err)
 	}
-
 	return nil
 }

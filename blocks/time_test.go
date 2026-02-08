@@ -14,7 +14,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/ava-labs/strevm/gastime"
-	"github.com/ava-labs/strevm/hook"
 	"github.com/ava-labs/strevm/hook/hookstest"
 	"github.com/ava-labs/strevm/proxytime"
 )
@@ -33,14 +32,12 @@ func TestGasTime(t *testing.T) {
 	)
 	rate := gastime.SafeRateOfTarget(target)
 
-	hooks := &hookstest.Stub{
-		Now: func() time.Time {
+	hooks := hookstest.NewStub(
+		target,
+		hookstest.WithNow(func() time.Time {
 			return time.Unix(unix, nanos)
-		},
-		GasConfig: hook.GasConfig{
-			Target: target,
-		},
-	}
+		}),
+	)
 	parent := &types.Header{
 		Number: big.NewInt(1),
 	}
@@ -72,14 +69,12 @@ func FuzzTimeExtraction(f *testing.F) {
 			t.Skip("Zero target")
 		}
 
-		hooks := &hookstest.Stub{
-			Now: func() time.Time {
+		hooks := hookstest.NewStub(
+			gas.Gas(target),
+			hookstest.WithNow(func() time.Time {
 				return time.Unix(unix, subSec)
-			},
-			GasConfig: hook.GasConfig{
-				Target: gas.Gas(target),
-			},
-		}
+			}),
+		)
 		parent := &types.Header{
 			Number: big.NewInt(1),
 		}

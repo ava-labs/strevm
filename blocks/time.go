@@ -32,7 +32,7 @@ func preciseTime(hdr *types.Header, subSec time.Duration) time.Time {
 // the parent header and the hooks.
 func GasTime(hooks hook.Points, hdr, parent *types.Header) *proxytime.Time[gas.Gas] {
 	rate := gastime.SafeRateOfTarget(
-		hooks.GasConfigAfter(parent).Target,
+		hooks.GasTargetAfter(parent),
 	)
 	tm := proxytime.New(hdr.Time, rate)
 	tm.Tick(gastime.SubSecond(hooks, hdr, rate))

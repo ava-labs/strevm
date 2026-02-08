@@ -7,6 +7,7 @@ import (
 	"github.com/StephenButtolph/canoto"
 	"github.com/ava-labs/avalanchego/vms/components/gas"
 
+	"github.com/ava-labs/strevm/hook"
 	"github.com/ava-labs/strevm/proxytime"
 )
 
@@ -15,6 +16,7 @@ import (
 type config struct {
 	targetToExcessScaling gas.Gas   `canoto:"uint,1"`
 	minPrice              gas.Price `canoto:"uint,2"`
+	staticPricing         bool      `canoto:"bool,3"`
 
 	canotoData canotoData_config
 }
@@ -23,7 +25,8 @@ type config struct {
 // It ignores canoto internal fields.
 func (c config) Equal(other config) bool {
 	return c.targetToExcessScaling == other.targetToExcessScaling &&
-		c.minPrice == other.minPrice
+		c.minPrice == other.minPrice &&
+		c.staticPricing == other.staticPricing
 }
 
 // A TimeMarshaler can marshal a time to and from canoto. It is of limited use
@@ -63,10 +66,10 @@ func (tm *Time) UnmarshalCanotoFrom(r canoto.Reader) error {
 	// Apply defaults for backward compatibility with old serialized data
 	// that doesn't include the config field.
 	if tm.config.targetToExcessScaling == 0 {
-		tm.config.targetToExcessScaling = DefaultTargetToExcessScaling
+		tm.config.targetToExcessScaling = hook.DefaultTargetToExcessScaling
 	}
 	if tm.config.minPrice == 0 {
-		tm.config.minPrice = DefaultMinPrice
+		tm.config.minPrice = hook.DefaultMinPrice
 	}
 	tm.establishInvariants()
 	return nil

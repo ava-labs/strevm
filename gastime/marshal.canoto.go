@@ -29,9 +29,11 @@ var (
 const (
 	canoto__config__targetToExcessScaling = 1
 	canoto__config__minPrice              = 2
+	canoto__config__staticPricing         = 3
 
 	canoto__config__targetToExcessScaling__tag = "\x08" // canoto.Tag(canoto__config__targetToExcessScaling, canoto.Varint)
 	canoto__config__minPrice__tag              = "\x10" // canoto.Tag(canoto__config__minPrice, canoto.Varint)
+	canoto__config__staticPricing__tag         = "\x18" // canoto.Tag(canoto__config__staticPricing, canoto.Varint)
 )
 
 type canotoData_config struct {
@@ -55,6 +57,12 @@ func (*config) CanotoSpec(...reflect.Type) *canoto.Spec {
 				Name:        "minPrice",
 				OneOf:       "",
 				TypeUint:    canoto.SizeOf(zero.minPrice),
+			},
+			{
+				FieldNumber: canoto__config__staticPricing,
+				Name:        "staticPricing",
+				OneOf:       "",
+				TypeBool:    true,
 			},
 		},
 	}
@@ -121,6 +129,17 @@ func (c *config) UnmarshalCanotoFrom(r canoto.Reader) error {
 			if canoto.IsZero(c.minPrice) {
 				return canoto.ErrZeroValue
 			}
+		case canoto__config__staticPricing:
+			if wireType != canoto.Varint {
+				return canoto.ErrUnexpectedWireType
+			}
+
+			if err := canoto.ReadBool(&r, &c.staticPricing); err != nil {
+				return err
+			}
+			if canoto.IsZero(c.staticPricing) {
+				return canoto.ErrZeroValue
+			}
 		default:
 			return canoto.ErrUnknownField
 		}
@@ -158,6 +177,9 @@ func (c *config) CalculateCanotoCache() {
 	}
 	if !canoto.IsZero(c.minPrice) {
 		size += uint64(len(canoto__config__minPrice__tag)) + canoto.SizeUint(c.minPrice)
+	}
+	if !canoto.IsZero(c.staticPricing) {
+		size += uint64(len(canoto__config__staticPricing__tag)) + canoto.SizeBool
 	}
 	atomic.StoreUint64(&c.canotoData.size, size)
 }
@@ -210,6 +232,10 @@ func (c *config) MarshalCanotoInto(w canoto.Writer) canoto.Writer {
 	if !canoto.IsZero(c.minPrice) {
 		canoto.Append(&w, canoto__config__minPrice__tag)
 		canoto.AppendUint(&w, c.minPrice)
+	}
+	if !canoto.IsZero(c.staticPricing) {
+		canoto.Append(&w, canoto__config__staticPricing__tag)
+		canoto.AppendBool(&w, true)
 	}
 	return w
 }

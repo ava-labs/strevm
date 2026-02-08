@@ -9,9 +9,11 @@ import (
 	"math/big"
 	"time"
 
+	"github.com/ava-labs/avalanchego/vms/components/gas"
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core/state"
 	"github.com/ava-labs/libevm/core/types"
+	"github.com/ava-labs/libevm/libevm/options"
 	"github.com/ava-labs/libevm/params"
 
 	"github.com/ava-labs/strevm/hook"
@@ -21,11 +23,49 @@ import (
 // Stub implements [hook.Points].
 type Stub struct {
 	Now       func() time.Time
+	Target    gas.Gas
 	GasConfig hook.GasConfig
 	Ops       []hook.Op
 }
 
 var _ hook.Points = (*Stub)(nil)
+
+// Option applies a configuration to [Stub].
+type HookOption = options.Option[Stub]
+
+// WithGasConfig overrides the default gas config.
+func WithGasConfig(cfg hook.GasConfig) HookOption {
+	return options.Func[Stub](func(s *Stub) {
+		s.GasConfig = cfg
+	})
+}
+
+// WithNow overrides the default time source.
+func WithNow(now func() time.Time) HookOption {
+	return options.Func[Stub](func(s *Stub) {
+		s.Now = now
+	})
+}
+
+// WithOps overrides the default end-of-block ops.
+func WithOps(ops []hook.Op) HookOption {
+	return options.Func[Stub](func(s *Stub) {
+		s.Ops = ops
+	})
+}
+
+// NewStub returns a stub with defaults applied.
+// It uses [hook.DefaultGasConfig] unless overridden by [WithGasConfig].
+func NewStub(target gas.Gas, opts ...HookOption) *Stub {
+	s := &Stub{
+		Target:    target,
+		GasConfig: hook.DefaultGasConfig(),
+	}
+	for _, opt := range opts {
+		options.ApplyTo(s, opt)
+	}
+	return s
+}
 
 // BuildHeader constructs a header that builds on top of the parent header. The
 // `Extra` field SHOULD NOT be modified as it encodes sub-second block time.
@@ -66,6 +106,11 @@ func (s *Stub) BlockRebuilderFrom(b *types.Block) hook.BlockBuilder {
 			)
 		},
 	}
+}
+
+// GasTargetAfter ignores its argument and always returns [Stub.Target].
+func (s *Stub) GasTargetAfter(*types.Header) gas.Gas {
+	return s.Target
 }
 
 // GasConfigAfter ignores its argument and always returns [Stub.GasConfig].

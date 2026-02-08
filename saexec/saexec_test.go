@@ -80,7 +80,7 @@ func newSUT(tb testing.TB, hooks *saehookstest.Stub) (context.Context, SUT) {
 
 	wallet := saetest.NewUNSAFEWallet(tb, 1, types.LatestSigner(config))
 	alloc := saetest.MaxAllocFor(wallet.Addresses()...)
-	genesis := blockstest.NewGenesis(tb, db, config, alloc, blockstest.WithTrieDBConfig(tdbConfig), blockstest.WithGasTarget(hooks.GasConfig.Target))
+	genesis := blockstest.NewGenesis(tb, db, config, alloc, blockstest.WithTrieDBConfig(tdbConfig), blockstest.WithGasTarget(hooks.Target))
 
 	opts := blockstest.WithBlockOptions(
 		blockstest.WithLogger(logger),
@@ -103,11 +103,7 @@ func newSUT(tb testing.TB, hooks *saehookstest.Stub) (context.Context, SUT) {
 }
 
 func defaultHooks() *saehookstest.Stub {
-	return &saehookstest.Stub{
-		GasConfig: hook.GasConfig{
-			Target: 1e6,
-		},
-	}
+	return saehookstest.NewStub(1e6)
 }
 
 func TestImmediateShutdownNonBlocking(t *testing.T) {
@@ -408,11 +404,7 @@ func TestEndOfBlockOps(t *testing.T) {
 
 func TestGasAccounting(t *testing.T) {
 	const gasPerTx = gas.Gas(params.TxGas)
-	hooks := &saehookstest.Stub{
-		GasConfig: hook.GasConfig{
-			Target: 5 * gasPerTx,
-		},
-	}
+	hooks := saehookstest.NewStub(5 * gasPerTx)
 	ctx, sut := newSUT(t, hooks)
 
 	at := func(blockTime, txs uint64, rate gas.Gas) *proxytime.Time[gas.Gas] {
@@ -497,20 +489,20 @@ func TestGasAccounting(t *testing.T) {
 			wantPriceAfter:  1,
 		},
 		{
-			blockTime:       21,                                        // fast-forward so excess is 0
-			numTxs:          30 * gastime.DefaultTargetToExcessScaling, // deliberate, see below
+			blockTime:       21,                                     // fast-forward so excess is 0
+			numTxs:          30 * hook.DefaultTargetToExcessScaling, // deliberate, see below
 			targetAfter:     5 * gasPerTx,
-			wantExecutedBy:  at(21, 30*gastime.DefaultTargetToExcessScaling, 10*gasPerTx),
-			wantExcessAfter: 3 * ((5 * gasPerTx /*T*/) * gastime.DefaultTargetToExcessScaling /* == K */),
+			wantExecutedBy:  at(21, 30*hook.DefaultTargetToExcessScaling, 10*gasPerTx),
+			wantExcessAfter: 3 * ((5 * gasPerTx /*T*/) * hook.DefaultTargetToExcessScaling /* == K */),
 			// Excess is now 3·K so the price is e^3
 			wantPriceAfter: gas.Price(math.Floor(math.Pow(math.E, 3 /* <----- NB */))),
 		},
 		{
 			blockTime:       22, // no fast-forward
-			numTxs:          10 * gastime.DefaultTargetToExcessScaling,
+			numTxs:          10 * hook.DefaultTargetToExcessScaling,
 			targetAfter:     5 * gasPerTx,
-			wantExecutedBy:  at(21, 40*gastime.DefaultTargetToExcessScaling, 10*gasPerTx),
-			wantExcessAfter: 4 * ((5 * gasPerTx /*T*/) * gastime.DefaultTargetToExcessScaling /* == K */),
+			wantExecutedBy:  at(21, 40*hook.DefaultTargetToExcessScaling, 10*gasPerTx),
+			wantExcessAfter: 4 * ((5 * gasPerTx /*T*/) * hook.DefaultTargetToExcessScaling /* == K */),
 			wantPriceAfter:  gas.Price(math.Floor(math.Pow(math.E, 4 /* <----- NB */))),
 		},
 	}
@@ -518,7 +510,7 @@ func TestGasAccounting(t *testing.T) {
 	e, chain, wallet := sut.Executor, sut.chain, sut.wallet
 
 	for i, step := range steps {
-		hooks.GasConfig.Target = step.targetAfter
+		hooks.Target = step.targetAfter
 
 		txs := make(types.Transactions, step.numTxs)
 		for i := range txs {

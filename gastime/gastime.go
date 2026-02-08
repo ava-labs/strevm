@@ -11,7 +11,6 @@ import (
 
 	"github.com/ava-labs/avalanchego/vms/components/gas"
 	"github.com/ava-labs/libevm/core/types"
-	"github.com/ava-labs/libevm/libevm/options"
 	"github.com/holiman/uint256"
 
 	"github.com/ava-labs/strevm/hook"
@@ -35,24 +34,6 @@ type Time struct {
 	TimeMarshaler
 }
 
-// An Option configures the [Time] created by [New].
-type Option = options.Option[config]
-
-// WithTargetToExcessScaling overrides the target to excess scaling ratio.
-// Setting TargetToExcessScaling to [math.MaxUint64] will result in fixed price mode.
-func WithTargetToExcessScaling(s gas.Gas) Option {
-	return options.Func[config](func(c *config) {
-		c.targetToExcessScaling = s
-	})
-}
-
-// WithMinPrice overrides minimum gas price.
-func WithMinPrice(p gas.Price) Option {
-	return options.Func[config](func(c *config) {
-		c.minPrice = p
-	})
-}
-
 // makeTime is a constructor shared by [New] and [Time.Clone].
 func makeTime(t *proxytime.Time[gas.Gas], target, excess gas.Gas, c config) *Time {
 	tm := &Time{
@@ -73,23 +54,21 @@ func (tm *Time) establishInvariants() {
 
 // New returns a new [Time], derived from a [time.Time]. The consumption of
 // `target` * [TargetToRate] units of [gas.Gas] is equivalent to a tick of 1
-// second. Targets are clamped to [MaxTarget]. The minPrice and
-// targetToExcessScaling parameters default to [DefaultMinPrice] and
-// [DefaultTargetToExcessScaling] respectively, but can be overridden with
-// [WithMinPrice] and [WithTargetToExcessScaling].
-func New(at time.Time, target, startingExcess gas.Gas, opts ...Option) (*Time, error) {
-	cfg := &config{
-		targetToExcessScaling: DefaultTargetToExcessScaling,
-		minPrice:              DefaultMinPrice,
+// second. Targets are clamped to [MaxTarget]. The gasConfig parameter
+// specifies the gas pricing configurations.
+func New(at time.Time, target, startingExcess gas.Gas, gasConfig hook.GasConfig) (*Time, error) {
+	internalCfg := config{
+		targetToExcessScaling: gasConfig.TargetToExcessScaling,
+		minPrice:              gasConfig.MinPrice,
+		staticPricing:         gasConfig.StaticPricing,
 	}
-	options.ApplyTo(cfg, opts...)
-	if err := cfg.validate(); err != nil {
+	if err := internalCfg.validate(); err != nil {
 		return nil, err
 	}
 	target = clampTarget(target)
 	tm := proxytime.Of[gas.Gas](at)
 	_ = tm.SetRate(rateOf(target))
-	return makeTime(tm, target, startingExcess, *cfg), nil
+	return makeTime(tm, target, startingExcess, internalCfg), nil
 }
 
 // SubSecond scales the value returned by [hook.Points.SubSecondBlockTime] to
@@ -109,17 +88,6 @@ func SubSecond(hooks hook.Points, hdr *types.Header, rate gas.Gas) gas.Gas {
 
 // TargetToRate is the ratio between [Time.Target] and [proxytime.Time.Rate].
 const TargetToRate = 2
-
-// DefaultTargetToExcessScaling is the default ratio between [Time.Target] and
-// the reciprocal of the [Time.Excess] coefficient used in calculating
-// [Time.Price]. In [ACP-176] this is the K variable.
-//
-// [ACP-176]: https://github.com/avalanche-foundation/ACPs/tree/main/ACPs/176-dynamic-evm-gas-limit-and-price-discovery-updates
-const DefaultTargetToExcessScaling = 87
-
-// DefaultMinPrice is the default minimum gas price (base fee). This is the M
-// parameter in ACP-176's price calculation.
-const DefaultMinPrice gas.Price = 1
 
 // MaxTarget is the maximum allowable [Time.Target] to avoid overflows of the
 // associated [proxytime.Time.Rate]. Values above this are silently clamped.
@@ -168,7 +136,7 @@ func (c *config) validate() error {
 	return nil
 }
 
-// setConfig sets the full config with excess scaling to maintain price continuity.
+// SetConfig sets the full config with excess scaling to maintain price continuity.
 //
 // When config changes, excess is scaled to maintain price continuity:
 //   - K changes (via TargetToExcessScaling): Scale excess to maintain current price
@@ -176,42 +144,35 @@ func (c *config) validate() error {
 //   - M decreases: Scale excess to maintain current price
 //   - M increases AND current price >= new M: Scale excess to maintain current price
 //   - M increases AND current price < new M: Price bumps to new M (excess becomes 0)
-func (tm *Time) setConfig(cfg config) error {
-	// No change, skip recalculation
-	if cfg.Equal(tm.config) {
+func (tm *Time) SetConfig(cfg hook.GasConfig) error {
+	newCfg := config{
+		targetToExcessScaling: cfg.TargetToExcessScaling,
+		minPrice:              cfg.MinPrice,
+		staticPricing:         cfg.StaticPricing,
+	}
+	if newCfg.Equal(tm.config) {
 		return nil
 	}
-	if err := cfg.validate(); err != nil {
+	if err := newCfg.validate(); err != nil {
 		return err
 	}
 
 	currentPrice := tm.Price()
-	// Find excess that produces targetPrice with new config.
-	newExcess := findExcessForPrice(currentPrice, cfg.minPrice, cfg.targetToExcessScaling, tm.target)
+	tm.config = newCfg
+	// Always call findExcessForPrice after updating the config for [tm] to ensure price continuity.
+	newExcess := tm.findExcessForPrice(currentPrice)
 	tm.excess = newExcess
-	tm.config = cfg
 	return nil
-}
-
-// SetOpts applies partial config updates with excess scaling to maintain price continuity.
-// This is convenient for C-Chain where only one parameter (e.g., MinPrice) might change.
-// If validation fails, the config is unchanged.
-func (tm *Time) SetOpts(opts ...Option) error {
-	newCfg := tm.config // copy current
-	options.ApplyTo(&newCfg, opts...)
-	return tm.setConfig(newCfg)
 }
 
 // Price returns the price of a unit of gas, i.e. the "base fee".
 //
-// When [config.TargetToExcessScaling] is MaxUint64, this is "fixed price mode" and
+// When [config.StaticPricing] is true, this is "fixed price mode" and
 // always returns minPrice regardless of excess. This prevents the fake
 // exponential approximation from producing e^(x/K) ≈ e^1 when excess is also
 // very large.
 func (tm *Time) Price() gas.Price {
-	// We need to check explicitly this edge case since even with max scaling, excess can be very large and the fake
-	// exponential approximation can produce e^(x/K) ≈ e^1, which would cause the price to change.
-	if tm.config.targetToExcessScaling == math.MaxUint64 {
+	if tm.config.staticPricing {
 		return tm.config.minPrice
 	}
 	return gas.CalculatePrice(tm.config.minPrice, tm.excess, tm.excessScalingFactor())
@@ -247,33 +208,30 @@ func maxExcessSearchCap(k gas.Gas) gas.Gas {
 }
 
 // findExcessForPrice uses binary search over uint64 to find an excess value
-// that produces targetPrice with the given minPrice and excessScalingFactor (K).
+// that produces targetPrice with the given config.
 //
-// The price formula is: P = M * e^(x / K), where K = targetToExcessScaling * target.
+// The price formula is: P = M * e^(x / K), where K = tm.config.targetToExcessScaling * tm.target.
 //   - P is the price (targetPrice)
-//   - M is the minimum price (minPrice)
+//   - M is the minimum price (tm.config.minPrice)
 //   - x is the excess
-//   - targetToExcessScaling is the target to excess scaling ratio
-//   - target is the target gas consumption per second
+//   - K is the excess scaling factor (tm.config.targetToExcessScaling * tm.target)
 //
-// Thus we are solving for: x = K * ln(P / m)
-func findExcessForPrice(targetPrice, minPrice gas.Price, targetToExcessScaling gas.Gas, target gas.Gas) gas.Gas {
-	// Check edge cases:
-	// If the target price is less than the minimum price or MaxUint64, return 0.
+// Thus we are solving for: x = K * ln(P / M)
+func (tm *Time) findExcessForPrice(targetPrice gas.Price) gas.Gas {
+	// We return 0 in case targetPrice < minPrice because we should at least maintain the minimum price
+	// by setting the excess to 0. ( P = M * e^(0 / K) = M )
 	// Note: Even though we return 0 for excess it won't avoid accumulating excess in the long run.
-	if targetPrice <= minPrice || targetToExcessScaling == math.MaxUint64 {
+	if targetPrice <= tm.config.minPrice || tm.config.staticPricing {
 		return 0
 	}
 
-	// Calculate new K with new scaling and current target
-	k := excessScalingFactorOf(targetToExcessScaling, target)
+	k := tm.excessScalingFactor()
 
 	// Binary search over [0, maxExcessSearchCap(k)] for smallest excess where price >= targetPrice.
-	maxTargetExcess := maxExcessSearchCap(k)
-	lo, hi := uint64(0), uint64(maxTargetExcess)
+	lo, hi := gas.Gas(0), maxExcessSearchCap(k)
 	for lo < hi {
-		mid := lo + (hi-lo)>>1 // avoid overflow
-		if gas.CalculatePrice(minPrice, gas.Gas(mid), k) >= targetPrice {
+		mid := lo + (hi-lo)>>1
+		if gas.CalculatePrice(tm.config.minPrice, gas.Gas(mid), k) >= targetPrice {
 			hi = mid
 		} else {
 			lo = mid + 1
@@ -350,16 +308,4 @@ func (tm *Time) FastForwardTo(to uint64, toFrac gas.Gas) {
 	// -fT/R
 	quo, _, _ := intmath.MulDiv(frac.Numerator, T, R) // overflow is impossible as T/R < 1
 	tm.excess = intmath.BoundedSubtract(tm.excess, quo, 0)
-}
-
-// GasConfigToOpts converts a hook.GasConfig to a slice of Options.
-func GasConfigToOpts(cfg hook.GasConfig) []Option {
-	var opts []Option
-	if cfg.TargetToExcessScaling != nil {
-		opts = append(opts, WithTargetToExcessScaling(*cfg.TargetToExcessScaling))
-	}
-	if cfg.MinPrice != nil {
-		opts = append(opts, WithMinPrice(*cfg.MinPrice))
-	}
-	return opts
 }

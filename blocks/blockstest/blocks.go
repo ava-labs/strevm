@@ -27,7 +27,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/ava-labs/strevm/blocks"
-	"github.com/ava-labs/strevm/hook"
 	"github.com/ava-labs/strevm/hook/hookstest"
 	"github.com/ava-labs/strevm/saetest"
 )
@@ -123,7 +122,7 @@ func NewGenesis(tb testing.TB, db ethdb.Database, config *params.ChainConfig, al
 	require.NoErrorf(tb, tdb.Commit(hash, true), "%T.Commit(core.SetupGenesisBlock(...))", tdb)
 
 	b := NewBlock(tb, gen.ToBlock(), nil, nil)
-	h := &hookstest.Stub{GasConfig: hook.GasConfig{Target: conf.gasTarget}}
+	h := hookstest.NewStub(conf.gasTarget)
 	require.NoErrorf(tb, b.MarkSynchronous(h, db, conf.gasExcess), "%T.MarkSynchronous()", b)
 	return b
 }

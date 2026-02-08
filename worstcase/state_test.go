@@ -55,11 +55,7 @@ func newSUT(tb testing.TB, alloc types.GenesisAlloc) SUT {
 		blockstest.WithGasTarget(initialGasTarget),
 		blockstest.WithGasExcess(initialExcess),
 	)
-	hooks := &hookstest.Stub{
-		GasConfig: hook.GasConfig{
-			Target: initialGasTarget,
-		},
-	}
+	hooks := hookstest.NewStub(initialGasTarget)
 	s, err := NewState(hooks, config, cache, genesis)
 	require.NoError(tb, err, "NewState()")
 
@@ -116,11 +112,9 @@ func TestMultipleBlocks(t *testing.T) {
 		wantMinSenderBalances []map[common.Address]uint64 // transformed to uint256.Int
 	}{
 		{
-			hooks: &hookstest.Stub{
-				GasConfig: hook.GasConfig{
-					Target: 2 * initialGasTarget, // Will double the target _after_ this block.
-				},
-			},
+			hooks: hookstest.NewStub(
+				2 * initialGasTarget, // Will double the target _after_ this block.
+			),
 			wantGasLimit: initialMaxBlockSize,
 			wantBaseFee:  uint256.NewInt(1),
 			ops: []op{
@@ -159,11 +153,9 @@ func TestMultipleBlocks(t *testing.T) {
 			},
 		},
 		{
-			hooks: &hookstest.Stub{
-				GasConfig: hook.GasConfig{
-					Target: initialGasTarget, // Restore the target _after_ this block.
-				},
-			},
+			hooks: hookstest.NewStub(
+				initialGasTarget, // Restore the target _after_ this block.
+			),
 			wantGasLimit: 2 * initialMaxBlockSize,
 			wantBaseFee:  uint256.NewInt(2),
 			ops: []op{
@@ -590,7 +582,7 @@ func TestStartBlockQueueFullDueToTargetChanges(t *testing.T) {
 	sut := newSUT(t, nil)
 	state := sut.State
 
-	sut.Hooks.GasConfig.Target = 1 // applied after the first block
+	sut.Hooks.Target = 1 // applied after the first block
 	h := &types.Header{
 		ParentHash: sut.Genesis.Hash(),
 		Number:     big.NewInt(0),
