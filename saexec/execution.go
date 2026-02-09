@@ -157,6 +157,15 @@ func (e *Executor) execute(b *blocks.Block, logger logging.Logger) error {
 		// the queue. It's only worth it if [blocks.LastToSettleAt] regularly
 		// returns false, meaning that execution is blocking consensus.
 
+		// The [types.Header] that we pass to [core.ApplyTransaction] is
+		// modified to reduce gas price from the worst-case value agreed by
+		// consensus. This changes the hash, which is what is copied to receipts
+		// and logs.
+		receipt.BlockHash = b.Hash()
+		for _, l := range receipt.Logs {
+			l.BlockHash = b.Hash()
+		}
+
 		// TODO(arr4n) add a receipt cache to the [executor] to allow API calls
 		// to access them before the end of the block.
 		receipts[ti] = receipt
@@ -181,10 +190,8 @@ func (e *Executor) execute(b *blocks.Block, logger logging.Logger) error {
 		}
 	}
 
-	// The [types.Header] that we pass to [core.ApplyTransaction] is adjusted to
-	// reduce worst-case gas, which changes the block hash. DeriveField recomputes
-	// receipt/log metadata (e.g., block hash, effective gas price, etc.) against the final
-	// block header so cached receipts match the DB path.
+	// DeriveField recomputes receipt/log metadata (e.g., block hash, effective
+	// gas price, etc.) against the final block header so cached receipts match the DB path.
 	var blobGasPrice *big.Int
 	if header.ExcessBlobGas != nil {
 		blobGasPrice = eip4844.CalcBlobFee(*header.ExcessBlobGas)
