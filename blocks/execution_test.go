@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/ava-labs/avalanchego/utils/logging"
+	"github.com/ava-labs/avalanchego/vms/components/gas"
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core/rawdb"
 	"github.com/ava-labs/libevm/core/types"
@@ -53,8 +54,7 @@ func TestMarkExecuted(t *testing.T) {
 	rawdb.WriteBlock(db, ethB)
 
 	settles := newBlock(t, newEthBlock(0, 0, nil), nil, nil)
-	tm, err := gastime.New(time.Unix(0, 0), 1, 0, hook.DefaultGasConfig())
-	require.NoError(t, err)
+	tm := mustNewGasTime(t, time.Unix(0, 0), 1, 0, hook.DefaultGasConfig())
 	settles.markExecutedForTests(t, db, tm)
 	b := newBlock(t, ethB, nil, settles)
 
@@ -88,8 +88,7 @@ func TestMarkExecuted(t *testing.T) {
 		}
 	})
 
-	gasTime, err := gastime.New(time.Unix(42, 0), 1e6, 42, hook.DefaultGasConfig())
-	require.NoError(t, err)
+	gasTime := mustNewGasTime(t, time.Unix(42, 0), 1e6, 42, hook.DefaultGasConfig())
 	wallTime := time.Unix(42, 100)
 	stateRoot := common.Hash{'s', 't', 'a', 't', 'e'}
 	baseFee := big.NewInt(314159)
@@ -151,3 +150,10 @@ func TestMarkExecuted(t *testing.T) {
 type selfAsHasher common.Hash
 
 func (h selfAsHasher) Hash() common.Hash { return common.Hash(h) }
+
+func mustNewGasTime(tb testing.TB, at time.Time, target, excess gas.Gas, gasConfig hook.GasConfig) *gastime.Time {
+	tb.Helper()
+	tm, err := gastime.New(at, target, excess, gasConfig)
+	require.NoError(tb, err, "gastime.New()")
+	return tm
+}

@@ -18,7 +18,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/ava-labs/strevm/gastime"
 	"github.com/ava-labs/strevm/hook"
 	"github.com/ava-labs/strevm/hook/hookstest"
 	"github.com/ava-labs/strevm/params"
@@ -58,8 +57,7 @@ func TestSettlementInvariants(t *testing.T) {
 
 	db := rawdb.NewMemoryDatabase()
 	for _, b := range []*Block{b, parent, lastSettled} {
-		tm, err := gastime.New(preciseTime(b.Header(), 0), 1, 0, hook.DefaultGasConfig())
-		require.NoError(t, err)
+		tm := mustNewGasTime(t, preciseTime(b.Header(), 0), 1, 0, hook.DefaultGasConfig())
 		b.markExecutedForTests(t, db, tm)
 	}
 
@@ -218,8 +216,7 @@ func TestLastToSettleAt(t *testing.T) {
 		}
 	})
 
-	tm, err := gastime.New(time.Unix(0, 0), 5 /*target*/, 0, hook.DefaultGasConfig())
-	require.NoError(t, err)
+	tm := mustNewGasTime(t, time.Unix(0, 0), 5 /*target*/, 0, hook.DefaultGasConfig())
 	require.Equal(t, gas.Gas(10), tm.Rate())
 
 	requireTime := func(t *testing.T, sec uint64, numerator gas.Gas) {

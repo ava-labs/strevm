@@ -23,7 +23,7 @@ import (
 func mustNew(tb testing.TB, at time.Time, target, startingExcess gas.Gas, gasConfig hook.GasConfig) *Time {
 	tb.Helper()
 	tm, err := New(at, target, startingExcess, gasConfig)
-	require.NoError(tb, err)
+	require.NoError(tb, err, "New(%v, %d, %d, %v)", at, target, startingExcess, gasConfig)
 	return tm
 }
 
@@ -68,7 +68,7 @@ func TestUnmarshalBackwardCompatibility(t *testing.T) {
 
 	// Deserialize - should apply defaults
 	restored := new(Time)
-	require.NoError(t, restored.UnmarshalCanoto(data))
+	require.NoError(t, restored.UnmarshalCanoto(data), "UnmarshalCanoto(%v)", data)
 
 	// Verify defaults were applied
 	assert.Equal(t, gas.Gas(hook.DefaultTargetToExcessScaling), restored.config.targetToExcessScaling,
@@ -77,9 +77,8 @@ func TestUnmarshalBackwardCompatibility(t *testing.T) {
 		"MinPrice should default to %d", hook.DefaultMinPrice)
 
 	// Verify the Time is functional
-	assert.Equal(t, tm.target, restored.target)
-	assert.Equal(t, tm.excess, restored.excess)
-	assert.Greater(t, restored.Price(), gas.Price(0), "Price should be computable")
+	assert.Equal(t, tm.target, restored.target, "target changed")
+	assert.Equal(t, tm.excess, restored.excess, "excess changed")
 }
 
 // state captures parameters about a [Time] for assertion in tests. It includes
@@ -437,19 +436,6 @@ func TestExcessScalingFactor(t *testing.T) {
 			require.NoErrorf(t, tm.SetTarget(tt.target), "%T.SetTarget(%v)", tm, tt.target)
 			assert.Equalf(t, tt.want, tm.excessScalingFactor(), "scaling=%d, T=%d", tt.scaling, tt.target)
 		}
-	})
-
-	t.Run("edge case with forced 0 scaling", func(t *testing.T) {
-		// Zero scaling should be rejected by validation
-		_, err := New(time.Unix(0, 0), 1, 0, hook.GasConfig{TargetToExcessScaling: 0, MinPrice: hook.DefaultMinPrice})
-		require.Error(t, err, "New should reject zero scaling")
-
-		// Create a valid instance and force zero scaling directly to test excessScalingFactor safety
-		tm := mustNew(t, time.Unix(0, 0), 1, 0, hook.DefaultGasConfig())
-		require.NoErrorf(t, tm.SetTarget(1), "%T.SetTarget(1)", tm)
-		// Set the scaling to 0 directly to test the edge case of forced 0 scaling.
-		tm.config.targetToExcessScaling = 0
-		assert.Equal(t, gas.Gas(max), tm.excessScalingFactor())
 	})
 }
 

@@ -186,9 +186,6 @@ func (tm *Time) excessScalingFactor() gas.Gas {
 
 // excessScalingFactorOf returns scaling * target, capped at [math.MaxUint64].
 func excessScalingFactorOf(scaling, target gas.Gas) gas.Gas {
-	if scaling == 0 {
-		return math.MaxUint64
-	}
 	overflowThreshold := math.MaxUint64 / scaling
 	if target > overflowThreshold {
 		return math.MaxUint64

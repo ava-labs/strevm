@@ -86,13 +86,11 @@ func (b *Block) MarkSynchronous(hooks hook.Points, db ethdb.Database, excessAfte
 	if baseFee == nil { // genesis blocks
 		baseFee = new(big.Int)
 	}
-	gasConfigAfter := hooks.GasConfigAfter(b.Header())
-	targetAfter := hooks.GasTargetAfter(b.Header())
 	execTime, err := gastime.New(
 		PreciseTime(hooks, b.Header()),
-		targetAfter, // target _after_ is a requirement of [Block.MarkExecuted]
+		hooks.GasTargetAfter(b.Header()), // target _after_ is a requirement of [Block.MarkExecuted]
 		excessAfter,
-		gasConfigAfter,
+		hooks.GasConfigAfter(b.Header()),
 	)
 	if err != nil {
 		return err
