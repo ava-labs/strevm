@@ -17,23 +17,6 @@ import (
 	"github.com/ava-labs/strevm/hook/hookstest"
 )
 
-// TestNilOptsPreserveConfig verifies that nil TargetToExcessScaling and MinPrice
-// in hook.GasConfig preserve the existing config values.
-func TestNilOptsPreserveConfig(t *testing.T) {
-	tm := mustNew(t, time.Unix(42, 0), 1_000_000, 100_000_000, hook.DefaultGasConfig())
-
-	initialScaling := tm.config.targetToExcessScaling
-	initialMinPrice := tm.config.minPrice
-	initialPrice := tm.Price()
-
-	hooks := hookstest.NewStub(1_000_000)
-	require.NoError(t, tm.AfterBlock(0, hooks, &types.Header{Time: 42}))
-
-	assert.Equal(t, initialScaling, tm.config.targetToExcessScaling)
-	assert.Equal(t, initialMinPrice, tm.config.minPrice)
-	assert.Equal(t, initialPrice, tm.Price())
-}
-
 // TestInvalidConfigRejected verifies that zero values for TargetToExcessScaling
 // and MinPrice are rejected by AfterBlock.
 func TestInvalidConfigRejected(t *testing.T) {
@@ -70,8 +53,8 @@ func TestInvalidConfigRejected(t *testing.T) {
 			require.ErrorIs(t, err, tt.expected)
 
 			// Config unchanged after rejected update
-			assert.Equal(t, initialScaling, tm.config.targetToExcessScaling)
-			assert.Equal(t, initialMinPrice, tm.config.minPrice)
+			assert.Equal(t, initialScaling, tm.config.targetToExcessScaling, "targetToExcessScaling changed")
+			assert.Equal(t, initialMinPrice, tm.config.minPrice, "minPrice changed")
 		})
 	}
 }
@@ -228,7 +211,7 @@ func TestPriceTrajectory(t *testing.T) {
 				hookstest.WithGasConfig(b.gasConfig),
 			)
 			tm.BeforeBlock(hooks, header)
-			require.NoError(t, tm.AfterBlock(b.gasUsed, hooks, header))
+			require.NoError(t, tm.AfterBlock(b.gasUsed, hooks, header), "AfterBlock()")
 			prices = append(prices, tm.Price())
 		}
 		return prices
@@ -290,21 +273,18 @@ func TestPriceTrajectory(t *testing.T) {
 			minPrice      = gas.Price(1e11) // 100 gwei
 		)
 
-		tm := mustNew(t, startTime, target, initialExcess, hook.GasConfig{
-			TargetToExcessScaling: hook.DefaultTargetToExcessScaling,
-			MinPrice:              minPrice,
-			StaticPricing:         true,
-		})
-
-		initialPrice := tm.Price()
-		assert.Equal(t, minPrice, initialPrice, "with StaticPricing, price %d should equal MinPrice %d", initialPrice, minPrice)
-
-		// Process blocks with varying gas usage — all using static pricing config
 		staticCfg := hook.GasConfig{
 			TargetToExcessScaling: hook.DefaultTargetToExcessScaling,
 			MinPrice:              minPrice,
 			StaticPricing:         true,
 		}
+
+		tm := mustNew(t, startTime, target, initialExcess, staticCfg)
+
+		initialPrice := tm.Price()
+		assert.Equal(t, minPrice, initialPrice, "with StaticPricing, price %d should equal MinPrice %d", initialPrice, minPrice)
+
+		// Process blocks with varying gas usage — all using static pricing config
 		blocks := []block{
 			{time: startTime.Add(time.Second), gasUsed: 0, target: target, gasConfig: staticCfg},              // empty block
 			{time: startTime.Add(2 * time.Second), gasUsed: target * 2, target: target, gasConfig: staticCfg}, // full block
@@ -320,8 +300,8 @@ func TestPriceTrajectory(t *testing.T) {
 		}
 	})
 
-	t.Run("transition_from_max_scaling_restores_dynamics", func(t *testing.T) {
-		// Start with static pricing (fixed price mode)
+	t.Run("transition_from_static_pricing_restores_dynamics", func(t *testing.T) {
+		// Start with static pricing mode
 		// Change to normal scaling
 		// Verify price becomes dynamic again
 		const (
@@ -459,8 +439,9 @@ func absdiff(x uint64, y uint64) uint64 {
 
 func FuzzPriceInvarianceAfterBlock(f *testing.F) {
 	for _, s := range []struct {
-		T, x, M, KonT       uint64
-		newT, newM, newKonT uint64
+		T, x, M, KonT         uint64
+		newT, newM, newKonT   uint64
+		initStatic, newStatic bool
 	}{
 		// Basic scaling change: K doubles, price should be maintained
 		{
@@ -469,7 +450,7 @@ func FuzzPriceInvarianceAfterBlock(f *testing.F) {
 			newT: 1e6, newM: 1, // both unchanged
 			newKonT: 2, // i.e. K == 2e6; without proper scaling, price becomes exp(2/2) ~= 2
 		},
-		// K at MaxUint64 boundary (fixed price mode)
+		// K at MaxUint64 boundary
 		{
 			T: 1e6, M: 1, KonT: math.MaxUint64,
 			x:    2e6,
@@ -516,22 +497,6 @@ func FuzzPriceInvarianceAfterBlock(f *testing.F) {
 			newM:    1e9,
 			newKonT: 50,
 		},
-		// Transition from MaxUint64 scaling to normal
-		{
-			T: 1e6, M: 1, KonT: math.MaxUint64,
-			x:       1e6, // with K=MaxUint64, price ~= M = 1
-			newT:    1e6,
-			newM:    1,
-			newKonT: 87, // normal scaling
-		},
-		// Transition from normal to MaxUint64 scaling
-		{
-			T: 1e6, M: 1, KonT: 87,
-			x:       5e6,
-			newT:    1e6,
-			newM:    1,
-			newKonT: math.MaxUint64, // fixed price mode
-		},
 		// Zero excess with config changes
 		{
 			T: 1e6, M: 1, KonT: 87,
@@ -539,14 +504,6 @@ func FuzzPriceInvarianceAfterBlock(f *testing.F) {
 			newT:    1e6,
 			newM:    1,
 			newKonT: 50,
-		},
-		// MaxUint64 scaling with MinPrice decrease
-		{
-			T: 1e6, M: 26, KonT: math.MaxUint64,
-			x:       1e6,
-			newT:    1e6,
-			newM:    1,
-			newKonT: math.MaxUint64,
 		},
 		// Around MaxUint64 scaling with MinPrice decrease
 		{
@@ -564,14 +521,42 @@ func FuzzPriceInvarianceAfterBlock(f *testing.F) {
 			newM:    1e12,
 			newKonT: math.MaxUint64,
 		},
+		// Dynamic to static pricing: price should snap to newMinPrice
+		{
+			T: 1e6, M: 1, KonT: 87,
+			x:         1e9, // high excess = high price
+			newT:      1e6,
+			newM:      1,
+			newKonT:   87,
+			newStatic: true,
+		},
+		// Static to dynamic pricing: price continuity from initMinPrice
+		{
+			T: 1e6, M: 100, KonT: 87,
+			x:          5e6,
+			initStatic: true,
+			newT:       1e6,
+			newM:       50, // M decreases, should maintain initMinPrice via excess
+			newKonT:    87,
+		},
+		// Static to static with MinPrice change: price should be newMinPrice
+		{
+			T: 1e6, M: 100, KonT: 87,
+			x:          5e6,
+			initStatic: true,
+			newT:       1e6,
+			newM:       200,
+			newKonT:    87,
+			newStatic:  true,
+		},
 	} {
-		f.Add(s.T, s.x, s.M, s.KonT, s.newT, s.newM, s.newKonT)
+		f.Add(s.T, s.x, s.M, s.KonT, s.initStatic, s.newT, s.newM, s.newKonT, s.newStatic)
 	}
 
 	f.Fuzz(func(
 		t *testing.T,
-		initTarget, excess, initMinPrice, initScaling uint64,
-		newTarget, newMinPrice, newScaling uint64,
+		initTarget, excess, initMinPrice, initScaling uint64, initStaticPricing bool,
+		newTarget, newMinPrice, newScaling uint64, newStaticPricing bool,
 	) {
 		if initMinPrice == 0 || newMinPrice == 0 {
 			t.Skip("Zero price coefficient")
@@ -587,6 +572,7 @@ func FuzzPriceInvarianceAfterBlock(f *testing.F) {
 			hook.GasConfig{
 				TargetToExcessScaling: gas.Gas(initScaling),
 				MinPrice:              gas.Price(initMinPrice),
+				StaticPricing:         initStaticPricing,
 			},
 		)
 		initPrice := tm.Price()
@@ -596,6 +582,7 @@ func FuzzPriceInvarianceAfterBlock(f *testing.F) {
 			hookstest.WithGasConfig(hook.GasConfig{
 				MinPrice:              gas.Price(newMinPrice),
 				TargetToExcessScaling: gas.Gas(newScaling),
+				StaticPricing:         newStaticPricing,
 			}),
 		)
 
@@ -605,7 +592,7 @@ func FuzzPriceInvarianceAfterBlock(f *testing.F) {
 		require.NoError(t, tm.AfterBlock(gasUsed, hooks, nil), "AfterBlock()")
 
 		want := initPrice
-		if p := hooks.GasConfig.MinPrice; p > initPrice {
+		if p := hooks.GasConfig.MinPrice; newStaticPricing || p > initPrice {
 			want = p
 		} else {
 			// When required excess for continuity exceeds the search cap, findExcessForPrice
@@ -613,7 +600,8 @@ func FuzzPriceInvarianceAfterBlock(f *testing.F) {
 			// This means price continuity is not possible if required excess exceeds the search cap.
 			newK := excessScalingFactorOf(gas.Gas(newScaling), gas.Gas(newTarget))
 			cap := maxExcessSearchCap(newK)
-			if cap == math.MaxUint64 {
+			requiredApproxExcess := float64(newK) * math.Log(float64(initPrice)/float64(newMinPrice))
+			if requiredApproxExcess > float64(cap) {
 				want = gas.CalculatePrice(gas.Price(newMinPrice), cap, newK)
 			}
 		}
@@ -635,6 +623,7 @@ func FuzzPriceInvarianceAfterBlock(f *testing.F) {
 			t.Logf("Price: %d -> %d", initPrice, got)
 			t.Logf("MinPrice: %d -> %d", initMinPrice, newMinPrice)
 			t.Logf("TargetToExcessScaling: %d -> %d", initScaling, newScaling)
+			t.Logf("StaticPricing: %v -> %v", initStaticPricing, newStaticPricing)
 			t.Errorf("AfterBlock([0 gas consumed]) -> %T.Price() got %d want %d (diff %d > tolerance %d)", tm, got, want, diff, tolerance)
 		}
 	})

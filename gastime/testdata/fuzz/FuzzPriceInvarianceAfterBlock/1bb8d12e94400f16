@@ -1,8 +1,0 @@
-go test fuzz v1
-uint64(999963)
-uint64(999978)
-uint64(99)
-uint64(163)
-uint64(1000000)
-uint64(49)
-uint64(1)
