@@ -426,6 +426,8 @@ func TestGetLogs(t *testing.T) {
 	for i := range indexed {
 		indexed[i] = sut.createAndAcceptBlock(t, createLog(t))
 	}
+	_, sections := sut.rawVM.APIBackend().BloomStatus()
+	require.Equalf(t, uint64(1), sections, "%T.BloomStatus returned %d indexed sections (did the indexer start?)", sut.rawVM.APIBackend(), sections)
 
 	settled := sut.createAndAcceptBlock(t, createLog(t))
 	require.NoErrorf(t, settled.WaitUntilExecuted(ctx), "%T.WaitUntilSettled()", settled)
