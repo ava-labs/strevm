@@ -59,7 +59,7 @@ type VM struct {
 
 	exec       *saexec.Executor
 	mempool    *txgossip.Set
-	apiBackend APIBackend
+	apiBackend *ethAPIBackend
 	newTxs     chan struct{}
 
 	toClose [](func() error)
