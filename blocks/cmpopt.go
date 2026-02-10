@@ -6,7 +6,10 @@
 package blocks
 
 import (
+	"sync/atomic"
+
 	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 
 	"github.com/ava-labs/strevm/cmputils"
 	"github.com/ava-labs/strevm/saetest"
@@ -16,6 +19,26 @@ import (
 // tests.
 func CmpOpt() cmp.Option {
 	return cmp.Comparer((*Block).equalForTests)
+	return cmp.Options{
+		cmpopts.EquateEmpty(),
+		cmp.AllowUnexported(Block{}, ancestry{}),
+		cmpopts.IgnoreFields(
+			Block{},
+			"bounds",
+			"interimExecutionTime",
+			"log",
+		),
+		cmputils.IfIn[Block](cmpopts.IgnoreTypes(make(chan struct{}))),
+		cmp.Comparer((*executionResults).equalForTests),
+		cmputils.Blocks(),
+		cmputils.Headers(),
+		cmp.Transformer("ancestry", func(p atomic.Pointer[ancestry]) *ancestry {
+			return p.Load()
+		}),
+		cmp.Transformer("execution", func(p atomic.Pointer[executionResults]) *executionResults {
+			return p.Load()
+		}),
+	}
 }
 
 func (b *Block) equalForTests(c *Block) bool {
@@ -41,7 +64,7 @@ func (e *executionResults) equalForTests(f *executionResults) bool {
 	fn := cmputils.WithNilCheck(func(e, f *executionResults) bool {
 		return true &&
 			e.byGas.Rate() == f.byGas.Rate() &&
-			e.byGas.Compare(f.byGas.Time) == 0 && // N.B. Compare is only valid if rates are equal
+			e.byGas.Compare(f.byGas.Time) == 0 &&
 			e.receiptRoot == f.receiptRoot &&
 			saetest.MerkleRootsEqual(e.receipts, f.receipts) &&
 			e.stateRootPost == f.stateRootPost
