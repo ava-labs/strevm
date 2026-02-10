@@ -38,9 +38,11 @@ import (
 var zeroAddr common.Address
 
 type rpcTest struct {
-	method string
-	args   []any
-	want   any
+	method       string
+	args         []any
+	want         any    // expected value compared via [cmp.Diff]
+	wantErr      string // if non-empty, assert ErrorContains instead of comparing want
+	wantNonEmpty bool   // if true, assert only that the result is non-zero (for non-deterministic values)
 }
 
 func (s *SUT) testRPC(ctx context.Context, t *testing.T, tcs ...rpcTest) {
@@ -54,9 +56,23 @@ func (s *SUT) testRPC(ctx context.Context, t *testing.T, tcs ...rpcTest) {
 
 	for _, tc := range tcs {
 		t.Run(tc.method, func(t *testing.T) {
+			if tc.wantErr != "" {
+				err := s.CallContext(ctx, nil, tc.method, tc.args...)
+				require.ErrorContains(t, err, tc.wantErr)
+				return
+			}
+			if tc.want == nil {
+				// Void RPC (e.g. debug_setHead, debug_chaindbCompact).
+				require.NoError(t, s.CallContext(ctx, nil, tc.method, tc.args...))
+				return
+			}
 			got := reflect.New(reflect.TypeOf(tc.want))
 			t.Logf("%T.CallContext(ctx, %T, %q, %v...)", s.rpcClient, &tc.want /*i.e. the type*/, tc.method, tc.args)
 			require.NoError(t, s.CallContext(ctx, got.Interface(), tc.method, tc.args...))
+			if tc.wantNonEmpty {
+				require.NotZero(t, got.Elem().Interface())
+				return
+			}
 			if diff := cmp.Diff(tc.want, got.Elem().Interface(), opts...); diff != "" {
 				t.Errorf("Diff (-want +got):\n%s", diff)
 			}
@@ -448,46 +464,43 @@ func TestEthSigningAPIs(t *testing.T) {
 func TestDebugRPCs(t *testing.T) {
 	ctx, sut := newSUT(t, 0, withDebugAPI())
 
-	t.Run("setHead", func(t *testing.T) {
-		require.NoError(t, sut.CallContext(ctx, nil, "debug_setHead", hexutil.Uint64(0)))
-	})
-
-	t.Run("printBlock", func(t *testing.T) {
-		var result string
-		require.NoError(t, sut.CallContext(ctx, &result, "debug_printBlock", uint64(0)))
-		require.NotEmpty(t, result, "debug_printBlock(0) should return non-empty string for genesis")
-	})
-
-	t.Run("chaindbCompact", func(t *testing.T) {
-		require.NoError(t, sut.CallContext(ctx, nil, "debug_chaindbCompact"))
-	})
-
-	t.Run("chaindbProperty", func(t *testing.T) {
-		var result string
-		err := sut.CallContext(ctx, &result, "debug_chaindbProperty", "leveldb.stats")
-		require.Error(t, err, "evmdb does not support Stat")
-	})
-
-	t.Run("dbGet", func(t *testing.T) {
-		// rawdb.headBlockKey is unexported - its value is "LastBlock".
-		// The VM writes this key during initialization via rawdb.WriteHeadBlockHash.
-		var result hexutil.Bytes
-		err := sut.CallContext(ctx, &result, "debug_dbGet", hexutil.Encode([]byte("LastBlock")))
-		require.NoError(t, err)
-		require.NotEmpty(t, result)
-	})
-
-	t.Run("dbAncient", func(t *testing.T) {
-		var result hexutil.Bytes
-		err := sut.CallContext(ctx, &result, "debug_dbAncient", "headers", uint64(0))
-		require.Error(t, err, "nofreezedb does not support Ancient")
-	})
-
-	t.Run("dbAncients", func(t *testing.T) {
-		var count uint64
-		err := sut.CallContext(ctx, &count, "debug_dbAncients")
-		require.Error(t, err, "nofreezedb does not support Ancients")
-	})
+	sut.testRPC(ctx, t, []rpcTest{
+		{
+			method: "debug_setHead",
+			args:   []any{hexutil.Uint64(0)},
+		},
+		{
+			method:       "debug_printBlock",
+			args:         []any{uint64(0)},
+			want:         "",
+			wantNonEmpty: true,
+		},
+		{
+			method: "debug_chaindbCompact",
+		},
+		{
+			method:  "debug_chaindbProperty",
+			args:    []any{"leveldb.stats"},
+			wantErr: "stat is not supported",
+		},
+		{
+			// rawdb.headBlockKey is unexported - its value is "LastBlock".
+			// The VM writes this key during initialization via rawdb.WriteHeadBlockHash.
+			method:       "debug_dbGet",
+			args:         []any{hexutil.Encode([]byte("LastBlock"))},
+			want:         hexutil.Bytes{},
+			wantNonEmpty: true,
+		},
+		{
+			method:  "debug_dbAncient",
+			args:    []any{"headers", uint64(0)},
+			wantErr: "this operation is not supported",
+		},
+		{
+			method:  "debug_dbAncients",
+			wantErr: "this operation is not supported",
+		},
+	}...)
 
 	// The profiling debug namespace is handled entirely by upstream code
 	// that doesn't depend in any way on SAE. We therefore only need an
@@ -495,7 +508,7 @@ func TestDebugRPCs(t *testing.T) {
 	// testing is the responsibility of the source.
 	//
 	// Reference: https://geth.ethereum.org/docs/interacting-with-geth/rpc/ns-debug
-	t.Run("setGCPercent", func(t *testing.T) {
+	t.Run("debug_setGCPercent", func(t *testing.T) {
 		const firstArg = 100
 		beforeTest := debug.SetGCPercent(firstArg)
 		defer debug.SetGCPercent(beforeTest)
