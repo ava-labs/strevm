@@ -75,6 +75,12 @@ type Config struct {
 	Now func() time.Time // defaults to [time.Now] if nil
 }
 
+// RPCConfig provides options for initialization of RPCs for the node.
+type RPCConfig struct {
+	BlocksPerBloomSection uint64
+	EnableProfiling       bool
+}
+
 // NewVM returns a new [VM] that is ready for use immediately upon return.
 // [VM.Shutdown] MUST be called to release resources.
 func NewVM(
