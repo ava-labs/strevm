@@ -24,6 +24,8 @@ type bloomIndexer struct {
 	handlers *eth.BloomHandlers
 }
 
+// newBloomIndexer creates a [bloomIndexer] and starts the indexer to run with events from `chain`.
+// The consumer must close the [core.ChainIndexer] on VM shutdown.
 func (vm *VM) newBloomIndexer(chain core.ChainIndexerChain, override filters.BloomOverrider, config RPCConfig) *bloomIndexer {
 	size := config.BlocksPerBloomSection
 	if size == 0 || size > math.MaxInt32 {
@@ -36,21 +38,23 @@ func (vm *VM) newBloomIndexer(chain core.ChainIndexerChain, override filters.Blo
 	}
 	table := rawdb.NewTable(vm.db, string(rawdb.BloomBitsIndexPrefix))
 
-	return &bloomIndexer{
+	b := &bloomIndexer{
 		indexer:  core.NewChainIndexer(vm.db, table, backend, size, 0, core.BloomThrottling, "bloombits"),
 		size:     size,
 		handlers: eth.StartBloomHandlers(vm.db, size),
 	}
+	b.indexer.Start(chain)
+	return b
 }
 
-func (s *bloomIndexer) BloomStatus() (uint64, uint64) {
-	sections, _, _ := s.indexer.Sections()
-	return s.size, sections
+func (b *bloomIndexer) BloomStatus() (uint64, uint64) {
+	sections, _, _ := b.indexer.Sections()
+	return b.size, sections
 }
 
-func (s *bloomIndexer) ServiceFilter(ctx context.Context, session *bloombits.MatcherSession) {
+func (b *bloomIndexer) ServiceFilter(ctx context.Context, session *bloombits.MatcherSession) {
 	for range eth.BloomFilterThreads {
-		go session.Multiplex(eth.BloomRetrievalBatch, eth.BloomRetrievalWait, s.handlers.Requests)
+		go session.Multiplex(eth.BloomRetrievalBatch, eth.BloomRetrievalWait, b.handlers.Requests)
 	}
 }
 
