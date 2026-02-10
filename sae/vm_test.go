@@ -236,7 +236,7 @@ func withVMTime(tb testing.TB, startTime time.Time) (sutOption, *vmTime) {
 
 func withBloomSectionSize(size uint64) sutOption {
 	return options.Func[sutConfig](func(c *sutConfig) {
-		c.vmConfig.RPCConfig = RPCConfig{BloomSectionSize: size}
+		c.vmConfig.RPCConfig = RPCConfig{BlocksPerBloomSection: size}
 	})
 }
 

@@ -17,7 +17,6 @@ import (
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/common/hexutil"
 	"github.com/ava-labs/libevm/core"
-	"github.com/ava-labs/libevm/core/bloombits"
 	"github.com/ava-labs/libevm/core/rawdb"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/crypto"
@@ -28,24 +27,9 @@ import (
 	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/rpc"
 
+	"github.com/ava-labs/strevm/saexec"
 	"github.com/ava-labs/strevm/txgossip"
 )
-
-// APIBackend returns an API backend backed by the [VM].
-// All goroutines created will be closed when the [VM] is shutdown.
-func (vm *VM) APIBackend(config RPCConfig) ethapi.Backend {
-	b := &ethAPIBackend{
-		vm:  vm,
-		Set: vm.mempool,
-	}
-
-	// TODO: if we are state syncing, we need to provide the first block available to the indexer
-	// via [core.ChainIndexer.AddCheckpoint].
-	b.bloomIndexer = filters.NewBloomIndexerService(b, config.BloomSectionSize)
-	vm.toClose = append(vm.toClose, b.bloomIndexer.Close)
-
-	return b
-}
 
 func (vm *VM) ethRPCServer(config RPCConfig) (*rpc.Server, error) {
 	b := vm.APIBackend(config)
@@ -173,35 +157,80 @@ func (s *netAPI) Version() string {
 
 // RPCConfig provides options for initialization of RPCs for the node.
 type RPCConfig struct {
-	BloomSectionSize uint64 // Number of blocks per bloom section
+	BlocksPerBloomSection uint64
 }
 
-var _ filters.IndexerServiceProvider = (*ethAPIBackend)(nil)
+// APIBackend returns an API backend backed by the [VM]. All goroutines created
+// will be closed by [VM.Shutdown].
+func (vm *VM) APIBackend(config RPCConfig) ethapi.Backend {
+	chainIdx := chainIndexer{vm.exec}
+	override := bloomOverrider{vm.db}
+	// TODO(alarso16): if we are state syncing, we need to provide the first
+	// block available to the indexer via [core.ChainIndexer.AddCheckpoint].
+	bloomIdx := vm.newBloomIndexer(chainIdx, override, config)
+	vm.toClose = append(vm.toClose, func() error {
+		bloomIdx.handlers.Close()
+		return bloomIdx.indexer.Close()
+	})
+
+	return &ethAPIBackend{
+		vm:             vm,
+		Set:            vm.mempool,
+		chainIndexer:   chainIdx,
+		bloomIndexer:   bloomIdx,
+		bloomOverrider: override,
+	}
+}
+
+// chainIndexer implements the subset of [ethapi.Backend] required to back a
+// [core.ChainIndexer].
+type chainIndexer struct {
+	exec *saexec.Executor
+}
+
+var _ core.ChainIndexerChain = chainIndexer{}
+
+func (ci chainIndexer) CurrentHeader() *types.Header {
+	return types.CopyHeader(ci.exec.LastExecuted().Header())
+}
+
+func (ci chainIndexer) SubscribeChainHeadEvent(ch chan<- core.ChainHeadEvent) event.Subscription {
+	return ci.exec.SubscribeChainHeadEvent(ch)
+}
+
+// A bloomOverrider constructs Bloom filters from persisted receipts instead of
+// relying on the [types.Header] field.
+type bloomOverrider struct {
+	db ethdb.Database
+}
+
+var _ filters.BloomOverrider = bloomOverrider{}
+
+// OverrideHeaderBloom returns the Bloom filter of the receipts generated when
+// executing the respective block, whereas the [types.Header] carries those
+// settled by the block.
+func (b bloomOverrider) OverrideHeaderBloom(header *types.Header) types.Bloom {
+	return types.CreateBloom(rawdb.ReadRawReceipts(
+		b.db,
+		header.Hash(),
+		header.Number.Uint64(),
+	))
+}
+
+var _ interface {
+	ethapi.Backend
+	filters.BloomOverrider
+} = (*ethAPIBackend)(nil)
 
 type ethAPIBackend struct {
-	ethapi.Backend // TODO(arr4n) remove in favour of `var _ ethapi.Backend = (*ethAPIBackend)(nil)`
+	vm *VM
+
 	*txgossip.Set
+	chainIndexer
+	bloomOverrider
+	*bloomIndexer
 
-	vm           *VM
-	bloomIndexer *filters.BloomIndexerService
-}
-
-func (b *ethAPIBackend) BloomStatus() (uint64, uint64) {
-	return b.bloomIndexer.BloomStatus()
-}
-
-func (b *ethAPIBackend) ServiceFilter(ctx context.Context, session *bloombits.MatcherSession) {
-	b.bloomIndexer.ServiceFilter(ctx, session)
-}
-
-// OverrideHeaderBloom retrieves the bloom filter for a given header.
-// The bloom actually stored in the header is the bloom of the receipts that the block settled, not the
-// bloom of the transactions in the block, so we must retrieve the blocks receipts from the database.
-// The [*filters.FilterAPI] relies on this method, although not in [ethapi.Backend] directly.
-// TODO: should we cache this? Store blooms separately?
-func (b *ethAPIBackend) OverrideHeaderBloom(header *types.Header) types.Bloom {
-	receipts := rawdb.ReadRawReceipts(b.ChainDb(), header.Hash(), header.Number.Uint64())
-	return types.CreateBloom(receipts)
+	ethapi.Backend // TODO(arr4n) remove once all methods are implemented
 }
 
 func (b *ethAPIBackend) ChainDb() ethdb.Database {
@@ -220,12 +249,10 @@ func (b *ethAPIBackend) UnprotectedAllowed() bool {
 	return false
 }
 
-func (b *ethAPIBackend) CurrentHeader() *types.Header {
-	return types.CopyHeader(b.vm.exec.LastExecuted().Header())
-}
-
 func (b *ethAPIBackend) CurrentBlock() *types.Header {
-	return b.CurrentHeader()
+	// TODO(arr4n) remove the `chainIndexer` disambiguation once [ethAPIBackend]
+	// no longer embeds [ethapi.Backend].
+	return b.chainIndexer.CurrentHeader()
 }
 
 func (b *ethAPIBackend) GetTd(context.Context, common.Hash) *big.Int {
@@ -346,10 +373,6 @@ func (b *ethAPIBackend) TxPoolContentFrom(addr common.Address) ([]*types.Transac
 
 func (b *ethAPIBackend) SubscribeChainEvent(ch chan<- core.ChainEvent) event.Subscription {
 	return b.vm.exec.SubscribeChainEvent(ch)
-}
-
-func (b *ethAPIBackend) SubscribeChainHeadEvent(ch chan<- core.ChainHeadEvent) event.Subscription {
-	return b.vm.exec.SubscribeChainHeadEvent(ch)
 }
 
 func (b *ethAPIBackend) SubscribeChainSideEvent(chan<- core.ChainSideEvent) event.Subscription {
