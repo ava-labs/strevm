@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/ava-labs/avalanchego/ids"
-	"github.com/ava-labs/avalanchego/snow"
+	"github.com/ava-labs/avalanchego/upgrade"
 	"github.com/ava-labs/avalanchego/vms/components/gas"
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core"
@@ -33,9 +33,9 @@ type Points interface {
 
 // InitializerPoints define the user-injected hook points for VM initialization.
 type InitializerPoints interface {
-	// ParseGenesis returns the [*core.Genesis] that the VM will use
-	// during initialization.
-	ParseGenesis(ctx *snow.Context, genesisBytes []byte) (*core.Genesis, error)
+	// ApplyNetworkUpgrades set the given chain configuration upgrades
+	// based on the Avalanche upgrade config.
+	ApplyNetworkUpgrades(config *params.ChainConfig, upgrades upgrade.Config) error
 }
 
 // BlockPoints define user-injected hook points for block building, execution,
