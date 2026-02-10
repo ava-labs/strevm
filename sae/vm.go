@@ -26,6 +26,7 @@ import (
 	"github.com/ava-labs/libevm/core/txpool/legacypool"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/ethdb"
+	"github.com/ava-labs/libevm/libevm/ethapi"
 	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/triedb"
 	"github.com/prometheus/client_golang/prometheus"
@@ -56,9 +57,10 @@ type VM struct {
 		accepted, settled atomic.Pointer[blocks.Block]
 	}
 
-	exec    *saexec.Executor
-	mempool *txgossip.Set
-	newTxs  chan struct{}
+	exec       *saexec.Executor
+	mempool    *txgossip.Set
+	apiBackend ethapi.Backend
+	newTxs     chan struct{}
 
 	toClose [](func() error)
 }
@@ -209,6 +211,8 @@ func NewVM(
 			return nil
 		})
 	}
+
+	vm.apiBackend = vm.newAPIBackend(c.RPCConfig)
 
 	return vm, nil
 }

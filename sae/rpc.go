@@ -14,10 +14,12 @@ import (
 	"github.com/ava-labs/avalanchego/network/p2p"
 	"github.com/ava-labs/avalanchego/version"
 	ethereum "github.com/ava-labs/libevm"
+	"github.com/ava-labs/libevm/accounts"
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/common/hexutil"
 	"github.com/ava-labs/libevm/core"
 	"github.com/ava-labs/libevm/core/rawdb"
+	"github.com/ava-labs/libevm/core/txpool"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/crypto"
 	"github.com/ava-labs/libevm/eth/filters"
@@ -31,13 +33,15 @@ import (
 	"github.com/ava-labs/strevm/txgossip"
 )
 
-func (vm *VM) ethRPCServer(config RPCConfig) (*rpc.Server, error) {
-	b := vm.APIBackend(config)
-	s := rpc.NewServer()
+// APIBackend returns an API backend backed by the [VM].
+func (vm *VM) APIBackend() ethapi.Backend {
+	return vm.apiBackend
+}
 
-	// Even if this function errors, we should close API to prevent a goroutine
-	// from leaking.
-	filterSystem := filters.NewFilterSystem(b, filters.Config{})
+func (vm *VM) ethRPCServer() (*rpc.Server, error) {
+	srv := rpc.NewServer()
+
+	filterSystem := filters.NewFilterSystem(vm.apiBackend, filters.Config{})
 	filterAPI := filters.NewFilterAPI(filterSystem, false /*isLightClient*/)
 	vm.toClose = append(vm.toClose, func() error {
 		filters.CloseAPI(filterAPI)
@@ -64,10 +68,10 @@ func (vm *VM) ethRPCServer(config RPCConfig) (*rpc.Server, error) {
 		// - txpool_contentFrom
 		// - txpool_inspect
 		// - txpool_status
-		{"txpool", ethapi.NewTxPoolAPI(b)},
+		{"txpool", ethapi.NewTxPoolAPI(vm.apiBackend)},
 		// Standard Ethereum node APIs:
 		// - eth_syncing
-		{"eth", ethapi.NewEthereumAPI(b)},
+		{"eth", ethapi.NewEthereumAPI(vm.apiBackend)},
 		// Standard Ethereum node APIs:
 		// - eth_blockNumber
 		// - eth_chainId
@@ -81,29 +85,34 @@ func (vm *VM) ethRPCServer(config RPCConfig) (*rpc.Server, error) {
 		// Geth-specific APIs:
 		// - eth_getHeaderByHash
 		// - eth_getHeaderByNumber
-		{"eth", ethapi.NewBlockChainAPI(b)},
+		{"eth", ethapi.NewBlockChainAPI(vm.apiBackend)},
 		// Standard Ethereum node APIs:
 		// - eth_getBlockTransactionCountByHash
 		// - eth_getBlockTransactionCountByNumber
 		// - eth_getTransactionByBlockHashAndIndex
 		// - eth_getTransactionByBlockNumberAndIndex
 		// - eth_getTransactionByHash
+		// - eth_sendRawTransaction
+		// - eth_sendTransaction
+		// - eth_sign
+		// - eth_signTransaction
 		//
 		// Undocumented APIs:
-		// - eth_getRawTransactionByHash
 		// - eth_getRawTransactionByBlockHashAndIndex
 		// - eth_getRawTransactionByBlockNumberAndIndex
-		{"eth", ethapi.NewTransactionAPI(b, new(ethapi.AddrLocker))},
+		// - eth_getRawTransactionByHash
+		// - eth_pendingTransactions
+		{"eth", ethapi.NewTransactionAPI(vm.apiBackend, new(ethapi.AddrLocker))},
 		// Standard Ethereum node APIS:
 		// - eth_getLogs
 		{"eth", filterAPI},
 	}
 	for _, api := range apis {
-		if err := s.RegisterName(api.namespace, api.api); err != nil {
-			return nil, fmt.Errorf("%T.RegisterName(%q, %T): %v", s, api.namespace, api.api, err)
+		if err := srv.RegisterName(api.namespace, api.api); err != nil {
+			return nil, fmt.Errorf("%T.RegisterName(%q, %T): %v", srv, api.namespace, api.api, err)
 		}
 	}
-	return s, nil
+	return srv, nil
 }
 
 // web3API offers the `web3` RPCs.
@@ -160,9 +169,9 @@ type RPCConfig struct {
 	BlocksPerBloomSection uint64
 }
 
-// APIBackend returns an API backend backed by the [VM]. All goroutines created
-// will be closed by [VM.Shutdown].
-func (vm *VM) APIBackend(config RPCConfig) ethapi.Backend {
+// newAPIBackend returns a fresh API backend backed by the [VM]. All goroutines
+// created will be closed by [VM.Shutdown].
+func (vm *VM) newAPIBackend(config RPCConfig) ethapi.Backend {
 	chainIdx := chainIndexer{vm.exec}
 	override := bloomOverrider{vm.db}
 	// TODO(alarso16): if we are state syncing, we need to provide the first
@@ -173,8 +182,15 @@ func (vm *VM) APIBackend(config RPCConfig) ethapi.Backend {
 		return bloomIdx.indexer.Close()
 	})
 
+	// Empty account manager provides graceful errors for signing
+	// RPCs (e.g. eth_sign) instead of nil-pointer panics. No
+	// actual account functionality is expected.
+	accountManager := accounts.NewManager(&accounts.Config{})
+	vm.toClose = append(vm.toClose, accountManager.Close)
+
 	return &ethAPIBackend{
 		vm:             vm,
+		accountManager: accountManager,
 		Set:            vm.mempool,
 		chainIndexer:   chainIdx,
 		bloomIndexer:   bloomIdx,
@@ -223,7 +239,8 @@ var _ interface {
 } = (*ethAPIBackend)(nil)
 
 type ethAPIBackend struct {
-	vm *VM
+	vm             *VM
+	accountManager *accounts.Manager
 
 	*txgossip.Set
 	chainIndexer
@@ -247,6 +264,10 @@ func (b *ethAPIBackend) RPCTxFeeCap() float64 {
 
 func (b *ethAPIBackend) UnprotectedAllowed() bool {
 	return false
+}
+
+func (b *ethAPIBackend) AccountManager() *accounts.Manager {
+	return b.accountManager
 }
 
 func (b *ethAPIBackend) CurrentBlock() *types.Header {
@@ -312,6 +333,25 @@ func (b *ethAPIBackend) GetBody(ctx context.Context, hash common.Hash, number rp
 
 func (b *ethAPIBackend) GetLogs(ctx context.Context, blockHash common.Hash, number uint64) ([][]*types.Log, error) {
 	return rawdb.ReadLogs(b.vm.db, blockHash, number), nil
+}
+
+func (b *ethAPIBackend) GetPoolTransactions() (types.Transactions, error) {
+	pending := b.Pool.Pending(txpool.PendingFilter{})
+
+	var pendingCount int
+	for _, batch := range pending {
+		pendingCount += len(batch)
+	}
+
+	txs := make(types.Transactions, 0, pendingCount)
+	for _, batch := range pending {
+		for _, lazy := range batch {
+			if tx := lazy.Resolve(); tx != nil {
+				txs = append(txs, tx)
+			}
+		}
+	}
+	return txs, nil
 }
 
 type canonicalReader[T any] func(ethdb.Reader, common.Hash, uint64) *T
