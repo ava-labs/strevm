@@ -41,9 +41,10 @@ import (
 var zeroAddr common.Address
 
 type rpcTest struct {
-	method string
-	args   []any
-	want   any
+	method  string
+	args    []any
+	want    any    // nil is type-sensitive - untyped nil means no return value.
+	wantErr string // want is ignored if non-empty
 }
 
 func (s *SUT) testRPC(ctx context.Context, t *testing.T, tcs ...rpcTest) {
@@ -55,11 +56,25 @@ func (s *SUT) testRPC(ctx context.Context, t *testing.T, tcs ...rpcTest) {
 		cmputils.TransactionsByHash(),
 	}
 
+	call := func(t *testing.T, store any, tc rpcTest) error {
+		t.Helper()
+		t.Logf("%T.CallContext(ctx, %T, %q, %v...)", s.rpcClient, &tc.want /*i.e. the type*/, tc.method, tc.args)
+		return s.CallContext(ctx, store, tc.method, tc.args...)
+	}
+
 	for _, tc := range tcs {
 		t.Run(tc.method, func(t *testing.T) {
+			if tc.wantErr != "" {
+				err := call(t, nil, tc) // won't unmarshal anything
+				require.ErrorContains(t, err, tc.wantErr)
+				return
+			}
+			if tc.want == nil {
+				require.NoError(t, call(t, nil, tc))
+				return
+			}
 			got := reflect.New(reflect.TypeOf(tc.want))
-			t.Logf("%T.CallContext(ctx, %T, %q, %v...)", s.rpcClient, &tc.want /*i.e. the type*/, tc.method, tc.args)
-			require.NoError(t, s.CallContext(ctx, got.Interface(), tc.method, tc.args...))
+			require.NoError(t, call(t, got.Interface(), tc))
 			if diff := cmp.Diff(tc.want, got.Elem().Interface(), opts...); diff != "" {
 				t.Errorf("Diff (-want +got):\n%s", diff)
 			}
@@ -486,6 +501,7 @@ func TestEthPendingTransactions(t *testing.T) {
 func TestEthSigningAPIs(t *testing.T) {
 	ctx, sut := newSUT(t, 1)
 
+	wantErr := "unknown account"
 	txFields := map[string]any{
 		"from":     zeroAddr,
 		"to":       zeroAddr,
@@ -494,36 +510,30 @@ func TestEthSigningAPIs(t *testing.T) {
 		"value":    hexutil.Big(*big.NewInt(100)),
 		"nonce":    hexutil.Uint64(0),
 	}
-	tests := []struct {
-		method string
-		args   []any
-	}{
+	sut.testRPC(ctx, t, []rpcTest{
 		{
 			method: "eth_sign",
 			args: []any{
 				zeroAddr,
 				hexutil.Bytes("test message"),
 			},
+			wantErr: wantErr,
 		},
 		{
 			method: "eth_signTransaction",
 			args: []any{
 				txFields,
 			},
+			wantErr: wantErr,
 		},
 		{
 			method: "eth_sendTransaction",
 			args: []any{
 				txFields,
 			},
+			wantErr: wantErr,
 		},
-	}
-	for _, test := range tests {
-		t.Run(test.method, func(t *testing.T) {
-			err := sut.CallContext(ctx, &struct{}{}, test.method, test.args...)
-			require.ErrorContains(t, err, "unknown account")
-		})
-	}
+	}...)
 }
 
 func (sut *SUT) testGetByHash(ctx context.Context, t *testing.T, want *types.Block) {
