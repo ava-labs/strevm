@@ -445,7 +445,7 @@ func TestEthSigningAPIs(t *testing.T) {
 	}
 }
 
-func TestDebugNamespace(t *testing.T) {
+func TestDebugRPCs(t *testing.T) {
 	ctx, sut := newSUT(t, 0, withDebugAPI())
 
 	t.Run("setHead", func(t *testing.T) {
