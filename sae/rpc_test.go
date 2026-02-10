@@ -9,6 +9,7 @@ import (
 	"math"
 	"math/big"
 	"reflect"
+	"runtime/debug"
 	"testing"
 	"time"
 
@@ -650,6 +651,43 @@ func (sut *SUT) testGetByUnknownNumber(ctx context.Context, t *testing.T) {
 			method: "eth_getRawTransactionByBlockNumberAndIndex",
 			args:   []any{n, hexutil.Uint(0)},
 			want:   hexutil.Bytes(nil),
+		},
+	}...)
+}
+
+// withDebugAPI returns a sutOption that enables the debug API.
+func withDebugAPI() sutOption {
+	return options.Func[sutConfig](func(c *sutConfig) {
+		c.vmConfig.RPCConfig.EnableProfiling = true
+	})
+}
+
+func TestDebugNamespace(t *testing.T) {
+	ctx, sut := newSUT(t, 0, withDebugAPI())
+
+	// The debug namespace is handled entirely by upstream code that doesn't
+	// depend in any way on SAE. We therefore only need an integration test, not
+	// to exercise every method because such unit testing is the responsibility
+	// of the source.
+	//
+	// Reference: https://geth.ethereum.org/docs/interacting-with-geth/rpc/ns-debug
+
+	const firstArg = 100
+	beforeTest := debug.SetGCPercent(firstArg)
+	defer debug.SetGCPercent(beforeTest)
+
+	const m = "debug_setGCPercent"
+	sut.testRPC(ctx, t, []rpcTest{
+		// Invariant: each call returns the input argument of the last.
+		{
+			method: m,
+			args:   []any{42},
+			want:   firstArg,
+		},
+		{
+			method: m,
+			args:   []any{0},
+			want:   42,
 		},
 	}...)
 }

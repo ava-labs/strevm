@@ -25,6 +25,7 @@ import (
 	"github.com/ava-labs/libevm/eth/filters"
 	"github.com/ava-labs/libevm/ethdb"
 	"github.com/ava-labs/libevm/event"
+	"github.com/ava-labs/libevm/libevm/debug"
 	"github.com/ava-labs/libevm/libevm/ethapi"
 	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/rpc"
@@ -50,12 +51,14 @@ func (vm *VM) ethRPCServer() (*rpc.Server, error) {
 		return nil
 	})
 
-	// Standard Ethereum APIs are documented at: https://ethereum.org/developers/docs/apis/json-rpc
-	// Geth-specific APIs are documented at: https://geth.ethereum.org/docs/interacting-with-geth/rpc
-	apis := []struct {
+	type api struct {
 		namespace string
 		api       any
-	}{
+	}
+
+	// Standard Ethereum APIs are documented at: https://ethereum.org/developers/docs/apis/json-rpc
+	// Geth-specific APIs are documented at: https://geth.ethereum.org/docs/interacting-with-geth/rpc
+	apis := []api{
 		// Standard Ethereum node APIs:
 		// - web3_clientVersion
 		// - web3_sha3
@@ -107,6 +110,34 @@ func (vm *VM) ethRPCServer() (*rpc.Server, error) {
 		{"eth", ethapi.NewTransactionAPI(b, new(ethapi.AddrLocker))},
 		{"eth", filterAPI},
 	}
+
+	if vm.config.RPCConfig.EnableProfiling {
+		apis = append(apis, api{
+			// Geth-specific APIs:
+			// - debug_blockProfile
+			// - debug_cpuProfile
+			// - debug_freeOSMemory
+			// - debug_gcStats
+			// - debug_goTrace
+			// - debug_memStats
+			// - debug_mutexProfile
+			// - debug_setBlockProfileRate
+			// - debug_setGCPercent
+			// - debug_setMutexProfileFraction
+			// - debug_stacks
+			// - debug_startCPUProfile
+			// - debug_startGoTrace
+			// - debug_stopCPUProfile
+			// - debug_stopGoTrace
+			// - debug_verbosity
+			// - debug_vmodule
+			// - debug_writeBlockProfile
+			// - debug_writeMemProfile
+			// - debug_writeMutexProfile
+			"debug", debug.Handler,
+		})
+	}
+
 	for _, api := range apis {
 		if err := s.RegisterName(api.namespace, api.api); err != nil {
 			return nil, fmt.Errorf("%T.RegisterName(%q, %T): %v", s, api.namespace, api.api, err)
