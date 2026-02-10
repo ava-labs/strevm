@@ -151,9 +151,9 @@ func (vm *VM) ethRPCServer() (*rpc.Server, error) {
 		//
 		// Geth-specific APIs:
 		// - eth_subscribe
-		//  - logs
 		//  - newHeads
 		//  - newPendingTransactions
+		//  - logs
 		{"eth", filterAPI},
 		// Geth-specific APIs:
 		// - debug_chainDbCompact
