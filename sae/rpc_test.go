@@ -132,7 +132,7 @@ func TestSubscriptions(t *testing.T) {
 		require.Equal(t, b.Hash(), (<-newHeads).Hash(), "header hash from newHeads subscription")
 
 		for _, want := range wantLogs {
-			want.BlockNumber = b.Height()
+			want.BlockNumber = b.NumberU64()
 			want.BlockHash = b.Hash()
 			require.Equal(t, want, <-newLogs, "log from subscription")
 		}
