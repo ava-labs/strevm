@@ -466,6 +466,7 @@ func TestDebugRPCs(t *testing.T) {
 
 	sut.testRPC(ctx, t, []rpcTest{
 		{
+			// SAE does not support rewinding - setHead is a no-op.
 			method: "debug_setHead",
 			args:   []any{hexutil.Uint64(0)},
 		},
@@ -476,6 +477,7 @@ func TestDebugRPCs(t *testing.T) {
 			wantNonEmpty: true,
 		},
 		{
+			// Compaction is a no-op but succeeds without error.
 			method: "debug_chaindbCompact",
 		},
 		{
