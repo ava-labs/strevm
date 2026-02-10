@@ -34,6 +34,8 @@ import (
 	"github.com/ava-labs/strevm/saetest"
 )
 
+var zeroAddr common.Address
+
 type rpcTest struct {
 	method string
 	args   []any
@@ -322,7 +324,6 @@ func TestEthGetters(t *testing.T) {
 			GasFeeCap: big.NewInt(1),
 		})
 	}
-	var zeroAddr common.Address
 
 	genesis := sut.lastAcceptedBlock(t)
 
@@ -378,6 +379,71 @@ func TestEthGetters(t *testing.T) {
 	})
 }
 
+func TestEthPendingTransactions(t *testing.T) {
+	ctx, sut := newSUT(t, 1)
+
+	tx := sut.wallet.SetNonceAndSign(t, 0, &types.DynamicFeeTx{
+		To:        &zeroAddr,
+		Gas:       params.TxGas,
+		GasFeeCap: big.NewInt(1),
+		Value:     big.NewInt(100),
+	})
+	sut.mustSendTx(t, tx)
+	sut.requireInMempool(t, tx.Hash())
+
+	// eth_pendingTransactions filters results to only transactions from
+	// accounts configured in the AccountManager, which is always empty.
+	sut.testRPC(ctx, t, rpcTest{
+		method: "eth_pendingTransactions",
+		want:   []*ethapi.RPCTransaction{},
+	})
+}
+
+// SAE doesn't really support APIs that require a key on the node, as there is
+// no way to add keys. But, we want to ensure the methods error gracefully.
+func TestEthSigningAPIs(t *testing.T) {
+	ctx, sut := newSUT(t, 1)
+
+	txFields := map[string]any{
+		"from":     zeroAddr,
+		"to":       zeroAddr,
+		"gas":      hexutil.Uint64(params.TxGas),
+		"gasPrice": hexutil.Big(*big.NewInt(1)),
+		"value":    hexutil.Big(*big.NewInt(100)),
+		"nonce":    hexutil.Uint64(0),
+	}
+	tests := []struct {
+		method string
+		args   []any
+	}{
+		{
+			method: "eth_sign",
+			args: []any{
+				zeroAddr,
+				hexutil.Bytes("test message"),
+			},
+		},
+		{
+			method: "eth_signTransaction",
+			args: []any{
+				txFields,
+			},
+		},
+		{
+			method: "eth_sendTransaction",
+			args: []any{
+				txFields,
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.method, func(t *testing.T) {
+			err := sut.CallContext(ctx, &struct{}{}, test.method, test.args...)
+			require.ErrorContains(t, err, "unknown account")
+		})
+	}
+}
+
 func TestDebugNamespace(t *testing.T) {
 	ctx, sut := newSUT(t, 0)
 
@@ -402,7 +468,7 @@ func TestDebugNamespace(t *testing.T) {
 	})
 
 	t.Run("dbGet", func(t *testing.T) {
-		// rawdb.headBlockKey is unexported - its value is "LastBlock".
+		// rawdb.headBlockKey is unexported; its value is "LastBlock".
 		// The VM writes this key during initialization via rawdb.WriteHeadBlockHash.
 		var result hexutil.Bytes
 		err := sut.CallContext(ctx, &result, "debug_dbGet", hexutil.Encode([]byte("LastBlock")))
@@ -422,7 +488,6 @@ func TestDebugNamespace(t *testing.T) {
 		require.Error(t, err, "nofreezedb does not support Ancients")
 	})
 }
-
 func (sut *SUT) testGetByHash(ctx context.Context, t *testing.T, want *types.Block) {
 	t.Helper()
 

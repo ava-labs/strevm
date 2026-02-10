@@ -14,10 +14,12 @@ import (
 	"github.com/ava-labs/avalanchego/network/p2p"
 	"github.com/ava-labs/avalanchego/version"
 	ethereum "github.com/ava-labs/libevm"
+	"github.com/ava-labs/libevm/accounts"
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/common/hexutil"
 	"github.com/ava-labs/libevm/core"
 	"github.com/ava-labs/libevm/core/rawdb"
+	"github.com/ava-labs/libevm/core/txpool"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/crypto"
 	"github.com/ava-labs/libevm/eth/filters"
@@ -32,10 +34,7 @@ import (
 
 // APIBackend returns an API backend backed by the VM.
 func (vm *VM) APIBackend() ethapi.Backend {
-	return &ethAPIBackend{
-		vm:  vm,
-		Set: vm.mempool,
-	}
+	return vm.apiBackend
 }
 
 func (vm *VM) ethRPCServer() (*rpc.Server, error) {
@@ -95,11 +94,16 @@ func (vm *VM) ethRPCServer() (*rpc.Server, error) {
 		// - eth_getTransactionByBlockHashAndIndex
 		// - eth_getTransactionByBlockNumberAndIndex
 		// - eth_getTransactionByHash
+		// - eth_sendRawTransaction
+		// - eth_sendTransaction
+		// - eth_sign
+		// - eth_signTransaction
 		//
 		// Undocumented APIs:
-		// - eth_getRawTransactionByHash
 		// - eth_getRawTransactionByBlockHashAndIndex
 		// - eth_getRawTransactionByBlockNumberAndIndex
+		// - eth_getRawTransactionByHash
+		// - eth_pendingTransactions
 		{"eth", ethapi.NewTransactionAPI(b, new(ethapi.AddrLocker))},
 		{"eth", filterAPI},
 		// Geth-specific APIs:
@@ -176,9 +180,11 @@ func (s *netAPI) Version() string {
 }
 
 type ethAPIBackend struct {
-	vm             *VM
-	ethapi.Backend // TODO(arr4n) remove in favour of `var _ ethapi.Backend = (*ethAPIBackend)(nil)`
 	*txgossip.Set
+	vm             *VM
+	accountManager *accounts.Manager
+
+	ethapi.Backend // TODO(arr4n) remove in favour of `var _ ethapi.Backend = (*ethAPIBackend)(nil)`
 }
 
 func (b *ethAPIBackend) ChainDb() ethdb.Database {
@@ -195,6 +201,10 @@ func (b *ethAPIBackend) RPCTxFeeCap() float64 {
 
 func (b *ethAPIBackend) UnprotectedAllowed() bool {
 	return false
+}
+
+func (b *ethAPIBackend) AccountManager() *accounts.Manager {
+	return b.accountManager
 }
 
 func (b *ethAPIBackend) CurrentHeader() *types.Header {
@@ -246,6 +256,25 @@ func (b *ethAPIBackend) GetTransaction(ctx context.Context, txHash common.Hash) 
 
 func (b *ethAPIBackend) GetPoolTransaction(txHash common.Hash) *types.Transaction {
 	return b.Set.Pool.Get(txHash)
+}
+
+func (b *ethAPIBackend) GetPoolTransactions() (types.Transactions, error) {
+	pending := b.Pool.Pending(txpool.PendingFilter{})
+
+	var pendingCount int
+	for _, batch := range pending {
+		pendingCount += len(batch)
+	}
+
+	txs := make(types.Transactions, 0, pendingCount)
+	for _, batch := range pending {
+		for _, lazy := range batch {
+			if tx := lazy.Resolve(); tx != nil {
+				txs = append(txs, tx)
+			}
+		}
+	}
+	return txs, nil
 }
 
 type canonicalReader[T any] func(ethdb.Reader, common.Hash, uint64) *T
