@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/ava-labs/avalanchego/version"
+	ethereum "github.com/ava-labs/libevm"
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/common/hexutil"
 	"github.com/ava-labs/libevm/core/types"
@@ -27,12 +28,14 @@ import (
 	"github.com/ava-labs/libevm/rpc"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
+	"github.com/holiman/uint256"
 	"github.com/stretchr/testify/require"
 
 	"github.com/ava-labs/strevm/blocks"
 	"github.com/ava-labs/strevm/cmputils"
 	saeparams "github.com/ava-labs/strevm/params"
 	"github.com/ava-labs/strevm/saetest"
+	"github.com/ava-labs/strevm/saetest/escrow"
 )
 
 var zeroAddr common.Address
@@ -95,17 +98,95 @@ func testRPCGetter[
 func TestSubscriptions(t *testing.T) {
 	ctx, sut := newSUT(t, 1)
 
-	newHeads := make(chan *types.Header, 1)
-	sub, err := sut.SubscribeNewHead(ctx, newHeads)
-	require.NoError(t, err, "SubscribeNewHead(...)")
-	// The subscription is closed in a defer rather than via t.Cleanup to ensure
-	// that is is closed before the rest of the SUT is torn down. Otherwise,
-	// there could be a goroutine leak.
-	defer sub.Unsubscribe()
+	var (
+		newTxs   = make(chan common.Hash, 1)
+		newHeads = make(chan *types.Header, 1)
+		newLogs  = make(chan types.Log, 1)
+	)
+	{
+		sub, err := sut.rpcClient.EthSubscribe(ctx, newTxs, "newPendingTransactions")
+		require.NoError(t, err, "EthSubscribe(newPendingTransactions)")
+		t.Cleanup(sub.Unsubscribe)
+	}
+	{
+		sub, err := sut.SubscribeNewHead(ctx, newHeads)
+		require.NoError(t, err, "SubscribeNewHead()")
+		t.Cleanup(sub.Unsubscribe)
+	}
+	{
+		sub, err := sut.SubscribeFilterLogs(ctx, ethereum.FilterQuery{}, newLogs)
+		require.NoError(t, err, "SubscribeFilterLogs()")
+		t.Cleanup(sub.Unsubscribe)
+	}
+	{
+		pendingLogs := make(chan types.Log, 1)
+		pendingBlock := big.NewInt(int64(rpc.PendingBlockNumber))
+		sub, err := sut.SubscribeFilterLogs(
+			ctx,
+			ethereum.FilterQuery{
+				FromBlock: pendingBlock,
+				ToBlock:   pendingBlock,
+			},
+			pendingLogs,
+		)
+		require.NoError(t, err, "SubscribeFilterLogs(pending)")
+		t.Cleanup(sub.Unsubscribe)
+		defer func() {
+			t.Helper()
 
-	b := sut.runConsensusLoop(t, sut.lastAcceptedBlock(t))
-	got := <-newHeads
-	require.Equalf(t, b.Hash(), got.Hash(), "%T.Hash() from %T.SubscribeNewHead(...)", got, sut.Client)
+			select {
+			case l := <-pendingLogs:
+				t.Fatalf("unexpected pending log %+v", l)
+			default:
+			}
+		}()
+	}
+
+	mustSendTx := func(tx *types.Transaction) {
+		t.Helper()
+
+		sut.mustSendTx(t, tx)
+		require.Equal(t, tx.Hash(), <-newTxs, "tx hash from newPendingTransactions subscription")
+	}
+
+	runConsensusLoop := func(wantLogs ...types.Log) {
+		t.Helper()
+
+		b := sut.runConsensusLoop(t, sut.lastAcceptedBlock(t))
+		require.Equal(t, b.Hash(), (<-newHeads).Hash(), "header hash from newHeads subscription")
+
+		for _, want := range wantLogs {
+			want.BlockNumber = b.NumberU64()
+			want.BlockHash = b.Hash()
+			require.Equal(t, want, <-newLogs, "log from subscription")
+		}
+	}
+
+	const senderIndex = 0
+	deployTx := sut.wallet.SetNonceAndSign(t, senderIndex, &types.LegacyTx{
+		Data:     escrow.CreationCode(),
+		GasPrice: big.NewInt(1),
+		Gas:      3e6,
+	})
+	mustSendTx(deployTx)
+	runConsensusLoop()
+
+	sender := sut.wallet.Addresses()[senderIndex]
+	contractAddr := crypto.CreateAddress(sender, deployTx.Nonce())
+	amount := uint256.NewInt(100)
+	depositTx := sut.wallet.SetNonceAndSign(t, senderIndex, &types.LegacyTx{
+		To:       &contractAddr,
+		Value:    amount.ToBig(),
+		Data:     escrow.CallDataToDeposit(sender),
+		GasPrice: big.NewInt(1),
+		Gas:      1e6,
+	})
+	mustSendTx(depositTx)
+
+	wantLog := escrow.DepositEvent(sender, amount)
+	wantLog.Address = contractAddr
+	wantLog.TxHash = depositTx.Hash()
+	runConsensusLoop(*wantLog)
 }
 
 func TestWeb3Namespace(t *testing.T) {

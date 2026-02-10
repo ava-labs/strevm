@@ -108,6 +108,11 @@ func (vm *VM) ethRPCServer() (*rpc.Server, error) {
 		// - eth_getRawTransactionByHash
 		// - eth_pendingTransactions
 		{"eth", ethapi.NewTransactionAPI(b, new(ethapi.AddrLocker))},
+		// Geth-specific APIs:
+		// - eth_subscribe
+		//  - newHeads
+		//  - newPendingTransactions
+		//  - logs
 		{"eth", filterAPI},
 	}
 
