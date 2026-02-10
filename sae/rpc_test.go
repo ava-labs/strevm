@@ -9,6 +9,7 @@ import (
 	"math"
 	"math/big"
 	"reflect"
+	"runtime/debug"
 	"testing"
 	"time"
 
@@ -34,6 +35,8 @@ import (
 	"github.com/ava-labs/strevm/saetest"
 	"github.com/ava-labs/strevm/saetest/escrow"
 )
+
+var zeroAddr common.Address
 
 type rpcTest struct {
 	method string
@@ -250,7 +253,7 @@ func TestTxPoolNamespace(t *testing.T) {
 			tx.To(),
 			tx.Value().Uint64(),
 			tx.Gas(),
-			tx.GasFeeCap().Uint64(),
+			tx.GasPrice(),
 		)
 	}
 
@@ -376,7 +379,6 @@ func TestEthGetters(t *testing.T) {
 			GasFeeCap: big.NewInt(1),
 		})
 	}
-	var zeroAddr common.Address
 
 	genesis := sut.lastAcceptedBlock(t)
 
@@ -430,6 +432,71 @@ func TestEthGetters(t *testing.T) {
 			want:   hexutil.Uint64(executed.Height()),
 		})
 	})
+}
+
+func TestEthPendingTransactions(t *testing.T) {
+	ctx, sut := newSUT(t, 1)
+
+	tx := sut.wallet.SetNonceAndSign(t, 0, &types.DynamicFeeTx{
+		To:        &zeroAddr,
+		Gas:       params.TxGas,
+		GasFeeCap: big.NewInt(1),
+		Value:     big.NewInt(100),
+	})
+	sut.mustSendTx(t, tx)
+	sut.requireInMempool(t, tx.Hash())
+
+	// eth_pendingTransactions filters results to only transactions from
+	// accounts configured in the AccountManager, which is always empty.
+	sut.testRPC(ctx, t, rpcTest{
+		method: "eth_pendingTransactions",
+		want:   []*ethapi.RPCTransaction{},
+	})
+}
+
+// SAE doesn't really support APIs that require a key on the node, as there is
+// no way to add keys. But, we want to ensure the methods error gracefully.
+func TestEthSigningAPIs(t *testing.T) {
+	ctx, sut := newSUT(t, 1)
+
+	txFields := map[string]any{
+		"from":     zeroAddr,
+		"to":       zeroAddr,
+		"gas":      hexutil.Uint64(params.TxGas),
+		"gasPrice": hexutil.Big(*big.NewInt(1)),
+		"value":    hexutil.Big(*big.NewInt(100)),
+		"nonce":    hexutil.Uint64(0),
+	}
+	tests := []struct {
+		method string
+		args   []any
+	}{
+		{
+			method: "eth_sign",
+			args: []any{
+				zeroAddr,
+				hexutil.Bytes("test message"),
+			},
+		},
+		{
+			method: "eth_signTransaction",
+			args: []any{
+				txFields,
+			},
+		},
+		{
+			method: "eth_sendTransaction",
+			args: []any{
+				txFields,
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.method, func(t *testing.T) {
+			err := sut.CallContext(ctx, &struct{}{}, test.method, test.args...)
+			require.ErrorContains(t, err, "unknown account")
+		})
+	}
 }
 
 func (sut *SUT) testGetByHash(ctx context.Context, t *testing.T, want *types.Block) {
@@ -638,6 +705,43 @@ func (sut *SUT) testGetByUnknownNumber(ctx context.Context, t *testing.T) {
 			method: "eth_getRawTransactionByBlockNumberAndIndex",
 			args:   []any{n, hexutil.Uint(0)},
 			want:   hexutil.Bytes(nil),
+		},
+	}...)
+}
+
+// withDebugAPI returns a sutOption that enables the debug API.
+func withDebugAPI() sutOption {
+	return options.Func[sutConfig](func(c *sutConfig) {
+		c.vmConfig.RPCConfig.EnableProfiling = true
+	})
+}
+
+func TestDebugNamespace(t *testing.T) {
+	ctx, sut := newSUT(t, 0, withDebugAPI())
+
+	// The debug namespace is handled entirely by upstream code that doesn't
+	// depend in any way on SAE. We therefore only need an integration test, not
+	// to exercise every method because such unit testing is the responsibility
+	// of the source.
+	//
+	// Reference: https://geth.ethereum.org/docs/interacting-with-geth/rpc/ns-debug
+
+	const firstArg = 100
+	beforeTest := debug.SetGCPercent(firstArg)
+	defer debug.SetGCPercent(beforeTest)
+
+	const m = "debug_setGCPercent"
+	sut.testRPC(ctx, t, []rpcTest{
+		// Invariant: each call returns the input argument of the last.
+		{
+			method: m,
+			args:   []any{42},
+			want:   firstArg,
+		},
+		{
+			method: m,
+			args:   []any{0},
+			want:   42,
 		},
 	}...)
 }

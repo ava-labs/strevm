@@ -14,15 +14,18 @@ import (
 	"github.com/ava-labs/avalanchego/network/p2p"
 	"github.com/ava-labs/avalanchego/version"
 	ethereum "github.com/ava-labs/libevm"
+	"github.com/ava-labs/libevm/accounts"
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/common/hexutil"
 	"github.com/ava-labs/libevm/core"
 	"github.com/ava-labs/libevm/core/rawdb"
+	"github.com/ava-labs/libevm/core/txpool"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/crypto"
 	"github.com/ava-labs/libevm/eth/filters"
 	"github.com/ava-labs/libevm/ethdb"
 	"github.com/ava-labs/libevm/event"
+	"github.com/ava-labs/libevm/libevm/debug"
 	"github.com/ava-labs/libevm/libevm/ethapi"
 	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/rpc"
@@ -30,11 +33,13 @@ import (
 	"github.com/ava-labs/strevm/txgossip"
 )
 
+// APIBackend returns an API backend backed by the VM.
+func (vm *VM) APIBackend() ethapi.Backend {
+	return vm.apiBackend
+}
+
 func (vm *VM) ethRPCServer() (*rpc.Server, error) {
-	b := &ethAPIBackend{
-		vm:  vm,
-		Set: vm.mempool,
-	}
+	b := vm.APIBackend()
 	s := rpc.NewServer()
 
 	// Even if this function errors, we should close API to prevent a goroutine
@@ -46,12 +51,14 @@ func (vm *VM) ethRPCServer() (*rpc.Server, error) {
 		return nil
 	})
 
-	// Standard Ethereum APIs are documented at: https://ethereum.org/developers/docs/apis/json-rpc
-	// Geth-specific APIs are documented at: https://geth.ethereum.org/docs/interacting-with-geth/rpc
-	apis := []struct {
+	type api struct {
 		namespace string
 		api       any
-	}{
+	}
+
+	// Standard Ethereum APIs are documented at: https://ethereum.org/developers/docs/apis/json-rpc
+	// Geth-specific APIs are documented at: https://geth.ethereum.org/docs/interacting-with-geth/rpc
+	apis := []api{
 		// Standard Ethereum node APIs:
 		// - web3_clientVersion
 		// - web3_sha3
@@ -90,11 +97,16 @@ func (vm *VM) ethRPCServer() (*rpc.Server, error) {
 		// - eth_getTransactionByBlockHashAndIndex
 		// - eth_getTransactionByBlockNumberAndIndex
 		// - eth_getTransactionByHash
+		// - eth_sendRawTransaction
+		// - eth_sendTransaction
+		// - eth_sign
+		// - eth_signTransaction
 		//
 		// Undocumented APIs:
-		// - eth_getRawTransactionByHash
 		// - eth_getRawTransactionByBlockHashAndIndex
 		// - eth_getRawTransactionByBlockNumberAndIndex
+		// - eth_getRawTransactionByHash
+		// - eth_pendingTransactions
 		{"eth", ethapi.NewTransactionAPI(b, new(ethapi.AddrLocker))},
 		// Geth-specific APIs:
 		// - eth_subscribe
@@ -103,6 +115,34 @@ func (vm *VM) ethRPCServer() (*rpc.Server, error) {
 		//  - logs
 		{"eth", filterAPI},
 	}
+
+	if vm.config.RPCConfig.EnableProfiling {
+		apis = append(apis, api{
+			// Geth-specific APIs:
+			// - debug_blockProfile
+			// - debug_cpuProfile
+			// - debug_freeOSMemory
+			// - debug_gcStats
+			// - debug_goTrace
+			// - debug_memStats
+			// - debug_mutexProfile
+			// - debug_setBlockProfileRate
+			// - debug_setGCPercent
+			// - debug_setMutexProfileFraction
+			// - debug_stacks
+			// - debug_startCPUProfile
+			// - debug_startGoTrace
+			// - debug_stopCPUProfile
+			// - debug_stopGoTrace
+			// - debug_verbosity
+			// - debug_vmodule
+			// - debug_writeBlockProfile
+			// - debug_writeMemProfile
+			// - debug_writeMutexProfile
+			"debug", debug.Handler,
+		})
+	}
+
 	for _, api := range apis {
 		if err := s.RegisterName(api.namespace, api.api); err != nil {
 			return nil, fmt.Errorf("%T.RegisterName(%q, %T): %v", s, api.namespace, api.api, err)
@@ -161,9 +201,11 @@ func (s *netAPI) Version() string {
 }
 
 type ethAPIBackend struct {
-	vm             *VM
-	ethapi.Backend // TODO(arr4n) remove in favour of `var _ ethapi.Backend = (*ethAPIBackend)(nil)`
 	*txgossip.Set
+	vm             *VM
+	accountManager *accounts.Manager
+
+	ethapi.Backend // TODO(arr4n) remove in favour of `var _ ethapi.Backend = (*ethAPIBackend)(nil)`
 }
 
 func (b *ethAPIBackend) ChainConfig() *params.ChainConfig {
@@ -176,6 +218,10 @@ func (b *ethAPIBackend) RPCTxFeeCap() float64 {
 
 func (b *ethAPIBackend) UnprotectedAllowed() bool {
 	return false
+}
+
+func (b *ethAPIBackend) AccountManager() *accounts.Manager {
+	return b.accountManager
 }
 
 func (b *ethAPIBackend) CurrentHeader() *types.Header {
@@ -227,6 +273,25 @@ func (b *ethAPIBackend) GetTransaction(ctx context.Context, txHash common.Hash) 
 
 func (b *ethAPIBackend) GetPoolTransaction(txHash common.Hash) *types.Transaction {
 	return b.Set.Pool.Get(txHash)
+}
+
+func (b *ethAPIBackend) GetPoolTransactions() (types.Transactions, error) {
+	pending := b.Pool.Pending(txpool.PendingFilter{})
+
+	var pendingCount int
+	for _, batch := range pending {
+		pendingCount += len(batch)
+	}
+
+	txs := make(types.Transactions, 0, pendingCount)
+	for _, batch := range pending {
+		for _, lazy := range batch {
+			if tx := lazy.Resolve(); tx != nil {
+				txs = append(txs, tx)
+			}
+		}
+	}
+	return txs, nil
 }
 
 type canonicalReader[T any] func(ethdb.Reader, common.Hash, uint64) *T
