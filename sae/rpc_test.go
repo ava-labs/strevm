@@ -446,7 +446,7 @@ func TestEthSigningAPIs(t *testing.T) {
 }
 
 func TestDebugNamespace(t *testing.T) {
-	ctx, sut := newSUT(t, 0)
+	ctx, sut := newSUT(t, 0, withDebugAPI())
 
 	t.Run("setHead", func(t *testing.T) {
 		require.NoError(t, sut.CallContext(ctx, nil, "debug_setHead", hexutil.Uint64(0)))
@@ -487,6 +487,33 @@ func TestDebugNamespace(t *testing.T) {
 		var count uint64
 		err := sut.CallContext(ctx, &count, "debug_dbAncients")
 		require.Error(t, err, "nofreezedb does not support Ancients")
+	})
+
+	// The profiling debug namespace is handled entirely by upstream code
+	// that doesn't depend in any way on SAE. We therefore only need an
+	// integration test, not to exercise every method because such unit
+	// testing is the responsibility of the source.
+	//
+	// Reference: https://geth.ethereum.org/docs/interacting-with-geth/rpc/ns-debug
+	t.Run("setGCPercent", func(t *testing.T) {
+		const firstArg = 100
+		beforeTest := debug.SetGCPercent(firstArg)
+		defer debug.SetGCPercent(beforeTest)
+
+		const m = "debug_setGCPercent"
+		sut.testRPC(ctx, t, []rpcTest{
+			// Invariant: each call returns the input argument of the last.
+			{
+				method: m,
+				args:   []any{42},
+				want:   firstArg,
+			},
+			{
+				method: m,
+				args:   []any{0},
+				want:   42,
+			},
+		}...)
 	})
 }
 
@@ -751,34 +778,4 @@ func withDebugAPI() sutOption {
 	return options.Func[sutConfig](func(c *sutConfig) {
 		c.vmConfig.RPCConfig.EnableProfiling = true
 	})
-}
-
-func TestDebugNamespace(t *testing.T) {
-	ctx, sut := newSUT(t, 0, withDebugAPI())
-
-	// The debug namespace is handled entirely by upstream code that doesn't
-	// depend in any way on SAE. We therefore only need an integration test, not
-	// to exercise every method because such unit testing is the responsibility
-	// of the source.
-	//
-	// Reference: https://geth.ethereum.org/docs/interacting-with-geth/rpc/ns-debug
-
-	const firstArg = 100
-	beforeTest := debug.SetGCPercent(firstArg)
-	defer debug.SetGCPercent(beforeTest)
-
-	const m = "debug_setGCPercent"
-	sut.testRPC(ctx, t, []rpcTest{
-		// Invariant: each call returns the input argument of the last.
-		{
-			method: m,
-			args:   []any{42},
-			want:   firstArg,
-		},
-		{
-			method: m,
-			args:   []any{0},
-			want:   42,
-		},
-	}...)
 }
