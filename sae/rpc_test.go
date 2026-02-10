@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/ava-labs/avalanchego/version"
+	"github.com/ava-labs/libevm"
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/common/hexutil"
 	"github.com/ava-labs/libevm/core/types"
@@ -113,9 +114,32 @@ func TestSubscriptions(t *testing.T) {
 		t.Cleanup(sub.Unsubscribe)
 	}
 	{
-		sub, err := sut.rpcClient.EthSubscribe(ctx, newLogs, "logs", map[string]any{})
-		require.NoError(t, err, "EthSubscribe(logs)")
+		sub, err := sut.SubscribeFilterLogs(ctx, ethereum.FilterQuery{}, newLogs)
+		require.NoError(t, err, "SubscribeFilterLogs()")
 		t.Cleanup(sub.Unsubscribe)
+	}
+	{
+		pendingLogs := make(chan types.Log, 1)
+		pendingBlock := big.NewInt(int64(rpc.PendingBlockNumber))
+		sub, err := sut.SubscribeFilterLogs(
+			ctx,
+			ethereum.FilterQuery{
+				FromBlock: pendingBlock,
+				ToBlock:   pendingBlock,
+			},
+			pendingLogs,
+		)
+		require.NoError(t, err, "SubscribeFilterLogs(pending)")
+		t.Cleanup(sub.Unsubscribe)
+		defer func() {
+			t.Helper()
+
+			select {
+			case l := <-pendingLogs:
+				t.Fatalf("unexpected pending log %+v", l)
+			default:
+			}
+		}()
 	}
 
 	mustSendTx := func(tx *types.Transaction) {
