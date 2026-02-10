@@ -49,11 +49,14 @@ func (vm *SinceGenesis) Initialize(
 
 	genesis := new(core.Genesis)
 	if err := json.Unmarshal(genesisBytes, genesis); err != nil {
-		return fmt.Errorf("json.Unmarshal(%T): %v", genesis, err)
+		return fmt.Errorf("parsing genesis: %w", err)
 	}
 	config, _, err := core.SetupGenesisBlock(db, tdb, genesis)
 	if err != nil {
 		return fmt.Errorf("core.SetupGenesisBlock(...): %v", err)
+	}
+	if (vm.config.Hooks.ApplyNetworkUpgrades(config, snowCtx.NetworkUpgrades)) != nil {
+		return fmt.Errorf("applying network upgrades: %w", err)
 	}
 
 	genBlock, err := blocks.New(genesis.ToBlock(), nil, nil, snowCtx.Log)

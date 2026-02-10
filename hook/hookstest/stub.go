@@ -9,6 +9,7 @@ import (
 	"math/big"
 	"time"
 
+	"github.com/ava-labs/avalanchego/upgrade"
 	"github.com/ava-labs/avalanchego/vms/components/gas"
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core/state"
@@ -96,3 +97,8 @@ func (*Stub) BeforeExecutingBlock(params.Rules, *state.StateDB, *types.Block) er
 
 // AfterExecutingBlock is a no-op.
 func (*Stub) AfterExecutingBlock(*state.StateDB, *types.Block, types.Receipts) {}
+
+// ApplyNetworkUpgrades is a no-op that always returns nil.
+func (*Stub) ApplyNetworkUpgrades(config *params.ChainConfig, upgrades upgrade.Config) error {
+	return nil
+}
