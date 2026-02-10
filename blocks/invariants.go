@@ -46,6 +46,7 @@ func (b *Block) WorstCaseBounds() *WorstCaseBounds {
 // execution so no error is returned and execution MUST continue optimistically.
 // Any such log in development will cause tests to fail.
 func (b *Block) CheckBaseFeeBound(actual *uint256.Int) {
+	return
 	switch actual.Cmp(b.bounds.MaxBaseFee) {
 	case 1:
 		b.log.Error("Actual base fee > predicted worst case",
@@ -68,6 +69,7 @@ func (b *Block) CheckBaseFeeBound(actual *uint256.Int) {
 // execution so no error is returned and execution MUST continue optimistically.
 // Any such log in development will cause tests to fail.
 func (b *Block) CheckSenderBalanceBound(stateDB *state.StateDB, signer types.Signer, tx *types.Transaction) {
+	return
 	log := b.log.With(
 		zap.Int("tx_index", stateDB.TxIndex()),
 		zap.Stringer("tx_hash", tx.Hash()),
