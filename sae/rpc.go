@@ -323,12 +323,18 @@ var errInvalidArguments = errors.New("invalid arguments")
 
 func (b *ethAPIBackend) GetBody(ctx context.Context, hash common.Hash, number rpc.BlockNumber) (*types.Body, error) {
 	if number < 0 || hash == (common.Hash{}) {
-		return nil, errInvalidArguments
+		return nil, fmt.Errorf("%w: no named numbers or empty hashes allowed", errInvalidArguments)
 	}
+
+	n := uint64(number) //nolint:gosec // Non-negative check performed above
 	if block, ok := b.vm.blocks.Load(hash); ok {
+		if block.NumberU64() != n {
+			return nil, fmt.Errorf("%w: found block number %d for hash, expected %d", errInvalidArguments, block.NumberU64(), number)
+		}
 		return block.EthBlock().Body(), nil
 	}
-	return rawdb.ReadBody(b.vm.db, hash, uint64(number)), nil //nolint:gosec // Non-negative check performed above
+
+	return rawdb.ReadBody(b.vm.db, hash, n), nil
 }
 
 func (b *ethAPIBackend) GetLogs(ctx context.Context, blockHash common.Hash, number uint64) ([][]*types.Log, error) {
