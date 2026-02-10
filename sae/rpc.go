@@ -61,12 +61,14 @@ func (vm *VM) ethRPCServer() (*rpc.Server, error) {
 		return nil
 	})
 
-	// Standard Ethereum APIs are documented at: https://ethereum.org/developers/docs/apis/json-rpc
-	// Geth-specific APIs are documented at: https://geth.ethereum.org/docs/interacting-with-geth/rpc
-	apis := []struct {
+	type api struct {
 		namespace string
 		api       any
-	}{
+	}
+
+	// Standard Ethereum APIs are documented at: https://ethereum.org/developers/docs/apis/json-rpc
+	// Geth-specific APIs are documented at: https://geth.ethereum.org/docs/interacting-with-geth/rpc
+	apis := []api{
 		// Standard Ethereum node APIs:
 		// - web3_clientVersion
 		// - web3_sha3
@@ -179,28 +181,6 @@ func (vm *VM) ethRPCServer() (*rpc.Server, error) {
 		// - debug_traceChain
 		// - debug_traceTransaction
 		{"debug", tracers.NewAPI(b)},
-		// Geth-specific APIs:
-		// - debug_blockProfile
-		// - debug_cpuProfile
-		// - debug_freeOSMemory
-		// - debug_gcStats
-		// - debug_goTrace
-		// - debug_memStats
-		// - debug_mutexProfile
-		// - debug_setBlockProfileRate
-		// - debug_setGCPercent
-		// - debug_setMutexProfileFraction
-		// - debug_stacks
-		// - debug_startCPUProfile
-		// - debug_startGoTrace
-		// - debug_stopCPUProfile
-		// - debug_stopGoTrace
-		// - debug_verbosity
-		// - debug_vmodule
-		// - debug_writeBlockProfile
-		// - debug_writeMemProfile
-		// - debug_writeMutexProfile
-		{"debug", debug.Handler},
 	}
 	// Unsupported APIs:
 	//
@@ -231,6 +211,34 @@ func (vm *VM) ethRPCServer() (*rpc.Server, error) {
 	//
 	// The graphql service.
 	s := rpc.NewServer()
+
+	if vm.config.RPCConfig.EnableProfiling {
+		apis = append(apis,
+			// Geth-specific APIs:
+			// - debug_blockProfile
+			// - debug_cpuProfile
+			// - debug_freeOSMemory
+			// - debug_gcStats
+			// - debug_goTrace
+			// - debug_memStats
+			// - debug_mutexProfile
+			// - debug_setBlockProfileRate
+			// - debug_setGCPercent
+			// - debug_setMutexProfileFraction
+			// - debug_stacks
+			// - debug_startCPUProfile
+			// - debug_startGoTrace
+			// - debug_stopCPUProfile
+			// - debug_stopGoTrace
+			// - debug_verbosity
+			// - debug_vmodule
+			// - debug_writeBlockProfile
+			// - debug_writeMemProfile
+			// - debug_writeMutexProfile
+			api{"debug", debug.Handler},
+		)
+	}
+
 	for _, api := range apis {
 		if err := s.RegisterName(api.namespace, api.api); err != nil {
 			return nil, fmt.Errorf("%T.RegisterName(%q, %T): %v", s, api.namespace, api.api, err)
@@ -311,6 +319,10 @@ func (b *ethAPIBackend) UnprotectedAllowed() bool {
 	return true
 }
 
+func (b *ethAPIBackend) AccountManager() *accounts.Manager {
+	return b.accountManager
+}
+
 func (b *ethAPIBackend) CurrentHeader() *types.Header {
 	return types.CopyHeader(b.vm.exec.LastExecuted().Header())
 }
@@ -338,10 +350,6 @@ func (b *ethAPIBackend) FeeHistory(ctx context.Context, blockCount uint64, lastB
 
 func (b *ethAPIBackend) ChainDb() ethdb.Database {
 	return b.vm.db
-}
-
-func (b *ethAPIBackend) AccountManager() *accounts.Manager {
-	return b.accountManager
 }
 
 func (b *ethAPIBackend) ExtRPCEnabled() bool {
@@ -409,6 +417,25 @@ func (b *ethAPIBackend) GetTransaction(ctx context.Context, txHash common.Hash) 
 
 func (b *ethAPIBackend) GetPoolTransaction(txHash common.Hash) *types.Transaction {
 	return b.Set.Pool.Get(txHash)
+}
+
+func (b *ethAPIBackend) GetPoolTransactions() (types.Transactions, error) {
+	pending := b.Pool.Pending(txpool.PendingFilter{})
+
+	var pendingCount int
+	for _, batch := range pending {
+		pendingCount += len(batch)
+	}
+
+	txs := make(types.Transactions, 0, pendingCount)
+	for _, batch := range pending {
+		for _, lazy := range batch {
+			if tx := lazy.Resolve(); tx != nil {
+				txs = append(txs, tx)
+			}
+		}
+	}
+	return txs, nil
 }
 
 type canonicalReader[T any] func(ethdb.Reader, common.Hash, uint64) *T
@@ -518,25 +545,6 @@ func (b *ethAPIBackend) GetReceipts(ctx context.Context, hash common.Hash) (type
 
 func (b *ethAPIBackend) GetEVM(ctx context.Context, msg *core.Message, state *state.StateDB, header *types.Header, vmConfig *vm.Config, blockCtx *vm.BlockContext) *vm.EVM {
 	panic(errUnimplemented)
-}
-
-func (b *ethAPIBackend) GetPoolTransactions() (types.Transactions, error) {
-	pending := b.Pool.Pending(txpool.PendingFilter{})
-
-	var pendingCount int
-	for _, batch := range pending {
-		pendingCount += len(batch)
-	}
-
-	txs := make(types.Transactions, 0, pendingCount)
-	for _, batch := range pending {
-		for _, lazy := range batch {
-			if tx := lazy.Resolve(); tx != nil {
-				txs = append(txs, tx)
-			}
-		}
-	}
-	return txs, nil
 }
 
 func (b *ethAPIBackend) GetPoolNonce(ctx context.Context, addr common.Address) (uint64, error) {

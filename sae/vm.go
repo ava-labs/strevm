@@ -59,8 +59,8 @@ type VM struct {
 
 	exec       *saexec.Executor
 	mempool    *txgossip.Set
-	newTxs     chan struct{}
 	apiBackend APIBackend
+	newTxs     chan struct{}
 
 	toClose [](func() error)
 }
@@ -70,8 +70,14 @@ type Config struct {
 	Hooks         hook.Points
 	MempoolConfig legacypool.Config
 	TrieDBConfig  *triedb.Config
+	RPCConfig     RPCConfig
 
 	Now func() time.Time // defaults to [time.Now] if nil
+}
+
+// RPCConfig configures RPC API behavior.
+type RPCConfig struct {
+	EnableProfiling bool
 }
 
 // NewVM returns a new [VM] that is ready for use immediately upon return.
@@ -212,6 +218,9 @@ func NewVM(
 	}
 
 	{ // ==========  API Backend  ==========
+		// Empty account manager provides graceful errors for signing
+		// RPCs (e.g. eth_sign) instead of nil-pointer panics. No
+		// actual account functionality is expected.
 		accountManager := accounts.NewManager(&accounts.Config{})
 		vm.toClose = append(vm.toClose, accountManager.Close)
 
