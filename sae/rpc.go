@@ -102,6 +102,21 @@ func (vm *VM) ethRPCServer() (*rpc.Server, error) {
 		// - eth_getRawTransactionByBlockNumberAndIndex
 		{"eth", ethapi.NewTransactionAPI(b, new(ethapi.AddrLocker))},
 		{"eth", filterAPI},
+		// Geth-specific APIs:
+		// - debug_chaindbCompact
+		// - debug_chaindbProperty
+		// - debug_dbGet
+		// - debug_getRawTransaction
+		// - debug_printBlock
+		// - debug_setHead          (no-op, logs info)
+		// - debug_dbAncient        (always errors, SAE has no freezer)
+		// - debug_dbAncients       (always errors, SAE has no freezer)
+		//
+		// TODO: implement once BlockByNumberOrHash and GetReceipts exist:
+		// - debug_getRawBlock
+		// - debug_getRawHeader
+		// - debug_getRawReceipts
+		{"debug", ethapi.NewDebugAPI(b)},
 	}
 	for _, api := range apis {
 		if err := s.RegisterName(api.namespace, api.api); err != nil {
@@ -164,6 +179,10 @@ type ethAPIBackend struct {
 	vm             *VM
 	ethapi.Backend // TODO(arr4n) remove in favour of `var _ ethapi.Backend = (*ethAPIBackend)(nil)`
 	*txgossip.Set
+}
+
+func (b *ethAPIBackend) ChainDb() ethdb.Database {
+	return b.vm.db
 }
 
 func (b *ethAPIBackend) ChainConfig() *params.ChainConfig {
@@ -316,6 +335,10 @@ func (b *ethAPIBackend) SubscribePendingLogsEvent(chan<- []*types.Log) event.Sub
 	// In SAE, "pending" refers to the execution status. There are no logs known
 	// for transactions pending execution.
 	return newNoopSubscription()
+}
+
+func (b *ethAPIBackend) SetHead(uint64) {
+	b.vm.log().Info("debug_setHead called but not supported by SAE")
 }
 
 type noopSubscription struct {

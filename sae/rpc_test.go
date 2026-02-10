@@ -378,6 +378,51 @@ func TestEthGetters(t *testing.T) {
 	})
 }
 
+func TestDebugNamespace(t *testing.T) {
+	ctx, sut := newSUT(t, 0)
+
+	t.Run("setHead", func(t *testing.T) {
+		require.NoError(t, sut.CallContext(ctx, nil, "debug_setHead", hexutil.Uint64(0)))
+	})
+
+	t.Run("printBlock", func(t *testing.T) {
+		var result string
+		require.NoError(t, sut.CallContext(ctx, &result, "debug_printBlock", uint64(0)))
+		require.NotEmpty(t, result, "debug_printBlock(0) should return non-empty string for genesis")
+	})
+
+	t.Run("chaindbCompact", func(t *testing.T) {
+		require.NoError(t, sut.CallContext(ctx, nil, "debug_chaindbCompact"))
+	})
+
+	t.Run("chaindbProperty", func(t *testing.T) {
+		var result string
+		err := sut.CallContext(ctx, &result, "debug_chaindbProperty", "leveldb.stats")
+		require.Error(t, err, "evmdb does not support Stat")
+	})
+
+	t.Run("dbGet", func(t *testing.T) {
+		// rawdb.headBlockKey is unexported - its value is "LastBlock".
+		// The VM writes this key during initialization via rawdb.WriteHeadBlockHash.
+		var result hexutil.Bytes
+		err := sut.CallContext(ctx, &result, "debug_dbGet", hexutil.Encode([]byte("LastBlock")))
+		require.NoError(t, err)
+		require.NotEmpty(t, result)
+	})
+
+	t.Run("dbAncient", func(t *testing.T) {
+		var result hexutil.Bytes
+		err := sut.CallContext(ctx, &result, "debug_dbAncient", "headers", uint64(0))
+		require.Error(t, err, "nofreezedb does not support Ancient")
+	})
+
+	t.Run("dbAncients", func(t *testing.T) {
+		var count uint64
+		err := sut.CallContext(ctx, &count, "debug_dbAncients")
+		require.Error(t, err, "nofreezedb does not support Ancients")
+	})
+}
+
 func (sut *SUT) testGetByHash(ctx context.Context, t *testing.T, want *types.Block) {
 	t.Helper()
 
