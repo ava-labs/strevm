@@ -213,7 +213,7 @@ func (vm *VM) ethRPCServer() (*rpc.Server, error) {
 	s := rpc.NewServer()
 
 	if vm.config.RPCConfig.EnableProfiling {
-		apis = append(apis,
+		apis = append(apis, api{
 			// Geth-specific APIs:
 			// - debug_blockProfile
 			// - debug_cpuProfile
@@ -235,8 +235,8 @@ func (vm *VM) ethRPCServer() (*rpc.Server, error) {
 			// - debug_writeBlockProfile
 			// - debug_writeMemProfile
 			// - debug_writeMutexProfile
-			api{"debug", debug.Handler},
-		)
+			"debug", debug.Handler,
+		})
 	}
 
 	for _, api := range apis {
