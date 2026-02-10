@@ -25,6 +25,7 @@ import (
 	"github.com/ava-labs/libevm/ethdb"
 	"github.com/ava-labs/libevm/libevm"
 	libevmhookstest "github.com/ava-labs/libevm/libevm/hookstest"
+	"github.com/ava-labs/libevm/libevm/options"
 	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/triedb"
 	"github.com/google/go-cmp/cmp"
@@ -65,11 +66,24 @@ type SUT struct {
 	db     ethdb.Database
 }
 
+type (
+	sutConfig struct {
+		useLibEVMTBLogger bool
+		snapshotCacheSize int
+	}
+	sutOption = options.Option[sutConfig]
+)
+
 // newSUT returns a new SUT. Any >= [logging.Error] on the logger will also
 // cancel the returned context, which is useful when waiting for blocks that
 // can never finish execution because of an error.
-func newSUT(tb testing.TB, hooks *saehookstest.Stub) (context.Context, SUT) {
+func newSUT(tb testing.TB, hooks *saehookstest.Stub, opts ...sutOption) (context.Context, SUT) {
 	tb.Helper()
+
+	conf := options.ApplyTo(&sutConfig{
+		useLibEVMTBLogger: true, // Default: enable enhanced logging
+		snapshotCacheSize: 0,    // Default: disabled; only enable for snapshot-specific tests
+	}, opts...)
 
 	logger := saetest.NewTBLogger(tb, logging.Warn)
 	ctx := logger.CancelOnError(tb.Context())
@@ -82,16 +96,20 @@ func newSUT(tb testing.TB, hooks *saehookstest.Stub) (context.Context, SUT) {
 	alloc := saetest.MaxAllocFor(wallet.Addresses()...)
 	genesis := blockstest.NewGenesis(tb, db, config, alloc, blockstest.WithTrieDBConfig(tdbConfig), blockstest.WithGasTarget(hooks.Target))
 
-	opts := blockstest.WithBlockOptions(
+	blockOpts := blockstest.WithBlockOptions(
 		blockstest.WithLogger(logger),
 	)
-	chain := blockstest.NewChainBuilder(config, genesis, opts)
+	chain := blockstest.NewChainBuilder(config, genesis, blockOpts)
 
-	e, err := New(genesis, chain.GetBlock, config, db, tdbConfig, hooks, logger)
+	e, err := New(genesis, chain.GetBlock, config, db, tdbConfig, hooks, logger, conf.snapshotCacheSize)
 	require.NoError(tb, err, "New()")
 	tb.Cleanup(func() {
 		require.NoErrorf(tb, e.Close(), "%T.Close()", e)
 	})
+
+	if conf.useLibEVMTBLogger {
+		saetest.EnableLibEVMTBLogger(tb)
+	}
 
 	return ctx, SUT{
 		Executor: e,
@@ -102,8 +120,29 @@ func newSUT(tb testing.TB, hooks *saehookstest.Stub) (context.Context, SUT) {
 	}
 }
 
+// withSnapshots enables snapshots in the test executor with the specified cache
+// size. Use this for tests that specifically test snapshot functionality.
+func withSnapshots(cacheSize int) sutOption {
+	return options.Func[sutConfig](func(c *sutConfig) {
+		c.snapshotCacheSize = cacheSize
+	})
+}
+
 func defaultHooks() *saehookstest.Stub {
 	return &saehookstest.Stub{Target: 1e6}
+}
+
+// withoutLibEVMTBLogger disables the use of [saetest.EnableLibEVMTBLogger] when
+// constructing a new [SUT]. This SHOULD be used sparingly.
+//
+// We generally enforce warnings as errors because in tests they amount to smoke
+// with a lingering fire, but geth uses warnings more liberally. Additionally,
+// initialization warnings (snapshot, txpool reset) are expected in certain tests
+// like snapshot persistence tests and fuzz tests.
+func withoutLibEVMTBLogger() sutOption {
+	return options.Func[sutConfig](func(c *sutConfig) {
+		c.useLibEVMTBLogger = false
+	})
 }
 
 func TestImmediateShutdownNonBlocking(t *testing.T) {
@@ -610,7 +649,9 @@ func FuzzOpCodes(f *testing.F) {
 	f.Fuzz(func(t *testing.T, code []byte) {
 		t.Parallel() // for corpus in ./testdata/
 
-		_, sut := newSUT(t, defaultHooks())
+		// Disable enhanced logging for fuzz tests - they intentionally explore edge cases
+		// and may trigger harmless init warnings in parallel SUTs.
+		_, sut := newSUT(t, defaultHooks(), withoutLibEVMTBLogger())
 		tx := sut.wallet.SetNonceAndSign(t, 0, &types.LegacyTx{
 			To:       nil, // i.e. contract creation, resulting in `code` being executed
 			GasPrice: big.NewInt(1),
@@ -818,7 +859,9 @@ func (e *blockNumSaver) store(h *types.Header) {
 }
 
 func TestSnapshotPersistence(t *testing.T) {
-	ctx, sut := newSUT(t, defaultHooks())
+	// Disable enhanced logging - "Loaded snapshot journal" is expected during snapshot tests.
+	// Enable snapshots since this test specifically tests snapshot persistence.
+	ctx, sut := newSUT(t, defaultHooks(), withoutLibEVMTBLogger(), withSnapshots(128))
 
 	e, chain, wallet := sut.Executor, sut.chain, sut.wallet
 

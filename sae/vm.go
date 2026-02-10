@@ -73,6 +73,8 @@ type Config struct {
 	TrieDBConfig  *triedb.Config
 	RPCConfig     RPCConfig
 
+	SnapshotCacheSize int // 0 disables snapshots entirely. Negative values use the default (128 MB).
+
 	Now func() time.Time // defaults to [time.Now] if nil
 }
 
@@ -126,6 +128,10 @@ func NewVM(
 	}
 
 	{ // ==========  Executor  ==========
+		snapshotCacheSize := vm.config.SnapshotCacheSize
+		if snapshotCacheSize < 0 {
+			snapshotCacheSize = 128 // Default: 128 MB
+		}
 		exec, err := saexec.New(
 			lastSynchronous,
 			vm.blockSource,
@@ -134,6 +140,7 @@ func NewVM(
 			vm.config.TrieDBConfig,
 			vm.hooks(),
 			snowCtx.Log,
+			snapshotCacheSize,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("saexec.New(...): %v", err)

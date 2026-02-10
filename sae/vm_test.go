@@ -11,6 +11,7 @@ import (
 	"math/rand/v2"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"runtime"
 	"testing"
 	"time"
@@ -90,9 +91,10 @@ type SUT struct {
 
 type (
 	sutConfig struct {
-		vmConfig Config
-		logLevel logging.Level
-		genesis  core.Genesis
+		vmConfig              Config
+		logLevel              logging.Level
+		genesis               core.Genesis
+		disableLibEVMTBLogger bool
 	}
 	sutOption = options.Option[sutConfig]
 )
@@ -104,7 +106,7 @@ func newSUT(tb testing.TB, numAccounts uint, opts ...sutOption) (context.Context
 	tb.Helper()
 
 	mempoolConf := legacypool.DefaultConfig // copies
-	mempoolConf.Journal = "/dev/null"
+	mempoolConf.Journal = filepath.Join(tb.TempDir(), "transactions.rlp")
 
 	keys := saetest.NewUNSAFEKeyChain(tb, numAccounts)
 
@@ -114,6 +116,7 @@ func newSUT(tb testing.TB, numAccounts uint, opts ...sutOption) (context.Context
 			Hooks: &hookstest.Stub{
 				Target: 100e6,
 			},
+			SnapshotCacheSize: 0,
 		},
 		logLevel: logging.Debug,
 		genesis: core.Genesis{
@@ -162,6 +165,10 @@ func newSUT(tb testing.TB, numAccounts uint, opts ...sutOption) (context.Context
 	require.NoErrorf(tb, err, "rpc.Dial(http.NewServer(%T.CreateHandlers()))", snow)
 	client := ethclient.NewClient(rpcClient)
 	tb.Cleanup(client.Close)
+
+	if !conf.disableLibEVMTBLogger {
+		saetest.EnableLibEVMTBLogger(tb)
+	}
 
 	validators, ok := snowCtx.ValidatorState.(*validatorstest.State)
 	require.Truef(tb, ok, "unexpected type %T for snowCtx.ValidatorState", snowCtx.ValidatorState)
@@ -232,6 +239,18 @@ func withVMTime(tb testing.TB, startTime time.Time) (sutOption, *vmTime) {
 	})
 
 	return opt, t
+}
+
+// withoutLibEVMTBLogger disables the use of [saetest.EnableLibEVMTBLogger] when
+// constructing a new [SUT]. This SHOULD be used sparingly.
+//
+// We generally enforce warnings as errors because in tests they amount to smoke
+// with a lingering fire, but geth uses warnings more liberally. For example,
+// when an RPC rejects a tx that exceeds the block gas limit.
+func withoutLibEVMTBLogger() sutOption {
+	return options.Func[sutConfig](func(c *sutConfig) {
+		c.disableLibEVMTBLogger = true
+	})
 }
 
 func (s *SUT) nodeID() ids.NodeID {

@@ -27,6 +27,7 @@ import (
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/eth"
 	"github.com/ava-labs/libevm/libevm/ethapi"
+	"github.com/ava-labs/libevm/libevm/options"
 	"github.com/ava-labs/libevm/params"
 	"github.com/google/go-cmp/cmp"
 	"github.com/holiman/uint256"
@@ -61,14 +62,26 @@ type SUT struct {
 	exec   *saexec.Executor
 }
 
+type (
+	sutConfig struct {
+		useLibEVMTBLogger bool
+	}
+	sutOption = options.Option[sutConfig]
+)
+
 func newWallet(tb testing.TB, numAccounts uint) *saetest.Wallet {
 	tb.Helper()
 	signer := types.LatestSigner(saetest.ChainConfig())
 	return saetest.NewUNSAFEWallet(tb, numAccounts, signer)
 }
 
-func newSUT(t *testing.T, numAccounts uint) SUT {
+func newSUT(t *testing.T, numAccounts uint, opts ...sutOption) SUT {
 	t.Helper()
+
+	conf := options.ApplyTo(&sutConfig{
+		useLibEVMTBLogger: true, // Default: enable enhanced logging
+	}, opts...)
+
 	logger := saetest.NewTBLogger(t, logging.Warn)
 
 	wallet := newWallet(t, numAccounts)
@@ -78,7 +91,7 @@ func newSUT(t *testing.T, numAccounts uint) SUT {
 	genesis := blockstest.NewGenesis(t, db, config, saetest.MaxAllocFor(wallet.Addresses()...))
 	chain := blockstest.NewChainBuilder(config, genesis)
 
-	exec, err := saexec.New(genesis, chain.GetBlock, config, db, nil, &hookstest.Stub{Target: 1e6}, logger)
+	exec, err := saexec.New(genesis, chain.GetBlock, config, db, nil, &hookstest.Stub{Target: 1e6}, logger, 0)
 	require.NoError(t, err, "saexec.New()")
 	t.Cleanup(func() {
 		require.NoErrorf(t, exec.Close(), "%T.Close()", exec)
@@ -92,12 +105,28 @@ func newSUT(t *testing.T, numAccounts uint) SUT {
 		assert.NoErrorf(t, pool.Close(), "%T.Close()", pool)
 	})
 
+	if conf.useLibEVMTBLogger {
+		saetest.EnableLibEVMTBLogger(t)
+	}
+
 	return SUT{
 		Set:    set,
 		chain:  chain,
 		wallet: wallet,
 		exec:   exec,
 	}
+}
+
+// withoutLibEVMTBLogger disables the use of [saetest.EnableLibEVMTBLogger] when
+// constructing a new [SUT]. This SHOULD be used sparingly.
+//
+// We generally enforce warnings as errors because in tests they amount to smoke
+// with a lingering fire, but geth uses warnings more liberally. Additionally,
+// initialization warnings (snapshot, txpool reset) are expected and safe.
+func withoutLibEVMTBLogger() sutOption {
+	return options.Func[sutConfig](func(c *sutConfig) {
+		c.useLibEVMTBLogger = false
+	})
 }
 
 func newTxPool(t *testing.T, bc BlockChain) *txpool.TxPool {
@@ -116,7 +145,8 @@ func TestExecutorIntegration(t *testing.T) {
 	ctx := t.Context()
 
 	const numAccounts = 3
-	s := newSUT(t, numAccounts)
+	// Disable enhanced logging - txpool reset warning happens during execution, not just init.
+	s := newSUT(t, numAccounts, withoutLibEVMTBLogger())
 
 	rng := rand.New(rand.NewPCG(0, 0)) //nolint:gosec // Reproducibility is useful in tests
 
@@ -262,13 +292,18 @@ func TestP2PIntegration(t *testing.T) {
 			logger := saetest.NewTBLogger(t, logging.Debug)
 			ctx = logger.CancelOnError(ctx)
 
+			// Disable enhanced logging during SUT creation to avoid harmless init warnings,
+			// then re-enable for test execution.
+			opt := withoutLibEVMTBLogger()
+			defer saetest.EnableLibEVMTBLogger(t)
+
 			sendID := ids.GenerateTestNodeID()
 			recvID := ids.GenerateTestNodeID()
-			send := newSUT(t, 1)
+			send := newSUT(t, 1, opt)
 			// Although the receiving mempool doesn't need to sign transactions, create
 			// the same (deterministic) account so it has non-zero balance otherwise the
 			// mempool will reject it.
-			recv := newSUT(t, 1)
+			recv := newSUT(t, 1, opt)
 
 			client := p2ptest.NewClient(
 				t, ctx,
