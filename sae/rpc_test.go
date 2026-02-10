@@ -468,7 +468,7 @@ func TestDebugNamespace(t *testing.T) {
 	})
 
 	t.Run("dbGet", func(t *testing.T) {
-		// rawdb.headBlockKey is unexported; its value is "LastBlock".
+		// rawdb.headBlockKey is unexported - its value is "LastBlock".
 		// The VM writes this key during initialization via rawdb.WriteHeadBlockHash.
 		var result hexutil.Bytes
 		err := sut.CallContext(ctx, &result, "debug_dbGet", hexutil.Encode([]byte("LastBlock")))
@@ -488,6 +488,53 @@ func TestDebugNamespace(t *testing.T) {
 		require.Error(t, err, "nofreezedb does not support Ancients")
 	})
 }
+
+func TestDebugGetRawTransaction(t *testing.T) {
+	ctx, sut := newSUT(t, 1)
+
+	tx := sut.wallet.SetNonceAndSign(t, 0, &types.DynamicFeeTx{
+		To:        &common.Address{},
+		Gas:       params.TxGas,
+		GasFeeCap: big.NewInt(1),
+	})
+	b := sut.createAndAcceptBlock(t, tx)
+	require.NoError(t, b.WaitUntilExecuted(ctx))
+
+	marshaled, err := tx.MarshalBinary()
+	require.NoError(t, err)
+
+	sut.testRPC(ctx, t, []rpcTest{
+		{
+			method: "debug_getRawTransaction",
+			args:   []any{tx.Hash()},
+			want:   hexutil.Bytes(marshaled),
+		},
+		{
+			method: "debug_getRawTransaction",
+			args:   []any{common.Hash{}},
+			want:   hexutil.Bytes(nil),
+		},
+	}...)
+
+	// Mempool tx: send without building a block, then query.
+	mempoolTx := sut.wallet.SetNonceAndSign(t, 0, &types.DynamicFeeTx{
+		To:        &common.Address{},
+		Gas:       params.TxGas,
+		GasFeeCap: big.NewInt(1),
+	})
+	sut.mustSendTx(t, mempoolTx)
+	sut.syncMempool(t)
+
+	mempoolMarshaled, err := mempoolTx.MarshalBinary()
+	require.NoError(t, err)
+
+	sut.testRPC(ctx, t, rpcTest{
+		method: "debug_getRawTransaction",
+		args:   []any{mempoolTx.Hash()},
+		want:   hexutil.Bytes(mempoolMarshaled),
+	})
+}
+
 func (sut *SUT) testGetByHash(ctx context.Context, t *testing.T, want *types.Block) {
 	t.Helper()
 
