@@ -45,7 +45,7 @@ type rpcTest struct {
 func (s *SUT) testRPC(ctx context.Context, t *testing.T, tcs ...rpcTest) {
 	t.Helper()
 	opts := []cmp.Option{
-		cmpopts.EquateEmpty(),
+		cmputils.NilSlicesAreEmpty[hexutil.Bytes](),
 		cmputils.Headers(),
 		cmputils.HexutilBigs(),
 		cmputils.TransactionsByHash(),

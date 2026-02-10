@@ -42,7 +42,18 @@ func (bc *blockchain) Config() *params.ChainConfig {
 }
 
 func (bc *blockchain) CurrentBlock() *types.Header {
-	return bc.exec.LastEnqueued().Header()
+	// TODO(arr4n) returning a synthetic header in a naive manner like this only
+	// works at startup, which is sufficient for database-recovery tests. A
+	// similar transformation will be necessary for
+	// [blockchain.SubscribeChainHeadEvent] but taking care to update the parent
+	// hash too otherwise the mempool will think that every block is a reorg. An
+	// alternative, which might have its own issues, is to have
+	// [blockchain.StateAt] assume that it receives the settled state, map that
+	// to the executed state at the same block, and open that root instead.
+	last := bc.exec.LastExecuted()
+	h := types.CopyHeader(last.Header())
+	h.Root = last.PostExecutionStateRoot()
+	return h
 }
 
 func (bc *blockchain) GetBlock(hash common.Hash, number uint64) *types.Block {

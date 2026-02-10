@@ -86,7 +86,7 @@ func New(eth *types.Block, parent, lastSettled *Block, log logging.Logger) (*Blo
 		inMemoryBlockCount.Add(-1)
 	}, struct{}{})
 
-	if err := b.setAncestors(parent, lastSettled); err != nil {
+	if err := b.SetAncestors(parent, lastSettled); err != nil {
 		return nil, err
 	}
 	b.log = log.With(
@@ -102,7 +102,7 @@ var (
 	errHashMismatch               = errors.New("block hash mismatch")
 )
 
-func (b *Block) setAncestors(parent, lastSettled *Block) error {
+func (b *Block) SetAncestors(parent, lastSettled *Block) error {
 	if parent != nil {
 		if got, want := parent.Hash(), b.ParentHash(); got != want {
 			return fmt.Errorf("%w: constructing Block with parent hash %v; expecting %v", errParentHashMismatch, got, want)
@@ -130,7 +130,7 @@ func (b *Block) CopyAncestorsFrom(c *Block) error {
 		return fmt.Errorf("%w: copying internals from block %#x to %#x", errHashMismatch, from, to)
 	}
 	a := c.ancestry.Load()
-	return b.setAncestors(a.parent, a.lastSettled)
+	return b.SetAncestors(a.parent, a.lastSettled)
 }
 
 // A Source returns a [Block] that matches both a hash and number, and a boolean
