@@ -14,6 +14,7 @@ import (
 	"github.com/ava-labs/avalanchego/snow/engine/snowman/block"
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core"
+	"github.com/ava-labs/libevm/core/rawdb"
 	"github.com/ava-labs/libevm/core/txpool"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/params"
@@ -347,6 +348,10 @@ func (vm *VM) VerifyBlock(ctx context.Context, bCtx *block.Context, b *blocks.Bl
 
 	vm.blocks.Store(b.Hash(), b)
 	return nil
+}
+
+func (vm *VM) canonicalBlock(num uint64) *types.Block {
+	return rawdb.ReadBlock(vm.db, rawdb.ReadCanonicalHash(vm.db, num), num)
 }
 
 // GetBlock returns the block with the given ID, or [database.ErrNotFound].

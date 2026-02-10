@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ava-labs/avalanchego/database"
 	"github.com/ava-labs/avalanchego/database/memdb"
 	"github.com/ava-labs/avalanchego/ids"
 	"github.com/ava-labs/avalanchego/snow"
@@ -80,6 +81,7 @@ type SUT struct {
 	rawVM   *VM
 	genesis *blocks.Block
 	wallet  *saetest.Wallet
+	avaDB   database.Database
 	db      ethdb.Database
 	hooks   hook.Points
 	logger  *saetest.TBLogger
@@ -93,6 +95,7 @@ type (
 		vmConfig Config
 		logLevel logging.Level
 		genesis  core.Genesis
+		db       database.Database
 	}
 	sutOption = options.Option[sutConfig]
 )
@@ -122,6 +125,7 @@ func newSUT(tb testing.TB, numAccounts uint, opts ...sutOption) (context.Context
 			Timestamp:  saeparams.TauSeconds,
 			Difficulty: big.NewInt(0), // irrelevant but required
 		},
+		db: memdb.New(),
 	}, opts...)
 
 	vm := NewSinceGenesis(conf.vmConfig)
@@ -142,17 +146,43 @@ func newSUT(tb testing.TB, numAccounts uint, opts ...sutOption) (context.Context
 		},
 	}
 
-	mdb := memdb.New()
 	require.NoError(tb, snow.Initialize(
 		ctx,
 		snowCtx,
-		mdb,
+		conf.db,
 		marshalJSON(tb, conf.genesis),
 		nil, // upgrade bytes
 		nil, // config bytes (not ChainConfig)
 		nil, // Fxs
 		sender,
 	), "Initialize()")
+
+	rpcClient, ethClient := dialRPC(ctx, tb, snow)
+
+	validators, ok := snowCtx.ValidatorState.(*validatorstest.State)
+	require.Truef(tb, ok, "unexpected type %T for snowCtx.ValidatorState", snowCtx.ValidatorState)
+	return ctx, &SUT{
+		ChainVM:   snow,
+		Client:    ethClient,
+		rpcClient: rpcClient,
+		rawVM:     vm.VM,
+		genesis:   vm.last.settled.Load(),
+		wallet: saetest.NewWalletWithKeyChain(
+			keys,
+			types.LatestSigner(conf.genesis.Config),
+		),
+		avaDB:  conf.db,
+		db:     newEthDB(conf.db),
+		hooks:  conf.vmConfig.Hooks,
+		logger: logger,
+
+		validators: validators,
+		sender:     sender,
+	}
+}
+
+func dialRPC(ctx context.Context, tb testing.TB, snow block.ChainVM) (*rpc.Client, *ethclient.Client) {
+	tb.Helper()
 
 	handlers, err := snow.CreateHandlers(ctx)
 	require.NoErrorf(tb, err, "%T.CreateHandlers()", snow)
@@ -163,25 +193,7 @@ func newSUT(tb testing.TB, numAccounts uint, opts ...sutOption) (context.Context
 	client := ethclient.NewClient(rpcClient)
 	tb.Cleanup(client.Close)
 
-	validators, ok := snowCtx.ValidatorState.(*validatorstest.State)
-	require.Truef(tb, ok, "unexpected type %T for snowCtx.ValidatorState", snowCtx.ValidatorState)
-	return ctx, &SUT{
-		ChainVM:   snow,
-		Client:    client,
-		rpcClient: rpcClient,
-		rawVM:     vm.VM,
-		genesis:   vm.last.settled.Load(),
-		wallet: saetest.NewWalletWithKeyChain(
-			keys,
-			types.LatestSigner(conf.genesis.Config),
-		),
-		db:     newEthDB(mdb),
-		hooks:  conf.vmConfig.Hooks,
-		logger: logger,
-
-		validators: validators,
-		sender:     sender,
-	}
+	return rpcClient, client
 }
 
 func marshalJSON(tb testing.TB, v any) []byte {
