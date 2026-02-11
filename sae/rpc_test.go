@@ -9,6 +9,7 @@ import (
 	"math"
 	"math/big"
 	"reflect"
+	"regexp"
 	"runtime/debug"
 	"testing"
 	"time"
@@ -16,6 +17,7 @@ import (
 	"github.com/ava-labs/avalanchego/version"
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/common/hexutil"
+	"github.com/ava-labs/libevm/core/rawdb"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/core/vm"
 	"github.com/ava-labs/libevm/crypto"
@@ -25,6 +27,7 @@ import (
 	"github.com/ava-labs/libevm/libevm/options"
 	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/rpc"
+	"github.com/davecgh/go-spew/spew"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/stretchr/testify/require"
@@ -35,14 +38,21 @@ import (
 	"github.com/ava-labs/strevm/saetest"
 )
 
-var zeroAddr common.Address
+var (
+	zeroAddr common.Address
+
+	// goPointerAddr matches Go pointer addresses, e.g. "(0x140003c0280)".
+	// These vary across allocations and must be stripped for stable string
+	// comparison.
+	goPointerAddr = regexp.MustCompile(`\(0x[0-9a-f]+\)`)
+)
 
 type rpcTest struct {
-	method       string
-	args         []any
-	want         any    // expected value compared via [cmp.Diff]
-	wantErr      string // if non-empty, assert ErrorContains instead of comparing want
-	wantNonEmpty bool   // if true, assert only that the result is non-zero (for non-deterministic values)
+	method  string
+	args    []any
+	want    any          // expected value compared via [cmp.Diff]
+	wantErr string       // if non-empty, assert ErrorContains instead of comparing want
+	cmpOpts []cmp.Option // additional per-test [cmp.Option]s
 }
 
 func (s *SUT) testRPC(ctx context.Context, t *testing.T, tcs ...rpcTest) {
@@ -69,11 +79,7 @@ func (s *SUT) testRPC(ctx context.Context, t *testing.T, tcs ...rpcTest) {
 			got := reflect.New(reflect.TypeOf(tc.want))
 			t.Logf("%T.CallContext(ctx, %T, %q, %v...)", s.rpcClient, &tc.want /*i.e. the type*/, tc.method, tc.args)
 			require.NoError(t, s.CallContext(ctx, got.Interface(), tc.method, tc.args...))
-			if tc.wantNonEmpty {
-				require.NotZero(t, got.Elem().Interface())
-				return
-			}
-			if diff := cmp.Diff(tc.want, got.Elem().Interface(), opts...); diff != "" {
+			if diff := cmp.Diff(tc.want, got.Elem().Interface(), append(opts, tc.cmpOpts...)...); diff != "" {
 				t.Errorf("Diff (-want +got):\n%s", diff)
 			}
 		})
@@ -464,6 +470,11 @@ func TestEthSigningAPIs(t *testing.T) {
 func TestDebugRPCs(t *testing.T) {
 	ctx, sut := newSUT(t, 0, withDebugAPI())
 
+	genesis := rawdb.ReadBlock(sut.db, sut.genesis.Hash(), 0)
+	stripPtrAddrs := cmp.Transformer("stripPtrAddrs", func(s string) string {
+		return goPointerAddr.ReplaceAllString(s, "")
+	})
+
 	sut.testRPC(ctx, t, []rpcTest{
 		{
 			// SAE does not support rewinding - setHead is a no-op.
@@ -471,10 +482,10 @@ func TestDebugRPCs(t *testing.T) {
 			args:   []any{hexutil.Uint64(0)},
 		},
 		{
-			method:       "debug_printBlock",
-			args:         []any{uint64(0)},
-			want:         "",
-			wantNonEmpty: true,
+			method:  "debug_printBlock",
+			args:    []any{uint64(0)},
+			want:    spew.Sdump(genesis),
+			cmpOpts: []cmp.Option{stripPtrAddrs},
 		},
 		{
 			// Compaction is a no-op but succeeds without error.
@@ -486,12 +497,9 @@ func TestDebugRPCs(t *testing.T) {
 			wantErr: "stat is not supported",
 		},
 		{
-			// rawdb.headBlockKey is unexported - its value is "LastBlock".
-			// The VM writes this key during initialization via rawdb.WriteHeadBlockHash.
-			method:       "debug_dbGet",
-			args:         []any{hexutil.Encode([]byte("LastBlock"))},
-			want:         hexutil.Bytes{},
-			wantNonEmpty: true,
+			method: "debug_dbGet",
+			args:   []any{hexutil.Encode([]byte("LastBlock"))},
+			want:   hexutil.Bytes(rawdb.ReadHeadBlockHash(sut.db).Bytes()),
 		},
 		{
 			method:  "debug_dbAncient",
