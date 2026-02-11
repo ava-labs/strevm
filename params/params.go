@@ -7,7 +7,11 @@
 package params
 
 import (
+	"encoding/binary"
 	"time"
+
+	// Imported for [rawdb] comment-link resolution.
+	_ "github.com/ava-labs/libevm/core/rawdb"
 )
 
 // Lambda is the denominator for computing the minimum gas consumed per
@@ -24,7 +28,20 @@ const (
 	TauSeconds = 5
 )
 
-const RawDBPrefix = "\x00\x00-ava-sae-"
+const rawDBPrefix = "\x00\x00-ava-sae-"
+
+// RawDBKeyForBlock returns an SAE-specific key for use with the [rawdb]
+// package.
+func RawDBKeyForBlock(namespace string, num uint64) []byte {
+	n := len(rawDBPrefix) + len(namespace) + 1 /*hyphen*/
+	key := make([]byte, n, n+8)
+
+	copy(key, []byte(rawDBPrefix))
+	copy(key[len(rawDBPrefix):], []byte(namespace))
+
+	key[n-1] = '-'
+	return binary.BigEndian.AppendUint64(key, num)
+}
 
 const (
 	CommitTrieDBEvery     = 1 << commitTrieDBEveryLog2

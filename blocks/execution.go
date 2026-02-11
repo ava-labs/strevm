@@ -5,7 +5,6 @@ package blocks
 
 import (
 	"context"
-	"encoding/binary"
 	"errors"
 	"fmt"
 	"math/big"
@@ -69,11 +68,7 @@ func (e *executionResults) persist(kvw ethdb.KeyValueWriter, blockNum uint64) er
 }
 
 func executionResultsKey(blockNum uint64) []byte {
-	const prefix = params.RawDBPrefix + "exec-"
-	n := len(prefix)
-	key := make([]byte, n, n+8)
-	copy(key[:n], prefix)
-	return binary.BigEndian.AppendUint64(key, blockNum)
+	return params.RawDBKeyForBlock("exec", blockNum)
 }
 
 // MarkExecuted marks the block as having been executed at the specified time(s)
