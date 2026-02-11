@@ -5,6 +5,7 @@ package sae
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"math"
 	"math/big"
@@ -29,6 +30,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/holiman/uint256"
+	"github.com/mrwormhole/errdiff"
 	"github.com/stretchr/testify/require"
 
 	"github.com/ava-labs/strevm/blocks"
@@ -41,10 +43,10 @@ import (
 var zeroAddr common.Address
 
 type rpcTest struct {
-	method  string
-	args    []any
-	want    any    // nil is type-sensitive - untyped nil means no return value.
-	wantErr string // want is ignored if non-empty
+	method          string
+	args            []any
+	want            any    // untyped nil means no return value
+	wantErrContains string // empty string means no error
 }
 
 func (s *SUT) testRPC(ctx context.Context, t *testing.T, tcs ...rpcTest) {
@@ -56,27 +58,20 @@ func (s *SUT) testRPC(ctx context.Context, t *testing.T, tcs ...rpcTest) {
 		cmputils.TransactionsByHash(),
 	}
 
-	call := func(t *testing.T, store any, tc rpcTest) error {
-		t.Helper()
-		t.Logf("%T.CallContext(ctx, %T, %q, %v...)", s.rpcClient, &tc.want /*i.e. the type*/, tc.method, tc.args)
-		return s.CallContext(ctx, store, tc.method, tc.args...)
-	}
-
 	for _, tc := range tcs {
 		t.Run(tc.method, func(t *testing.T) {
-			if tc.wantErr != "" {
-				err := call(t, nil, tc) // won't unmarshal anything
-				require.ErrorContains(t, err, tc.wantErr)
-				return
-			}
-			if tc.want == nil {
-				require.NoError(t, call(t, nil, tc))
-				return
+			if tc.want == nil { // Reminder: excludes typed nil
+				tc.want = json.RawMessage{}
 			}
 			got := reflect.New(reflect.TypeOf(tc.want))
-			require.NoError(t, call(t, got.Interface(), tc))
+			err := s.CallContext(ctx, got.Interface(), tc.method, tc.args...)
+
+			t.Logf("%T.CallContext(ctx, %T, %q, %v...)", s.rpcClient, got.Interface(), tc.method, tc.args)
+			if diff := errdiff.Text(err, tc.wantErrContains); diff != "" {
+				t.Fatalf("CallContext(...) %s", diff)
+			}
 			if diff := cmp.Diff(tc.want, got.Elem().Interface(), opts...); diff != "" {
-				t.Errorf("Diff (-want +got):\n%s", diff)
+				t.Errorf("Unmarshalled %T diff (-want +got):\n%s", got.Elem().Interface(), diff)
 			}
 		})
 	}
@@ -501,7 +496,8 @@ func TestEthPendingTransactions(t *testing.T) {
 func TestEthSigningAPIs(t *testing.T) {
 	ctx, sut := newSUT(t, 1)
 
-	wantErr := "unknown account"
+	const wantErr = "unknown account"
+
 	txFields := map[string]any{
 		"from":     zeroAddr,
 		"to":       zeroAddr,
@@ -517,21 +513,21 @@ func TestEthSigningAPIs(t *testing.T) {
 				zeroAddr,
 				hexutil.Bytes("test message"),
 			},
-			wantErr: wantErr,
+			wantErrContains: wantErr,
 		},
 		{
 			method: "eth_signTransaction",
 			args: []any{
 				txFields,
 			},
-			wantErr: wantErr,
+			wantErrContains: wantErr,
 		},
 		{
 			method: "eth_sendTransaction",
 			args: []any{
 				txFields,
 			},
-			wantErr: wantErr,
+			wantErrContains: wantErr,
 		},
 	}...)
 }
