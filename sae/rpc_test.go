@@ -5,7 +5,6 @@ package sae
 
 import (
 	"context"
-	"encoding/binary"
 	"fmt"
 	"math"
 	"math/big"
@@ -55,6 +54,7 @@ func (s *SUT) testRPC(ctx context.Context, t *testing.T, tcs ...rpcTest) {
 		cmputils.Headers(),
 		cmputils.HexutilBigs(),
 		cmputils.TransactionsByHash(),
+		cmputils.Receipts(),
 	}
 
 	for _, tc := range tcs {
@@ -492,24 +492,21 @@ func TestReceiptAPIs(t *testing.T) {
 	}
 	getReceipt := func(t *testing.T, tx *types.Transaction) *types.Receipt {
 		t.Helper()
-		var receipt *types.Receipt
-		require.NoError(t, sut.CallContext(ctx, &receipt, "eth_getTransactionReceipt", tx.Hash()))
-		require.NotNil(t, receipt, "receipt for tx %s", tx.Hash())
+		receipt, err := sut.TransactionReceipt(ctx, tx.Hash())
+		require.NoError(t, err, "TransactionReceipt(%s)", tx.Hash())
 		return receipt
 	}
-
-	var zeroAddr common.Address
 
 	// All blocks created upfront to avoid executor blocking during subtests.
 
 	genesis := sut.lastAcceptedBlock(t)
 
-	// Block 1: Executed, still in cache (not yet settled)
+	// Block 1: Executed; will also be settled when block 2 settles (it's older)
 	txExecutedInCache := createTx(t, 0, zeroAddr)
 	blockExecutedInCache := sut.createAndAcceptBlock(t, txExecutedInCache)
 	require.NoErrorf(t, blockExecutedInCache.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", blockExecutedInCache)
 
-	// Block 2: Will be settled to DB
+	// Block 2: Executed; will be settled to DB when block 4 triggers settlement
 	txSettled := createTx(t, 1, zeroAddr)
 	blockSettled := sut.createAndAcceptBlock(t, txSettled)
 	require.NoErrorf(t, blockSettled.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", blockSettled)
@@ -523,7 +520,7 @@ func TestReceiptAPIs(t *testing.T) {
 	blockMultiTxs := sut.createAndAcceptBlock(t, txMulti1, txMulti2, txMulti3)
 	require.NoErrorf(t, blockMultiTxs.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", blockMultiTxs)
 
-	// Block 4: Triggers settlement of block 2
+	// Block 4: Triggers settlement of blocks 1 and 2
 	triggerSettlement := createTx(t, 3, zeroAddr)
 	b4 := sut.createAndAcceptBlock(t, triggerSettlement)
 	require.NoErrorf(t, b4.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", b4)
@@ -575,18 +572,6 @@ func TestReceiptAPIs(t *testing.T) {
 		}...)
 	})
 
-	requireBlockReceipts := func(t *testing.T, blockID any, txs []*types.Transaction) {
-		t.Helper()
-		var got []*types.Receipt
-		require.NoError(t, sut.CallContext(ctx, &got, "eth_getBlockReceipts", blockID))
-		require.Len(t, got, len(txs))
-		for i, r := range got {
-			require.Equal(t, txs[i].Hash(), r.TxHash, "receipt[%d]", i)
-			require.Equal(t, uint(i), r.TransactionIndex, "receipt[%d]", i) //nolint:gosec // test index
-			require.Equal(t, types.ReceiptStatusSuccessful, r.Status, "receipt[%d]", i)
-		}
-	}
-
 	t.Run("eth_getBlockReceipts", func(t *testing.T) {
 		multiTxs := []*types.Transaction{txMulti1, txMulti2, txMulti3}
 
@@ -612,18 +597,17 @@ func TestReceiptAPIs(t *testing.T) {
 			},
 		} {
 			t.Run(tc.name, func(t *testing.T) {
-				requireBlockReceipts(t, tc.id, tc.txs)
+				var want []*types.Receipt
+				for _, tx := range tc.txs {
+					want = append(want, getReceipt(t, tx))
+				}
+				sut.testRPC(ctx, t, rpcTest{
+					method: "eth_getBlockReceipts",
+					args:   []any{tc.id},
+					want:   want,
+				})
 			})
 		}
-
-		t.Run("hash_equals_number", func(t *testing.T) {
-			var byHash, byNum []*types.Receipt
-			require.NoError(t, sut.CallContext(ctx, &byHash, "eth_getBlockReceipts", blockMultiTxs.Hash()))
-			require.NoError(t, sut.CallContext(ctx, &byNum, "eth_getBlockReceipts", hexutil.Uint64(blockMultiTxs.Height())))
-			if diff := cmp.Diff(byHash, byNum, cmputils.Receipts()); diff != "" {
-				t.Errorf("by-hash vs by-number diff (-hash +num):\n%s", diff)
-			}
-		})
 
 		sut.testRPC(ctx, t, []rpcTest{
 			{
@@ -640,10 +624,7 @@ func TestReceiptAPIs(t *testing.T) {
 	})
 
 	// Missing or malformed execution results must surface as backend failures.
-	execKey := binary.BigEndian.AppendUint64(
-		[]byte(saeparams.RawDBPrefix+"exec-"),
-		blockSettled.Height(),
-	)
+	execKey := saeparams.RawDBKeyForBlock("exec", blockSettled.Height())
 	require.NoError(t, sut.db.Delete(execKey))
 
 	var receipt *types.Receipt
