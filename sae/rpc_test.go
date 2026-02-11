@@ -5,6 +5,7 @@ package sae
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"math"
 	"math/big"
@@ -41,10 +42,10 @@ import (
 var zeroAddr common.Address
 
 type rpcTest struct {
-	method  string
-	args    []any
-	want    any    // nil is type-sensitive - untyped nil means no return value.
-	wantErr string // want is ignored if non-empty
+	method          string
+	args            []any
+	want            any    // untyped nil means no return value.
+	wantErrContains string // empty means no error expected
 }
 
 func (s *SUT) testRPC(ctx context.Context, t *testing.T, tcs ...rpcTest) {
@@ -56,25 +57,20 @@ func (s *SUT) testRPC(ctx context.Context, t *testing.T, tcs ...rpcTest) {
 		cmputils.TransactionsByHash(),
 	}
 
-	call := func(t *testing.T, store any, tc rpcTest) error {
-		t.Helper()
-		t.Logf("%T.CallContext(ctx, %T, %q, %v...)", s.rpcClient, &tc.want /*i.e. the type*/, tc.method, tc.args)
-		return s.CallContext(ctx, store, tc.method, tc.args...)
-	}
-
 	for _, tc := range tcs {
 		t.Run(tc.method, func(t *testing.T) {
-			if tc.wantErr != "" {
-				err := call(t, nil, tc) // won't unmarshal anything
-				require.ErrorContains(t, err, tc.wantErr)
-				return
+			if tc.want == nil { // Reminder: only applies to untyped nil
+				tc.want = json.RawMessage{}
 			}
-			if tc.want == nil {
-				require.NoError(t, call(t, nil, tc))
-				return
-			}
+
 			got := reflect.New(reflect.TypeOf(tc.want))
-			require.NoError(t, call(t, got.Interface(), tc))
+			t.Logf("%T.CallContext(ctx, %T, %q, %v...)", s.rpcClient, &tc.want, tc.method, tc.args)
+			err := s.CallContext(ctx, got.Interface(), tc.method, tc.args...)
+			if tc.wantErrContains != "" {
+				require.ErrorContains(t, err, tc.wantErrContains)
+				return
+			}
+			require.NoError(t, err)
 			if diff := cmp.Diff(tc.want, got.Elem().Interface(), opts...); diff != "" {
 				t.Errorf("Diff (-want +got):\n%s", diff)
 			}
@@ -501,7 +497,7 @@ func TestEthPendingTransactions(t *testing.T) {
 func TestEthSigningAPIs(t *testing.T) {
 	ctx, sut := newSUT(t, 1)
 
-	wantErr := "unknown account"
+	const wantErr = "unknown account"
 	txFields := map[string]any{
 		"from":     zeroAddr,
 		"to":       zeroAddr,
@@ -517,21 +513,21 @@ func TestEthSigningAPIs(t *testing.T) {
 				zeroAddr,
 				hexutil.Bytes("test message"),
 			},
-			wantErr: wantErr,
+			wantErrContains: wantErr,
 		},
 		{
 			method: "eth_signTransaction",
 			args: []any{
 				txFields,
 			},
-			wantErr: wantErr,
+			wantErrContains: wantErr,
 		},
 		{
 			method: "eth_sendTransaction",
 			args: []any{
 				txFields,
 			},
-			wantErr: wantErr,
+			wantErrContains: wantErr,
 		},
 	}...)
 }
