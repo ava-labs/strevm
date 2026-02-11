@@ -6,7 +6,6 @@
 package cmputils
 
 import (
-	"bytes"
 	"fmt"
 	"math/big"
 	"reflect"
