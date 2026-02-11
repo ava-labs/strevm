@@ -497,7 +497,6 @@ func TestReceiptAPIs(t *testing.T) {
 		return receipt
 	}
 
-	// All blocks created upfront to avoid executor blocking during subtests.
 
 	genesis := sut.lastAcceptedBlock(t)
 
