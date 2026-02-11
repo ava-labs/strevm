@@ -31,7 +31,6 @@ import (
 	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/rpc"
 
-	"github.com/ava-labs/strevm/blocks"
 	"github.com/ava-labs/strevm/txgossip"
 )
 
@@ -433,26 +432,23 @@ func (b *ethAPIBackend) GetReceipts(ctx context.Context, hash common.Hash) (type
 		return nil, nil
 	}
 
-	// The block header contains the minimum base fee from acceptance time,
-	// but execution may use a higher base fee due to dynamic fee adjustments
-	// during the τ delay.
-	baseFee, err := blocks.ReadBaseFeeFromExecutionResults(b.vm.db, number)
+	ethBlock := rawdb.ReadBlock(b.vm.db, hash, number)
+	if ethBlock == nil {
+		return nil, nil
+	}
+
+	// Restore execution artefacts to access the execution-time base fee.
+	// The header's base fee is from acceptance time, but execution may use a
+	// higher base fee due to dynamic fee adjustments during the τ delay.
+	block, err := b.vm.newBlock(ethBlock, nil, nil)
 	if err != nil {
-		return nil, fmt.Errorf("reading execution-result base fee: %w", err)
+		return nil, err
+	}
+	if err := block.RestoreExecutionArtefacts(b.vm.db); err != nil {
+		return nil, fmt.Errorf("restoring execution artefacts: %w", err)
 	}
 
-	body := rawdb.ReadBody(b.vm.db, hash, number)
-	if body == nil {
-		return nil, nil
-	}
-
-	header := rawdb.ReadHeader(b.vm.db, hash, number)
-	if header == nil {
-		return nil, nil
-	}
-
-	// Compute blobGasPrice the same way the executor does (saexec/execution.go)
-	// to keep the DB path consistent with the cache path for blob transactions.
+	header := ethBlock.Header()
 	var blobGasPrice *big.Int
 	if header.ExcessBlobGas != nil {
 		blobGasPrice = eip4844.CalcBlobFee(*header.ExcessBlobGas)
@@ -463,9 +459,9 @@ func (b *ethAPIBackend) GetReceipts(ctx context.Context, hash common.Hash) (type
 		hash,
 		number,
 		header.Time,
-		baseFee.ToBig(),
+		block.BaseFee().ToBig(),
 		blobGasPrice,
-		body.Transactions,
+		ethBlock.Transactions(),
 	); err != nil {
 		return nil, fmt.Errorf("deriving receipt fields: %w", err)
 	}

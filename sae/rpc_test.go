@@ -628,11 +628,11 @@ func TestReceiptAPIs(t *testing.T) {
 
 	var receipt *types.Receipt
 	err := sut.CallContext(ctx, &receipt, "eth_getTransactionReceipt", txSettled.Hash())
-	require.ErrorContains(t, err, "reading execution-result base fee")
+	require.ErrorContains(t, err, "restoring execution artefacts")
 
 	require.NoError(t, sut.db.Put(execKey, []byte{0x01}))
 	err = sut.CallContext(ctx, &receipt, "eth_getTransactionReceipt", txSettled.Hash())
-	require.ErrorContains(t, err, "reading execution-result base fee")
+	require.ErrorContains(t, err, "restoring execution artefacts")
 }
 func TestEthPendingTransactions(t *testing.T) {
 	ctx, sut := newSUT(t, 1)

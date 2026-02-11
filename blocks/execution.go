@@ -71,21 +71,6 @@ func executionResultsKey(blockNum uint64) []byte {
 	return params.RawDBKeyForBlock("exec", blockNum)
 }
 
-// ReadBaseFeeFromExecutionResults reads the execution-time base fee stored in
-// the database for the given block number.
-func ReadBaseFeeFromExecutionResults(db ethdb.Database, blockNum uint64) (*uint256.Int, error) {
-	buf, err := db.Get(executionResultsKey(blockNum))
-	if err != nil {
-		return nil, err
-	}
-	e := new(executionResults)
-	if err := e.UnmarshalCanoto(buf); err != nil {
-		return nil, err
-	}
-	baseFee := uint256.Int(e.baseFee)
-	return &baseFee, nil
-}
-
 // MarkExecuted marks the block as having been executed at the specified time(s)
 // and with the specified results. It also sets the chain's head block to b. The
 // [gastime.Time] MUST have already been scaled to the target applicable after
