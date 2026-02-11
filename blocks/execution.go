@@ -63,8 +63,8 @@ func (e *executionResults) setBaseFee(bf *big.Int) error {
 	return nil
 }
 
-func (e *executionResults) persist(kvw ethdb.KeyValueWriter, blockNum uint64) error {
-	return kvw.Put(executionResultsKey(blockNum), e.MarshalCanoto())
+func (e *executionResults) persist(kv ethdb.KeyValueWriter, blockNum uint64) error {
+	return kv.Put(executionResultsKey(blockNum), e.MarshalCanoto())
 }
 
 func executionResultsKey(blockNum uint64) []byte {
@@ -116,30 +116,41 @@ func (b *Block) MarkExecuted(
 		return err
 	}
 
-	// Disk
 	batch := db.NewBatch()
 	rawdb.WriteReceipts(batch, b.Hash(), b.NumberU64(), receipts)
-	b.SetAsHeadBlock(batch)
-	if err := e.persist(batch, b.NumberU64()); err != nil {
-		return err
-	}
-	if err := batch.Write(); err != nil {
-		return err
-	}
-
-	// Memory and indicators
-	return b.markExecuted(e, lastExecuted)
-}
-
-func (b *Block) SetAsHeadBlock(kvw ethdb.KeyValueWriter) {
-	h := b.Hash()
-	rawdb.WriteHeadBlockHash(kvw, h)
-	rawdb.WriteHeadHeaderHash(kvw, h)
+	return b.markExecuted(batch, e, true, lastExecuted)
 }
 
 var errMarkBlockExecutedAgain = errors.New("block re-marked as executed")
 
-func (b *Block) markExecuted(e *executionResults, lastExecuted *atomic.Pointer[Block]) error {
+// markExecuted is the intersection point of [Block.MarkExecuted],
+// [Block.MarkSynchronous], and [Block.RestoreExecutionArtefacts], all of which
+// have side effects drawn from the same ordered set of events. This method
+// exists to guarantee that the correct selection and ordering of events occurs,
+// regardless of the upstream trigger. See documentation re ordering invariants
+// for more information.
+//
+// Only the [executionResults] are required. If `setAsHeadBlock` is true then
+// the [ethdb.KeyValueWriter] MUST be true for setting to take effect. If the KV
+// writer also has a `Write()` method (e.g. an [ethdb.Batch]) then it will be
+// called after all `Put()` calls.
+func (b *Block) markExecuted(kv ethdb.KeyValueWriter, e *executionResults, setAsHeadBlock bool, lastExecuted *atomic.Pointer[Block]) error {
+	// Disk
+	if kv != nil {
+		if setAsHeadBlock {
+			b.SetAsHeadBlock(kv)
+		}
+		if err := e.persist(kv, b.Height()); err != nil {
+			return err
+		}
+		if k, ok := kv.(interface{ Write() error }); ok {
+			if err := k.Write(); err != nil {
+				return err
+			}
+		}
+	}
+
+	// Memory
 	if !b.execution.CompareAndSwap(nil, e) {
 		// This is fatal because we corrupted the database's head block if we
 		// got here by [Block.MarkExecuted] being called twice (an invalid use
@@ -147,14 +158,28 @@ func (b *Block) markExecuted(e *executionResults, lastExecuted *atomic.Pointer[B
 		b.log.Fatal("Block re-marked as executed")
 		return fmt.Errorf("%w: height %d", errMarkBlockExecutedAgain, b.Height())
 	}
+	// Internal indicator
 	if lastExecuted != nil {
 		lastExecuted.Store(b)
 	}
+	// External indicator
 	close(b.executed)
 	return nil
 }
 
-func (b *Block) ReloadExecutionResults(db ethdb.Database) error {
+// SetAsHeadBlock calls all necessary [rawdb] write methods for setting the
+// block as head. Said writes are not atomic and an [ethdb.Batch] SHOULD be used
+// if this is a desired property.
+func (b *Block) SetAsHeadBlock(kv ethdb.KeyValueWriter) {
+	h := b.Hash()
+	rawdb.WriteHeadBlockHash(kv, h)
+	rawdb.WriteHeadHeaderHash(kv, h)
+}
+
+// RestoreExecutionArtefacts reloads post-execution artefacts persisted by
+// [Block.MarkExecuted] such that the block is in an equivalent state to when
+// said function was originally called.
+func (b *Block) RestoreExecutionArtefacts(db ethdb.Database) error {
 	buf, err := db.Get(executionResultsKey(b.NumberU64()))
 	if err != nil {
 		return err
@@ -164,7 +189,7 @@ func (b *Block) ReloadExecutionResults(db ethdb.Database) error {
 		return err
 	}
 	e.receipts = rawdb.ReadRawReceipts(db, b.Hash(), b.NumberU64())
-	return b.markExecuted(e, nil)
+	return b.markExecuted(nil, e, false, nil)
 }
 
 // WaitUntilExecuted blocks until [Block.MarkExecuted] is called or the

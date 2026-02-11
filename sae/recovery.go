@@ -30,7 +30,7 @@ func (vm *VM) lastBlockWithStateRootAvailable(lastSync *blocks.Block) (*blocks.B
 	if err != nil {
 		return nil, err
 	}
-	if err := b.ReloadExecutionResults(vm.db); err != nil {
+	if err := b.RestoreExecutionArtefacts(vm.db); err != nil {
 		return nil, err
 	}
 	return b, nil
@@ -85,7 +85,7 @@ func (vm *VM) rebuildBlocksInMemory(lastSynchronous *blocks.Block) error {
 				if err != nil {
 					return err
 				}
-				if err := parent.ReloadExecutionResults(vm.db); err != nil {
+				if err := parent.RestoreExecutionArtefacts(vm.db); err != nil {
 					return err
 				}
 				chain = append(chain, parent)

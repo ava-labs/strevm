@@ -78,6 +78,10 @@ func (b *Block) markSettled(lastSettled *atomic.Pointer[Block]) error {
 // Wherever MarkSynchronous results in different behaviour to
 // [Block.MarkSettled], the respective methods are documented as such. They can
 // otherwise be considered identical.
+//
+// Unlike [Block.MarkExecuted[, MarkSynchronous does not call
+// [Block.SetAsHeadBlock], which MUST be done by the caller, i.f.f. the chain
+// has not yet commenced asynchronous execution.
 func (b *Block) MarkSynchronous(hooks hook.Points, db ethdb.Database, excessAfter gas.Gas) error {
 	ethB := b.EthBlock()
 	// Receipts of a synchronous block have already been "settled" by the block
@@ -96,10 +100,7 @@ func (b *Block) MarkSynchronous(hooks hook.Points, db ethdb.Database, excessAfte
 	if err := e.setBaseFee(ethB.BaseFee()); err != nil {
 		return err
 	}
-	if err := e.persist(db, ethB.NumberU64()); err != nil {
-		return err
-	}
-	if err := b.markExecuted(e, nil); err != nil {
+	if err := b.markExecuted(db, e, false, nil); err != nil {
 		return err
 	}
 	b.synchronous = true

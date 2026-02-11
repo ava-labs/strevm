@@ -100,7 +100,7 @@ func TestMarkExecuted(t *testing.T) {
 	require.NoError(t, b.MarkExecuted(db, gasTime, wallTime, baseFee.ToBig(), receipts, stateRoot, lastExecuted), "MarkExecuted()")
 
 	fromDB := newBlock(t, b.EthBlock(), b.ParentBlock(), b.LastSettled())
-	require.NoError(t, fromDB.ReloadExecutionResults(db), "ReloadExecutionResults()")
+	require.NoError(t, fromDB.RestoreExecutionArtefacts(db), "RestoreExecutionArtefacts()")
 	tests := []struct {
 		name           string
 		isLastExecuted bool
