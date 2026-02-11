@@ -35,11 +35,6 @@ import (
 	"github.com/ava-labs/strevm/txgossip"
 )
 
-var (
-	errFutureBlockNotResolved = errors.New("not accepted yet")
-	errNoBlockNorHash         = errors.New("invalid arguments; neither block nor hash specified")
-)
-
 // APIBackend returns an API backend backed by the VM.
 func (vm *VM) APIBackend() ethapi.Backend {
 	return vm.apiBackend
@@ -330,6 +325,10 @@ func readByHash[T any](b *ethAPIBackend, hash common.Hash, read canonicalReader[
 	}
 	return read(b.vm.db, hash, *num)
 }
+
+var errFutureBlockNotResolved = errors.New("not accepted yet")
+
+var errNoBlockNorHash = errors.New("invalid arguments; neither block nor hash specified")
 
 func readByNumberOrHash[T any](
 	ctx context.Context,
