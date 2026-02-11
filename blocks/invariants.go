@@ -46,7 +46,10 @@ func (b *Block) WorstCaseBounds() *WorstCaseBounds {
 // execution so no error is returned and execution MUST continue optimistically.
 // Any such log in development will cause tests to fail.
 func (b *Block) CheckBaseFeeBound(actual *uint256.Int) {
-	return
+	if b.bounds == nil {
+		return
+	}
+
 	switch actual.Cmp(b.bounds.MaxBaseFee) {
 	case 1:
 		b.log.Error("Actual base fee > predicted worst case",
@@ -69,7 +72,10 @@ func (b *Block) CheckBaseFeeBound(actual *uint256.Int) {
 // execution so no error is returned and execution MUST continue optimistically.
 // Any such log in development will cause tests to fail.
 func (b *Block) CheckSenderBalanceBound(stateDB *state.StateDB, signer types.Signer, tx *types.Transaction) {
-	return
+	if b.bounds == nil {
+		return
+	}
+
 	log := b.log.With(
 		zap.Int("tx_index", stateDB.TxIndex()),
 		zap.Stringer("tx_hash", tx.Hash()),
@@ -91,6 +97,10 @@ func (b *Block) CheckSenderBalanceBound(stateDB *state.StateDB, signer types.Sig
 // For the purposes of calculating the Op's index in the block, a
 // [types.Transaction] is also considered to be an Op.
 func (b *Block) CheckOpBurnerBalanceBounds(stateDB *state.StateDB, opIndexInBlock int, op hook.Op) {
+	if b.bounds == nil {
+		return
+	}
+
 	log := b.log.With(
 		zap.Int("op_index_in_block", opIndexInBlock),
 		zap.Stringer("op_id", op.ID),

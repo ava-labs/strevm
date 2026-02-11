@@ -55,7 +55,7 @@ func (vm *VM) recoverFromDB(lastSync *blocks.Block) (*blocks.Block, iter.Seq2[*b
 	}, nil
 }
 
-func (vm *VM) rebuildBlocksInMemory() error {
+func (vm *VM) rebuildBlocksInMemory(lastSynchronous *blocks.Block) error {
 	head := vm.exec.LastExecuted()
 	chain := []*blocks.Block{head}
 
@@ -69,21 +69,27 @@ func (vm *VM) rebuildBlocksInMemory() error {
 			if b.Synchronous() {
 				return nil
 			}
-			n := b.NumberU64()
-			if n == 0 || b.ExecutedByGasTime().Compare(tm) <= 0 {
+			if b.ExecutedByGasTime().Compare(tm) <= 0 {
 				if !extended {
 					return nil
 				}
 				return b.MarkSettled(blackhole)
 			}
-			parent, err := vm.newBlock(vm.canonicalBlock(n-1), nil, nil)
-			if err != nil {
-				return err
+			switch n := b.NumberU64(); n {
+			case lastSynchronous.Height() + 1:
+				chain = append(chain, lastSynchronous)
+				return nil
+
+			default:
+				parent, err := vm.newBlock(vm.canonicalBlock(n-1), nil, nil)
+				if err != nil {
+					return err
+				}
+				if err := parent.ReloadExecutionResults(vm.db); err != nil {
+					return err
+				}
+				chain = append(chain, parent)
 			}
-			if err := parent.ReloadExecutionResults(vm.db); err != nil {
-				return err
-			}
-			chain = append(chain, parent)
 		}
 	}
 

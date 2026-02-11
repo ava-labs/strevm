@@ -27,9 +27,9 @@ const (
 const RawDBPrefix = "\x00\x00-ava-sae-"
 
 const (
-	commitTrieDBEvery     = 1 << commitTrieDBEveryLog2
+	CommitTrieDBEvery     = 1 << commitTrieDBEveryLog2
 	commitTrieDBEveryLog2 = 12
-	commitTrieDBMask      = commitTrieDBEvery - 1
+	commitTrieDBMask      = CommitTrieDBEvery - 1
 )
 
 func CommitTrieDB(blockNum uint64) bool {

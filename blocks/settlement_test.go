@@ -14,10 +14,10 @@ import (
 	"github.com/ava-labs/avalanchego/vms/components/gas"
 	"github.com/ava-labs/libevm/core/rawdb"
 	"github.com/google/go-cmp/cmp"
-	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/ava-labs/strevm/cmputils"
 	"github.com/ava-labs/strevm/gastime"
 	"github.com/ava-labs/strevm/hook"
 	"github.com/ava-labs/strevm/hook/hookstest"
@@ -67,8 +67,12 @@ func TestSettlementInvariants(t *testing.T) {
 		defer cancel()
 		assert.ErrorIs(t, b.WaitUntilSettled(ctx), context.DeadlineExceeded, "WaitUntilSettled()")
 
-		assert.True(t, b.ParentBlock().equalForTests(parent), "ParentBlock().equalForTests([constructor arg])")
-		assert.True(t, b.LastSettled().equalForTests(lastSettled), "LastSettled().equalForTests([constructor arg])")
+		if diff := cmp.Diff(parent, b.ParentBlock(), CmpOpt()); diff != "" {
+			t.Errorf("ParentBlock() diff (-constructor arg +got):\n%s", diff)
+		}
+		if diff := cmp.Diff(lastSettled, b.LastSettled(), CmpOpt()); diff != "" {
+			t.Errorf("LastSettled() diff (-constructor arg +got):\n%s", diff)
+		}
 		assert.NoError(t, b.CheckInvariants(Executed), "CheckInvariants(Executed)")
 	})
 	if t.Failed() {
@@ -197,9 +201,13 @@ func TestSettles(t *testing.T) {
 		},
 	}...)
 
+	opts := cmp.Options{
+		CmpOpt(),
+		cmputils.NilSlicesAreEmpty[[]*Block](),
+	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if diff := cmp.Diff(tt.want, tt.got, cmpopts.EquateEmpty(), CmpOpt()); diff != "" {
+			if diff := cmp.Diff(tt.want, tt.got, opts); diff != "" {
 				t.Errorf("Settles() diff (-want +got):\n%s", diff)
 			}
 		})

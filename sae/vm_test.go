@@ -157,20 +157,13 @@ func newSUT(tb testing.TB, numAccounts uint, opts ...sutOption) (context.Context
 		sender,
 	), "Initialize()")
 
-	handlers, err := snow.CreateHandlers(ctx)
-	require.NoErrorf(tb, err, "%T.CreateHandlers()", snow)
-	server := httptest.NewServer(handlers[wsHTTPExtensionPath])
-	tb.Cleanup(server.Close)
-	rpcClient, err := rpc.Dial("ws://" + server.Listener.Addr().String())
-	require.NoErrorf(tb, err, "rpc.Dial(http.NewServer(%T.CreateHandlers()))", snow)
-	client := ethclient.NewClient(rpcClient)
-	tb.Cleanup(client.Close)
+	rpcClient, ethClient := dialRPC(ctx, tb, snow)
 
 	validators, ok := snowCtx.ValidatorState.(*validatorstest.State)
 	require.Truef(tb, ok, "unexpected type %T for snowCtx.ValidatorState", snowCtx.ValidatorState)
 	return ctx, &SUT{
 		ChainVM:   snow,
-		Client:    client,
+		Client:    ethClient,
 		rpcClient: rpcClient,
 		rawVM:     vm.VM,
 		genesis:   vm.last.settled.Load(),
@@ -186,6 +179,21 @@ func newSUT(tb testing.TB, numAccounts uint, opts ...sutOption) (context.Context
 		validators: validators,
 		sender:     sender,
 	}
+}
+
+func dialRPC(ctx context.Context, tb testing.TB, snow block.ChainVM) (*rpc.Client, *ethclient.Client) {
+	tb.Helper()
+
+	handlers, err := snow.CreateHandlers(ctx)
+	require.NoErrorf(tb, err, "%T.CreateHandlers()", snow)
+	server := httptest.NewServer(handlers[wsHTTPExtensionPath])
+	tb.Cleanup(server.Close)
+	rpcClient, err := rpc.Dial("ws://" + server.Listener.Addr().String())
+	require.NoErrorf(tb, err, "rpc.Dial(http.NewServer(%T.CreateHandlers()))", snow)
+	client := ethclient.NewClient(rpcClient)
+	tb.Cleanup(client.Close)
+
+	return rpcClient, client
 }
 
 func marshalJSON(tb testing.TB, v any) []byte {

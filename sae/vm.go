@@ -88,6 +88,9 @@ func NewVM(
 	if c.Now == nil {
 		c.Now = time.Now
 	}
+	if !lastSynchronous.Synchronous() {
+		return nil, errors.New("last-synchronous block not marked as such")
+	}
 
 	vm := &VM{
 		config:  c,
@@ -143,7 +146,7 @@ func NewVM(
 	}
 
 	// ==========  Pedantry  ==========
-	if err := vm.rebuildBlocksInMemory(); err != nil {
+	if err := vm.rebuildBlocksInMemory(lastSynchronous); err != nil {
 		return nil, err
 	}
 

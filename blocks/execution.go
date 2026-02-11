@@ -42,7 +42,7 @@ type executionResults struct {
 	byGas  gastime.Time `canoto:"value,1"`
 	byWall time.Time    // For metrics only; allowed to be incorrect.
 
-	baseFee [4]uint64 `canoto:"fixed repeated uint,2"` // Interpreted as [uint256.Int]
+	baseFee uint256.Int `canoto:"fixed repeated uint,2"`
 	// Receipts are deliberately not stored by the canoto representation as they
 	// are already in the database. All methods that read the stored canoto
 	// either accept a [types.Receipts] for comparison against the
@@ -58,7 +58,7 @@ func (e *executionResults) setBaseFee(bf *big.Int) error {
 	if bf == nil { // genesis blocks
 		return nil
 	}
-	if overflow := (*uint256.Int)(&e.baseFee).SetFromBig(bf); overflow {
+	if overflow := e.baseFee.SetFromBig(bf); overflow {
 		return fmt.Errorf("base fee %v overflows 256 bits", bf)
 	}
 	return nil

@@ -8,7 +8,7 @@ import (
 )
 
 func TestTrieDBCommitHeights(t *testing.T) {
-	const e = commitTrieDBEvery
+	const e = CommitTrieDBEvery
 
 	for num, want := range map[uint64]bool{
 		0:       false, // would be redundant
