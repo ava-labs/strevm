@@ -129,22 +129,19 @@ var errMarkBlockExecutedAgain = errors.New("block re-marked as executed")
 // for more information.
 //
 // Only the [executionResults] are required. If `setAsHeadBlock` is true then
-// the [ethdb.KeyValueWriter] MUST be non-nil for setting to take effect. If the
-// KV writer also has a `Write()` method (e.g. an [ethdb.Batch]) then it will be
-// called after all `Put()` calls.
-func (b *Block) markExecuted(kv ethdb.KeyValueWriter, e *executionResults, setAsHeadBlock bool, lastExecuted *atomic.Pointer[Block]) error {
+// the [ethdb.Batch] MUST be non-nil for setting to take effect. This function
+// calls the batch's `Write()` method.
+func (b *Block) markExecuted(batch ethdb.Batch, e *executionResults, setAsHeadBlock bool, lastExecuted *atomic.Pointer[Block]) error {
 	// Disk
-	if kv != nil {
+	if batch != nil {
 		if setAsHeadBlock {
-			b.SetAsHeadBlock(kv)
+			b.SetAsHeadBlock(batch)
 		}
-		if err := e.persist(kv, b.Height()); err != nil {
+		if err := e.persist(batch, b.Height()); err != nil {
 			return err
 		}
-		if k, ok := kv.(interface{ Write() error }); ok {
-			if err := k.Write(); err != nil {
-				return err
-			}
+		if err := batch.Write(); err != nil {
+			return err
 		}
 	}
 

@@ -100,7 +100,7 @@ func (b *Block) MarkSynchronous(hooks hook.Points, db ethdb.Database, excessAfte
 	if err := e.setBaseFee(ethB.BaseFee()); err != nil {
 		return err
 	}
-	if err := b.markExecuted(db, e, false, nil); err != nil {
+	if err := b.markExecuted(db.NewBatch(), e, false, nil); err != nil {
 		return err
 	}
 	b.synchronous = true
