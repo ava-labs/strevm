@@ -94,7 +94,7 @@ func (b *Block) MarkSynchronous(hooks hook.Points, db ethdb.Database, excessAfte
 			hooks.GasTargetAfter(b.Header()), // target _after_ is a requirement of [Block.MarkExecuted]
 			excessAfter,
 		),
-		receiptRoot:   b.b.ReceiptHash(),
+		receiptRoot:   ethB.ReceiptHash(),
 		stateRootPost: ethB.Root(),
 	}
 	if err := e.setBaseFee(ethB.BaseFee()); err != nil {
