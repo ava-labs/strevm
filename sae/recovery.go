@@ -16,6 +16,7 @@ import (
 	"github.com/ava-labs/strevm/blocks"
 	"github.com/ava-labs/strevm/params"
 	"github.com/ava-labs/strevm/proxytime"
+	"github.com/ava-labs/strevm/saexec"
 )
 
 func (vm *VM) lastBlockWithStateRootAvailable(lastSync *blocks.Block) (*blocks.Block, error) {
@@ -44,7 +45,15 @@ func (vm *VM) lastBlockWithStateRootAvailable(lastSync *blocks.Block) (*blocks.B
 	return b, nil
 }
 
+// recoverFromDB returns the block to be used as the `lastExecuted` argument to
+// [saexec.New], along with an iterator of blocks to pass to
+// [saexec.Executor.Enqueue]. Enqueuing of all blocks and waiting for the last
+// one to be executed will leave the [saexec.Executor] in almost the same state
+// as before shutdown. [VM.rebuildBlocksInMemory] MUST then be called to fully
+// reinstate internal invariants.
 func (vm *VM) recoverFromDB(lastSync *blocks.Block) (*blocks.Block, iter.Seq2[*blocks.Block, error], error) {
+	var _ = saexec.New // protect the import to allow comment linking
+
 	execAfter, err := vm.lastBlockWithStateRootAvailable(lastSync)
 	if err != nil {
 		return nil, nil, err
@@ -63,6 +72,10 @@ func (vm *VM) recoverFromDB(lastSync *blocks.Block) (*blocks.Block, iter.Seq2[*b
 	}, nil
 }
 
+// rebuildBlocksInMemory reinstates internal invariants pertaining to blocks
+// kept in memory. After it returns, all blocks from the
+// [saexec.Executor.LastExecuted] back to the block that it settled will be in
+// memory, with their ancestry populated as required by invariants.
 func (vm *VM) rebuildBlocksInMemory(lastSynchronous *blocks.Block) error {
 	head := vm.exec.LastExecuted()
 	chain := []*blocks.Block{head}
