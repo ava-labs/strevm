@@ -599,10 +599,9 @@ func FuzzPriceInvarianceAfterBlock(f *testing.F) {
 			// returns that cap and the resulting price is M * e^(cap/K).
 			// This means price continuity is not possible if required excess exceeds the search cap.
 			newK := excessScalingFactorOf(gas.Gas(newScaling), gas.Gas(newTarget))
-			cap := maxExcessSearchCap(newK)
 			requiredApproxExcess := float64(newK) * math.Log(float64(initPrice)/float64(newMinPrice))
-			if requiredApproxExcess > float64(cap) {
-				want = gas.CalculatePrice(gas.Price(newMinPrice), cap, newK)
+			if requiredApproxExcess > float64(math.MaxUint64) {
+				want = gas.CalculatePrice(gas.Price(newMinPrice), math.MaxUint64, newK)
 			}
 		}
 

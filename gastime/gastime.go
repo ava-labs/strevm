@@ -140,7 +140,7 @@ func (c *config) validate() error {
 //
 // When config changes, excess is scaled to maintain price continuity:
 //   - K changes (via TargetToExcessScaling): Scale excess to maintain current price
-//   - TargetToExcessScaling is MaxUint64: Set excess to 0 for fixed price mode and update config
+//   - StaticPricing is true: Set excess to 0, enable fixed price mode and update config.
 //   - M decreases: Scale excess to maintain current price
 //   - M increases AND current price >= new M: Scale excess to maintain current price
 //   - M increases AND current price < new M: Price bumps to new M (excess becomes 0)
@@ -159,7 +159,7 @@ func (tm *Time) SetConfig(cfg hook.GasConfig) error {
 
 	currentPrice := tm.Price()
 	tm.config = newCfg
-	// Always call findExcessForPrice after updating the config for [tm] to ensure price continuity.
+	// Always call findExcessForPrice after updating the config for tm to ensure price continuity.
 	newExcess := tm.findExcessForPrice(currentPrice)
 	tm.excess = newExcess
 	return nil
@@ -186,22 +186,7 @@ func (tm *Time) excessScalingFactor() gas.Gas {
 
 // excessScalingFactorOf returns scaling * target, capped at [math.MaxUint64].
 func excessScalingFactorOf(scaling, target gas.Gas) gas.Gas {
-	overflowThreshold := math.MaxUint64 / scaling
-	if target > overflowThreshold {
-		return math.MaxUint64
-	}
-	return scaling * target
-}
-
-// maxExcessSearchCap returns the maximum possible x to be searched for.
-// Because x = ln(P/M) * K, we know x <= ln(MaxUint64/M) * K <= 45 * K
-// However, if 45 * K would overflow, MaxUint64 is returned
-func maxExcessSearchCap(k gas.Gas) gas.Gas {
-	const maxExcessMultiplier = 45 // ≈ ceil(ln(MaxUint64))
-	if k > math.MaxUint64/gas.Gas(maxExcessMultiplier) {
-		return math.MaxUint64
-	}
-	return gas.Gas(maxExcessMultiplier) * k
+	return intmath.BoundedMultiply(scaling, target, math.MaxUint64)
 }
 
 // findExcessForPrice uses binary search over uint64 to find an excess value
@@ -225,9 +210,9 @@ func (tm *Time) findExcessForPrice(targetPrice gas.Price) gas.Gas {
 	k := tm.excessScalingFactor()
 
 	// Binary search over [0, maxExcessSearchCap(k)] for smallest excess where price >= targetPrice.
-	lo, hi := gas.Gas(0), maxExcessSearchCap(k)
+	lo, hi := gas.Gas(0), gas.Gas(math.MaxUint64)
 	for lo < hi {
-		mid := lo + (hi-lo)>>1
+		mid := lo + (hi-lo)/2
 		if gas.CalculatePrice(tm.config.minPrice, mid, k) >= targetPrice {
 			hi = mid
 		} else {

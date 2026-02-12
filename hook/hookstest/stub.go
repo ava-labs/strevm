@@ -57,14 +57,10 @@ func WithOps(ops []hook.Op) HookOption {
 // NewStub returns a stub with defaults applied.
 // It uses [hook.DefaultGasConfig] unless overridden by [WithGasConfig].
 func NewStub(target gas.Gas, opts ...HookOption) *Stub {
-	s := &Stub{
+	return options.ApplyTo(&Stub{
 		Target:    target,
 		GasConfig: hook.DefaultGasConfig(),
-	}
-	for _, opt := range opts {
-		options.ApplyTo(s, opt)
-	}
-	return s
+	}, opts...)
 }
 
 // BuildHeader constructs a header that builds on top of the parent header. The
