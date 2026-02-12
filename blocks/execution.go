@@ -128,23 +128,26 @@ var errMarkBlockExecutedAgain = errors.New("block re-marked as executed")
 // regardless of the upstream trigger. See documentation re ordering invariants
 // for more information.
 //
-// Only the [executionResults] are required. If `setAsHeadBlock` is true then
-// the [ethdb.Batch] MUST be non-nil for setting to take effect. This function
-// calls the batch's `Write()` method.
+// The batch is `Write()`n (yeah, it's a word now) after all disk artefacts are
+// persisted.
 func (b *Block) markExecuted(batch ethdb.Batch, e *executionResults, setAsHeadBlock bool, lastExecuted *atomic.Pointer[Block]) error {
-	// Disk
-	if batch != nil {
-		if setAsHeadBlock {
-			b.SetAsHeadBlock(batch)
-		}
-		if err := e.persist(batch, b.Height()); err != nil {
-			return err
-		}
-		if err := batch.Write(); err != nil {
-			return err
-		}
+	if err := b.markExecutedOnDisk(batch, e, setAsHeadBlock); err != nil {
+		return err
 	}
+	return b.markExecutedAfterDiskArtefacts(e, lastExecuted)
+}
 
+func (b *Block) markExecutedOnDisk(batch ethdb.Batch, e *executionResults, setAsHeadBlock bool) error {
+	if setAsHeadBlock {
+		b.SetAsHeadBlock(batch)
+	}
+	if err := e.persist(batch, b.Height()); err != nil {
+		return err
+	}
+	return batch.Write()
+}
+
+func (b *Block) markExecutedAfterDiskArtefacts(e *executionResults, lastExecuted *atomic.Pointer[Block]) error {
 	// Memory
 	if !b.execution.CompareAndSwap(nil, e) {
 		// This is fatal because we corrupted the database's head block if we
@@ -184,7 +187,7 @@ func (b *Block) RestoreExecutionArtefacts(db ethdb.Database) error {
 		return err
 	}
 	e.receipts = rawdb.ReadRawReceipts(db, b.Hash(), b.NumberU64())
-	return b.markExecuted(nil, e, false, nil)
+	return b.markExecutedAfterDiskArtefacts(e, nil)
 }
 
 // WaitUntilExecuted blocks until [Block.MarkExecuted] is called or the
