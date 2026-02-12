@@ -26,8 +26,6 @@ import (
 	"github.com/ava-labs/strevm/proxytime"
 )
 
-//go:generate go run github.com/StephenButtolph/canoto/canoto $GOFILE
-
 // SetInterimExecutionTime is expected to be called during execution of b's
 // transactions, with the highest-known gas time. This MAY be at any resolution
 // but MUST be monotonic.
