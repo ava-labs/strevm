@@ -102,6 +102,7 @@ var (
 	errHashMismatch               = errors.New("block hash mismatch")
 )
 
+// SetAncestors sets the block's ancestry while enforcing invariants.
 func (b *Block) SetAncestors(parent, lastSettled *Block) error {
 	if parent != nil {
 		if got, want := parent.Hash(), b.ParentHash(); got != want {

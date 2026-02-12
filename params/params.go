@@ -44,15 +44,20 @@ func RawDBKeyForBlock(namespace string, num uint64) []byte {
 }
 
 const (
+	// CommitTrieDBEvery is the number of blocks between commits of the state
+	// trie to disk.
 	CommitTrieDBEvery     = 1 << commitTrieDBEveryLog2
 	commitTrieDBEveryLog2 = 12
 	commitTrieDBMask      = CommitTrieDBEvery - 1
 )
 
+// CommitTrieDB returns whether or not to commit the state trie to disk.
 func CommitTrieDB(blockNum uint64) bool {
 	return blockNum > 0 && blockNum&commitTrieDBMask == 0
 }
 
+// LastCommittedTrieDBHeight returns the largest value <= the argument at which
+// [CommitTrieDB] would have returned true.
 func LastCommittedTrieDBHeight(atOrBefore uint64) uint64 {
 	return atOrBefore &^ commitTrieDBMask
 }

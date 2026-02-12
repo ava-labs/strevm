@@ -1,3 +1,6 @@
+// Copyright (C) 2025-2026, Ava Labs, Inc. All rights reserved.
+// See the file LICENSE for licensing terms.
+
 package sae
 
 import (
@@ -100,7 +103,7 @@ func TestRecoverFromDatabase(t *testing.T) {
 
 					for _, sys := range []struct {
 						name string
-						ctx  context.Context // ephemeral so not in contravention of https://go.dev/blog/context-and-structs
+						ctx  context.Context //nolint:containedctx // Ephemeral so not in contravention of https://go.dev/blog/context-and-structs
 						*SUT
 					}{
 						{"source", srcCtx, src},
