@@ -78,31 +78,29 @@ func (vm *VM) recoverFromDB(lastSync *blocks.Block) (*blocks.Block, iter.Seq2[*b
 // memory, with their ancestry populated as required by invariants.
 func (vm *VM) rebuildBlocksInMemory(lastSynchronous *blocks.Block) error {
 	head := vm.exec.LastExecuted()
-	chain := []*blocks.Block{head}
+	chain := []*blocks.Block{head} // reverse height order
+	blackhole := new(atomic.Pointer[blocks.Block])
 
 	extend := func(settler *blocks.Block) error {
 		settleAt := blocks.PreciseTime(vm.hooks(), settler.Header()).Add(-params.Tau)
 		tm := proxytime.Of[gas.Gas](settleAt)
-		blackhole := new(atomic.Pointer[blocks.Block])
 
 		for extended := false; ; extended = true {
-			b := chain[len(chain)-1]
-			if b.Synchronous() {
+			switch b := chain[len(chain)-1]; {
+			case b.Synchronous():
 				return nil
-			}
-			if b.ExecutedByGasTime().Compare(tm) <= 0 {
+
+			case b.ExecutedByGasTime().Compare(tm) <= 0:
 				if !extended {
 					return nil
 				}
 				return b.MarkSettled(blackhole)
-			}
-			switch n := b.NumberU64(); n {
-			case lastSynchronous.Height() + 1:
+
+			case b.Height() == lastSynchronous.Height()+1:
 				chain = append(chain, lastSynchronous)
-				return nil
 
 			default:
-				parent, err := vm.newBlock(vm.canonicalBlock(n-1), nil, nil)
+				parent, err := vm.newBlock(vm.canonicalBlock(b.Height()-1), nil, nil)
 				if err != nil {
 					return err
 				}
