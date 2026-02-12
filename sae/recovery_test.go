@@ -61,7 +61,7 @@ func TestRecoverFromDatabase(t *testing.T) {
 		if !quick {
 			require.Len(t, b.Transactions(), 1, "transactions in block")
 		}
-		require.NoErrorf(t, b.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()")
+		require.NoErrorf(t, b.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", b)
 
 		if quick {
 			continue
