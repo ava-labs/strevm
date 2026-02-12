@@ -30,6 +30,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/holiman/uint256"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/ava-labs/strevm/blocks"
@@ -507,8 +508,6 @@ func TestGetLogs(t *testing.T) {
 	for i := range indexed {
 		indexed[i] = sut.createAndAcceptBlock(t, createLog(t))
 	}
-	_, sections := sut.rawVM.APIBackend().BloomStatus()
-	require.Equalf(t, uint64(1), sections, "%T.BloomStatus returned %d indexed sections (did the indexer start?)", sut.rawVM.APIBackend(), sections)
 
 	settled := sut.createAndAcceptBlock(t, createLog(t))
 	require.NoErrorf(t, settled.WaitUntilExecuted(ctx), "%T.WaitUntilSettled()", settled)
@@ -518,6 +517,15 @@ func TestGetLogs(t *testing.T) {
 
 	executed := sut.createAndAcceptBlock(t, createLog(t))
 	require.NoErrorf(t, executed.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", executed)
+
+	// Although the FiltersAPI will work without any blocks indexed, it will not test
+	// the functionality of the bloom indexer.
+	require.EventuallyWithT(t, func(c *assert.CollectT) {
+		_, sections := sut.rawVM.APIBackend().BloomStatus()
+		if sections != 1 {
+			c.Errorf("%d sections indexed, expected 1", sections)
+		}
+	}, 5*time.Second, 500*time.Millisecond, "bloom indexer never finished")
 
 	tests := []struct {
 		name            string
