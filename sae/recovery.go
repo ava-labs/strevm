@@ -12,6 +12,7 @@ import (
 
 	"github.com/ava-labs/avalanchego/vms/components/gas"
 	"github.com/ava-labs/libevm/core/rawdb"
+	"github.com/ava-labs/libevm/core/state"
 
 	"github.com/ava-labs/strevm/blocks"
 	"github.com/ava-labs/strevm/params"
@@ -36,11 +37,14 @@ func (vm *VM) lastBlockWithStateRootAvailable(lastSync *blocks.Block) (*blocks.B
 	if err := b.RestoreExecutionArtefacts(vm.db); err != nil {
 		return nil, err
 	}
-	if _, err := vm.exec.StateCache().OpenTrie(b.PostExecutionStateRoot()); err != nil {
+	{
 		// This would require the node to crash at such a precise point in time
 		// that it's not worth a preemptive fix. If this ever occurs then just
 		// try the root [params.CommitTrieDBEvery] blocks earlier.
-		return nil, fmt.Errorf("database corrupted: latest expected state root (block %d / %#x) unavailable: %v", b.NumberU64(), b.Hash(), err)
+		root := b.PostExecutionStateRoot()
+		if _, err := state.NewDatabaseWithConfig(vm.db, vm.config.TrieDBConfig).OpenTrie(root); err != nil {
+			return nil, fmt.Errorf("database corrupted: latest expected state root (block %d / %#x) unavailable: %v", b.NumberU64(), b.Hash(), err)
+		}
 	}
 	return b, nil
 }
