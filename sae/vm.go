@@ -94,8 +94,8 @@ func NewVM(
 	if c.Now == nil {
 		c.Now = time.Now
 	}
-	if !lastSynchronous.Synchronous() {
-		return nil, errors.New("last-synchronous block not marked as such")
+	if err := canonicaliseLastSynchronous(db, lastSynchronous); err != nil {
+		return nil, err
 	}
 
 	vm := &VM{

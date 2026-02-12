@@ -65,9 +65,6 @@ func (vm *SinceGenesis) Initialize(
 	if err := genBlock.MarkSynchronous(vm.config.Hooks, db, 0 /*gas excess*/); err != nil {
 		return fmt.Errorf("%T{genesis}.MarkSynchronous(): %v", genBlock, err)
 	}
-	if err := CanonicaliseLastSynchronous(db, genBlock); err != nil {
-		return err
-	}
 
 	inner, err := NewVM(ctx, vm.config, snowCtx, config, db, genBlock, appSender)
 	if err != nil {
@@ -77,7 +74,12 @@ func (vm *SinceGenesis) Initialize(
 	return nil
 }
 
-func CanonicaliseLastSynchronous(db ethdb.Database, block *blocks.Block) error {
+// canonicaliseLastSynchronous writes all necessary information to the database
+// to have the block be considered canonical by SAE. If there are any canonical
+// blocks at a height greater than the provided block then this function is a
+// no-op, which makes it effectively idempotent with respect to the rest of SAE
+// processing.
+func canonicaliseLastSynchronous(db ethdb.Database, block *blocks.Block) error {
 	if !block.Synchronous() {
 		return fmt.Errorf("only synchronous block can be canonicalised: %d / %#x is async", block.NumberU64(), block.Hash())
 	}
