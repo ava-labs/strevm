@@ -36,7 +36,7 @@ func TestTrieDBCommitHeights(t *testing.T) {
 		2*e + 1: 2 * e,
 		3*e - 1: 2 * e,
 	} {
-		if got := LastCommitedTrieDBHeight(num); got != want {
+		if got := LastCommittedTrieDBHeight(num); got != want {
 			t.Errorf("LastCommitedTrieDBHeight(%d) got %d; want %d", num, got, want)
 		}
 	}
@@ -46,7 +46,7 @@ func TestTrieDBCommitHeights(t *testing.T) {
 		if CommitTrieDB(num) {
 			last = num
 		}
-		if got, want := LastCommitedTrieDBHeight(num), last; got != want {
+		if got, want := LastCommittedTrieDBHeight(num), last; got != want {
 			t.Errorf("LastCommitedTrieDBHeight(%d) got %d; want %d", num, got, want)
 		}
 	}

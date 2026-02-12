@@ -20,7 +20,7 @@ func (vm *VM) lastBlockWithStateRootAvailable(lastSync *blocks.Block) (*blocks.B
 	lastExec := rawdb.ReadHeadHeader(vm.db)
 	num := max(
 		lastSync.NumberU64(),
-		params.LastCommitedTrieDBHeight(lastExec.Number.Uint64()),
+		params.LastCommittedTrieDBHeight(lastExec.Number.Uint64()),
 	)
 	if num == lastSync.NumberU64() {
 		return lastSync, nil

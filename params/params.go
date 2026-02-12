@@ -53,6 +53,6 @@ func CommitTrieDB(blockNum uint64) bool {
 	return blockNum > 0 && blockNum&commitTrieDBMask == 0
 }
 
-func LastCommitedTrieDBHeight(atOrBefore uint64) uint64 {
+func LastCommittedTrieDBHeight(atOrBefore uint64) uint64 {
 	return atOrBefore &^ commitTrieDBMask
 }
