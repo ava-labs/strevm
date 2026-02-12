@@ -53,7 +53,7 @@ const (
 
 // CommitTrieDB returns whether or not to commit the state trie to disk.
 func CommitTrieDB(blockNum uint64) bool {
-	return blockNum > 0 && blockNum&commitTrieDBMask == 0
+	return blockNum&commitTrieDBMask == 0
 }
 
 // LastCommittedTrieDBHeight returns the largest value <= the argument at which

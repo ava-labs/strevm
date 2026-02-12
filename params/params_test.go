@@ -13,7 +13,6 @@ func TestTrieDBCommitHeights(t *testing.T) {
 	const e = CommitTrieDBEvery
 
 	for num, want := range map[uint64]bool{
-		0:       false, // would be redundant
 		e - 1:   false,
 		e:       true,
 		e + 1:   false,
