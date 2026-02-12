@@ -107,7 +107,7 @@ func NewVM(
 	}
 	defer func() {
 		if retErr != nil {
-			vm.close()
+			retErr = errors.Join(retErr, vm.close())
 		}
 	}()
 
