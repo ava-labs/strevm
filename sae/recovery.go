@@ -4,6 +4,7 @@
 package sae
 
 import (
+	"fmt"
 	"iter"
 	"math"
 	"slices"
@@ -33,6 +34,12 @@ func (vm *VM) lastBlockWithStateRootAvailable(lastSync *blocks.Block) (*blocks.B
 	}
 	if err := b.RestoreExecutionArtefacts(vm.db); err != nil {
 		return nil, err
+	}
+	if _, err := vm.exec.StateCache().OpenTrie(b.PostExecutionStateRoot()); err != nil {
+		// This would require the node to crash at such a precise point in time
+		// that it's not worth a preemptive fix. If this ever occurs then just
+		// try the root [params.CommitTrieDBEvery] blocks earlier.
+		return nil, fmt.Errorf("database corrupted: latest expected state root (block %d / %#x) unavailable: %v", b.NumberU64(), b.Hash(), err)
 	}
 	return b, nil
 }
