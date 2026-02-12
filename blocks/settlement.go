@@ -79,7 +79,7 @@ func (b *Block) markSettled(lastSettled *atomic.Pointer[Block]) error {
 // [Block.MarkSettled], the respective methods are documented as such. They can
 // otherwise be considered identical.
 //
-// Unlike [Block.MarkExecuted[, MarkSynchronous does not call
+// Unlike [Block.MarkExecuted], MarkSynchronous does not call
 // [Block.SetAsHeadBlock], which MUST be done by the caller, i.f.f. the chain
 // has not yet commenced asynchronous execution.
 func (b *Block) MarkSynchronous(hooks hook.Points, db ethdb.Database, excessAfter gas.Gas) error {

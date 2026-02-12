@@ -129,8 +129,8 @@ var errMarkBlockExecutedAgain = errors.New("block re-marked as executed")
 // for more information.
 //
 // Only the [executionResults] are required. If `setAsHeadBlock` is true then
-// the [ethdb.KeyValueWriter] MUST be true for setting to take effect. If the KV
-// writer also has a `Write()` method (e.g. an [ethdb.Batch]) then it will be
+// the [ethdb.KeyValueWriter] MUST be non-nil for setting to take effect. If the
+// KV writer also has a `Write()` method (e.g. an [ethdb.Batch]) then it will be
 // called after all `Put()` calls.
 func (b *Block) markExecuted(kv ethdb.KeyValueWriter, e *executionResults, setAsHeadBlock bool, lastExecuted *atomic.Pointer[Block]) error {
 	// Disk
