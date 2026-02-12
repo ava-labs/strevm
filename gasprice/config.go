@@ -1,0 +1,151 @@
+// Copyright (C) 2025-2026, Ava Labs, Inc. All rights reserved.
+// See the file LICENSE for licensing terms.
+
+package gasprice
+
+import (
+	"fmt"
+	"math/big"
+
+	"github.com/ava-labs/avalanchego/vms/evm/acp176"
+	"github.com/ava-labs/libevm/libevm/options"
+	"github.com/ava-labs/libevm/params"
+)
+
+const (
+	// DefaultMaxCallBlockHistory is the number of blocks that can be fetched in
+	// a single call to eth_feeHistory.
+	DefaultMaxCallBlockHistory = 2048
+	// DefaultMaxBlockHistory is the number of blocks from the last accepted
+	// block that can be fetched in eth_feeHistory.
+	//
+	// DefaultMaxBlockHistory is chosen to be a value larger than the required
+	// fee lookback window that MetaMask uses (20k blocks).
+	DefaultMaxBlockHistory = 25_000
+	// DefaultFeeHistoryCacheSize is chosen to be some value larger than
+	// [DefaultMaxBlockHistory] to ensure all block lookups can be cached when
+	// serving a fee history query.
+	FeeHistoryCacheSize = 30_000
+)
+
+var (
+	DefaultMaxPrice           = big.NewInt(150 * params.GWei)
+	DefaultMinPrice           = big.NewInt(acp176.MinGasPrice)
+	DefaultMinGasUsed         = big.NewInt(6_000_000) // block gas limit is 8,000,000
+	DefaultMaxLookbackSeconds = uint64(80)
+)
+
+type config struct {
+	// BlocksCount specifies the number of recent blocks to fetch for gas price estimation.
+	BlocksCount int
+	// Percentile is a value between 0 and 100 that we use during gas price estimation to choose
+	// the gas price estimate in which Percentile% of the gas estimate values in the array fall below it
+	Percentile int
+	// MaxLookbackSeconds specifies the maximum number of seconds that current timestamp
+	// can differ from block timestamp in order to be included in gas price estimation
+	MaxLookbackSeconds uint64
+	// MaxCallBlockHistory specifies the maximum number of blocks that can be
+	// fetched in a single eth_feeHistory call.
+	MaxCallBlockHistory uint64
+	// MaxBlockHistory specifies the furthest back behind the last accepted block that can
+	// be requested by fee history.
+	MaxBlockHistory uint64
+	MaxPrice        *big.Int `toml:",omitempty"`
+	MinPrice        *big.Int `toml:",omitempty"`
+	MinGasUsed      *big.Int `toml:",omitempty"`
+}
+
+// Option configures oracle initialization.
+type OracleOption = options.Option[config]
+
+func defaultConfig() config {
+	return config{
+		BlocksCount:         1,
+		MaxLookbackSeconds:  DefaultMaxLookbackSeconds,
+		MaxCallBlockHistory: DefaultMaxCallBlockHistory,
+		MaxBlockHistory:     DefaultMaxBlockHistory,
+		MaxPrice:            DefaultMaxPrice,
+		MinPrice:            DefaultMinPrice,
+		MinGasUsed:          DefaultMinGasUsed,
+	}
+}
+
+// WithBlocks sets the number of blocks sampled for tip estimation.
+func WithBlocks(blocks int) (OracleOption, error) {
+	if blocks < 1 {
+		return nil, fmt.Errorf("sample blocks (%d) is less than 1", blocks)
+	}
+	return options.Func[config](func(c *config) {
+		c.BlocksCount = blocks
+	}), nil
+}
+
+// WithPercentile sets the sampled percentile used for tip estimation.
+func WithPercentile(percentile int) (OracleOption, error) {
+	if percentile < 0 || percentile > 100 {
+		return nil, fmt.Errorf("sample percentile (%d) is not between 0 and 100", percentile)
+	}
+	return options.Func[config](func(c *config) {
+		c.Percentile = percentile
+	}), nil
+}
+
+// WithMaxLookbackSeconds sets the timestamp-based lookback limit.
+func WithMaxLookbackSeconds(maxLookbackSeconds uint64) (OracleOption, error) {
+	if maxLookbackSeconds < 1 {
+		return nil, fmt.Errorf("max lookback seconds (%d) is less than 1", maxLookbackSeconds)
+	}
+	return options.Func[config](func(c *config) {
+		c.MaxLookbackSeconds = maxLookbackSeconds
+	}), nil
+}
+
+// WithMaxCallBlockHistory sets the per-call block limit for fee history.
+func WithMaxCallBlockHistory(maxCallBlockHistory uint64) (OracleOption, error) {
+	if maxCallBlockHistory < 1 {
+		return nil, fmt.Errorf("max call block history (%d) is less than 1", maxCallBlockHistory)
+	}
+	return options.Func[config](func(c *config) {
+		c.MaxCallBlockHistory = maxCallBlockHistory
+	}), nil
+}
+
+// WithMaxBlockHistory sets the maximum query depth for fee history.
+func WithMaxBlockHistory(maxBlockHistory uint64) (OracleOption, error) {
+	if maxBlockHistory < 1 {
+		return nil, fmt.Errorf("max block history (%d) is less than 1", maxBlockHistory)
+	}
+	return options.Func[config](func(c *config) {
+		c.MaxBlockHistory = maxBlockHistory
+	}), nil
+}
+
+// WithMaxPrice sets the maximum suggested tip.
+func WithMaxPrice(maxPrice *big.Int) (OracleOption, error) {
+	if maxPrice == nil || maxPrice.Sign() <= 0 {
+		return nil, fmt.Errorf("max price (%v) is nil or non-positive", maxPrice)
+	}
+	return options.Func[config](func(c *config) {
+		c.MaxPrice = maxPrice
+	}), nil
+}
+
+// WithMinPrice sets the minimum suggested tip.
+func WithMinPrice(minPrice *big.Int) (OracleOption, error) {
+	if minPrice == nil || minPrice.Sign() < 0 {
+		return nil, fmt.Errorf("min price (%v) is nil or negative", minPrice)
+	}
+	return options.Func[config](func(c *config) {
+		c.MinPrice = minPrice
+	}), nil
+}
+
+// WithMinGasUsed sets the minimum gas-used threshold.
+func WithMinGasUsed(minGasUsed *big.Int) (OracleOption, error) {
+	if minGasUsed == nil || minGasUsed.Sign() < 0 {
+		return nil, fmt.Errorf("min gas used (%v) is nil or negative", minGasUsed)
+	}
+	return options.Func[config](func(c *config) {
+		c.MinGasUsed = minGasUsed
+	}), nil
+}

@@ -297,7 +297,7 @@ func (b *ethAPIBackend) GetPoolTransactions() (types.Transactions, error) {
 type canonicalReader[T any] func(ethdb.Reader, common.Hash, uint64) *T
 
 func readByNumber[T any](b *ethAPIBackend, n rpc.BlockNumber, read canonicalReader[T]) (*T, error) {
-	num, err := b.resolveBlockNumber(n)
+	num, err := b.ResolveBlockNumber(n)
 	if errors.Is(err, errFutureBlockNotResolved) {
 		return nil, nil
 	} else if err != nil {
@@ -316,7 +316,7 @@ func readByHash[T any](b *ethAPIBackend, hash common.Hash, read canonicalReader[
 
 var errFutureBlockNotResolved = errors.New("not accepted yet")
 
-func (b *ethAPIBackend) resolveBlockNumber(bn rpc.BlockNumber) (uint64, error) {
+func (b *ethAPIBackend) ResolveBlockNumber(bn rpc.BlockNumber) (uint64, error) {
 	head := b.vm.last.accepted.Load().Height()
 
 	switch bn {
@@ -362,6 +362,10 @@ func (b *ethAPIBackend) SubscribeChainHeadEvent(ch chan<- core.ChainHeadEvent) e
 func (b *ethAPIBackend) SubscribeChainSideEvent(chan<- core.ChainSideEvent) event.Subscription {
 	// SAE never reorgs, so there are no side events.
 	return newNoopSubscription()
+}
+
+func (b *ethAPIBackend) SubscribeChainAcceptedEvent(ch chan<- *types.Block) event.Subscription {
+	return b.vm.exec.SubscribeBlockEnqueueEvent(ch)
 }
 
 func (b *ethAPIBackend) SubscribeNewTxsEvent(ch chan<- core.NewTxsEvent) event.Subscription {
