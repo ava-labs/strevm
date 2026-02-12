@@ -11,6 +11,7 @@ import (
 
 	"github.com/ava-labs/avalanchego/vms/components/gas"
 	"github.com/ava-labs/libevm/core/rawdb"
+
 	"github.com/ava-labs/strevm/blocks"
 	"github.com/ava-labs/strevm/params"
 	"github.com/ava-labs/strevm/proxytime"

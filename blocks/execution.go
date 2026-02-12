@@ -239,8 +239,8 @@ func (b *Block) ExecutedByWallTime() time.Time {
 // no such successful call has been made.
 func (b *Block) BaseFee() *uint256.Int {
 	return executionArtefact(b, "baseFee", func(e *executionResults) *uint256.Int {
-		i := uint256.Int(e.baseFee)
-		return &i
+		cp := e.baseFee
+		return &cp
 	})
 }
 
