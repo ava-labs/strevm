@@ -60,19 +60,14 @@ func NewStub(target gas.Gas, opts ...HookOption) *Stub {
 	return options.ApplyTo(&Stub{
 		Target:    target,
 		GasConfig: hook.DefaultGasConfig(),
+		Now:       time.Now,
 	}, opts...)
 }
 
 // BuildHeader constructs a header that builds on top of the parent header. The
 // `Extra` field SHOULD NOT be modified as it encodes sub-second block time.
 func (s *Stub) BuildHeader(parent *types.Header) *types.Header {
-	var now time.Time
-	if s.Now != nil {
-		now = s.Now()
-	} else {
-		now = time.Now()
-	}
-
+	now := s.Now()
 	hdr := &types.Header{
 		ParentHash: parent.Hash(),
 		Number:     new(big.Int).Add(parent.Number, common.Big1),
