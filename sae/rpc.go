@@ -275,9 +275,7 @@ func (b *ethAPIBackend) AccountManager() *accounts.Manager {
 }
 
 func (b *ethAPIBackend) CurrentBlock() *types.Header {
-	// TODO(arr4n) remove the `chainIndexer` disambiguation once [ethAPIBackend]
-	// no longer embeds [ethapi.Backend].
-	return b.chainIndexer.CurrentHeader()
+	return b.CurrentHeader()
 }
 
 func (b *ethAPIBackend) GetTd(context.Context, common.Hash) *big.Int {
