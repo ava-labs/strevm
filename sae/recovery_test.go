@@ -24,6 +24,7 @@ import (
 	"github.com/ava-labs/strevm/blocks"
 	"github.com/ava-labs/strevm/cmputils"
 	saeparams "github.com/ava-labs/strevm/params"
+	"github.com/ava-labs/strevm/saedb"
 )
 
 func TestRecoverFromDatabase(t *testing.T) {
@@ -46,8 +47,8 @@ func TestRecoverFromDatabase(t *testing.T) {
 		// iteration.
 		last := src.lastAcceptedBlock(t)
 		height := last.Height()
-		quick := height < saeparams.CommitTrieDBEvery && src.rawVM.last.settled.Load().Height() > 1
-		final = height > saeparams.CommitTrieDBEvery
+		quick := height < saedb.CommitTrieDBEvery && src.rawVM.last.settled.Load().Height() > 1
+		final = height > saedb.CommitTrieDBEvery
 
 		if !quick {
 			src.mustSendTx(t, src.wallet.SetNonceAndSign(t, 0, &types.LegacyTx{

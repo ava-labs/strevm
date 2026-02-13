@@ -23,7 +23,7 @@ import (
 
 	"github.com/ava-labs/strevm/blocks"
 	"github.com/ava-labs/strevm/hook"
-	saeparams "github.com/ava-labs/strevm/params"
+	"github.com/ava-labs/strevm/saedb"
 )
 
 // An Executor accepts and executes a [blocks.Block] FIFO queue.
@@ -82,7 +82,7 @@ func New(
 		// On startup we enqueue every block since the last time the trie DB was
 		// committed, so the queue needs sufficient capacity to avoid
 		// [Executor.Enqueue] warning about it being too full.
-		queue:        make(chan *blocks.Block, 2*saeparams.CommitTrieDBEvery),
+		queue:        make(chan *blocks.Block, 2*saedb.CommitTrieDBEvery),
 		chainContext: &chainContext{blockSrc, log},
 		chainConfig:  chainConfig,
 		db:           db,

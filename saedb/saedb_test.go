@@ -1,7 +1,7 @@
 // Copyright (C) 2026, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
-package params
+package saedb
 
 import (
 	"testing"
@@ -20,7 +20,7 @@ func TestTrieDBCommitHeights(t *testing.T) {
 		2 * e:   true,
 		2*e + 1: false,
 	} {
-		if got := CommitTrieDB(num); got != want {
+		if got := ShouldCommitTrieDB(num); got != want {
 			t.Errorf("CommitTrieDB(%d) got %t want %t", num, got, want)
 		}
 	}
@@ -42,7 +42,7 @@ func TestTrieDBCommitHeights(t *testing.T) {
 
 	var last uint64
 	for num := range uint64(20 * e) {
-		if CommitTrieDB(num) {
+		if ShouldCommitTrieDB(num) {
 			last = num
 		}
 		if got, want := LastCommittedTrieDBHeight(num), last; got != want {

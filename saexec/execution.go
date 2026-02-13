@@ -19,7 +19,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/ava-labs/strevm/blocks"
-	"github.com/ava-labs/strevm/params"
+	"github.com/ava-labs/strevm/saedb"
 )
 
 var errExecutorClosed = errors.New("saexec.Executor closed")
@@ -205,7 +205,7 @@ func (e *Executor) execute(b *blocks.Block, logger logging.Logger) error {
 	if err != nil {
 		return fmt.Errorf("%T.Commit() at end of block %d: %w", stateDB, b.NumberU64(), err)
 	}
-	if num := b.NumberU64(); params.CommitTrieDB(num) {
+	if num := b.NumberU64(); saedb.ShouldCommitTrieDB(num) {
 		tdb := e.stateCache.TrieDB()
 		if err := tdb.Commit(root, false /* log */); err != nil {
 			return fmt.Errorf("%T.Commit(%#x) at end of block %d: %v", tdb, root, num, err)

@@ -20,6 +20,7 @@ import (
 	"github.com/ava-labs/strevm/blocks"
 	"github.com/ava-labs/strevm/params"
 	"github.com/ava-labs/strevm/proxytime"
+	"github.com/ava-labs/strevm/saedb"
 	"github.com/ava-labs/strevm/saexec"
 )
 
@@ -42,7 +43,7 @@ func (rec *recovery) lastBlockWithStateRootAvailable() (*blocks.Block, error) {
 	lastExec := rawdb.ReadHeadHeader(rec.db)
 	num := max(
 		rec.lastSynchronous.NumberU64(),
-		params.LastCommittedTrieDBHeight(lastExec.Number.Uint64()),
+		saedb.LastCommittedTrieDBHeight(lastExec.Number.Uint64()),
 	)
 	if num == rec.lastSynchronous.NumberU64() {
 		return rec.lastSynchronous, nil

@@ -22,8 +22,8 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/ava-labs/strevm/gastime"
-	"github.com/ava-labs/strevm/params"
 	"github.com/ava-labs/strevm/proxytime"
+	"github.com/ava-labs/strevm/saedb"
 )
 
 // SetInterimExecutionTime is expected to be called during execution of b's
@@ -71,7 +71,7 @@ func (e *persistedExecutionResults) persist(kv ethdb.KeyValueWriter, blockNum ui
 }
 
 func executionResultsKey(blockNum uint64) []byte {
-	return params.RawDBKeyForBlock("exec", blockNum)
+	return saedb.RawDBKeyForBlock("exec", blockNum)
 }
 
 // MarkExecuted marks the block as having been executed at the specified time(s)
