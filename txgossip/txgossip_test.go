@@ -84,7 +84,7 @@ func newSUT(t *testing.T, numAccounts uint) SUT {
 		require.NoErrorf(t, exec.Close(), "%T.Close()", exec)
 	})
 
-	bc := NewBlockChain(logger, exec, chain.GetBlock)
+	bc := NewBlockChain(exec, chain.GetBlock)
 	pool := newTxPool(t, bc)
 	set, err := NewSet(logger, pool, gossip.BloomSetConfig{})
 	require.NoError(t, err, "NewSet()")

@@ -34,7 +34,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
 
-	"github.com/ava-labs/strevm/blocks"
 	"github.com/ava-labs/strevm/blocks/blockstest"
 	"github.com/ava-labs/strevm/cmputils"
 	"github.com/ava-labs/strevm/gastime"
@@ -181,12 +180,10 @@ func TestSubscriptions(t *testing.T) {
 	}
 	stub.Register(t)
 
-	gotExecutionEvents := saetest.NewEventCollector(e.SubscribeBlockExecutionEvent)
 	gotChainHeadEvents := saetest.NewEventCollector(e.SubscribeChainHeadEvent)
 	gotChainEvents := saetest.NewEventCollector(e.SubscribeChainEvent)
 	gotLogsEvents := saetest.NewEventCollector(e.SubscribeLogsEvent)
 	var (
-		wantExecutionEvents []*blocks.Block
 		wantChainHeadEvents []core.ChainHeadEvent
 		wantChainEvents     []core.ChainEvent
 		wantLogsEvents      [][]*types.Log
@@ -202,7 +199,6 @@ func TestSubscriptions(t *testing.T) {
 		b := chain.NewBlock(t, types.Transactions{tx})
 		require.NoError(t, e.Enqueue(ctx, b), "Enqueue()")
 
-		wantExecutionEvents = append(wantExecutionEvents, b)
 		wantChainHeadEvents = append(wantChainHeadEvents, core.ChainHeadEvent{
 			Block: b.EthBlock(),
 		})
@@ -221,9 +217,6 @@ func TestSubscriptions(t *testing.T) {
 	}
 
 	opt := cmputils.BlocksByHash()
-	t.Run("BlockExecutionEvents", func(t *testing.T) {
-		testEvents(ctx, t, gotExecutionEvents, wantExecutionEvents, blocks.CmpOpt())
-	})
 	t.Run("ChainHeadEvents", func(t *testing.T) {
 		testEvents(ctx, t, gotChainHeadEvents, wantChainHeadEvents, opt)
 	})
