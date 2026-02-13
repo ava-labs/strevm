@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"iter"
 	"math"
-	"slices"
 	"sync/atomic"
 
 	"github.com/ava-labs/avalanchego/utils/logging"
@@ -141,23 +140,19 @@ func (rec *recovery) rebuildBlocksInMemory(lastExecuted *blocks.Block) (_ *syncM
 	if err := extend(lastExecuted); err != nil {
 		return nil, nil, err
 	}
-	// The chain has been extended back by exactly the number of blocks needed
-	// to restore the [lastSettled, head] range. It will be extended further as
-	// we find interim last-settled blocks, so snapshot it.
-	restore := slices.Clone(chain)
-
+	lastSettled = lastOf(chain)
 	bMap := newSyncMap[common.Hash, *blocks.Block]()
-	for i, b := range restore {
+	for _, b := range chain {
 		bMap.Store(b.Hash(), b)
-		if i+1 == len(restore) {
-			break
-		}
+	}
+
+	for i, b := range chain[:len(chain)-1] {
 		if err := extend(b); err != nil {
 			return nil, nil, err
 		}
-		if err := b.SetAncestors(restore[i+1], lastOf(chain)); err != nil {
+		if err := b.SetAncestors(chain[i+1], lastOf(chain)); err != nil {
 			return nil, nil, err
 		}
 	}
-	return bMap, lastOf(restore), nil
+	return bMap, lastSettled, nil
 }
