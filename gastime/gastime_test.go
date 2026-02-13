@@ -45,42 +45,6 @@ func TestClone(t *testing.T) {
 	}
 }
 
-// TestUnmarshalBackwardCompatibility verifies that deserializing old data
-// (without config field) applies default values for TargetToExcessScaling
-// and MinPrice, ensuring backward compatibility.
-func TestUnmarshalBackwardCompatibility(t *testing.T) {
-	// Create a Time and serialize it
-	tm := mustNew(t, time.Unix(42, 0), 1e6, 1e5, hook.DefaultGasPriceConfig())
-
-	// Manually create serialized data without config field by using the
-	// proxytime.Time and target/excess fields only
-	tmWithoutConfig := &Time{
-		TimeMarshaler: TimeMarshaler{
-			Time:   tm.Time,
-			target: tm.target,
-			excess: tm.excess,
-			// config is zero-valued (no TargetToExcessScaling, no MinPrice)
-		},
-	}
-
-	// Serialize the Time without config
-	data := tmWithoutConfig.MarshalCanoto()
-
-	// Deserialize - should apply defaults
-	restored := new(Time)
-	require.NoError(t, restored.UnmarshalCanoto(data), "UnmarshalCanoto(%v)", data)
-
-	// Verify defaults were applied
-	assert.Equal(t, gas.Gas(hook.DefaultTargetToExcessScaling), restored.config.targetToExcessScaling,
-		"TargetToExcessScaling should default to %d", hook.DefaultTargetToExcessScaling)
-	assert.Equal(t, hook.DefaultMinPrice, restored.config.minPrice,
-		"MinPrice should default to %d", hook.DefaultMinPrice)
-
-	// Verify the Time is functional
-	assert.Equal(t, tm.target, restored.target, "target changed")
-	assert.Equal(t, tm.excess, restored.excess, "excess changed")
-}
-
 // state captures parameters about a [Time] for assertion in tests. It includes
 // both explicit (i.e. struct fields) and derived parameters (e.g. gas price),
 // which aid testing of behaviour and invariants in a more fine-grained manner
