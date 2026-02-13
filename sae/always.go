@@ -12,8 +12,6 @@ import (
 	"github.com/ava-labs/avalanchego/snow"
 	snowcommon "github.com/ava-labs/avalanchego/snow/engine/common"
 	"github.com/ava-labs/libevm/core"
-	"github.com/ava-labs/libevm/core/rawdb"
-	"github.com/ava-labs/libevm/ethdb"
 	"github.com/ava-labs/libevm/triedb"
 
 	"github.com/ava-labs/strevm/adaptor"
@@ -72,30 +70,6 @@ func (vm *SinceGenesis) Initialize(
 	}
 	vm.VM = inner
 	return nil
-}
-
-// canonicaliseLastSynchronous writes all necessary information to the database
-// to have the block be considered accepted/canonical by SAE. If there are any canonical
-// blocks at a height greater than the provided block then this function is a
-// no-op, which makes it effectively idempotent with respect to the rest of SAE
-// processing.
-func canonicaliseLastSynchronous(db ethdb.Database, block *blocks.Block) error {
-	if !block.Synchronous() {
-		return fmt.Errorf("only synchronous block can be canonicalised: %d / %#x is async", block.NumberU64(), block.Hash())
-	}
-	num := block.NumberU64()
-	if accepted, _ := rawdb.ReadAllCanonicalHashes(db, num+1, num+2, 1); len(accepted) > 0 {
-		// If any other block has been accepted then the genesis block must have
-		// been canonicalised in a previous initialisation.
-		return nil
-	}
-
-	h := block.Hash()
-	b := db.NewBatch()
-	rawdb.WriteCanonicalHash(b, h, num)
-	block.SetAsHeadBlock(b)
-	rawdb.WriteFinalizedBlockHash(b, h)
-	return b.Write()
 }
 
 // Shutdown gracefully closes the VM.
