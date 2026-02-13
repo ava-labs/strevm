@@ -34,10 +34,10 @@ type Executor struct {
 	queue                      chan *blocks.Block
 	lastEnqueued, lastExecuted atomic.Pointer[blocks.Block]
 
-	enqueueEvents event.FeedOf[*types.Block]
-	headEvents    event.FeedOf[core.ChainHeadEvent]
-	chainEvents   event.FeedOf[core.ChainEvent]
-	logEvents     event.FeedOf[[]*types.Log]
+	executionEvents event.FeedOf[*blocks.Block]
+	headEvents      event.FeedOf[core.ChainHeadEvent]
+	chainEvents     event.FeedOf[core.ChainEvent]
+	logEvents       event.FeedOf[[]*types.Log]
 
 	chainContext core.ChainContext
 	chainConfig  *params.ChainConfig

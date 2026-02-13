@@ -7,27 +7,29 @@ import (
 	"github.com/ava-labs/libevm/core"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/event"
+	"github.com/ava-labs/strevm/blocks"
 )
 
-func (e *Executor) sendPostExecutionEvents(b *types.Block, receipts types.Receipts) {
-	e.headEvents.Send(core.ChainHeadEvent{Block: b})
+func (e *Executor) sendPostExecutionEvents(b *blocks.Block, receipts types.Receipts) {
+	e.executionEvents.Send(b)
+	e.headEvents.Send(core.ChainHeadEvent{Block: b.EthBlock()})
 
 	var logs []*types.Log
 	for _, r := range receipts {
 		logs = append(logs, r.Logs...)
 	}
 	e.chainEvents.Send(core.ChainEvent{
-		Block: b,
+		Block: b.EthBlock(),
 		Hash:  b.Hash(),
 		Logs:  logs,
 	})
 	e.logEvents.Send(logs)
 }
 
-// SubscribeBlockEnqueueEvent returns a new subscription for each block queued
-// [Executor.Enqueue].
-func (e *Executor) SubscribeBlockEnqueueEvent(ch chan<- *types.Block) event.Subscription {
-	return e.enqueueEvents.Subscribe(ch)
+// SubscribeBlockExecutionEvent returns a new subscription for each executed
+// block.
+func (e *Executor) SubscribeBlockExecutionEvent(ch chan<- *blocks.Block) event.Subscription {
+	return e.executionEvents.Subscribe(ch)
 }
 
 // SubscribeChainHeadEvent returns a new subscription for each

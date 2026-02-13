@@ -30,7 +30,6 @@ func (e *Executor) Enqueue(ctx context.Context, block *blocks.Block) error {
 	select {
 	case e.queue <- block:
 		e.lastEnqueued.Store(block)
-		e.enqueueEvents.Send(block.EthBlock())
 
 		size := cap(e.queue)
 		warningThreshold := size - size/16
@@ -213,6 +212,6 @@ func (e *Executor) execute(b *blocks.Block, logger logging.Logger) error {
 	if err := b.MarkExecuted(e.db, gasClock.Clone(), endTime, header.BaseFee, receipts, root, &e.lastExecuted /* (2) */); err != nil {
 		return err
 	}
-	e.sendPostExecutionEvents(b.EthBlock(), receipts) // (3)
+	e.sendPostExecutionEvents(b, receipts) // (3)
 	return nil
 }

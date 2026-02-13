@@ -143,7 +143,7 @@ func NewVM(
 	}
 
 	{ // ==========  Mempool  ==========
-		bc := txgossip.NewBlockChain(vm.exec, vm.blockSource)
+		bc := txgossip.NewBlockChain(vm.log(), vm.exec, vm.blockSource)
 		pools := []txpool.SubPool{
 			legacypool.New(vm.config.MempoolConfig, bc),
 		}
