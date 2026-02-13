@@ -83,6 +83,10 @@ type RPCConfig struct {
 
 // NewVM returns a new [VM] that is ready for use immediately upon return.
 // [VM.Shutdown] MUST be called to release resources.
+//
+// The state root of the last synchronous block MUST be available when creating
+// a [triedb.Database] from the provided [ethdb.Database] and [triedb.Config]
+// (the latter provided via the [Config]).
 func NewVM(
 	ctx context.Context,
 	c Config,
