@@ -89,15 +89,13 @@ func (b *Block) MarkSynchronous(hooks hook.Points, db ethdb.Database, excessAfte
 	// in another block, there is no need to pass anything meaningful as it
 	// would also require them to be received as an argument to MarkSynchronous.
 	e := &executionResults{
-		persistedExecutionResults: persistedExecutionResults{
-			byGas: *gastime.New(
-				PreciseTime(hooks, b.Header()),
-				hooks.GasTargetAfter(b.Header()), // target _after_ is a requirement of [Block.MarkExecuted]
-				excessAfter,
-			),
-			receiptRoot:   ethB.ReceiptHash(),
-			stateRootPost: ethB.Root(),
-		},
+		byGas: *gastime.New(
+			PreciseTime(hooks, b.Header()),
+			hooks.GasTargetAfter(b.Header()), // target _after_ is a requirement of [Block.MarkExecuted]
+			excessAfter,
+		),
+		receiptRoot:   ethB.ReceiptHash(),
+		stateRootPost: ethB.Root(),
 	}
 	if err := e.setBaseFee(ethB.BaseFee()); err != nil {
 		return err

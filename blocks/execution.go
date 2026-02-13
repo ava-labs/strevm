@@ -36,9 +36,19 @@ func (b *Block) SetInterimExecutionTime(t *proxytime.Time[gas.Gas]) {
 //go:generate go run github.com/StephenButtolph/canoto/canoto $GOFILE
 
 type executionResults struct {
-	persistedExecutionResults
+	byGas         gastime.Time `canoto:"value,1"`
+	baseFee       uint256.Int  `canoto:"fixed repeated uint,2"`
+	receiptRoot   common.Hash  `canoto:"fixed bytes,3"`
+	stateRootPost common.Hash  `canoto:"fixed bytes,4"`
 
-	byWall time.Time // For metrics only; allowed to be incorrect.
+	ephemeralExecutionResults // not for canotofication
+
+	canotoData canotoData_executionResults
+}
+
+type ephemeralExecutionResults struct {
+	// Wall-clock time is for metrics only and MAY be incorrect.
+	byWall time.Time
 	// Receipts are deliberately not stored by the canoto representation as they
 	// are already in the database. All methods that read the stored canoto
 	// either accept a [types.Receipts] for comparison against the
@@ -47,16 +57,7 @@ type executionResults struct {
 	receipts types.Receipts
 }
 
-type persistedExecutionResults struct {
-	byGas         gastime.Time `canoto:"value,1"`
-	baseFee       uint256.Int  `canoto:"fixed repeated uint,2"`
-	receiptRoot   common.Hash  `canoto:"fixed bytes,3"`
-	stateRootPost common.Hash  `canoto:"fixed bytes,4"`
-
-	canotoData canotoData_persistedExecutionResults
-}
-
-func (e *persistedExecutionResults) setBaseFee(bf *big.Int) error {
+func (e *executionResults) setBaseFee(bf *big.Int) error {
 	if bf == nil { // genesis blocks
 		return nil
 	}
@@ -66,7 +67,7 @@ func (e *persistedExecutionResults) setBaseFee(bf *big.Int) error {
 	return nil
 }
 
-func (e *persistedExecutionResults) persist(kv ethdb.KeyValueWriter, blockNum uint64) error {
+func (e *executionResults) persist(kv ethdb.KeyValueWriter, blockNum uint64) error {
 	return kv.Put(executionResultsKey(blockNum), e.MarshalCanoto())
 }
 
@@ -109,13 +110,13 @@ func (b *Block) MarkExecuted(
 	}
 
 	e := &executionResults{
-		persistedExecutionResults: persistedExecutionResults{
-			byGas:         *byGas.Clone(),
-			receiptRoot:   types.DeriveSha(receipts, trie.NewStackTrie(nil)),
-			stateRootPost: stateRootPost,
+		byGas:         *byGas.Clone(),
+		receiptRoot:   types.DeriveSha(receipts, trie.NewStackTrie(nil)),
+		stateRootPost: stateRootPost,
+		ephemeralExecutionResults: ephemeralExecutionResults{
+			byWall:   byWall,
+			receipts: slices.Clone(receipts),
 		},
-		byWall:   byWall,
-		receipts: slices.Clone(receipts),
 	}
 	if err := e.setBaseFee(baseFee); err != nil {
 		return err

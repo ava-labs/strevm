@@ -27,32 +27,32 @@ var (
 )
 
 const (
-	canoto__persistedExecutionResults__byGas         = 1
-	canoto__persistedExecutionResults__baseFee       = 2
-	canoto__persistedExecutionResults__receiptRoot   = 3
-	canoto__persistedExecutionResults__stateRootPost = 4
+	canoto__executionResults__byGas         = 1
+	canoto__executionResults__baseFee       = 2
+	canoto__executionResults__receiptRoot   = 3
+	canoto__executionResults__stateRootPost = 4
 
-	canoto__persistedExecutionResults__byGas__tag         = "\x0a" // canoto.Tag(canoto__persistedExecutionResults__byGas, canoto.Len)
-	canoto__persistedExecutionResults__baseFee__tag       = "\x12" // canoto.Tag(canoto__persistedExecutionResults__baseFee, canoto.Len)
-	canoto__persistedExecutionResults__receiptRoot__tag   = "\x1a" // canoto.Tag(canoto__persistedExecutionResults__receiptRoot, canoto.Len)
-	canoto__persistedExecutionResults__stateRootPost__tag = "\x22" // canoto.Tag(canoto__persistedExecutionResults__stateRootPost, canoto.Len)
+	canoto__executionResults__byGas__tag         = "\x0a" // canoto.Tag(canoto__executionResults__byGas, canoto.Len)
+	canoto__executionResults__baseFee__tag       = "\x12" // canoto.Tag(canoto__executionResults__baseFee, canoto.Len)
+	canoto__executionResults__receiptRoot__tag   = "\x1a" // canoto.Tag(canoto__executionResults__receiptRoot, canoto.Len)
+	canoto__executionResults__stateRootPost__tag = "\x22" // canoto.Tag(canoto__executionResults__stateRootPost, canoto.Len)
 )
 
-type canotoData_persistedExecutionResults struct {
+type canotoData_executionResults struct {
 	size        uint64
 	baseFeeSize uint64
 }
 
 // CanotoSpec returns the specification of this canoto message.
-func (*persistedExecutionResults) CanotoSpec(types ...reflect.Type) *canoto.Spec {
-	types = append(types, reflect.TypeOf(persistedExecutionResults{}))
-	var zero persistedExecutionResults
+func (*executionResults) CanotoSpec(types ...reflect.Type) *canoto.Spec {
+	types = append(types, reflect.TypeOf(executionResults{}))
+	var zero executionResults
 	s := &canoto.Spec{
-		Name: "persistedExecutionResults",
+		Name: "executionResults",
 		Fields: []canoto.FieldType{
 			canoto.FieldTypeFromField(
 				/*type inference:*/ (&zero.byGas),
-				/*FieldNumber:   */ canoto__persistedExecutionResults__byGas,
+				/*FieldNumber:   */ canoto__executionResults__byGas,
 				/*Name:          */ "byGas",
 				/*FixedLength:   */ 0,
 				/*Repeated:      */ false,
@@ -60,7 +60,7 @@ func (*persistedExecutionResults) CanotoSpec(types ...reflect.Type) *canoto.Spec
 				/*types:         */ types,
 			),
 			{
-				FieldNumber: canoto__persistedExecutionResults__baseFee,
+				FieldNumber: canoto__executionResults__baseFee,
 				Name:        "baseFee",
 				FixedLength: uint64(len(zero.baseFee)),
 				Repeated:    true,
@@ -68,13 +68,13 @@ func (*persistedExecutionResults) CanotoSpec(types ...reflect.Type) *canoto.Spec
 				TypeUint:    canoto.SizeOf(canoto.MakeEntry(zero.baseFee[:])),
 			},
 			{
-				FieldNumber:    canoto__persistedExecutionResults__receiptRoot,
+				FieldNumber:    canoto__executionResults__receiptRoot,
 				Name:           "receiptRoot",
 				OneOf:          "",
 				TypeFixedBytes: uint64(len(zero.receiptRoot)),
 			},
 			{
-				FieldNumber:    canoto__persistedExecutionResults__stateRootPost,
+				FieldNumber:    canoto__executionResults__stateRootPost,
 				Name:           "stateRootPost",
 				OneOf:          "",
 				TypeFixedBytes: uint64(len(zero.stateRootPost)),
@@ -86,14 +86,14 @@ func (*persistedExecutionResults) CanotoSpec(types ...reflect.Type) *canoto.Spec
 }
 
 // MakeCanoto creates a new empty value.
-func (*persistedExecutionResults) MakeCanoto() *persistedExecutionResults {
-	return new(persistedExecutionResults)
+func (*executionResults) MakeCanoto() *executionResults {
+	return new(executionResults)
 }
 
 // UnmarshalCanoto unmarshals a Canoto-encoded byte slice into the struct.
 //
 // During parsing, the canoto cache is saved.
-func (c *persistedExecutionResults) UnmarshalCanoto(bytes []byte) error {
+func (c *executionResults) UnmarshalCanoto(bytes []byte) error {
 	r := canoto.Reader{
 		B: bytes,
 	}
@@ -106,9 +106,9 @@ func (c *persistedExecutionResults) UnmarshalCanoto(bytes []byte) error {
 // During parsing, the canoto cache is saved.
 //
 // This function enables configuration of reader options.
-func (c *persistedExecutionResults) UnmarshalCanotoFrom(r canoto.Reader) error {
+func (c *executionResults) UnmarshalCanotoFrom(r canoto.Reader) error {
 	// Zero the struct before unmarshaling.
-	*c = persistedExecutionResults{}
+	*c = executionResults{}
 	atomic.StoreUint64(&c.canotoData.size, uint64(len(r.B)))
 
 	var minField uint32
@@ -122,7 +122,7 @@ func (c *persistedExecutionResults) UnmarshalCanotoFrom(r canoto.Reader) error {
 		}
 
 		switch field {
-		case canoto__persistedExecutionResults__byGas:
+		case canoto__executionResults__byGas:
 			if wireType != canoto.Len {
 				return canoto.ErrUnexpectedWireType
 			}
@@ -146,7 +146,7 @@ func (c *persistedExecutionResults) UnmarshalCanotoFrom(r canoto.Reader) error {
 				return err
 			}
 			r.B = remainingBytes
-		case canoto__persistedExecutionResults__baseFee:
+		case canoto__executionResults__baseFee:
 			if wireType != canoto.Len {
 				return canoto.ErrUnexpectedWireType
 			}
@@ -176,7 +176,7 @@ func (c *persistedExecutionResults) UnmarshalCanotoFrom(r canoto.Reader) error {
 			}
 			r.B = remainingBytes
 			atomic.StoreUint64(&c.canotoData.baseFeeSize, uint64(len(msgBytes)))
-		case canoto__persistedExecutionResults__receiptRoot:
+		case canoto__executionResults__receiptRoot:
 			if wireType != canoto.Len {
 				return canoto.ErrUnexpectedWireType
 			}
@@ -201,7 +201,7 @@ func (c *persistedExecutionResults) UnmarshalCanotoFrom(r canoto.Reader) error {
 				return canoto.ErrZeroValue
 			}
 			r.B = r.B[expectedLength:]
-		case canoto__persistedExecutionResults__stateRootPost:
+		case canoto__executionResults__stateRootPost:
 			if wireType != canoto.Len {
 				return canoto.ErrUnexpectedWireType
 			}
@@ -242,7 +242,7 @@ func (c *persistedExecutionResults) UnmarshalCanotoFrom(r canoto.Reader) error {
 // 1. All OneOfs are specified at most once.
 // 2. All strings are valid utf-8.
 // 3. All custom fields are ValidCanoto.
-func (c *persistedExecutionResults) ValidCanoto() bool {
+func (c *executionResults) ValidCanoto() bool {
 	if c == nil {
 		return true
 	}
@@ -256,28 +256,28 @@ func (c *persistedExecutionResults) ValidCanoto() bool {
 // values in the struct.
 //
 // It is not safe to copy this struct concurrently.
-func (c *persistedExecutionResults) CalculateCanotoCache() {
+func (c *executionResults) CalculateCanotoCache() {
 	if c == nil {
 		return
 	}
 	var size uint64
 	(&c.byGas).CalculateCanotoCache()
 	if fieldSize := (&c.byGas).CachedCanotoSize(); fieldSize != 0 {
-		size += uint64(len(canoto__persistedExecutionResults__byGas__tag)) + canoto.SizeUint(fieldSize) + fieldSize
+		size += uint64(len(canoto__executionResults__byGas__tag)) + canoto.SizeUint(fieldSize) + fieldSize
 	}
 	if !canoto.IsZero(c.baseFee) {
 		var fieldSize uint64
 		for _, v := range &c.baseFee {
 			fieldSize += canoto.SizeUint(v)
 		}
-		size += uint64(len(canoto__persistedExecutionResults__baseFee__tag)) + canoto.SizeUint(fieldSize) + fieldSize
+		size += uint64(len(canoto__executionResults__baseFee__tag)) + canoto.SizeUint(fieldSize) + fieldSize
 		atomic.StoreUint64(&c.canotoData.baseFeeSize, fieldSize)
 	}
 	if !canoto.IsZero(c.receiptRoot) {
-		size += uint64(len(canoto__persistedExecutionResults__receiptRoot__tag)) + canoto.SizeBytes((&c.receiptRoot)[:])
+		size += uint64(len(canoto__executionResults__receiptRoot__tag)) + canoto.SizeBytes((&c.receiptRoot)[:])
 	}
 	if !canoto.IsZero(c.stateRootPost) {
-		size += uint64(len(canoto__persistedExecutionResults__stateRootPost__tag)) + canoto.SizeBytes((&c.stateRootPost)[:])
+		size += uint64(len(canoto__executionResults__stateRootPost__tag)) + canoto.SizeBytes((&c.stateRootPost)[:])
 	}
 	atomic.StoreUint64(&c.canotoData.size, size)
 }
@@ -289,7 +289,7 @@ func (c *persistedExecutionResults) CalculateCanotoCache() {
 //
 // If the struct has been modified since the last call to CalculateCanotoCache,
 // the returned size may be incorrect.
-func (c *persistedExecutionResults) CachedCanotoSize() uint64 {
+func (c *executionResults) CachedCanotoSize() uint64 {
 	if c == nil {
 		return 0
 	}
@@ -301,7 +301,7 @@ func (c *persistedExecutionResults) CachedCanotoSize() uint64 {
 // It is assumed that this struct is ValidCanoto.
 //
 // It is not safe to copy this struct concurrently.
-func (c *persistedExecutionResults) MarshalCanoto() []byte {
+func (c *executionResults) MarshalCanoto() []byte {
 	c.CalculateCanotoCache()
 	w := canoto.Writer{
 		B: make([]byte, 0, c.CachedCanotoSize()),
@@ -319,28 +319,28 @@ func (c *persistedExecutionResults) MarshalCanoto() []byte {
 // It is assumed that this struct is ValidCanoto.
 //
 // It is not safe to copy this struct concurrently.
-func (c *persistedExecutionResults) MarshalCanotoInto(w canoto.Writer) canoto.Writer {
+func (c *executionResults) MarshalCanotoInto(w canoto.Writer) canoto.Writer {
 	if c == nil {
 		return w
 	}
 	if fieldSize := (&c.byGas).CachedCanotoSize(); fieldSize != 0 {
-		canoto.Append(&w, canoto__persistedExecutionResults__byGas__tag)
+		canoto.Append(&w, canoto__executionResults__byGas__tag)
 		canoto.AppendUint(&w, fieldSize)
 		w = (&c.byGas).MarshalCanotoInto(w)
 	}
 	if !canoto.IsZero(c.baseFee) {
-		canoto.Append(&w, canoto__persistedExecutionResults__baseFee__tag)
+		canoto.Append(&w, canoto__executionResults__baseFee__tag)
 		canoto.AppendUint(&w, atomic.LoadUint64(&c.canotoData.baseFeeSize))
 		for _, v := range &c.baseFee {
 			canoto.AppendUint(&w, v)
 		}
 	}
 	if !canoto.IsZero(c.receiptRoot) {
-		canoto.Append(&w, canoto__persistedExecutionResults__receiptRoot__tag)
+		canoto.Append(&w, canoto__executionResults__receiptRoot__tag)
 		canoto.AppendBytes(&w, (&c.receiptRoot)[:])
 	}
 	if !canoto.IsZero(c.stateRootPost) {
-		canoto.Append(&w, canoto__persistedExecutionResults__stateRootPost__tag)
+		canoto.Append(&w, canoto__executionResults__stateRootPost__tag)
 		canoto.AppendBytes(&w, (&c.stateRootPost)[:])
 	}
 	return w
