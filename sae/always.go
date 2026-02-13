@@ -75,7 +75,7 @@ func (vm *SinceGenesis) Initialize(
 }
 
 // canonicaliseLastSynchronous writes all necessary information to the database
-// to have the block be considered canonical by SAE. If there are any canonical
+// to have the block be considered accepted/canonical by SAE. If there are any canonical
 // blocks at a height greater than the provided block then this function is a
 // no-op, which makes it effectively idempotent with respect to the rest of SAE
 // processing.
