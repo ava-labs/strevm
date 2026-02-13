@@ -274,7 +274,7 @@ func canonicaliseLastSynchronous(db ethdb.Database, block *blocks.Block) error {
 		return fmt.Errorf("only synchronous block can be canonicalised: %d / %#x is async", block.NumberU64(), block.Hash())
 	}
 	num := block.NumberU64()
-	if accepted, _ := rawdb.ReadAllCanonicalHashes(db, num+1, num+2, 1); len(accepted) > 0 {
+	if rawdb.ReadCanonicalHash(db, num+1) != (common.Hash{}) {
 		// If any other block has been accepted then the last synchronous block
 		// must have been canonicalised in a previous initialisation.
 		return nil
