@@ -41,9 +41,9 @@ type Points interface {
 	// GasTargetAfter returns the gas target that should go into effect
 	// immediately after the provided block.
 	GasTargetAfter(*types.Header) gas.Gas
-	// GasConfigAfter returns the gas configuration that should go into effect
+	// GasPriceConfigAfter returns the gas price configuration that should go into effect
 	// immediately after the provided block.
-	GasConfigAfter(*types.Header) GasConfig
+	GasPriceConfigAfter(*types.Header) GasPriceConfig
 	// SubSecondBlockTime returns the sub-second portion of the block time,
 	// which MUST be non-negative and strictly shorter than a second; i.e. a
 	// value d such that 0 <= d < [time.Second].
@@ -138,8 +138,8 @@ func (o *Op) ApplyTo(stateDB *state.StateDB) error {
 	return nil
 }
 
-// GasConfig contains gas-related parameters that can be configured via hooks.
-type GasConfig struct {
+// GasPriceConfig contains gas-related parameters that can be configured via hooks.
+type GasPriceConfig struct {
 	// TargetToExcessScaling is the ratio between the gas target and the
 	// reciprocal of the excess coefficient used in price calculation
 	// (K variable in ACP-176, where K = TargetToExcessScaling * T).
@@ -161,9 +161,9 @@ const DefaultTargetToExcessScaling = 87
 // parameter in ACP-176's price calculation.
 const DefaultMinPrice gas.Price = 1
 
-// DefaultGasConfig returns the default gas config values.
-func DefaultGasConfig() GasConfig {
-	return GasConfig{
+// DefaultGasPriceConfig returns the default gas config values.
+func DefaultGasPriceConfig() GasPriceConfig {
+	return GasPriceConfig{
 		TargetToExcessScaling: DefaultTargetToExcessScaling,
 		MinPrice:              DefaultMinPrice,
 		StaticPricing:         false,

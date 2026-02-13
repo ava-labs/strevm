@@ -29,7 +29,7 @@ func (tm *Time) AfterBlock(used gas.Gas, hooks hook.Points, h *types.Header) err
 	if err := tm.SetTarget(target); err != nil {
 		return fmt.Errorf("%T.SetTarget() after block: %w", tm, err)
 	}
-	cfg := hooks.GasConfigAfter(h)
+	cfg := hooks.GasPriceConfigAfter(h)
 	if err := tm.SetConfig(cfg); err != nil {
 		return fmt.Errorf("%T.SetConfig() after block: %w", tm, err)
 	}
