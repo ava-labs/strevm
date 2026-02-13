@@ -13,6 +13,7 @@ import (
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/eth"
 	"github.com/ava-labs/libevm/eth/filters"
+	"github.com/ava-labs/libevm/ethdb"
 	"github.com/ava-labs/libevm/params"
 )
 
@@ -26,22 +27,21 @@ type bloomIndexer struct {
 
 // newBloomIndexer creates a [bloomIndexer] and starts the indexer to run with events from `chain`.
 // The consumer must close the [core.ChainIndexer] on VM shutdown.
-func (vm *VM) newBloomIndexer(chain core.ChainIndexerChain, override filters.BloomOverrider, config RPCConfig) *bloomIndexer {
-	size := config.BlocksPerBloomSection
+func newBloomIndexer(db ethdb.Database, chain core.ChainIndexerChain, override filters.BloomOverrider, size uint64) *bloomIndexer {
 	if size == 0 || size > math.MaxInt32 {
 		size = params.BloomBitsBlocks
 	}
 
 	backend := &bloomBackend{
-		BloomIndexer:   core.NewBloomIndexerBackend(vm.db, size),
+		BloomIndexer:   core.NewBloomIndexerBackend(db, size),
 		BloomOverrider: override,
 	}
-	table := rawdb.NewTable(vm.db, string(rawdb.BloomBitsIndexPrefix))
+	table := rawdb.NewTable(db, string(rawdb.BloomBitsIndexPrefix))
 
 	b := &bloomIndexer{
-		indexer:  core.NewChainIndexer(vm.db, table, backend, size, 0, core.BloomThrottling, "bloombits"),
+		indexer:  core.NewChainIndexer(db, table, backend, size, 0, core.BloomThrottling, "bloombits"),
 		size:     size,
-		handlers: eth.StartBloomHandlers(vm.db, size),
+		handlers: eth.StartBloomHandlers(db, size),
 	}
 	b.indexer.Start(chain)
 	return b
@@ -56,6 +56,11 @@ func (b *bloomIndexer) ServiceFilter(ctx context.Context, session *bloombits.Mat
 	for range eth.BloomFilterThreads {
 		go session.Multiplex(eth.BloomRetrievalBatch, eth.BloomRetrievalWait, b.handlers.Requests)
 	}
+}
+
+func (b *bloomIndexer) Close() error {
+	b.handlers.Close()
+	return b.indexer.Close()
 }
 
 var _ core.ChainIndexerBackend = (*bloomBackend)(nil)

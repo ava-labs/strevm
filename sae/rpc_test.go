@@ -527,10 +527,20 @@ func TestGetLogs(t *testing.T) {
 		}
 	}, 5*time.Second, 500*time.Millisecond, "bloom indexer never finished")
 
+	// Each block has exactly 1 tx producing 1 receipt with 1 log,
+	// so indexing directly is safe.
+	logsFrom := func(bs ...*blocks.Block) []types.Log {
+		logs := make([]types.Log, len(bs))
+		for i, b := range bs {
+			logs[i] = *b.Receipts()[0].Logs[0]
+		}
+		return logs
+	}
+
 	tests := []struct {
 		name            string
 		query           ethereum.FilterQuery
-		wantCount       int
+		wantLogs        []types.Log
 		wantErrContains string
 	}{
 		{
@@ -538,14 +548,12 @@ func TestGetLogs(t *testing.T) {
 			query: ethereum.FilterQuery{
 				BlockHash: utils.PointerTo(genesis.Hash()),
 			},
-			wantCount: 0,
 		},
 		{
 			name: "no_logs",
 			query: ethereum.FilterQuery{
 				BlockHash: utils.PointerTo(noLogs.Hash()),
 			},
-			wantCount: 0,
 		},
 		{
 			name: "nonexistent_block",
@@ -559,14 +567,14 @@ func TestGetLogs(t *testing.T) {
 			query: ethereum.FilterQuery{
 				BlockHash: utils.PointerTo(indexed[0].Hash()),
 			},
-			wantCount: len(indexed[0].EthBlock().Transactions()),
+			wantLogs: logsFrom(indexed[0]),
 		},
 		{
 			name: "in_memory",
 			query: ethereum.FilterQuery{
 				BlockHash: utils.PointerTo(executed.Hash()),
 			},
-			wantCount: len(executed.EthBlock().Transactions()),
+			wantLogs: logsFrom(executed),
 		},
 		{
 			name: "unindexed",
@@ -575,7 +583,7 @@ func TestGetLogs(t *testing.T) {
 				ToBlock:   executed.Number(),
 				Addresses: []common.Address{precompile},
 			},
-			wantCount: 2,
+			wantLogs: logsFrom(settled, executed),
 		},
 		{
 			name: "indexed",
@@ -584,19 +592,21 @@ func TestGetLogs(t *testing.T) {
 				ToBlock:   indexed[len(indexed)-1].Number(),
 				Addresses: []common.Address{precompile},
 			},
-			wantCount: int(bloomSectionSize),
+			wantLogs: logsFrom(indexed...),
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			logs, err := sut.FilterLogs(ctx, tt.query)
+			got, err := sut.FilterLogs(ctx, tt.query)
 			if tt.wantErrContains != "" {
 				require.ErrorContains(t, err, tt.wantErrContains, "eth_getLogs(...)")
 				return
 			}
 			require.NoErrorf(t, err, "eth_getLogs(...)")
-			require.Lenf(t, logs, tt.wantCount, "eth_getLogs(...)")
+			if diff := cmp.Diff(tt.wantLogs, got, cmpopts.EquateEmpty()); diff != "" {
+				t.Errorf("eth_getLogs(...) mismatch (-want +got):\n%s", diff)
+			}
 		})
 	}
 }

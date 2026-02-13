@@ -34,15 +34,21 @@ import (
 	"github.com/ava-labs/strevm/txgossip"
 )
 
+// APIBackend merges all interfaces required to implement the SAE APIs.
+type APIBackend interface {
+	ethapi.Backend
+	filters.BloomOverrider
+}
+
 // APIBackend returns an API backend backed by the [VM].
-func (vm *VM) APIBackend() ethapi.Backend {
+func (vm *VM) APIBackend() APIBackend {
 	return vm.apiBackend
 }
 
 func (vm *VM) ethRPCServer() (*rpc.Server, error) {
-	srv := rpc.NewServer()
+	b := vm.APIBackend()
 
-	filterSystem := filters.NewFilterSystem(vm.apiBackend, filters.Config{})
+	filterSystem := filters.NewFilterSystem(b, filters.Config{})
 	filterAPI := filters.NewFilterAPI(filterSystem, false /*isLightClient*/)
 	vm.toClose = append(vm.toClose, func() error {
 		filters.CloseAPI(filterAPI)
@@ -71,10 +77,10 @@ func (vm *VM) ethRPCServer() (*rpc.Server, error) {
 		// - txpool_contentFrom
 		// - txpool_inspect
 		// - txpool_status
-		{"txpool", ethapi.NewTxPoolAPI(vm.apiBackend)},
+		{"txpool", ethapi.NewTxPoolAPI(b)},
 		// Standard Ethereum node APIs:
 		// - eth_syncing
-		{"eth", ethapi.NewEthereumAPI(vm.apiBackend)},
+		{"eth", ethapi.NewEthereumAPI(b)},
 		// Standard Ethereum node APIs:
 		// - eth_blockNumber
 		// - eth_chainId
@@ -88,7 +94,7 @@ func (vm *VM) ethRPCServer() (*rpc.Server, error) {
 		// Geth-specific APIs:
 		// - eth_getHeaderByHash
 		// - eth_getHeaderByNumber
-		{"eth", ethapi.NewBlockChainAPI(vm.apiBackend)},
+		{"eth", ethapi.NewBlockChainAPI(b)},
 		// Standard Ethereum node APIs:
 		// - eth_getBlockTransactionCountByHash
 		// - eth_getBlockTransactionCountByNumber
@@ -107,7 +113,7 @@ func (vm *VM) ethRPCServer() (*rpc.Server, error) {
 		// - eth_pendingTransactions
 		// Standard Ethereum node APIS:
 		// - eth_getLogs
-		{"eth", ethapi.NewTransactionAPI(vm.apiBackend, new(ethapi.AddrLocker))},
+		{"eth", ethapi.NewTransactionAPI(b, new(ethapi.AddrLocker))},
 		// Geth-specific APIs:
 		// - eth_subscribe
 		//  - newHeads
@@ -143,12 +149,13 @@ func (vm *VM) ethRPCServer() (*rpc.Server, error) {
 		})
 	}
 
+	s := rpc.NewServer()
 	for _, api := range apis {
-		if err := srv.RegisterName(api.namespace, api.api); err != nil {
-			return nil, fmt.Errorf("%T.RegisterName(%q, %T): %v", srv, api.namespace, api.api, err)
+		if err := s.RegisterName(api.namespace, api.api); err != nil {
+			return nil, fmt.Errorf("%T.RegisterName(%q, %T): %v", s, api.namespace, api.api, err)
 		}
 	}
-	return srv, nil
+	return s, nil
 }
 
 // web3API offers the `web3` RPCs.
@@ -200,35 +207,6 @@ func (s *netAPI) Version() string {
 	return s.chainID
 }
 
-// newAPIBackend returns a fresh API backend backed by the [VM]. All goroutines
-// created will be closed by [VM.Shutdown].
-func (vm *VM) newAPIBackend(config RPCConfig) ethapi.Backend {
-	chainIdx := chainIndexer{vm.exec}
-	override := bloomOverrider{vm.db}
-	// TODO(alarso16): if we are state syncing, we need to provide the first
-	// block available to the indexer via [core.ChainIndexer.AddCheckpoint].
-	bloomIdx := vm.newBloomIndexer(chainIdx, override, config)
-	vm.toClose = append(vm.toClose, func() error {
-		bloomIdx.handlers.Close()
-		return bloomIdx.indexer.Close()
-	})
-
-	// Empty account manager provides graceful errors for signing
-	// RPCs (e.g. eth_sign) instead of nil-pointer panics. No
-	// actual account functionality is expected.
-	accountManager := accounts.NewManager(&accounts.Config{})
-	vm.toClose = append(vm.toClose, accountManager.Close)
-
-	return &ethAPIBackend{
-		vm:             vm,
-		accountManager: accountManager,
-		Set:            vm.mempool,
-		chainIndexer:   chainIdx,
-		bloomIndexer:   bloomIdx,
-		bloomOverrider: override,
-	}
-}
-
 // chainIndexer implements the subset of [ethapi.Backend] required to back a
 // [core.ChainIndexer].
 type chainIndexer struct {
@@ -263,11 +241,6 @@ func (b bloomOverrider) OverrideHeaderBloom(header *types.Header) types.Bloom {
 		header.Number.Uint64(),
 	))
 }
-
-var _ interface {
-	ethapi.Backend
-	filters.BloomOverrider
-} = (*ethAPIBackend)(nil)
 
 type ethAPIBackend struct {
 	vm             *VM
