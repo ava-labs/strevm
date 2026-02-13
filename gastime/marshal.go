@@ -7,7 +7,6 @@ import (
 	"github.com/StephenButtolph/canoto"
 	"github.com/ava-labs/avalanchego/vms/components/gas"
 
-	"github.com/ava-labs/strevm/hook"
 	"github.com/ava-labs/strevm/proxytime"
 )
 
@@ -62,14 +61,6 @@ func (tm *Time) UnmarshalCanoto(bytes []byte) error {
 func (tm *Time) UnmarshalCanotoFrom(r canoto.Reader) error {
 	if err := tm.TimeMarshaler.UnmarshalCanotoFrom(r); err != nil {
 		return err
-	}
-	// Apply defaults for backward compatibility with old serialized data
-	// that doesn't include the config field.
-	if tm.config.targetToExcessScaling == 0 {
-		tm.config.targetToExcessScaling = hook.DefaultTargetToExcessScaling
-	}
-	if tm.config.minPrice == 0 {
-		tm.config.minPrice = hook.DefaultMinPrice
 	}
 	tm.establishInvariants()
 	return nil
