@@ -32,13 +32,12 @@ type Executor struct {
 	log        logging.Logger
 	hooks      hook.Points
 
-	queue                      chan *blocks.Block
-	lastEnqueued, lastExecuted atomic.Pointer[blocks.Block]
+	queue        chan *blocks.Block
+	lastExecuted atomic.Pointer[blocks.Block]
 
-	enqueueEvents event.FeedOf[*types.Block]
-	headEvents    event.FeedOf[core.ChainHeadEvent]
-	chainEvents   event.FeedOf[core.ChainEvent]
-	logEvents     event.FeedOf[[]*types.Log]
+	headEvents  event.FeedOf[core.ChainHeadEvent]
+	chainEvents event.FeedOf[core.ChainEvent]
+	logEvents   event.FeedOf[[]*types.Log]
 
 	chainContext core.ChainContext
 	chainConfig  *params.ChainConfig
@@ -89,7 +88,6 @@ func New(
 		stateCache:   cache,
 		snaps:        snaps,
 	}
-	e.lastEnqueued.Store(lastExecuted)
 	e.lastExecuted.Store(lastExecuted)
 
 	go e.processQueue()
@@ -129,9 +127,4 @@ func (e *Executor) StateCache() state.Database {
 // LastExecuted returns the last-executed block in a threadsafe manner.
 func (e *Executor) LastExecuted() *blocks.Block {
 	return e.lastExecuted.Load()
-}
-
-// LastEnqueued returns the last-enqueued block in a threadsafe manner.
-func (e *Executor) LastEnqueued() *blocks.Block {
-	return e.lastEnqueued.Load()
 }

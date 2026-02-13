@@ -30,9 +30,6 @@ var errExecutorClosed = errors.New("saexec.Executor closed")
 func (e *Executor) Enqueue(ctx context.Context, block *blocks.Block) error {
 	select {
 	case e.queue <- block:
-		e.lastEnqueued.Store(block)
-		e.enqueueEvents.Send(block.EthBlock())
-
 		size := cap(e.queue)
 		warningThreshold := size - size/16
 		if n := len(e.queue); n >= warningThreshold {
@@ -45,6 +42,7 @@ func (e *Executor) Enqueue(ctx context.Context, block *blocks.Block) error {
 			)
 		}
 		return nil
+
 	case <-ctx.Done():
 		return ctx.Err()
 	case <-e.quit:
