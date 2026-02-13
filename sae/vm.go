@@ -121,7 +121,7 @@ func NewVM(
 	}
 
 	{ // ==========  Executor  ==========
-		executeAfter, unexecuted, err := vm.recoverFromDB(lastSynchronous)
+		lastExecuted, unexecuted, err := vm.recoverFromDB(lastSynchronous)
 		if err != nil {
 			return nil, err
 		}
