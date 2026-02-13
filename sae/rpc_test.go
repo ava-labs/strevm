@@ -9,10 +9,12 @@ import (
 	"math"
 	"math/big"
 	"reflect"
+	"runtime/debug"
 	"testing"
 	"time"
 
 	"github.com/ava-labs/avalanchego/version"
+	ethereum "github.com/ava-labs/libevm"
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/common/hexutil"
 	"github.com/ava-labs/libevm/core/types"
@@ -26,13 +28,17 @@ import (
 	"github.com/ava-labs/libevm/rpc"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
+	"github.com/holiman/uint256"
 	"github.com/stretchr/testify/require"
 
 	"github.com/ava-labs/strevm/blocks"
 	"github.com/ava-labs/strevm/cmputils"
 	saeparams "github.com/ava-labs/strevm/params"
 	"github.com/ava-labs/strevm/saetest"
+	"github.com/ava-labs/strevm/saetest/escrow"
 )
+
+var zeroAddr common.Address
 
 type rpcTest struct {
 	method string
@@ -92,17 +98,95 @@ func testRPCGetter[
 func TestSubscriptions(t *testing.T) {
 	ctx, sut := newSUT(t, 1)
 
-	newHeads := make(chan *types.Header, 1)
-	sub, err := sut.SubscribeNewHead(ctx, newHeads)
-	require.NoError(t, err, "SubscribeNewHead(...)")
-	// The subscription is closed in a defer rather than via t.Cleanup to ensure
-	// that is is closed before the rest of the SUT is torn down. Otherwise,
-	// there could be a goroutine leak.
-	defer sub.Unsubscribe()
+	var (
+		newTxs   = make(chan common.Hash, 1)
+		newHeads = make(chan *types.Header, 1)
+		newLogs  = make(chan types.Log, 1)
+	)
+	{
+		sub, err := sut.rpcClient.EthSubscribe(ctx, newTxs, "newPendingTransactions")
+		require.NoError(t, err, "EthSubscribe(newPendingTransactions)")
+		t.Cleanup(sub.Unsubscribe)
+	}
+	{
+		sub, err := sut.SubscribeNewHead(ctx, newHeads)
+		require.NoError(t, err, "SubscribeNewHead()")
+		t.Cleanup(sub.Unsubscribe)
+	}
+	{
+		sub, err := sut.SubscribeFilterLogs(ctx, ethereum.FilterQuery{}, newLogs)
+		require.NoError(t, err, "SubscribeFilterLogs()")
+		t.Cleanup(sub.Unsubscribe)
+	}
+	{
+		pendingLogs := make(chan types.Log, 1)
+		pendingBlock := big.NewInt(int64(rpc.PendingBlockNumber))
+		sub, err := sut.SubscribeFilterLogs(
+			ctx,
+			ethereum.FilterQuery{
+				FromBlock: pendingBlock,
+				ToBlock:   pendingBlock,
+			},
+			pendingLogs,
+		)
+		require.NoError(t, err, "SubscribeFilterLogs(pending)")
+		t.Cleanup(sub.Unsubscribe)
+		defer func() {
+			t.Helper()
 
-	b := sut.runConsensusLoop(t, sut.lastAcceptedBlock(t))
-	got := <-newHeads
-	require.Equalf(t, b.Hash(), got.Hash(), "%T.Hash() from %T.SubscribeNewHead(...)", got, sut.Client)
+			select {
+			case l := <-pendingLogs:
+				t.Fatalf("unexpected pending log %+v", l)
+			default:
+			}
+		}()
+	}
+
+	mustSendTx := func(tx *types.Transaction) {
+		t.Helper()
+
+		sut.mustSendTx(t, tx)
+		require.Equal(t, tx.Hash(), <-newTxs, "tx hash from newPendingTransactions subscription")
+	}
+
+	runConsensusLoop := func(wantLogs ...types.Log) {
+		t.Helper()
+
+		b := sut.runConsensusLoop(t, sut.lastAcceptedBlock(t))
+		require.Equal(t, b.Hash(), (<-newHeads).Hash(), "header hash from newHeads subscription")
+
+		for _, want := range wantLogs {
+			want.BlockNumber = b.NumberU64()
+			want.BlockHash = b.Hash()
+			require.Equal(t, want, <-newLogs, "log from subscription")
+		}
+	}
+
+	const senderIndex = 0
+	deployTx := sut.wallet.SetNonceAndSign(t, senderIndex, &types.LegacyTx{
+		Data:     escrow.CreationCode(),
+		GasPrice: big.NewInt(1),
+		Gas:      3e6,
+	})
+	mustSendTx(deployTx)
+	runConsensusLoop()
+
+	sender := sut.wallet.Addresses()[senderIndex]
+	contractAddr := crypto.CreateAddress(sender, deployTx.Nonce())
+	amount := uint256.NewInt(100)
+	depositTx := sut.wallet.SetNonceAndSign(t, senderIndex, &types.LegacyTx{
+		To:       &contractAddr,
+		Value:    amount.ToBig(),
+		Data:     escrow.CallDataToDeposit(sender),
+		GasPrice: big.NewInt(1),
+		Gas:      1e6,
+	})
+	mustSendTx(depositTx)
+
+	wantLog := escrow.DepositEvent(sender, amount)
+	wantLog.Address = contractAddr
+	wantLog.TxHash = depositTx.Hash()
+	runConsensusLoop(*wantLog)
 }
 
 func TestWeb3Namespace(t *testing.T) {
@@ -322,7 +406,6 @@ func TestEthGetters(t *testing.T) {
 			GasFeeCap: big.NewInt(1),
 		})
 	}
-	var zeroAddr common.Address
 
 	genesis := sut.lastAcceptedBlock(t)
 
@@ -376,6 +459,71 @@ func TestEthGetters(t *testing.T) {
 			want:   hexutil.Uint64(executed.Height()),
 		})
 	})
+}
+
+func TestEthPendingTransactions(t *testing.T) {
+	ctx, sut := newSUT(t, 1)
+
+	tx := sut.wallet.SetNonceAndSign(t, 0, &types.DynamicFeeTx{
+		To:        &zeroAddr,
+		Gas:       params.TxGas,
+		GasFeeCap: big.NewInt(1),
+		Value:     big.NewInt(100),
+	})
+	sut.mustSendTx(t, tx)
+	sut.requireInMempool(t, tx.Hash())
+
+	// eth_pendingTransactions filters results to only transactions from
+	// accounts configured in the AccountManager, which is always empty.
+	sut.testRPC(ctx, t, rpcTest{
+		method: "eth_pendingTransactions",
+		want:   []*ethapi.RPCTransaction{},
+	})
+}
+
+// SAE doesn't really support APIs that require a key on the node, as there is
+// no way to add keys. But, we want to ensure the methods error gracefully.
+func TestEthSigningAPIs(t *testing.T) {
+	ctx, sut := newSUT(t, 1)
+
+	txFields := map[string]any{
+		"from":     zeroAddr,
+		"to":       zeroAddr,
+		"gas":      hexutil.Uint64(params.TxGas),
+		"gasPrice": hexutil.Big(*big.NewInt(1)),
+		"value":    hexutil.Big(*big.NewInt(100)),
+		"nonce":    hexutil.Uint64(0),
+	}
+	tests := []struct {
+		method string
+		args   []any
+	}{
+		{
+			method: "eth_sign",
+			args: []any{
+				zeroAddr,
+				hexutil.Bytes("test message"),
+			},
+		},
+		{
+			method: "eth_signTransaction",
+			args: []any{
+				txFields,
+			},
+		},
+		{
+			method: "eth_sendTransaction",
+			args: []any{
+				txFields,
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.method, func(t *testing.T) {
+			err := sut.CallContext(ctx, &struct{}{}, test.method, test.args...)
+			require.ErrorContains(t, err, "unknown account")
+		})
+	}
 }
 
 func (sut *SUT) testGetByHash(ctx context.Context, t *testing.T, want *types.Block) {
@@ -584,6 +732,43 @@ func (sut *SUT) testGetByUnknownNumber(ctx context.Context, t *testing.T) {
 			method: "eth_getRawTransactionByBlockNumberAndIndex",
 			args:   []any{n, hexutil.Uint(0)},
 			want:   hexutil.Bytes(nil),
+		},
+	}...)
+}
+
+// withDebugAPI returns a sutOption that enables the debug API.
+func withDebugAPI() sutOption {
+	return options.Func[sutConfig](func(c *sutConfig) {
+		c.vmConfig.RPCConfig.EnableProfiling = true
+	})
+}
+
+func TestDebugNamespace(t *testing.T) {
+	ctx, sut := newSUT(t, 0, withDebugAPI())
+
+	// The debug namespace is handled entirely by upstream code that doesn't
+	// depend in any way on SAE. We therefore only need an integration test, not
+	// to exercise every method because such unit testing is the responsibility
+	// of the source.
+	//
+	// Reference: https://geth.ethereum.org/docs/interacting-with-geth/rpc/ns-debug
+
+	const firstArg = 100
+	beforeTest := debug.SetGCPercent(firstArg)
+	defer debug.SetGCPercent(beforeTest)
+
+	const m = "debug_setGCPercent"
+	sut.testRPC(ctx, t, []rpcTest{
+		// Invariant: each call returns the input argument of the last.
+		{
+			method: m,
+			args:   []any{42},
+			want:   firstArg,
+		},
+		{
+			method: m,
+			args:   []any{0},
+			want:   42,
 		},
 	}...)
 }

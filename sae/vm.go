@@ -19,6 +19,7 @@ import (
 	"github.com/ava-labs/avalanchego/utils/bloom"
 	"github.com/ava-labs/avalanchego/utils/logging"
 	"github.com/ava-labs/avalanchego/version"
+	"github.com/ava-labs/libevm/accounts"
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core"
 	"github.com/ava-labs/libevm/core/rawdb"
@@ -26,6 +27,7 @@ import (
 	"github.com/ava-labs/libevm/core/txpool/legacypool"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/ethdb"
+	"github.com/ava-labs/libevm/libevm/ethapi"
 	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/triedb"
 	"github.com/prometheus/client_golang/prometheus"
@@ -56,9 +58,10 @@ type VM struct {
 		accepted, settled atomic.Pointer[blocks.Block]
 	}
 
-	exec    *saexec.Executor
-	mempool *txgossip.Set
-	newTxs  chan struct{}
+	exec       *saexec.Executor
+	mempool    *txgossip.Set
+	apiBackend ethapi.Backend
+	newTxs     chan struct{}
 
 	toClose [](func() error)
 }
@@ -68,8 +71,14 @@ type Config struct {
 	Hooks         hook.Points
 	MempoolConfig legacypool.Config
 	TrieDBConfig  *triedb.Config
+	RPCConfig     RPCConfig
 
 	Now func() time.Time // defaults to [time.Now] if nil
+}
+
+// RPCConfig configures RPC API behavior.
+type RPCConfig struct {
+	EnableProfiling bool
 }
 
 // NewVM returns a new [VM] that is ready for use immediately upon return.
@@ -207,6 +216,20 @@ func NewVM(
 			wg.Wait()
 			return nil
 		})
+	}
+
+	{ // ==========  API Backend  ==========
+		// Empty account manager provides graceful errors for signing
+		// RPCs (e.g. eth_sign) instead of nil-pointer panics. No
+		// actual account functionality is expected.
+		accountManager := accounts.NewManager(&accounts.Config{})
+		vm.toClose = append(vm.toClose, accountManager.Close)
+
+		vm.apiBackend = &ethAPIBackend{
+			Set:            vm.mempool,
+			vm:             vm,
+			accountManager: accountManager,
+		}
 	}
 
 	return vm, nil
