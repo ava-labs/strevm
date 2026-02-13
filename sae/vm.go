@@ -50,7 +50,7 @@ type VM struct {
 	metrics *prometheus.Registry
 
 	db     ethdb.Database
-	blocks *sMap[common.Hash, *blocks.Block]
+	blocks *syncMap[common.Hash, *blocks.Block]
 
 	consensusState utils.Atomic[snow.State]
 	preference     atomic.Pointer[blocks.Block]
@@ -108,7 +108,7 @@ func NewVM(
 		snowCtx: snowCtx,
 		metrics: prometheus.NewRegistry(),
 		db:      db,
-		blocks:  newSMap[common.Hash, *blocks.Block](),
+		blocks:  newSyncMap[common.Hash, *blocks.Block](),
 	}
 	defer func() {
 		if retErr != nil {
@@ -120,14 +120,15 @@ func NewVM(
 		return nil, err
 	}
 
+	rec := &recovery{db, snowCtx.Log, vm.config, lastSynchronous}
 	{ // ==========  Executor  ==========
-		lastExecuted, unexecuted, err := vm.recoverFromDB(lastSynchronous)
+		lastExecuted, unexecuted, err := rec.recoverFromDB()
 		if err != nil {
 			return nil, err
 		}
 
 		exec, err := saexec.New(
-			executeAfter,
+			lastExecuted,
 			vm.blockSource,
 			chainConfig,
 			db,
@@ -141,7 +142,7 @@ func NewVM(
 		vm.exec = exec
 		vm.toClose = append(vm.toClose, exec.Close)
 
-		last := executeAfter
+		last := lastExecuted
 		for b, err := range unexecuted {
 			if err != nil {
 				return nil, err
@@ -156,9 +157,18 @@ func NewVM(
 		}
 	}
 
-	// ==========  Pedantry  ==========
-	if err := vm.rebuildBlocksInMemory(lastSynchronous); err != nil {
-		return nil, err
+	{ // ==========  Blocks in memory  ==========
+		head := vm.exec.LastExecuted()
+
+		bMap, lastSettled, err := rec.rebuildBlocksInMemory(head)
+		if err != nil {
+			return nil, err
+		}
+		vm.blocks = bMap
+
+		vm.last.settled.Store(lastSettled)
+		vm.last.accepted.Store(head)
+		vm.preference.Store(head)
 	}
 
 	{ // ==========  Mempool  ==========

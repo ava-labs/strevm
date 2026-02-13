@@ -10,9 +10,12 @@ import (
 	"slices"
 	"sync/atomic"
 
+	"github.com/ava-labs/avalanchego/utils/logging"
 	"github.com/ava-labs/avalanchego/vms/components/gas"
+	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core/rawdb"
 	"github.com/ava-labs/libevm/core/state"
+	"github.com/ava-labs/libevm/ethdb"
 
 	"github.com/ava-labs/strevm/blocks"
 	"github.com/ava-labs/strevm/params"
@@ -20,21 +23,36 @@ import (
 	"github.com/ava-labs/strevm/saexec"
 )
 
-func (vm *VM) lastBlockWithStateRootAvailable(lastSync *blocks.Block) (*blocks.Block, error) {
-	lastExec := rawdb.ReadHeadHeader(vm.db)
-	num := max(
-		lastSync.NumberU64(),
-		params.LastCommittedTrieDBHeight(lastExec.Number.Uint64()),
-	)
-	if num == lastSync.NumberU64() {
-		return lastSync, nil
-	}
+type recovery struct {
+	db              ethdb.Database
+	log             logging.Logger
+	config          Config
+	lastSynchronous *blocks.Block
+}
 
-	b, err := vm.newBlock(vm.canonicalBlock(num), nil, nil)
+func (rec *recovery) newCanonicalBlock(num uint64, parent, lastSettled *blocks.Block) (*blocks.Block, error) {
+	ethB, err := canonicalBlock(rec.db, num)
 	if err != nil {
 		return nil, err
 	}
-	if err := b.RestoreExecutionArtefacts(vm.db); err != nil {
+	return blocks.New(ethB, parent, lastSettled, rec.log)
+}
+
+func (rec *recovery) lastBlockWithStateRootAvailable() (*blocks.Block, error) {
+	lastExec := rawdb.ReadHeadHeader(rec.db)
+	num := max(
+		rec.lastSynchronous.NumberU64(),
+		params.LastCommittedTrieDBHeight(lastExec.Number.Uint64()),
+	)
+	if num == rec.lastSynchronous.NumberU64() {
+		return rec.lastSynchronous, nil
+	}
+
+	b, err := rec.newCanonicalBlock(num, nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	if err := b.RestoreExecutionArtefacts(rec.db); err != nil {
 		return nil, err
 	}
 	{
@@ -42,7 +60,7 @@ func (vm *VM) lastBlockWithStateRootAvailable(lastSync *blocks.Block) (*blocks.B
 		// that it's not worth a preemptive fix. If this ever occurs then just
 		// try the root [params.CommitTrieDBEvery] blocks earlier.
 		root := b.PostExecutionStateRoot()
-		if _, err := state.NewDatabaseWithConfig(vm.db, vm.config.TrieDBConfig).OpenTrie(root); err != nil {
+		if _, err := state.NewDatabaseWithConfig(rec.db, rec.config.TrieDBConfig).OpenTrie(root); err != nil {
 			return nil, fmt.Errorf("database corrupted: latest expected state root (block %d / %#x) unavailable: %v", b.NumberU64(), b.Hash(), err)
 		}
 	}
@@ -55,19 +73,19 @@ func (vm *VM) lastBlockWithStateRootAvailable(lastSync *blocks.Block) (*blocks.B
 // one to be executed will leave the [saexec.Executor] in almost the same state
 // as before shutdown. [VM.rebuildBlocksInMemory] MUST then be called to fully
 // reinstate internal invariants.
-func (vm *VM) recoverFromDB(lastSync *blocks.Block) (*blocks.Block, iter.Seq2[*blocks.Block, error], error) {
+func (rec *recovery) recoverFromDB() (*blocks.Block, iter.Seq2[*blocks.Block, error], error) {
 	var _ = saexec.New // protect the import to allow comment linking
 
-	execAfter, err := vm.lastBlockWithStateRootAvailable(lastSync)
+	execAfter, err := rec.lastBlockWithStateRootAvailable()
 	if err != nil {
 		return nil, nil, err
 	}
-	toExecute, _ := rawdb.ReadAllCanonicalHashes(vm.db, execAfter.NumberU64()+1, math.MaxUint64, math.MaxInt)
+	toExecute, _ := rawdb.ReadAllCanonicalHashes(rec.db, execAfter.NumberU64()+1, math.MaxUint64, math.MaxInt)
 
 	return execAfter, func(yield func(*blocks.Block, error) bool) {
 		parent := execAfter
 		for _, num := range toExecute {
-			b, err := blocks.New(vm.canonicalBlock(num), parent, nil, vm.log())
+			b, err := rec.newCanonicalBlock(num, parent, nil)
 			if !yield(b, err) || err != nil {
 				return
 			}
@@ -76,21 +94,24 @@ func (vm *VM) recoverFromDB(lastSync *blocks.Block) (*blocks.Block, iter.Seq2[*b
 	}, nil
 }
 
-// rebuildBlocksInMemory reinstates internal invariants pertaining to blocks
-// kept in memory. After it returns, all blocks from the
-// [saexec.Executor.LastExecuted] back to the block that it settled will be in
-// memory, with their ancestry populated as required by invariants.
-func (vm *VM) rebuildBlocksInMemory(lastSynchronous *blocks.Block) error {
-	head := vm.exec.LastExecuted()
-	chain := []*blocks.Block{head} // reverse height order
+// lastOf returns the lastOf element in a slice, which MUST NOT be empty.
+func lastOf[E any](s []E) E {
+	return s[len(s)-1]
+}
+
+// rebuildBlocksInMemory returns a block-hash-keyed map of all blocks from the
+// last executed back to, and including, the block that it settled. It returns
+// said settled block separately, for convenience.
+func (rec *recovery) rebuildBlocksInMemory(lastExecuted *blocks.Block) (_ *syncMap[common.Hash, *blocks.Block], lastSettled *blocks.Block, _ error) {
+	chain := []*blocks.Block{lastExecuted} // reverse height order
 	blackhole := new(atomic.Pointer[blocks.Block])
 
 	extend := func(settler *blocks.Block) error {
-		settleAt := blocks.PreciseTime(vm.hooks(), settler.Header()).Add(-params.Tau)
+		settleAt := blocks.PreciseTime(rec.config.Hooks, settler.Header()).Add(-params.Tau)
 		tm := proxytime.Of[gas.Gas](settleAt)
 
 		for extended := false; ; extended = true {
-			switch b := chain[len(chain)-1]; {
+			switch b := lastOf(chain); {
 			case b.Synchronous():
 				return nil
 
@@ -100,15 +121,15 @@ func (vm *VM) rebuildBlocksInMemory(lastSynchronous *blocks.Block) error {
 				}
 				return b.MarkSettled(blackhole)
 
-			case b.Height() == lastSynchronous.Height()+1:
-				chain = append(chain, lastSynchronous)
+			case b.Height() == rec.lastSynchronous.Height()+1:
+				chain = append(chain, rec.lastSynchronous)
 
 			default:
-				parent, err := vm.newBlock(vm.canonicalBlock(b.Height()-1), nil, nil)
+				parent, err := rec.newCanonicalBlock(b.Height()-1, nil, nil)
 				if err != nil {
 					return err
 				}
-				if err := parent.RestoreExecutionArtefacts(vm.db); err != nil {
+				if err := parent.RestoreExecutionArtefacts(rec.db); err != nil {
 					return err
 				}
 				chain = append(chain, parent)
@@ -116,33 +137,26 @@ func (vm *VM) rebuildBlocksInMemory(lastSynchronous *blocks.Block) error {
 		}
 	}
 
-	if err := extend(head); err != nil {
-		return err
+	if err := extend(lastExecuted); err != nil {
+		return nil, nil, err
 	}
 	// The chain has been extended back by exactly the number of blocks needed
 	// to restore the [lastSettled, head] range. It will be extended further as
 	// we find interim last-settled blocks, so snapshot it.
 	restore := slices.Clone(chain)
 
+	bMap := newSyncMap[common.Hash, *blocks.Block]()
 	for i, b := range restore {
-		vm.blocks.Store(b.Hash(), b)
-
-		switch i {
-		case len(restore) - 1:
-			vm.last.settled.Store(b)
-
-		default:
-			if err := extend(b); err != nil {
-				return err
-			}
-			if err := b.SetAncestors(restore[i+1], chain[len(chain)-1]); err != nil {
-				return err
-			}
+		bMap.Store(b.Hash(), b)
+		if i+1 == len(restore) {
+			break
+		}
+		if err := extend(b); err != nil {
+			return nil, nil, err
+		}
+		if err := b.SetAncestors(restore[i+1], lastOf(chain)); err != nil {
+			return nil, nil, err
 		}
 	}
-
-	vm.last.accepted.Store(head)
-	vm.preference.Store(head)
-
-	return nil
+	return bMap, lastOf(restore), nil
 }
