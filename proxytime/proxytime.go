@@ -7,6 +7,7 @@ package proxytime
 
 import (
 	"cmp"
+	"errors"
 	"fmt"
 	"math"
 	"math/bits"
@@ -169,8 +170,8 @@ func ConvertMilliseconds[D Duration](rate D, ms uint64) (sec uint64, _ Fractiona
 // time. Rounding up instead of down achieves monotonicity of the clock.
 //
 // If no values have been registered with [Time.SetRateInvariants] then SetRate
-// will always return a nil error. A non-nil error will only be returned if any
-// of the rate-invariant values overflows a uint64 due to the scaling.
+// will always return a nil error. If a rate-invariant value overflows while
+// scaling then it is capped at [math.MaxUint64].
 func (tm *Time[D]) SetRate(hertz D) error {
 	frac, err := tm.scale(tm.fraction, hertz)
 	if err != nil {
@@ -180,12 +181,13 @@ func (tm *Time[D]) SetRate(hertz D) error {
 		return fmt.Errorf("fractional-second time: %w", err)
 	}
 
-	// Avoid scaling some but not all rate invariants if one results in an
-	// error.
 	scaled := make([]D, len(tm.rateInvariants))
 	for i, v := range tm.rateInvariants {
 		scaled[i], err = tm.scale(*v, hertz)
-		if err != nil {
+		switch {
+		case errors.Is(err, intmath.ErrOverflow):
+			scaled[i] = ^D(0)
+		case err != nil:
 			return fmt.Errorf("rate invariant [%d]: %w", i, err)
 		}
 	}
