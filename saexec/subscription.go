@@ -11,12 +11,12 @@ import (
 	"github.com/ava-labs/strevm/blocks"
 )
 
-func (e *Executor) sendPostExecutionEvents(b *blocks.Block, receipts types.Receipts) {
+func (e *Executor) sendPostExecutionEvents(b *blocks.Block) {
 	e.executionEvents.Send(b)
 	e.headEvents.Send(core.ChainHeadEvent{Block: b.EthBlock()})
 
 	var logs []*types.Log
-	for _, r := range receipts {
+	for _, r := range b.Receipts() {
 		logs = append(logs, r.Logs...)
 	}
 	e.chainEvents.Send(core.ChainEvent{
