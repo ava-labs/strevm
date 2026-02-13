@@ -7,6 +7,7 @@ import (
 	"github.com/ava-labs/libevm/core"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/event"
+
 	"github.com/ava-labs/strevm/blocks"
 )
 
