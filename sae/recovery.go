@@ -40,12 +40,10 @@ func (rec *recovery) newCanonicalBlock(num uint64, parent, lastSettled *blocks.B
 }
 
 func (rec *recovery) lastBlockWithStateRootAvailable() (*blocks.Block, error) {
-	lastExec := rawdb.ReadHeadHeader(rec.db)
-	num := max(
-		rec.lastSynchronous.NumberU64(),
-		saedb.LastCommittedTrieDBHeight(lastExec.Number.Uint64()),
+	num := saedb.LastCommittedTrieDBHeight(
+		rawdb.ReadHeadHeader(rec.db).Number.Uint64(),
 	)
-	if num == rec.lastSynchronous.NumberU64() {
+	if num <= rec.lastSynchronous.NumberU64() {
 		return rec.lastSynchronous, nil
 	}
 
