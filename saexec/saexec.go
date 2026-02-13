@@ -23,6 +23,7 @@ import (
 
 	"github.com/ava-labs/strevm/blocks"
 	"github.com/ava-labs/strevm/hook"
+	saeparams "github.com/ava-labs/strevm/params"
 )
 
 // An Executor accepts and executes a [blocks.Block] FIFO queue.
@@ -74,11 +75,14 @@ func New(
 	}
 
 	e := &Executor{
-		quit:         make(chan struct{}), // closed by [Executor.Close]
-		done:         make(chan struct{}), // closed by [Executor.processQueue] after `quit` is closed
-		log:          log,
-		hooks:        hooks,
-		queue:        make(chan *blocks.Block, 4096), // arbitrarily sized
+		quit:  make(chan struct{}), // closed by [Executor.Close]
+		done:  make(chan struct{}), // closed by [Executor.processQueue] after `quit` is closed
+		log:   log,
+		hooks: hooks,
+		// On startup we enqueue every block since the last time the trie DB was
+		// committed, so the queue needs sufficient capacity to avoid
+		// [Executor.Enqueue] warning about it being too full.
+		queue:        make(chan *blocks.Block, 2*saeparams.CommitTrieDBEvery),
 		chainContext: &chainContext{blockSrc, log},
 		chainConfig:  chainConfig,
 		db:           db,
