@@ -105,6 +105,8 @@ func (rec *recovery) rebuildBlocksInMemory(lastExecuted *blocks.Block) (_ *syncM
 	chain := []*blocks.Block{lastExecuted} // reverse height order
 	blackhole := new(atomic.Pointer[blocks.Block])
 
+	// extend appends to the chain all the blocks in settler's ancestry up to
+	// and including the block that it settled.
 	extend := func(settler *blocks.Block) error {
 		settleAt := blocks.PreciseTime(rec.config.Hooks, settler.Header()).Add(-params.Tau)
 		tm := proxytime.Of[gas.Gas](settleAt)
