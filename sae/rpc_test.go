@@ -464,7 +464,8 @@ func TestEthGetters(t *testing.T) {
 }
 
 func TestGetLogs(t *testing.T) {
-	const bloomSectionSize = 8 // shorten params.BloomBitsBlocks for test speed
+	// We shorten section size to reduce number of required blocks in the test.
+	const bloomSectionSize = 8
 	timeOpt, vmTime := withVMTime(t, time.Unix(saeparams.TauSeconds, 0))
 	rpcOpt := withBloomSectionSize(bloomSectionSize)
 
@@ -527,12 +528,14 @@ func TestGetLogs(t *testing.T) {
 		}
 	}, 5*time.Second, 500*time.Millisecond, "bloom indexer never finished")
 
-	// Each block has exactly 1 tx producing 1 receipt with 1 log,
-	// so indexing directly is safe.
 	logsFrom := func(bs ...*blocks.Block) []types.Log {
-		logs := make([]types.Log, len(bs))
-		for i, b := range bs {
-			logs[i] = *b.Receipts()[0].Logs[0]
+		var logs []types.Log
+		for _, b := range bs {
+			for _, r := range b.Receipts() {
+				for _, l := range r.Logs {
+					logs = append(logs, *l)
+				}
+			}
 		}
 		return logs
 	}

@@ -25,8 +25,10 @@ type bloomIndexer struct {
 	handlers *eth.BloomHandlers
 }
 
-// newBloomIndexer creates a [bloomIndexer] and starts the indexer to run with events from `chain`.
-// The consumer must close the [core.ChainIndexer] on VM shutdown.
+// newBloomIndexer creates a [bloomIndexer] and starts the indexer to run with
+// events from `chain`.
+//
+// The consumer must call [bloomIndexer.Close] to release allocated resources.
 func newBloomIndexer(db ethdb.Database, chain core.ChainIndexerChain, override filters.BloomOverrider, size uint64) *bloomIndexer {
 	if size == 0 || size > math.MaxInt32 {
 		size = params.BloomBitsBlocks
@@ -37,7 +39,6 @@ func newBloomIndexer(db ethdb.Database, chain core.ChainIndexerChain, override f
 		BloomOverrider: override,
 	}
 	table := rawdb.NewTable(db, string(rawdb.BloomBitsIndexPrefix))
-
 	b := &bloomIndexer{
 		indexer:  core.NewChainIndexer(db, table, backend, size, 0, core.BloomThrottling, "bloombits"),
 		size:     size,

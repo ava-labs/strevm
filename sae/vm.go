@@ -219,18 +219,18 @@ func NewVM(
 	}
 
 	{ // ==========  API Backend  ==========
+		// Empty account manager provides graceful errors for signing
+		// RPCs (e.g. eth_sign) instead of nil-pointer panics. No
+		// actual account functionality is expected.
+		accountManager := accounts.NewManager(&accounts.Config{})
+		vm.toClose = append(vm.toClose, accountManager.Close)
+
 		chainIdx := chainIndexer{vm.exec}
 		override := bloomOverrider{vm.db}
 		// TODO(alarso16): if we are state syncing, we need to provide the first
 		// block available to the indexer via [core.ChainIndexer.AddCheckpoint].
 		bloomIdx := newBloomIndexer(vm.db, chainIdx, override, c.RPCConfig.BlocksPerBloomSection)
 		vm.toClose = append(vm.toClose, bloomIdx.Close)
-
-		// Empty account manager provides graceful errors for signing
-		// RPCs (e.g. eth_sign) instead of nil-pointer panics. No
-		// actual account functionality is expected.
-		accountManager := accounts.NewManager(&accounts.Config{})
-		vm.toClose = append(vm.toClose, accountManager.Close)
 
 		vm.apiBackend = &ethAPIBackend{
 			vm:             vm,
