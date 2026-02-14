@@ -22,10 +22,10 @@ import (
 
 // Stub implements [hook.Points].
 type Stub struct {
-	Now       func() time.Time
-	Target    gas.Gas
-	GasConfig hook.GasConfig
-	Ops       []hook.Op
+	Now            func() time.Time
+	Target         gas.Gas
+	GasPriceConfig hook.GasPriceConfig
+	Ops            []hook.Op
 }
 
 var _ hook.Points = (*Stub)(nil)
@@ -33,10 +33,10 @@ var _ hook.Points = (*Stub)(nil)
 // HookOption applies a configuration to [Stub].
 type HookOption = options.Option[Stub]
 
-// WithGasConfig overrides the default gas config.
-func WithGasConfig(cfg hook.GasConfig) HookOption {
+// WithGasPriceConfig overrides the default gas config.
+func WithGasPriceConfig(cfg hook.GasPriceConfig) HookOption {
 	return options.Func[Stub](func(s *Stub) {
-		s.GasConfig = cfg
+		s.GasPriceConfig = cfg
 	})
 }
 
@@ -55,12 +55,12 @@ func WithOps(ops []hook.Op) HookOption {
 }
 
 // NewStub returns a stub with defaults applied.
-// It uses [hook.DefaultGasConfig] unless overridden by [WithGasConfig].
+// It uses [hook.DefaultGasPriceConfig] unless overridden by [WithGasPriceConfig].
 func NewStub(target gas.Gas, opts ...HookOption) *Stub {
 	return options.ApplyTo(&Stub{
-		Target:    target,
-		GasConfig: hook.DefaultGasConfig(),
-		Now:       time.Now,
+		Target:         target,
+		GasPriceConfig: hook.DefaultGasPriceConfig(),
+		Now:            time.Now,
 	}, opts...)
 }
 
@@ -104,9 +104,9 @@ func (s *Stub) GasTargetAfter(*types.Header) gas.Gas {
 	return s.Target
 }
 
-// GasConfigAfter ignores its argument and always returns [Stub.GasConfig].
-func (s *Stub) GasConfigAfter(*types.Header) hook.GasConfig {
-	return s.GasConfig
+// GasPriceConfigAfter ignores its argument and always returns [Stub.GasPriceConfig].
+func (s *Stub) GasPriceConfigAfter(*types.Header) hook.GasPriceConfig {
+	return s.GasPriceConfig
 }
 
 // SubSecondBlockTime returns the sub-second time encoded and stored by

@@ -54,7 +54,7 @@ func TestMarkExecuted(t *testing.T) {
 	rawdb.WriteBlock(db, ethB)
 
 	settles := newBlock(t, newEthBlock(0, 0, nil), nil, nil)
-	tm := mustNewGasTime(t, time.Unix(0, 0), 1, 0, hook.DefaultGasConfig())
+	tm := mustNewGasTime(t, time.Unix(0, 0), 1, 0, hook.DefaultGasPriceConfig())
 	settles.markExecutedForTests(t, db, tm)
 	b := newBlock(t, ethB, nil, settles)
 
@@ -88,7 +88,7 @@ func TestMarkExecuted(t *testing.T) {
 		}
 	})
 
-	gasTime := mustNewGasTime(t, time.Unix(42, 0), 1e6, 42, hook.DefaultGasConfig())
+	gasTime := mustNewGasTime(t, time.Unix(42, 0), 1e6, 42, hook.DefaultGasPriceConfig())
 	wallTime := time.Unix(42, 100)
 	stateRoot := common.Hash{'s', 't', 'a', 't', 'e'}
 	baseFee := big.NewInt(314159)
@@ -151,9 +151,9 @@ type selfAsHasher common.Hash
 
 func (h selfAsHasher) Hash() common.Hash { return common.Hash(h) }
 
-func mustNewGasTime(tb testing.TB, at time.Time, target, excess gas.Gas, gasConfig hook.GasConfig) *gastime.Time {
+func mustNewGasTime(tb testing.TB, at time.Time, target, excess gas.Gas, gasPriceConfig hook.GasPriceConfig) *gastime.Time {
 	tb.Helper()
-	tm, err := gastime.New(at, target, excess, gasConfig)
+	tm, err := gastime.New(at, target, excess, gasPriceConfig)
 	require.NoError(tb, err, "gastime.New()")
 	return tm
 }

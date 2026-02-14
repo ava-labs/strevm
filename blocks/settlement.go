@@ -90,7 +90,7 @@ func (b *Block) MarkSynchronous(hooks hook.Points, db ethdb.Database, excessAfte
 		PreciseTime(hooks, b.Header()),
 		hooks.GasTargetAfter(b.Header()), // target _after_ is a requirement of [Block.MarkExecuted]
 		excessAfter,
-		hooks.GasConfigAfter(b.Header()),
+		hooks.GasPriceConfigAfter(b.Header()),
 	)
 	if err != nil {
 		return err

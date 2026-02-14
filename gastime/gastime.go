@@ -54,13 +54,13 @@ func (tm *Time) establishInvariants() {
 
 // New returns a new [Time], derived from a [time.Time]. The consumption of
 // `target` * [TargetToRate] units of [gas.Gas] is equivalent to a tick of 1
-// second. Targets are clamped to [MaxTarget]. The gasConfig parameter
+// second. Targets are clamped to [MaxTarget]. The gasPriceConfig parameter
 // specifies the gas pricing configurations.
-func New(at time.Time, target, startingExcess gas.Gas, gasConfig hook.GasConfig) (*Time, error) {
+func New(at time.Time, target, startingExcess gas.Gas, gasPriceConfig hook.GasPriceConfig) (*Time, error) {
 	internalCfg := config{
-		targetToExcessScaling: gasConfig.TargetToExcessScaling,
-		minPrice:              gasConfig.MinPrice,
-		staticPricing:         gasConfig.StaticPricing,
+		targetToExcessScaling: gasPriceConfig.TargetToExcessScaling,
+		minPrice:              gasPriceConfig.MinPrice,
+		staticPricing:         gasPriceConfig.StaticPricing,
 	}
 	if err := internalCfg.validate(); err != nil {
 		return nil, err
@@ -144,7 +144,7 @@ func (c *config) validate() error {
 //   - M decreases: Scale excess to maintain current price
 //   - M increases AND current price >= new M: Scale excess to maintain current price
 //   - M increases AND current price < new M: Price bumps to new M (excess becomes 0)
-func (tm *Time) SetConfig(cfg hook.GasConfig) error {
+func (tm *Time) SetConfig(cfg hook.GasPriceConfig) error {
 	newCfg := config{
 		targetToExcessScaling: cfg.TargetToExcessScaling,
 		minPrice:              cfg.MinPrice,

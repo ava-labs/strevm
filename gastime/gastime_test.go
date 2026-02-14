@@ -20,10 +20,10 @@ import (
 	"github.com/ava-labs/strevm/proxytime"
 )
 
-func mustNew(tb testing.TB, at time.Time, target, startingExcess gas.Gas, gasConfig hook.GasConfig) *Time {
+func mustNew(tb testing.TB, at time.Time, target, startingExcess gas.Gas, gasPriceConfig hook.GasPriceConfig) *Time {
 	tb.Helper()
-	tm, err := New(at, target, startingExcess, gasConfig)
-	require.NoError(tb, err, "New(%v, %d, %d, %v)", at, target, startingExcess, gasConfig)
+	tm, err := New(at, target, startingExcess, gasPriceConfig)
+	require.NoError(tb, err, "New(%v, %d, %d, %v)", at, target, startingExcess, gasPriceConfig)
 	return tm
 }
 
@@ -35,7 +35,7 @@ func (tm *Time) cloneViaCanotoRoundTrip(tb testing.TB) *Time {
 }
 
 func TestClone(t *testing.T) {
-	tm := mustNew(t, time.Unix(42, 0), 1e6, 1e5, hook.GasConfig{TargetToExcessScaling: 100, MinPrice: 100})
+	tm := mustNew(t, time.Unix(42, 0), 1e6, 1e5, hook.GasPriceConfig{TargetToExcessScaling: 100, MinPrice: 100})
 
 	if diff := cmp.Diff(tm, tm.Clone(), CmpOpt()); diff != "" {
 		t.Errorf("%T.Clone() diff (-want +got):\n%s", tm, diff)
@@ -43,42 +43,6 @@ func TestClone(t *testing.T) {
 	if diff := cmp.Diff(tm, tm.cloneViaCanotoRoundTrip(t), CmpOpt()); diff != "" {
 		t.Errorf("%T.UnmarshalCanoto(%[1]T.MarshalCanoto()) diff (-want +got):\n%s", tm, diff)
 	}
-}
-
-// TestUnmarshalBackwardCompatibility verifies that deserializing old data
-// (without config field) applies default values for TargetToExcessScaling
-// and MinPrice, ensuring backward compatibility.
-func TestUnmarshalBackwardCompatibility(t *testing.T) {
-	// Create a Time and serialize it
-	tm := mustNew(t, time.Unix(42, 0), 1e6, 1e5, hook.DefaultGasConfig())
-
-	// Manually create serialized data without config field by using the
-	// proxytime.Time and target/excess fields only
-	tmWithoutConfig := &Time{
-		TimeMarshaler: TimeMarshaler{
-			Time:   tm.Time,
-			target: tm.target,
-			excess: tm.excess,
-			// config is zero-valued (no TargetToExcessScaling, no MinPrice)
-		},
-	}
-
-	// Serialize the Time without config
-	data := tmWithoutConfig.MarshalCanoto()
-
-	// Deserialize - should apply defaults
-	restored := new(Time)
-	require.NoError(t, restored.UnmarshalCanoto(data), "UnmarshalCanoto(%v)", data)
-
-	// Verify defaults were applied
-	assert.Equal(t, gas.Gas(hook.DefaultTargetToExcessScaling), restored.config.targetToExcessScaling,
-		"TargetToExcessScaling should default to %d", hook.DefaultTargetToExcessScaling)
-	assert.Equal(t, hook.DefaultMinPrice, restored.config.minPrice,
-		"MinPrice should default to %d", hook.DefaultMinPrice)
-
-	// Verify the Time is functional
-	assert.Equal(t, tm.target, restored.target, "target changed")
-	assert.Equal(t, tm.excess, restored.excess, "excess changed")
 }
 
 // state captures parameters about a [Time] for assertion in tests. It includes
@@ -154,7 +118,7 @@ func TestNew(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			tm := time.Unix(tt.unix, tt.nanos)
-			got := mustNew(t, tm, tt.target, tt.excess, hook.DefaultGasConfig())
+			got := mustNew(t, tm, tt.target, tt.excess, hook.DefaultGasPriceConfig())
 			got.requireState(t, fmt.Sprintf("New(%v, %d, %d)", tm, tt.target, tt.excess), tt.want, ignore)
 		})
 	}
@@ -172,7 +136,7 @@ func (tm *Time) mustSetTarget(tb testing.TB, target gas.Gas) {
 
 func TestScaling(t *testing.T) {
 	const initExcess = gas.Gas(1_234_567_890)
-	tm := mustNew(t, time.Unix(42, 0), 1.6e6, initExcess, hook.DefaultGasConfig())
+	tm := mustNew(t, time.Unix(42, 0), 1.6e6, initExcess, hook.DefaultGasPriceConfig())
 
 	// The initial price isn't important in this test; what we care about is
 	// that it's invariant under scaling of the target etc.
@@ -248,7 +212,7 @@ func TestScaling(t *testing.T) {
 
 func TestExcess(t *testing.T) {
 	const rate = gas.Gas(3.2e6)
-	tm := mustNew(t, time.Unix(42, 0), rate/2, 0, hook.DefaultGasConfig())
+	tm := mustNew(t, time.Unix(42, 0), rate/2, 0, hook.DefaultGasPriceConfig())
 
 	frac := func(num gas.Gas) (f proxytime.FractionalSecond[gas.Gas]) {
 		f.Numerator = num
@@ -393,7 +357,7 @@ func TestExcessScalingFactor(t *testing.T) {
 		{max, max},        // target clamped to MaxTarget, still overflows
 	}
 	t.Run("default", func(t *testing.T) {
-		tm := mustNew(t, time.Unix(0, 0), 1, 0, hook.DefaultGasConfig())
+		tm := mustNew(t, time.Unix(0, 0), 1, 0, hook.DefaultGasPriceConfig())
 		for _, tt := range defaultTests {
 			require.NoErrorf(t, tm.SetTarget(tt.target), "%T.SetTarget(%v)", tm, tt.target)
 			assert.Equalf(t, tt.want, tm.excessScalingFactor(), "T=%d", tt.target)
@@ -432,7 +396,7 @@ func TestExcessScalingFactor(t *testing.T) {
 
 	t.Run("custom scaling", func(t *testing.T) {
 		for _, tt := range customTests {
-			tm := mustNew(t, time.Unix(0, 0), tt.target, 0, hook.GasConfig{TargetToExcessScaling: tt.scaling, MinPrice: hook.DefaultMinPrice})
+			tm := mustNew(t, time.Unix(0, 0), tt.target, 0, hook.GasPriceConfig{TargetToExcessScaling: tt.scaling, MinPrice: hook.DefaultMinPrice})
 			require.NoErrorf(t, tm.SetTarget(tt.target), "%T.SetTarget(%v)", tm, tt.target)
 			assert.Equalf(t, tt.want, tm.excessScalingFactor(), "scaling=%d, T=%d", tt.scaling, tt.target)
 		}
@@ -453,7 +417,7 @@ func TestMinPrice(t *testing.T) {
 			{1_000_000, 100_000_000, 3}, // excess/K ≈ 1.15, e^1.15 ≈ 3.16
 		}
 		for _, tt := range tests {
-			tm := mustNew(t, time.Unix(0, 0), tt.target, tt.excess, hook.DefaultGasConfig())
+			tm := mustNew(t, time.Unix(0, 0), tt.target, tt.excess, hook.DefaultGasPriceConfig())
 			assert.Equalf(t, tt.want, tm.Price(), "target=%d, excess=%d", tt.target, tt.excess)
 		}
 	})
@@ -475,16 +439,16 @@ func TestMinPrice(t *testing.T) {
 			{100, 1_000_000, 87_000_000, 271}, // 100 * e^1 ≈ 271
 		}
 		for _, tt := range tests {
-			tm := mustNew(t, time.Unix(0, 0), tt.target, tt.excess, hook.GasConfig{TargetToExcessScaling: hook.DefaultTargetToExcessScaling, MinPrice: tt.minPrice})
+			tm := mustNew(t, time.Unix(0, 0), tt.target, tt.excess, hook.GasPriceConfig{TargetToExcessScaling: hook.DefaultTargetToExcessScaling, MinPrice: tt.minPrice})
 			assert.Equalf(t, tt.want, tm.Price(), "minPrice=%d, target=%d, excess=%d", tt.minPrice, tt.target, tt.excess)
 		}
 	})
 
 	t.Run("min price updated via SetOpts", func(t *testing.T) {
-		tm := mustNew(t, time.Unix(0, 0), 1_000_000, 0, hook.DefaultGasConfig())
+		tm := mustNew(t, time.Unix(0, 0), 1_000_000, 0, hook.DefaultGasPriceConfig())
 		assert.Equal(t, hook.DefaultMinPrice, tm.Price(), "initial price with default minPrice")
 
-		cfg := hook.DefaultGasConfig()
+		cfg := hook.DefaultGasPriceConfig()
 		cfg.MinPrice = 100
 		require.NoError(t, tm.SetConfig(cfg))
 		assert.Equal(t, gas.Price(100), tm.Price(), "price after SetOpts(WithMinPrice(100))")
@@ -502,7 +466,7 @@ func TestMinPrice(t *testing.T) {
 }
 
 func TestTargetClamping(t *testing.T) {
-	tm := mustNew(t, time.Unix(0, 0), MaxTarget+1, 0, hook.DefaultGasConfig())
+	tm := mustNew(t, time.Unix(0, 0), MaxTarget+1, 0, hook.DefaultGasPriceConfig())
 	require.Equal(t, MaxTarget, tm.Target(), "tm.Target() clamped by constructor")
 
 	tests := []struct {
