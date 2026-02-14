@@ -255,10 +255,6 @@ type ethAPIBackend struct {
 	ethapi.Backend // TODO(arr4n) remove once all methods are implemented
 }
 
-func (b *ethAPIBackend) ChainDb() ethdb.Database {
-	return b.vm.db
-}
-
 func (b *ethAPIBackend) ChainConfig() *params.ChainConfig {
 	return b.vm.exec.ChainConfig()
 }
