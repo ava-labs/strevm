@@ -216,12 +216,12 @@ type chainIndexer struct {
 
 var _ core.ChainIndexerChain = chainIndexer{}
 
-func (ci chainIndexer) CurrentHeader() *types.Header {
-	return types.CopyHeader(ci.exec.LastExecuted().Header())
+func (c chainIndexer) CurrentHeader() *types.Header {
+	return types.CopyHeader(c.exec.LastExecuted().Header())
 }
 
-func (ci chainIndexer) SubscribeChainHeadEvent(ch chan<- core.ChainHeadEvent) event.Subscription {
-	return ci.exec.SubscribeChainHeadEvent(ch)
+func (c chainIndexer) SubscribeChainHeadEvent(ch chan<- core.ChainHeadEvent) event.Subscription {
+	return c.exec.SubscribeChainHeadEvent(ch)
 }
 
 // A bloomOverrider constructs Bloom filters from persisted receipts instead of
