@@ -22,14 +22,15 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/ava-labs/strevm/gastime"
+	"github.com/ava-labs/strevm/saedb"
 	"github.com/ava-labs/strevm/saetest"
 )
 
 // markExecutedForTests calls [Block.MarkExecuted] with zero-value
 // post-execution artefacts (other than the gas time).
-func (b *Block) markExecutedForTests(tb testing.TB, db ethdb.Database, tm *gastime.Time) {
+func (b *Block) markExecutedForTests(tb testing.TB, db ethdb.Database, xdb saedb.ExecutionResults, tm *gastime.Time) {
 	tb.Helper()
-	require.NoError(tb, b.MarkExecuted(db, tm, time.Time{}, new(big.Int), nil, common.Hash{}, new(atomic.Pointer[Block])), "MarkExecuted()")
+	require.NoError(tb, b.MarkExecuted(db, xdb, tm, time.Time{}, new(big.Int), nil, common.Hash{}, new(atomic.Pointer[Block])), "MarkExecuted()")
 }
 
 func TestMarkExecuted(t *testing.T) {
@@ -51,9 +52,10 @@ func TestMarkExecuted(t *testing.T) {
 	)
 	db := rawdb.NewMemoryDatabase()
 	rawdb.WriteBlock(db, ethB)
+	xdb := saetest.NewExecutionResultsDB()
 
 	settles := newBlock(t, newEthBlock(0, 0, nil), nil, nil)
-	settles.markExecutedForTests(t, db, gastime.New(time.Unix(0, 0), 1, 0))
+	settles.markExecutedForTests(t, db, xdb, gastime.New(time.Unix(0, 0), 1, 0))
 	b := newBlock(t, ethB, nil, settles)
 
 	t.Run("before_MarkExecuted", func(t *testing.T) {
@@ -97,10 +99,10 @@ func TestMarkExecuted(t *testing.T) {
 		})
 	}
 	lastExecuted := new(atomic.Pointer[Block])
-	require.NoError(t, b.MarkExecuted(db, gasTime, wallTime, baseFee.ToBig(), receipts, stateRoot, lastExecuted), "MarkExecuted()")
+	require.NoError(t, b.MarkExecuted(db, xdb, gasTime, wallTime, baseFee.ToBig(), receipts, stateRoot, lastExecuted), "MarkExecuted()")
 
 	fromDB := newBlock(t, b.EthBlock(), b.ParentBlock(), b.LastSettled())
-	require.NoError(t, fromDB.RestoreExecutionArtefacts(db), "RestoreExecutionArtefacts()")
+	require.NoError(t, fromDB.RestoreExecutionArtefacts(db, xdb), "RestoreExecutionArtefacts()")
 	tests := []struct {
 		name           string
 		isLastExecuted bool
@@ -142,7 +144,7 @@ func TestMarkExecuted(t *testing.T) {
 			t.Run("MarkExecuted_again", func(t *testing.T) {
 				rec := saetest.NewLogRecorder(logging.Warn)
 				b.log = rec
-				assert.ErrorIs(t, b.MarkExecuted(db, gasTime, wallTime, baseFee.ToBig(), receipts, stateRoot, lastExecuted), errMarkBlockExecutedAgain)
+				assert.ErrorIs(t, b.MarkExecuted(db, xdb, gasTime, wallTime, baseFee.ToBig(), receipts, stateRoot, lastExecuted), errMarkBlockExecutedAgain)
 				// The database's head block might have been corrupted so this MUST
 				// be a fatal action.
 				assert.Len(t, rec.At(logging.Fatal), 1, "FATAL logs")

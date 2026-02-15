@@ -5,8 +5,6 @@ package saedb
 
 import (
 	"testing"
-
-	"github.com/stretchr/testify/assert"
 )
 
 func TestTrieDBCommitHeights(t *testing.T) {
@@ -48,34 +46,5 @@ func TestTrieDBCommitHeights(t *testing.T) {
 		if got, want := LastCommittedTrieDBHeight(num), last; got != want {
 			t.Errorf("LastCommitedTrieDBHeight(%d) got %d; want %d", num, got, want)
 		}
-	}
-}
-
-func TestRawDBKeyForBlock(t *testing.T) {
-	tests := []struct {
-		namespace string
-		num       uint64
-		want      string
-	}{
-		{
-			namespace: "foo",
-			num:       0,
-			want:      rawDBPrefix + "foo-" + string(make([]byte, 8)),
-		},
-		{
-			namespace: "bar",
-			num:       42,
-			want:      rawDBPrefix + "bar-" + string([]byte{7: 42}),
-		},
-		{
-			namespace: "bazza",
-			num:       42 << (7 * 8),
-			want:      rawDBPrefix + "bazza-" + string([]byte{0: 42, 7: 0}),
-		},
-	}
-
-	for _, tt := range tests {
-		got := RawDBKeyForBlock(tt.namespace, tt.num)
-		assert.Equalf(t, tt.want, string(got), "RawDBKeyForBlock(%q, %d)", tt.namespace, tt.num)
 	}
 }

@@ -215,7 +215,7 @@ func (e *Executor) execute(b *blocks.Block, logger logging.Logger) error {
 	// 1. [blocks.Block.MarkExecuted] guarantees disk then in-memory changes.
 	// 2. Internal indicator of last executed MUST follow in-memory change.
 	// 3. External indicator of last executed MUST follow internal indicator.
-	if err := b.MarkExecuted(e.db, gasClock.Clone(), endTime, header.BaseFee, receipts, root, &e.lastExecuted /* (2) */); err != nil {
+	if err := b.MarkExecuted(e.db, e.xdb, gasClock.Clone(), endTime, header.BaseFee, receipts, root, &e.lastExecuted /* (2) */); err != nil {
 		return err
 	}
 	e.sendPostExecutionEvents(b.EthBlock(), receipts) // (3)

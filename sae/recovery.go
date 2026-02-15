@@ -25,6 +25,7 @@ import (
 
 type recovery struct {
 	db              ethdb.Database
+	xdb             saedb.ExecutionResults
 	log             logging.Logger
 	config          Config
 	lastSynchronous *blocks.Block
@@ -50,7 +51,7 @@ func (rec *recovery) lastBlockWithStateRootAvailable() (*blocks.Block, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := b.RestoreExecutionArtefacts(rec.db); err != nil {
+	if err := b.RestoreExecutionArtefacts(rec.db, rec.xdb); err != nil {
 		return nil, err
 	}
 	{
@@ -129,7 +130,7 @@ func (rec *recovery) rebuildBlocksInMemory(lastExecuted *blocks.Block) (_ *syncM
 				if err != nil {
 					return err
 				}
-				if err := parent.RestoreExecutionArtefacts(rec.db); err != nil {
+				if err := parent.RestoreExecutionArtefacts(rec.db, rec.xdb); err != nil {
 					return err
 				}
 				chain = append(chain, parent)

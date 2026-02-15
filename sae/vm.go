@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -19,6 +20,7 @@ import (
 	"github.com/ava-labs/avalanchego/utils/bloom"
 	"github.com/ava-labs/avalanchego/utils/logging"
 	"github.com/ava-labs/avalanchego/version"
+	"github.com/ava-labs/avalanchego/vms/components/gas"
 	"github.com/ava-labs/libevm/accounts"
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core"
@@ -73,6 +75,8 @@ type Config struct {
 	TrieDBConfig  *triedb.Config
 	RPCConfig     RPCConfig
 
+	ExcessAfterLastSynchronous gas.Gas
+
 	Now func() time.Time // defaults to [time.Now] if nil
 }
 
@@ -89,22 +93,18 @@ type RPCConfig struct {
 // (the latter provided via the [Config]).
 func NewVM(
 	ctx context.Context,
-	c Config,
+	cfg Config,
 	snowCtx *snow.Context,
 	chainConfig *params.ChainConfig,
 	db ethdb.Database,
 	lastSynchronous *blocks.Block,
 	sender snowcommon.AppSender,
 ) (_ *VM, retErr error) {
-	if c.Now == nil {
-		c.Now = time.Now
+	if cfg.Now == nil {
+		cfg.Now = time.Now
 	}
-	if err := canonicaliseLastSynchronous(db, lastSynchronous); err != nil {
-		return nil, err
-	}
-
 	vm := &VM{
-		config:  c,
+		config:  cfg,
 		snowCtx: snowCtx,
 		metrics: prometheus.NewRegistry(),
 		db:      db,
@@ -120,7 +120,24 @@ func NewVM(
 		return nil, err
 	}
 
-	rec := &recovery{db, snowCtx.Log, vm.config, lastSynchronous}
+	xdb, err := cfg.Hooks.ExecutionResultsDB(
+		filepath.Join(snowCtx.ChainDataDir, "sae_execution_results"),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("%T.ExecutionResultsDB(%q): %v", cfg.Hooks, snowCtx.ChainDataDir, err)
+	}
+	vm.toClose = append(vm.toClose, xdb.Close)
+
+	{ // ==========  Sync -> Async  ==========
+		if err := lastSynchronous.MarkSynchronous(cfg.Hooks, db, xdb, cfg.ExcessAfterLastSynchronous); err != nil {
+			return nil, fmt.Errorf("%T{genesis}.MarkSynchronous(): %v", lastSynchronous, err)
+		}
+		if err := canonicaliseLastSynchronous(db, lastSynchronous); err != nil {
+			return nil, err
+		}
+	}
+
+	rec := &recovery{db, xdb, snowCtx.Log, cfg, lastSynchronous}
 	{ // ==========  Executor  ==========
 		lastExecuted, unexecuted, err := rec.recoverFromDB()
 		if err != nil {
@@ -132,7 +149,8 @@ func NewVM(
 			vm.blockSource,
 			chainConfig,
 			db,
-			vm.config.TrieDBConfig,
+			xdb,
+			cfg.TrieDBConfig,
 			vm.hooks(),
 			snowCtx.Log,
 		)
@@ -174,7 +192,7 @@ func NewVM(
 	{ // ==========  Mempool  ==========
 		bc := txgossip.NewBlockChain(vm.exec, vm.blockSource)
 		pools := []txpool.SubPool{
-			legacypool.New(vm.config.MempoolConfig, bc),
+			legacypool.New(cfg.MempoolConfig, bc),
 		}
 		txPool, err := txpool.New(0, bc, pools)
 		if err != nil {

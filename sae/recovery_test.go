@@ -25,13 +25,15 @@ import (
 	"github.com/ava-labs/strevm/cmputils"
 	saeparams "github.com/ava-labs/strevm/params"
 	"github.com/ava-labs/strevm/saedb"
+	"github.com/ava-labs/strevm/saetest"
 )
 
 func TestRecoverFromDatabase(t *testing.T) {
 	sutOpt, vmTime := withVMTime(t, time.Unix(saeparams.TauSeconds, 0))
 
 	var srcDB database.Database
-	ctx, src := newSUT(t, 1, sutOpt, options.Func[sutConfig](func(c *sutConfig) {
+	srcHDB := saetest.NewHeightIndexDB()
+	ctx, src := newSUT(t, 1, sutOpt, withExecResultsDB(srcHDB), options.Func[sutConfig](func(c *sutConfig) {
 		srcDB = c.db
 		c.logLevel = logging.Warn
 	}))
@@ -78,7 +80,7 @@ func TestRecoverFromDatabase(t *testing.T) {
 			}
 			require.NoError(t, it.Error())
 
-			sutCtx, sut := newSUT(t, 1, sutOpt, options.Func[sutConfig](func(c *sutConfig) {
+			sutCtx, sut := newSUT(t, 1, sutOpt, withExecResultsDB(srcHDB.Clone()), options.Func[sutConfig](func(c *sutConfig) {
 				c.db = newDB
 				c.logLevel = logging.Warn
 			}))

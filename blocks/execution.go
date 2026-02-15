@@ -67,14 +67,6 @@ func (e *executionResults) setBaseFee(bf *big.Int) error {
 	return nil
 }
 
-func (e *executionResults) persist(kv ethdb.KeyValueWriter, blockNum uint64) error {
-	return kv.Put(executionResultsKey(blockNum), e.MarshalCanoto())
-}
-
-func executionResultsKey(blockNum uint64) []byte {
-	return saedb.RawDBKeyForBlock("exec", blockNum)
-}
-
 // MarkExecuted marks the block as having been executed at the specified time(s)
 // and with the specified results. It also sets the chain's head block to b. The
 // [gastime.Time] MUST have already been scaled to the target applicable after
@@ -91,6 +83,7 @@ func executionResultsKey(blockNum uint64) []byte {
 // for metrics only.
 func (b *Block) MarkExecuted(
 	db ethdb.Database,
+	xdb saedb.ExecutionResults,
 	byGas *gastime.Time,
 	byWall time.Time,
 	baseFee *big.Int,
@@ -124,7 +117,7 @@ func (b *Block) MarkExecuted(
 
 	batch := db.NewBatch()
 	rawdb.WriteReceipts(batch, b.Hash(), b.NumberU64(), receipts)
-	return b.markExecuted(batch, e, true, lastExecuted)
+	return b.markExecuted(batch, xdb, e, true, lastExecuted)
 }
 
 var errMarkBlockExecutedAgain = errors.New("block re-marked as executed")
@@ -138,19 +131,19 @@ var errMarkBlockExecutedAgain = errors.New("block re-marked as executed")
 //
 // The batch is `Write()`n (yeah, it's a word now) after all disk artefacts are
 // persisted.
-func (b *Block) markExecuted(batch ethdb.Batch, e *executionResults, setAsHeadBlock bool, lastExecuted *atomic.Pointer[Block]) error {
-	if err := b.markExecutedOnDisk(batch, e, setAsHeadBlock); err != nil {
+func (b *Block) markExecuted(batch ethdb.Batch, xdb saedb.ExecutionResults, e *executionResults, setAsHeadBlock bool, lastExecuted *atomic.Pointer[Block]) error {
+	if err := b.markExecutedOnDisk(batch, xdb, e, setAsHeadBlock); err != nil {
 		return err
 	}
 	return b.markExecutedAfterDiskArtefacts(e, lastExecuted)
 }
 
-func (b *Block) markExecutedOnDisk(batch ethdb.Batch, e *executionResults, setAsHeadBlock bool) error {
+func (b *Block) markExecutedOnDisk(batch ethdb.Batch, xdb saedb.ExecutionResults, e *executionResults, setAsHeadBlock bool) error {
+	if err := xdb.Put(b.Height(), e.MarshalCanoto()); err != nil {
+		return err
+	}
 	if setAsHeadBlock {
 		b.SetAsHeadBlock(batch)
-	}
-	if err := e.persist(batch, b.Height()); err != nil {
-		return err
 	}
 	return batch.Write()
 }
@@ -185,8 +178,8 @@ func (b *Block) SetAsHeadBlock(kv ethdb.KeyValueWriter) {
 // RestoreExecutionArtefacts reloads post-execution artefacts persisted by
 // [Block.MarkExecuted] such that the block is in an equivalent state to when
 // said function was originally called.
-func (b *Block) RestoreExecutionArtefacts(db ethdb.Database) error {
-	buf, err := db.Get(executionResultsKey(b.NumberU64()))
+func (b *Block) RestoreExecutionArtefacts(db ethdb.Database, xdb saedb.ExecutionResults) error {
+	buf, err := xdb.Get(b.NumberU64())
 	if err != nil {
 		return err
 	}

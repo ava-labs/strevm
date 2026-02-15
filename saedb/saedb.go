@@ -7,27 +7,7 @@
 // [Streaming Asynchronous Execution]: https://github.com/avalanche-foundation/ACPs/tree/main/ACPs/194-streaming-asynchronous-execution
 package saedb
 
-import (
-	"encoding/binary"
-
-	// Imported for [rawdb] comment-link resolution.
-	_ "github.com/ava-labs/libevm/core/rawdb"
-)
-
-const rawDBPrefix = "\x00\x00-ava-sae-"
-
-// RawDBKeyForBlock returns an SAE-specific key for use with the [rawdb]
-// package.
-func RawDBKeyForBlock(namespace string, num uint64) []byte {
-	n := len(rawDBPrefix) + len(namespace) + 1 /*hyphen*/
-	key := make([]byte, n, n+8)
-
-	copy(key, []byte(rawDBPrefix))
-	copy(key[len(rawDBPrefix):], []byte(namespace))
-
-	key[n-1] = '-'
-	return binary.BigEndian.AppendUint64(key, num)
-}
+import "github.com/ava-labs/avalanchego/database"
 
 const (
 	// CommitTrieDBEvery is the number of blocks between commits of the state
@@ -46,4 +26,11 @@ func ShouldCommitTrieDB(blockNum uint64) bool {
 // [ShouldCommitTrieDB] would have returned true.
 func LastCommittedTrieDBHeight(atOrBefore uint64) uint64 {
 	return atOrBefore &^ commitTrieDBMask
+}
+
+// ExecutionResults provides type safety for a [database.HeightIndex], to be
+// used for persistence of SAE-specific execution results, avoiding possible
+// collision with `rawdb` keys.
+type ExecutionResults struct {
+	database.HeightIndex
 }

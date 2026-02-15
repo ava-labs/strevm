@@ -42,6 +42,7 @@ type Executor struct {
 	chainContext core.ChainContext
 	chainConfig  *params.ChainConfig
 	db           ethdb.Database
+	xdb          saedb.ExecutionResults
 	stateCache   state.Database
 	// snaps MUST NOT be accessed by any methods other than [Executor.execute]
 	// and [Executor.Close].
@@ -59,6 +60,7 @@ func New(
 	blockSrc blocks.Source,
 	chainConfig *params.ChainConfig,
 	db ethdb.Database,
+	xdb saedb.ExecutionResults,
 	triedbConfig *triedb.Config,
 	hooks hook.Points,
 	log logging.Logger,
@@ -87,6 +89,7 @@ func New(
 		db:           db,
 		stateCache:   cache,
 		snaps:        snaps,
+		xdb:          xdb,
 	}
 	e.lastExecuted.Store(lastExecuted)
 

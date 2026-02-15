@@ -26,6 +26,7 @@ import (
 
 	"github.com/ava-labs/strevm/blocks"
 	"github.com/ava-labs/strevm/hook/hookstest"
+	"github.com/ava-labs/strevm/saedb"
 	"github.com/ava-labs/strevm/saetest"
 )
 
@@ -101,7 +102,7 @@ func WithLogger(l logging.Logger) BlockOption {
 // returns wraps [core.Genesis.ToBlock] with [NewBlock]. It assumes a nil
 // [triedb.Config] unless overridden by a [WithTrieDBConfig]. The block is
 // marked as both executed and synchronous.
-func NewGenesis(tb testing.TB, db ethdb.Database, config *params.ChainConfig, alloc types.GenesisAlloc, opts ...GenesisOption) *blocks.Block {
+func NewGenesis(tb testing.TB, db ethdb.Database, xdb saedb.ExecutionResults, config *params.ChainConfig, alloc types.GenesisAlloc, opts ...GenesisOption) *blocks.Block {
 	tb.Helper()
 	conf := &genesisConfig{
 		gasTarget: math.MaxUint64,
@@ -121,7 +122,7 @@ func NewGenesis(tb testing.TB, db ethdb.Database, config *params.ChainConfig, al
 
 	b := NewBlock(tb, gen.ToBlock(), nil, nil)
 	h := &hookstest.Stub{Target: conf.gasTarget}
-	require.NoErrorf(tb, b.MarkSynchronous(h, db, conf.gasExcess), "%T.MarkSynchronous()", b)
+	require.NoErrorf(tb, b.MarkSynchronous(h, db, xdb, conf.gasExcess), "%T.MarkSynchronous()", b)
 	return b
 }
 
