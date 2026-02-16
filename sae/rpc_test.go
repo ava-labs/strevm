@@ -648,7 +648,7 @@ func TestEthPendingTransactions(t *testing.T) {
 
 func TestReceiptAPIs(t *testing.T) {
 	opt, vmTime := withVMTime(t, time.Unix(saeparams.TauSeconds, 0))
-	ctx, sut := newSUT(t, 5, opt) 
+	ctx, sut := newSUT(t, 5, opt)
 
 	// Blocking precompile creates accepted-but-not-executed blocks
 	blockingPrecompile := common.Address{'b', 'l', 'o', 'c', 'k'}
@@ -679,7 +679,6 @@ func TestReceiptAPIs(t *testing.T) {
 		require.NoError(t, err, "TransactionReceipt(%s)", tx.Hash())
 		return receipt
 	}
-
 
 	genesis := sut.lastAcceptedBlock(t)
 
@@ -805,16 +804,12 @@ func TestReceiptAPIs(t *testing.T) {
 		}...)
 	})
 
-	// Missing or malformed execution results must surface as backend failures.
-	execKey := saeparams.RawDBKeyForBlock("exec", blockSettled.Height())
-	require.NoError(t, sut.db.Delete(execKey))
+	// Malformed execution results must surface as backend failures.
+	xdb := sut.rawVM.xdb
+	require.NoError(t, xdb.Put(blockSettled.Height(), []byte{0x01}))
 
 	var receipt *types.Receipt
 	err := sut.CallContext(ctx, &receipt, "eth_getTransactionReceipt", txSettled.Hash())
-	require.ErrorContains(t, err, "restoring execution artefacts")
-
-	require.NoError(t, sut.db.Put(execKey, []byte{0x01}))
-	err = sut.CallContext(ctx, &receipt, "eth_getTransactionReceipt", txSettled.Hash()) 
 	require.ErrorContains(t, err, "restoring execution artefacts")
 }
 

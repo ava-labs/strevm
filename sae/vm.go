@@ -35,6 +35,7 @@ import (
 
 	"github.com/ava-labs/strevm/blocks"
 	"github.com/ava-labs/strevm/hook"
+	"github.com/ava-labs/strevm/saedb"
 	"github.com/ava-labs/strevm/saexec"
 	"github.com/ava-labs/strevm/txgossip"
 )
@@ -51,6 +52,7 @@ type VM struct {
 	metrics *prometheus.Registry
 
 	db     ethdb.Database
+	xdb    saedb.ExecutionResults
 	blocks *syncMap[common.Hash, *blocks.Block]
 
 	consensusState utils.Atomic[snow.State]
@@ -126,6 +128,7 @@ func NewVM(
 	if err != nil {
 		return nil, fmt.Errorf("%T.ExecutionResultsDB(%q): %v", cfg.Hooks, snowCtx.ChainDataDir, err)
 	}
+	vm.xdb = xdb
 	vm.toClose = append(vm.toClose, xdb.Close)
 
 	{ // ==========  Sync -> Async  ==========

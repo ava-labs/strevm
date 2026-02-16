@@ -506,7 +506,7 @@ func (b *ethAPIBackend) GetReceipts(ctx context.Context, hash common.Hash) (type
 	if err != nil {
 		return nil, err
 	}
-	if err := block.RestoreExecutionArtefacts(b.vm.db); err != nil {
+	if err := block.RestoreExecutionArtefacts(b.vm.db, b.vm.xdb); err != nil {
 		return nil, fmt.Errorf("restoring execution artefacts: %w", err)
 	}
 
