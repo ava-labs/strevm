@@ -258,8 +258,9 @@ func TestExecution(t *testing.T) {
 	contract := crypto.CreateAddress(eoa, deploy.Nonce())
 	txs = append(txs, deploy)
 	want = append(want, &types.Receipt{
-		TxHash:          deploy.Hash(),
-		ContractAddress: contract,
+		TxHash:            deploy.Hash(),
+		ContractAddress:   contract,
+		EffectiveGasPrice: big.NewInt(1),
 	})
 
 	rng := rand.New(rand.NewPCG(0, 0)) //nolint:gosec // Reproducibility is useful for tests
@@ -281,8 +282,9 @@ func TestExecution(t *testing.T) {
 		ev.Address = contract
 		ev.TxHash = tx.Hash()
 		want = append(want, &types.Receipt{
-			TxHash: tx.Hash(),
-			Logs:   []*types.Log{ev},
+			TxHash:            tx.Hash(),
+			EffectiveGasPrice: big.NewInt(1),
+			Logs:              []*types.Log{ev},
 		})
 	}
 
@@ -313,7 +315,7 @@ func TestExecution(t *testing.T) {
 	opts := cmp.Options{
 		cmpopts.IgnoreFields(
 			types.Receipt{},
-			"GasUsed", "CumulativeGasUsed", "EffectiveGasPrice",
+			"GasUsed", "CumulativeGasUsed",
 			"Bloom",
 		),
 		cmputils.BigInts(),
@@ -767,7 +769,7 @@ func TestContextualOpCodes(t *testing.T) {
 			diffopts := cmp.Options{
 				cmpopts.IgnoreFields(
 					types.Receipt{},
-					"Bloom", "ContractAddress", "CumulativeGasUsed", "GasUsed", "EffectiveGasPrice",
+					"Bloom", "ContractAddress", "CumulativeGasUsed", "GasUsed",
 				),
 				cmpopts.IgnoreFields(
 					types.Log{},
@@ -780,10 +782,11 @@ func TestContextualOpCodes(t *testing.T) {
 				wantTopic = tt.wantTopicFn()
 			}
 			want := &types.Receipt{
-				Status:      types.ReceiptStatusSuccessful,
-				BlockHash:   b.Hash(),
-				BlockNumber: b.Number(),
-				TxHash:      tx.Hash(),
+				Status:            types.ReceiptStatusSuccessful,
+				BlockHash:         b.Hash(),
+				BlockNumber:       b.Number(),
+				TxHash:            tx.Hash(),
+				EffectiveGasPrice: big.NewInt(1),
 				Logs: []*types.Log{{
 					Topics:      []common.Hash{wantTopic},
 					BlockHash:   b.Hash(),
