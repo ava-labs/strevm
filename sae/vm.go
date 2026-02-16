@@ -27,7 +27,6 @@ import (
 	"github.com/ava-labs/libevm/core/txpool/legacypool"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/ethdb"
-	"github.com/ava-labs/libevm/libevm/ethapi"
 	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/triedb"
 	"github.com/prometheus/client_golang/prometheus"
@@ -60,7 +59,7 @@ type VM struct {
 
 	exec       *saexec.Executor
 	mempool    *txgossip.Set
-	apiBackend ethapi.Backend
+	apiBackend APIBackend
 	newTxs     chan struct{}
 
 	toClose [](func() error)
@@ -70,15 +69,16 @@ type VM struct {
 type Config struct {
 	Hooks         hook.Points
 	MempoolConfig legacypool.Config
-	TrieDBConfig  *triedb.Config
 	RPCConfig     RPCConfig
+	TrieDBConfig  *triedb.Config
 
 	Now func() time.Time // defaults to [time.Now] if nil
 }
 
-// RPCConfig configures RPC API behavior.
+// RPCConfig provides options for initialization of RPCs for the node.
 type RPCConfig struct {
-	EnableProfiling bool
+	BlocksPerBloomSection uint64
+	EnableProfiling       bool
 }
 
 // NewVM returns a new [VM] that is ready for use immediately upon return.
@@ -225,10 +225,20 @@ func NewVM(
 		accountManager := accounts.NewManager(&accounts.Config{})
 		vm.toClose = append(vm.toClose, accountManager.Close)
 
+		chainIdx := chainIndexer{vm.exec}
+		override := bloomOverrider{vm.db}
+		// TODO(alarso16): if we are state syncing, we need to provide the first
+		// block available to the indexer via [core.ChainIndexer.AddCheckpoint].
+		bloomIdx := newBloomIndexer(vm.db, chainIdx, override, c.RPCConfig.BlocksPerBloomSection)
+		vm.toClose = append(vm.toClose, bloomIdx.Close)
+
 		vm.apiBackend = &ethAPIBackend{
-			Set:            vm.mempool,
 			vm:             vm,
 			accountManager: accountManager,
+			Set:            vm.mempool,
+			chainIndexer:   chainIdx,
+			bloomIndexer:   bloomIdx,
+			bloomOverrider: override,
 		}
 	}
 
