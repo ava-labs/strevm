@@ -335,11 +335,11 @@ func readByNumberOrHash[T any](
 	byNum func(context.Context, rpc.BlockNumber) (*T, error),
 	byHash func(context.Context, common.Hash) (*T, error),
 ) (*T, error) {
-	if blockNr, ok := blockNrOrHash.Number(); ok {
-		return byNum(ctx, blockNr)
+	if n, ok := blockNrOrHash.Number(); ok {
+		return byNum(ctx, n)
 	}
-	if hash, ok := blockNrOrHash.Hash(); ok {
-		return byHash(ctx, hash)
+	if h, ok := blockNrOrHash.Hash(); ok {
+		return byHash(ctx, h)
 	}
 	return nil, errNoBlockNorHash
 }
