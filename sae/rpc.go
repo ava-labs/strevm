@@ -319,11 +319,14 @@ func (b *ethAPIBackend) GetPoolTransaction(txHash common.Hash) *types.Transactio
 }
 
 func (b *ethAPIBackend) GetBody(ctx context.Context, hash common.Hash, number rpc.BlockNumber) (*types.Body, error) {
-	if number < 0 || hash == (common.Hash{}) {
-		return nil, errors.New("no named block numbers nor empty hashes allowed")
+	if hash == (common.Hash{}) {
+		return nil, errors.New("empty block hash")
+	}
+	n, err := b.resolveBlockNumber(number)
+	if err != nil {
+		return nil, err
 	}
 
-	n := uint64(number) //nolint:gosec // Non-negative check performed above
 	if block, ok := b.vm.blocks.Load(hash); ok {
 		if block.NumberU64() != n {
 			return nil, fmt.Errorf("found block number %d for hash %#x, expected %d", block.NumberU64(), hash, number)
