@@ -586,6 +586,14 @@ func TestGetLogs(t *testing.T) {
 			wantLogs: logsFrom(settled, executed),
 		},
 		{
+			name: "unknown_contract",
+			query: ethereum.FilterQuery{
+				FromBlock: settled.Number(),
+				ToBlock:   executed.Number(),
+				Addresses: []common.Address{{0xf0, 0x00}},
+			},
+		},
+		{
 			name: "indexed",
 			query: ethereum.FilterQuery{
 				FromBlock: indexed[0].Number(),
