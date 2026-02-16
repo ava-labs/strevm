@@ -48,6 +48,7 @@ type rpcTest struct {
 	args            []any
 	want            any    // untyped nil means no return value.
 	wantErrContains string // empty means no error expected
+	eventually      bool
 }
 
 func (s *SUT) testRPC(ctx context.Context, t *testing.T, tcs ...rpcTest) {
@@ -65,14 +66,25 @@ func (s *SUT) testRPC(ctx context.Context, t *testing.T, tcs ...rpcTest) {
 				tc.want = json.RawMessage{}
 			}
 
-			got := reflect.New(reflect.TypeOf(tc.want))
-			t.Logf("%T.CallContext(ctx, %T, %q, %v...)", s.rpcClient, &tc.want, tc.method, tc.args)
-			err := s.CallContext(ctx, got.Interface(), tc.method, tc.args...)
-			if diff := errdiff.Text(err, tc.wantErrContains); diff != "" {
-				t.Fatalf("CallContext(...) %s", diff)
+			check := func(t require.TestingT) {
+				got := reflect.New(reflect.TypeOf(tc.want))
+				err := s.CallContext(ctx, got.Interface(), tc.method, tc.args...)
+				if diff := errdiff.Text(err, tc.wantErrContains); diff != "" {
+					t.Errorf("CallContext(...) %s", diff)
+					return
+				}
+				if diff := cmp.Diff(tc.want, got.Elem().Interface(), opts...); diff != "" {
+					t.Errorf("Diff (-want +got):\n%s", diff)
+				}
 			}
-			if diff := cmp.Diff(tc.want, got.Elem().Interface(), opts...); diff != "" {
-				t.Errorf("Unmarshalled %T diff (-want +got):\n%s", got.Elem().Interface(), diff)
+
+			if tc.eventually {
+				require.EventuallyWithT(t, func(c *assert.CollectT) {
+					check(c)
+				}, time.Second, 10*time.Millisecond)
+			} else {
+				t.Logf("%T.CallContext(ctx, %T, %q, %v...)", s.rpcClient, &tc.want, tc.method, tc.args)
+				check(t)
 			}
 		})
 	}
@@ -354,6 +366,151 @@ func TestTxPoolNamespace(t *testing.T) {
 			},
 		},
 	}...)
+}
+
+func TestFilterAPIs(t *testing.T) {
+	createFilter := func(t *testing.T, ctx context.Context, sut *SUT, method string, args ...any) string {
+		t.Helper()
+		var filterID string
+		require.NoError(t, sut.CallContext(ctx, &filterID, method, args...))
+		require.NotEmpty(t, filterID)
+		return filterID
+	}
+
+	uninstallFilter := func(t *testing.T, ctx context.Context, sut *SUT, filterID string) {
+		t.Helper()
+		sut.testRPC(ctx, t, []rpcTest{
+			{
+				method: "eth_uninstallFilter",
+				args:   []any{filterID},
+				want:   true,
+			},
+			{
+				method:          "eth_getFilterChanges",
+				args:            []any{filterID},
+				wantErrContains: "filter not found",
+			},
+		}...)
+	}
+
+	t.Run("newBlockFilter", func(t *testing.T) {
+		ctx, sut := newSUT(t, 1)
+		filterID := createFilter(t, ctx, sut, "eth_newBlockFilter")
+
+		sut.testRPC(ctx, t, rpcTest{
+			method: "eth_getFilterChanges",
+			args:   []any{filterID},
+			want:   []common.Hash{},
+		})
+
+		tx := sut.wallet.SetNonceAndSign(t, 0, &types.DynamicFeeTx{
+			To:        &zeroAddr,
+			Gas:       params.TxGas,
+			GasFeeCap: big.NewInt(1),
+		})
+		b := sut.createAndAcceptBlock(t, tx)
+		require.NoError(t, b.WaitUntilExecuted(ctx))
+
+		sut.testRPC(ctx, t, []rpcTest{
+			{
+				method:     "eth_getFilterChanges",
+				args:       []any{filterID},
+				want:       []common.Hash{b.Hash()},
+				eventually: true,
+			},
+			{ // Already consumed — second poll returns empty
+				method: "eth_getFilterChanges",
+				args:   []any{filterID},
+				want:   []common.Hash{},
+			},
+		}...)
+
+		uninstallFilter(t, ctx, sut, filterID)
+	})
+
+	t.Run("newPendingTransactionFilter", func(t *testing.T) {
+		ctx, sut := newSUT(t, 1)
+		filterID := createFilter(t, ctx, sut, "eth_newPendingTransactionFilter")
+
+		tx := sut.wallet.SetNonceAndSign(t, 0, &types.DynamicFeeTx{
+			To:        &zeroAddr,
+			Gas:       params.TxGas,
+			GasFeeCap: big.NewInt(1),
+		})
+		sut.mustSendTx(t, tx)
+
+		sut.testRPC(ctx, t, rpcTest{
+			method: "eth_getFilterChanges",
+			args:   []any{filterID},
+			want:   []common.Hash{tx.Hash()},
+		})
+
+		uninstallFilter(t, ctx, sut, filterID)
+	})
+
+	t.Run("newFilter", func(t *testing.T) {
+		ctx, sut := newSUT(t, 1)
+
+		precompile := common.Address{'f', 'i', 'l', 't'}
+		stub := &libevmhookstest.Stub{
+			PrecompileOverrides: map[common.Address]libevm.PrecompiledContract{
+				precompile: vm.NewStatefulPrecompile(func(env vm.PrecompileEnvironment, _ []byte) ([]byte, error) {
+					env.StateDB().AddLog(&types.Log{
+						Address: precompile,
+						Topics:  []common.Hash{},
+					})
+					return nil, nil
+				}),
+			},
+		}
+		stub.Register(t)
+
+		filterID := createFilter(t, ctx, sut, "eth_newFilter", map[string]any{
+			"address": precompile,
+		})
+
+		tx := sut.wallet.SetNonceAndSign(t, 0, &types.LegacyTx{
+			To:       &precompile,
+			GasPrice: big.NewInt(1),
+			Gas:      1e6,
+		})
+		b := sut.createAndAcceptBlock(t, tx)
+		require.NoError(t, b.WaitUntilExecuted(ctx))
+
+		wantLog := types.Log{
+			Address:     precompile,
+			Topics:      []common.Hash{},
+			BlockNumber: b.NumberU64(),
+			BlockHash:   b.Hash(),
+			TxHash:      tx.Hash(),
+		}
+
+		sut.testRPC(ctx, t, []rpcTest{
+			{
+				method: "eth_getFilterLogs",
+				args:   []any{filterID},
+				want:   []types.Log{wantLog},
+			},
+			{
+				method:     "eth_getFilterChanges",
+				args:       []any{filterID},
+				want:       []types.Log{wantLog},
+				eventually: true,
+			},
+			{ // Already consumed — second poll returns empty
+				method: "eth_getFilterChanges",
+				args:   []any{filterID},
+				want:   []types.Log{},
+			},
+			{ // getFilterLogs still returns logs (re-queries, not consumptive).
+				method: "eth_getFilterLogs",
+				args:   []any{filterID},
+				want:   []types.Log{wantLog},
+			},
+		}...)
+
+		uninstallFilter(t, ctx, sut, filterID)
+	})
 }
 
 func TestEthSyncing(t *testing.T) {
