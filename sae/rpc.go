@@ -34,7 +34,7 @@ import (
 	"github.com/ava-labs/strevm/txgossip"
 )
 
-// APIBackend merges all interfaces required to implement the SAE APIs.
+// APIBackend is the union of all interfaces required to implement the SAE APIs.
 type APIBackend interface {
 	ethapi.Backend
 	filters.BloomOverrider
@@ -318,17 +318,15 @@ func (b *ethAPIBackend) GetPoolTransaction(txHash common.Hash) *types.Transactio
 	return b.Set.Pool.Get(txHash)
 }
 
-var errInvalidArguments = errors.New("invalid arguments")
-
 func (b *ethAPIBackend) GetBody(ctx context.Context, hash common.Hash, number rpc.BlockNumber) (*types.Body, error) {
 	if number < 0 || hash == (common.Hash{}) {
-		return nil, fmt.Errorf("%w: no named numbers or empty hashes allowed", errInvalidArguments)
+		return nil, errors.New("no named block numbers nor empty hashes allowed")
 	}
 
 	n := uint64(number) //nolint:gosec // Non-negative check performed above
 	if block, ok := b.vm.blocks.Load(hash); ok {
 		if block.NumberU64() != n {
-			return nil, fmt.Errorf("%w: found block number %d for hash, expected %d", errInvalidArguments, block.NumberU64(), number)
+			return nil, fmt.Errorf("found block number %d for hash %#x, expected %d", block.NumberU64(), hash, number)
 		}
 		return block.EthBlock().Body(), nil
 	}
