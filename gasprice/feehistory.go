@@ -28,15 +28,19 @@ const (
 
 // txGasAndReward is sorted in ascending order based on reward
 type txGasAndReward struct {
-	gasUsed uint64
-	reward  *big.Int
+	gasLimit uint64
+	reward   *big.Int
 }
 
 type slimBlock struct {
-	GasUsed  uint64
+	// GasUsed is the sum of all tx gas limits in SAE.
+	GasUsed uint64
+	// GasLimit is the block gas limit.
 	GasLimit uint64
-	BaseFee  *big.Int
-	Txs      []txGasAndReward
+	// BaseFee is the block base fee.
+	BaseFee *big.Int
+	// Txs is the list of txs in the block.
+	Txs []txGasAndReward
 }
 
 // processBlock prepares a [slimBlock] from a retrieved block and list of
@@ -51,9 +55,10 @@ func processBlock(block *types.Block) *slimBlock {
 	sorter := make([]txGasAndReward, len(block.Transactions()))
 	for i, tx := range block.Transactions() {
 		reward, _ := tx.EffectiveGasTip(sb.BaseFee)
-		// Note: we don't use the gas used of the transaction here because receipts might not available.
-		// So we use the gas limit of the transaction instead.
-		sorter[i] = txGasAndReward{gasUsed: tx.Gas(), reward: reward}
+		// SAE charges the half of the gas limit per transaction, so tx.Gas() is
+		// both the limit and half of the amount charged. block.GasUsed() in the
+		// header equals the sum of all tx gas limits.
+		sorter[i] = txGasAndReward{gasLimit: tx.Gas(), reward: reward}
 	}
 	slices.SortStableFunc(sorter, func(a, b txGasAndReward) int {
 		return a.reward.Cmp(b.reward)
@@ -77,14 +82,17 @@ func (sb *slimBlock) processPercentiles(percentiles []float64) ([]*big.Int, *big
 		return reward, sb.BaseFee, gasUsedRatio
 	}
 
-	// sb transactions are already sorted by tip, so we don't need to re-sort
+	// Transactions are sorted by tip ascending. We walk through them,
+	// accumulating gas limits, to find the gas-weighted reward at each
+	// percentile. This is consistent because in SAE, sb.GasUsed equals
+	// the sum of all tx gas limits.
 	var txIndex int
-	sumGasUsed := sb.Txs[0].gasUsed
+	sumGasLimit := sb.Txs[0].gasLimit
 	for i, p := range percentiles {
-		thresholdGasUsed := uint64(float64(sb.GasUsed) * p / 100)
-		for sumGasUsed < thresholdGasUsed && txIndex < txLen-1 {
+		threshold := uint64(float64(sb.GasUsed) * p / 100)
+		for sumGasLimit < threshold && txIndex < txLen-1 {
 			txIndex++
-			sumGasUsed += sb.Txs[txIndex].gasUsed
+			sumGasLimit += sb.Txs[txIndex].gasLimit
 		}
 		reward[i] = sb.Txs[txIndex].reward
 	}
