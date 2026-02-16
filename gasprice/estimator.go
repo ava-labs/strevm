@@ -29,6 +29,7 @@ var (
 )
 
 const (
+	// maxRewardQueryLimit is the maximum number of reward percentiles that can be requested in a single fee history query.
 	maxRewardQueryLimit = 100
 )
 
@@ -207,7 +208,6 @@ func (e *Estimator) FeeHistory(ctx context.Context, blocks uint64, unresolvedLas
 	)
 
 	for blockNumber := oldestBlock; blockNumber < oldestBlock+blocks; blockNumber++ {
-		// Check if the context has errored
 		if err := ctx.Err(); err != nil {
 			return common.Big0, nil, nil, nil, err
 		}
