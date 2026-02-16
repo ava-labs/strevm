@@ -393,23 +393,6 @@ func readByHash[T any](b *ethAPIBackend, hash common.Hash, read canonicalReader[
 
 var errFutureBlockNotResolved = errors.New("not accepted yet")
 
-var errNoBlockNorHash = errors.New("invalid arguments; neither block nor hash specified")
-
-func readByNumberOrHash[T any](
-	ctx context.Context,
-	blockNrOrHash rpc.BlockNumberOrHash,
-	byNum func(context.Context, rpc.BlockNumber) (*T, error),
-	byHash func(context.Context, common.Hash) (*T, error),
-) (*T, error) {
-	if n, ok := blockNrOrHash.Number(); ok {
-		return byNum(ctx, n)
-	}
-	if h, ok := blockNrOrHash.Hash(); ok {
-		return byHash(ctx, h)
-	}
-	return nil, errNoBlockNorHash
-}
-
 func (b *ethAPIBackend) resolveBlockNumber(bn rpc.BlockNumber) (uint64, error) {
 	head := b.vm.last.accepted.Load().Height()
 
@@ -431,6 +414,23 @@ func (b *ethAPIBackend) resolveBlockNumber(bn rpc.BlockNumber) (uint64, error) {
 		return 0, fmt.Errorf("%w: block %d", errFutureBlockNotResolved, n)
 	}
 	return n, nil
+}
+
+var errNoBlockNorHash = errors.New("invalid arguments; neither block nor hash specified")
+
+func readByNumberOrHash[T any](
+	ctx context.Context,
+	blockNrOrHash rpc.BlockNumberOrHash,
+	byNum func(context.Context, rpc.BlockNumber) (*T, error),
+	byHash func(context.Context, common.Hash) (*T, error),
+) (*T, error) {
+	if n, ok := blockNrOrHash.Number(); ok {
+		return byNum(ctx, n)
+	}
+	if h, ok := blockNrOrHash.Hash(); ok {
+		return byHash(ctx, h)
+	}
+	return nil, errNoBlockNorHash
 }
 
 func (b *ethAPIBackend) Stats() (pending int, queued int) {
