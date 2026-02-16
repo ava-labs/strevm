@@ -65,7 +65,7 @@ func (b *testBackend) ResolveBlockNumber(bn rpc.BlockNumber) (uint64, error) {
 	}
 	n := uint64(bn) //nolint:gosec // Non-negative checked above
 	if n > head {
-		return 0, fmt.Errorf("%w: block %d", errRequestBeyondHead, n)
+		return 0, fmt.Errorf("%w: block %d", errFutureBlock, n)
 	}
 	return n, nil
 }
@@ -378,11 +378,11 @@ func TestFeeHistory(t *testing.T) {
 		// Standard libevm tests
 		{maxCallBlock: 0, maxBlock: 1000, count: 10, last: 30, percent: nil, expFirst: 21, expCount: 10, expErr: nil},
 		{maxCallBlock: 0, maxBlock: 1000, count: 10, last: 30, percent: []float64{0, 10}, expFirst: 21, expCount: 10, expErr: nil},
-		{maxCallBlock: 0, maxBlock: 1000, count: 10, last: 30, percent: []float64{20, 10}, expFirst: 0, expCount: 0, expErr: errInvalidPercentile},
+		{maxCallBlock: 0, maxBlock: 1000, count: 10, last: 30, percent: []float64{20, 10}, expFirst: 0, expCount: 0, expErr: errBadPercentile},
 		{maxCallBlock: 0, maxBlock: 1000, count: 1000000000, last: 30, percent: nil, expFirst: 0, expCount: 31, expErr: nil},
 		{maxCallBlock: 0, maxBlock: 1000, count: 1000000000, last: rpc.PendingBlockNumber, percent: nil, expFirst: 0, expCount: 33, expErr: nil},
-		{maxCallBlock: 0, maxBlock: 1000, count: 10, last: 40, percent: nil, expFirst: 0, expCount: 0, expErr: errRequestBeyondHead},
-		{maxCallBlock: 0, maxBlock: 1000, count: 10, last: 40, percent: nil, expFirst: 0, expCount: 0, expErr: errRequestBeyondHead},
+		{maxCallBlock: 0, maxBlock: 1000, count: 10, last: 40, percent: nil, expFirst: 0, expCount: 0, expErr: errFutureBlock},
+		{maxCallBlock: 0, maxBlock: 1000, count: 10, last: 40, percent: nil, expFirst: 0, expCount: 0, expErr: errFutureBlock},
 		{maxCallBlock: 0, maxBlock: 2, count: 100, last: rpc.PendingBlockNumber, percent: []float64{0, 10}, expFirst: 31, expCount: 2, expErr: nil},
 		{maxCallBlock: 0, maxBlock: 2, count: 100, last: 32, percent: []float64{0, 10}, expFirst: 31, expCount: 2, expErr: nil},
 		// In SAE backend, `pending` resolves to accepted head (not head+1).
@@ -398,7 +398,7 @@ func TestFeeHistory(t *testing.T) {
 		{maxCallBlock: 0, maxBlock: 2, count: 100, last: rpc.PendingBlockNumber, percent: nil, expFirst: 31, expCount: 2, expErr: nil},    // apply block lookback limits even if only headers required
 		{maxCallBlock: 0, maxBlock: 10, count: 10, last: 30, percent: nil, expFirst: 23, expCount: 8, expErr: nil},                        // limit lookback based on maxHistory from latest block
 		{maxCallBlock: 0, maxBlock: 33, count: 1000000000, last: 10, percent: nil, expFirst: 0, expCount: 11, expErr: nil},                // handle truncation edge case
-		{maxCallBlock: 0, maxBlock: 2, count: 10, last: 20, percent: nil, expFirst: 0, expCount: 0, expErr: errBeyondHistoricalLimit},     // query behind historical limit
+		{maxCallBlock: 0, maxBlock: 2, count: 10, last: 20, percent: nil, expFirst: 0, expCount: 0, expErr: errHistoryDepthExhausted},     // query behind historical limit
 		{maxCallBlock: 10, maxBlock: 30, count: 100, last: rpc.PendingBlockNumber, percent: nil, expFirst: 23, expCount: 10, expErr: nil}, // ensure [MaxCallBlockHistory] is honored
 	}
 	for i, c := range cases {

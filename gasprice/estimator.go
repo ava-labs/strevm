@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"slices"
 	"sync"
 
 	"github.com/ava-labs/avalanchego/cache/lru"
@@ -19,29 +20,29 @@ import (
 	"github.com/ava-labs/libevm/libevm/options"
 	"github.com/ava-labs/libevm/log"
 	"github.com/ava-labs/libevm/rpc"
-	"golang.org/x/exp/slices"
 )
 
 var (
-	errInvalidPercentile     = errors.New("invalid reward percentile")
-	errRequestBeyondHead     = errors.New("request beyond head block")
-	errBeyondHistoricalLimit = errors.New("request beyond historical limit")
+	errBadPercentile         = errors.New("percentile out of range or misordered")
+	errFutureBlock           = errors.New("requested block is ahead of accepted head")
+	errHistoryDepthExhausted = errors.New("requested block is too far behind accepted head")
 )
 
 const (
-	// maxRewardQueryLimit is the maximum number of reward percentiles that can be requested in a single fee history query.
-	maxRewardQueryLimit = 100
+	// maxPercentilesPerQuery caps the number of reward percentiles a single
+	// FeeHistory call may request.
+	maxPercentilesPerQuery = 100
 )
 
-// Backend includes all necessary background APIs for estimator.
+// Backend abstracts the chain data needed by the Estimator.
 type Backend interface {
 	ResolveBlockNumber(bn rpc.BlockNumber) (uint64, error)
 	BlockByNumber(ctx context.Context, number rpc.BlockNumber) (*types.Block, error)
 	SubscribeChainAcceptedEvent(ch chan<- *types.Block) event.Subscription
 }
 
-// Estimator recommends gas prices based on the content of recent
-// blocks. Suitable for both light and full clients.
+// Estimator provides gas-price suggestions and fee-history data for SAE
+// by analysing recently accepted blocks.
 type Estimator struct {
 	backend Backend
 	// cfg holds all estimator parameters set through options.
@@ -62,8 +63,7 @@ type Estimator struct {
 	feeInfoProvider *feeInfoProvider
 }
 
-// NewEstimator returns a new gasprice estimator which can recommend suitable
-// gasprice for newly created transaction.
+// NewEstimator creates an Estimator that serves gas price estimation and fee history.
 func NewEstimator(backend Backend, opts ...EstimatorOption) (*Estimator, error) {
 	config := defaultConfig()
 	options.ApplyTo(&config, opts...)
@@ -89,12 +89,12 @@ func (e *Estimator) Close() {
 	close(e.closeCh)
 }
 
-// SuggestTipCap returns a tip cap so that newly created transaction can have a
-// very high chance to be included in the following blocks.
+// SuggestTipCap recommends a priority-fee (tip) for new transactions by
+// sampling effective tips from recently accepted blocks. The result is the
+// configured percentile of the combined, tip-sorted transaction set.
 //
-// Note, for legacy transactions and the legacy eth_gasPrice RPC call, it will be
-// necessary to add the basefee to the returned number to fall back to the legacy
-// behavior.
+// For the legacy eth_gasPrice RPC the caller must add the current base fee
+// to the returned tip.
 func (e *Estimator) SuggestTipCap(ctx context.Context) (*big.Int, error) {
 	headNumber, err := e.backend.ResolveBlockNumber(rpc.PendingBlockNumber)
 	if err != nil {
@@ -121,37 +121,34 @@ func (e *Estimator) SuggestTipCap(ctx context.Context) (*big.Int, error) {
 	}
 
 	var (
-		latestBlockNumber     = headNumber
-		lowerBlockNumberLimit = uint64(0)
-		currentTime           = e.clock.Unix()
-		tipResults            []txGasAndReward
+		newest  = headNumber
+		oldest  = uint64(0)
+		now     = e.clock.Unix()
+		allTips []tipEntry
 	)
-
-	if e.cfg.BlocksCount <= latestBlockNumber {
-		lowerBlockNumberLimit = latestBlockNumber - e.cfg.BlocksCount
+	if e.cfg.BlocksCount <= newest {
+		oldest = newest - e.cfg.BlocksCount
 	}
 
-	// Process block headers in the range calculated for this gas price estimation.
-	for i := latestBlockNumber; i > lowerBlockNumberLimit; i-- {
-		fi, err := e.feeInfoProvider.getFeeInfo(ctx, i)
+	// Walk backwards through recent blocks, collecting tips until we
+	// either exhaust the configured window or hit the lookback age limit.
+	for n := newest; n > oldest; n-- {
+		fi, err := e.feeInfoProvider.getFeeInfo(ctx, n)
 		if err != nil {
 			return new(big.Int).Set(lastPrice), err
 		}
-
-		if fi.timestamp+e.cfg.MaxLookbackSeconds < currentTime {
+		if fi.timestamp+e.cfg.MaxLookbackSeconds < now {
 			break
 		}
-
-		tipResults = append(tipResults, fi.txs...)
+		allTips = append(allTips, fi.tips...)
 	}
 
 	price := lastPrice
-	lenTipResults := uint64(len(tipResults))
-	if lenTipResults > 0 {
-		// Although txs are sorted per-block in each feeInfo, we need to
-		// re-sort across all recent blocks to find the global percentile.
-		slices.SortFunc(tipResults, func(a, b txGasAndReward) int { return a.reward.Cmp(b.reward) })
-		price = tipResults[(lenTipResults-1)*(e.cfg.Percentile)/100].reward
+	if count := uint64(len(allTips)); count > 0 {
+		// Tips are sorted per-block, but we need the global percentile
+		// across all recent blocks, so re-sort the combined set.
+		slices.SortFunc(allTips, func(a, b tipEntry) int { return a.tip.Cmp(b.tip) })
+		price = allTips[(count-1)*e.cfg.Percentile/100].tip
 	}
 
 	price = math.BigMax(math.BigMin(price, e.cfg.MaxPrice), e.cfg.MinPrice)
@@ -178,49 +175,40 @@ func (e *Estimator) SuggestTipCap(ctx context.Context) (*big.Int, error) {
 // value can be derived from the newest block.
 func (e *Estimator) FeeHistory(ctx context.Context, blocks uint64, unresolvedLastBlock rpc.BlockNumber, rewardPercentiles []float64) (*big.Int, [][]*big.Int, []*big.Int, []float64, error) {
 	if blocks < 1 {
-		return common.Big0, nil, nil, nil, nil // returning with no data and no error means there are no retrievable blocks
+		return common.Big0, nil, nil, nil, nil
 	}
-	if len(rewardPercentiles) > maxRewardQueryLimit {
-		return common.Big0, nil, nil, nil, fmt.Errorf("%w: over the query limit %d", errInvalidPercentile, maxRewardQueryLimit)
+	if err := validatePercentiles(rewardPercentiles); err != nil {
+		return common.Big0, nil, nil, nil, err
 	}
 	if blocks > e.cfg.MaxCallBlockHistory {
 		log.Warn("Sanitizing fee history length", "requested", blocks, "truncated", e.cfg.MaxCallBlockHistory)
 		blocks = e.cfg.MaxCallBlockHistory
 	}
-	for i, p := range rewardPercentiles {
-		if p < 0 || p > 100 {
-			return common.Big0, nil, nil, nil, fmt.Errorf("%w: %f", errInvalidPercentile, p)
-		}
-		if i > 0 && p <= rewardPercentiles[i-1] {
-			return common.Big0, nil, nil, nil, fmt.Errorf("%w: #%d:%f >= #%d:%f", errInvalidPercentile, i-1, rewardPercentiles[i-1], i, p)
-		}
-	}
-	lastBlock, blocks, err := e.resolveBlockRange(ctx, unresolvedLastBlock, blocks)
+
+	last, blocks, err := e.clampBlockRange(ctx, unresolvedLastBlock, blocks)
 	if err != nil || blocks == 0 {
 		return common.Big0, nil, nil, nil, err
 	}
-	oldestBlock := lastBlock + 1 - blocks
+	first := last + 1 - blocks
 
 	var (
 		reward       = make([][]*big.Int, blocks)
 		baseFee      = make([]*big.Int, blocks)
 		gasUsedRatio = make([]float64, blocks)
 	)
-
-	for blockNumber := oldestBlock; blockNumber < oldestBlock+blocks; blockNumber++ {
+	for n := first; n <= last; n++ {
 		if err := ctx.Err(); err != nil {
 			return common.Big0, nil, nil, nil, err
 		}
-
-		i := blockNumber - oldestBlock
-		fi, err := e.getFeeHistoryInfo(ctx, blockNumber)
+		idx := n - first
+		fi, err := e.getFeeHistoryInfo(ctx, n)
 		if err != nil {
 			return common.Big0, nil, nil, nil, err
 		}
-		baseFee[i] = fi.baseFee
-		gasUsedRatio[i] = float64(fi.gasUsed) / float64(fi.gasLimit)
+		baseFee[idx] = fi.baseFee
+		gasUsedRatio[idx] = float64(fi.gasUsed) / float64(fi.gasLimit)
 		if len(rewardPercentiles) != 0 {
-			reward[i] = fi.processPercentiles(rewardPercentiles)
+			reward[idx] = fi.rewardPercentiles(rewardPercentiles)
 		}
 	}
 
@@ -228,12 +216,29 @@ func (e *Estimator) FeeHistory(ctx context.Context, blocks uint64, unresolvedLas
 	if len(rewardPercentiles) == 0 {
 		reward = nil
 	}
-	return new(big.Int).SetUint64(oldestBlock), reward, baseFee, gasUsedRatio, nil
+	return new(big.Int).SetUint64(first), reward, baseFee, gasUsedRatio, nil
 }
 
-// getFeeHistoryInfo gets the feeInfo for a given block number from the history cache.
-// If it is not in the cache, it also checks the feeInfoProvider for the block.
-// It adds the entry to the history cache if missing.
+// validatePercentiles checks that [percentiles] are in [0,100] and strictly
+// ascending. Returns nil when the slice is empty.
+func validatePercentiles(percentiles []float64) error {
+	if len(percentiles) > maxPercentilesPerQuery {
+		return fmt.Errorf("%w: requested %d percentiles, max %d", errBadPercentile, len(percentiles), maxPercentilesPerQuery)
+	}
+	for i, p := range percentiles {
+		if p < 0 || p > 100 {
+			return fmt.Errorf("%w: value %f at index %d", errBadPercentile, p, i)
+		}
+		if i > 0 && p <= percentiles[i-1] {
+			return fmt.Errorf("%w: index %d (%f) must be greater than index %d (%f)", errBadPercentile, i, p, i-1, percentiles[i-1])
+		}
+	}
+	return nil
+}
+
+// getFeeHistoryInfo returns the feeInfo for [number], consulting (in order)
+// the history LRU cache, the feeInfoProvider's recent-block cache, and
+// finally the backend. Results are promoted into the history cache on miss.
 func (e *Estimator) getFeeHistoryInfo(ctx context.Context, number uint64) (*feeInfo, error) {
 	if feeInfo, ok := e.historyCache.Get(number); ok {
 		return feeInfo, nil
@@ -250,51 +255,49 @@ func (e *Estimator) getFeeHistoryInfo(ctx context.Context, number uint64) (*feeI
 	if err != nil {
 		return nil, err
 	}
-	feeInfo = processBlock(block)
+	feeInfo = buildFeeInfo(block)
 	// We only add the feeInfo to the history cache if we could not find it in the feeInfoProvider's cache.
 	// because the FeeHistory can evict recent blocks from the history cache.
 	e.historyCache.Put(number, feeInfo)
 	return feeInfo, nil
 }
 
-// resolveBlockRange resolves the specified block range to absolute block numbers while also
-// enforcing backend specific limitations.
-// Note: an error is only returned if retrieving the head header has failed. If there are no
-// retrievable blocks in the specified range then zero block count is returned with no error.
-func (e *Estimator) resolveBlockRange(ctx context.Context, lastBlock rpc.BlockNumber, blocks uint64) (uint64, uint64, error) {
-	if blocks == 0 {
+// clampBlockRange turns a caller-supplied (possibly symbolic) block number and
+// count into a concrete, accepted-head-relative range. It enforces the
+// configured MaxBlockHistory depth and clamps [count] so the range never
+// extends before genesis.
+//
+// Returns the resolved last block number and the (possibly reduced) count.
+// A zero count with nil error means no retrievable blocks exist in the range.
+func (e *Estimator) clampBlockRange(ctx context.Context, reqEnd rpc.BlockNumber, count uint64) (uint64, uint64, error) {
+	if count == 0 {
 		return 0, 0, nil
 	}
-
-	lastBlockNumber, err := e.backend.ResolveBlockNumber(lastBlock)
+	endNum, err := e.backend.ResolveBlockNumber(reqEnd)
+	if err != nil {
+		return 0, 0, err
+	}
+	lastAcceptedNumber, err := e.backend.ResolveBlockNumber(rpc.PendingBlockNumber)
 	if err != nil {
 		return 0, 0, err
 	}
 
-	headNumber, err := e.backend.ResolveBlockNumber(rpc.PendingBlockNumber)
-	if err != nil {
-		return 0, 0, err
+	// Reject requests whose *endpoint* is too far behind the accepted head.
+	maxDepth := e.cfg.MaxBlockHistory - 1
+	if lastAcceptedNumber > maxDepth && endNum < lastAcceptedNumber-maxDepth {
+		return 0, 0, fmt.Errorf("%w: block %d requested, accepted head is %d (max depth %d)",
+			errHistoryDepthExhausted, reqEnd, lastAcceptedNumber, e.cfg.MaxBlockHistory)
 	}
-	maxQueryDepth := e.cfg.MaxBlockHistory - 1
-	// If the requested last block reaches further back than [config.MaxBlockHistory]
-	// from the last accepted block, return an error.
-	// Note: this allows some blocks past this point to be fetched since it will
-	// start fetching [blocks] from this point.
-	if headNumber > maxQueryDepth && lastBlockNumber < headNumber-maxQueryDepth {
-		return 0, 0, fmt.Errorf("%w: requested %d, head number %d", errBeyondHistoricalLimit, lastBlock, headNumber)
+
+	// Don't reach before genesis.
+	if count > endNum+1 {
+		count = endNum + 1
 	}
-	// Ensure not trying to retrieve before genesis
-	if blocks > lastBlockNumber+1 {
-		blocks = lastBlockNumber + 1
+
+	// Trim the start of the range so it stays within MaxBlockHistory of head.
+	start := endNum + 1 - count
+	if depth := lastAcceptedNumber - start; depth > maxDepth {
+		count -= depth - maxDepth
 	}
-	// Truncate blocks range if extending past [config.MaxBlockHistory].
-	oldestQueriedIndex := lastBlockNumber - blocks + 1
-	if queryDepth := headNumber - oldestQueriedIndex; queryDepth > maxQueryDepth {
-		overage := queryDepth - maxQueryDepth
-		blocks -= overage
-	}
-	// It is not possible that [blocks] could be <= 0 after
-	// truncation as the [lastBlock] requested will at least be fetchable.
-	// Otherwise, we would've returned an error earlier.
-	return lastBlockNumber, blocks, nil
+	return endNum, count, nil
 }

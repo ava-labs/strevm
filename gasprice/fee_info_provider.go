@@ -23,10 +23,11 @@ type feeInfoProvider struct {
 	backend Backend
 }
 
-// txGasAndReward is sorted in ascending order based on reward
-type txGasAndReward struct {
-	gasLimit uint64
-	reward   *big.Int
+// tipEntry holds a transaction's gas limit and effective tip, used for
+// gas-weighted percentile calculations.
+type tipEntry struct {
+	gas uint64
+	tip *big.Int
 }
 
 type feeInfo struct {
@@ -38,64 +39,61 @@ type feeInfo struct {
 	gasLimit uint64
 	// baseFee is the block base fee.
 	baseFee *big.Int
-	// txs is the list of txs in the block.
-	// txs is sorted in ascending order based on reward.
-	txs []txGasAndReward
+	// tips holds every transaction's gas limit and effective tip, sorted
+	// ascending by tip. Used for gas-weighted reward percentile lookups.
+	tips []tipEntry
 }
 
-// processBlock prepares a [feeInfo] from a retrieved block and list of
-// receipts. txs is sorted in ascending order based on reward.
-// This feeInfo can be cached and used for future calls.
-func processBlock(block *types.Block) *feeInfo {
-	var fi feeInfo
+// buildFeeInfo extracts fee-relevant data from [block] and returns a
+// cacheable [*feeInfo]. The returned tips slice is sorted ascending by
+// effective tip so that percentile lookups are O(n).
+func buildFeeInfo(block *types.Block) *feeInfo {
+	fi := feeInfo{
+		timestamp: block.Time(),
+		gasUsed:   block.GasUsed(),
+		gasLimit:  block.GasLimit(),
+	}
 	if fi.baseFee = block.BaseFee(); fi.baseFee == nil {
 		fi.baseFee = new(big.Int)
 	}
-	fi.timestamp = block.Time()
-	fi.gasUsed = block.GasUsed()
-	fi.gasLimit = block.GasLimit()
-	sorter := make([]txGasAndReward, len(block.Transactions()))
-	for i, tx := range block.Transactions() {
-		reward, _ := tx.EffectiveGasTip(fi.baseFee)
-		// SAE charges the half of the gas limit per transaction, so tx.Gas() is
-		// both the limit and half of the amount charged. block.GasUsed() in the
-		// header equals the sum of all tx gas limits.
-		sorter[i] = txGasAndReward{gasLimit: tx.Gas(), reward: reward}
+	txs := block.Transactions()
+	tips := make([]tipEntry, len(txs))
+	for i, tx := range txs {
+		tip, _ := tx.EffectiveGasTip(fi.baseFee)
+		tips[i] = tipEntry{gas: tx.Gas(), tip: tip}
 	}
-	slices.SortStableFunc(sorter, func(a, b txGasAndReward) int {
-		return a.reward.Cmp(b.reward)
+	slices.SortStableFunc(tips, func(a, b tipEntry) int {
+		return a.tip.Cmp(b.tip)
 	})
-	fi.txs = sorter
+	fi.tips = tips
 	return &fi
 }
 
-// processPercentiles returns reward percentiles
-func (fi *feeInfo) processPercentiles(percentiles []float64) []*big.Int {
-	txLen := len(fi.txs)
-	reward := make([]*big.Int, len(percentiles))
-	if txLen == 0 {
+// rewardPercentiles computes the gas-weighted reward at each requested
+// percentile. Because SAE charges each transaction its half of the gas limit,
+// we accumulate gas limits (not receipt gas-used) when walking the
+// tip-sorted transaction list.
+func (fi *feeInfo) rewardPercentiles(percentiles []float64) []*big.Int {
+	out := make([]*big.Int, len(percentiles))
+	if len(fi.tips) == 0 {
 		// return an all zero row if there are no transactions to gather data from
-		for i := range reward {
-			reward[i] = new(big.Int)
+		for i := range out {
+			out[i] = new(big.Int)
 		}
-		return reward
+		return out
 	}
 
-	// Transactions are sorted by tip ascending. We walk through them,
-	// accumulating gas limits, to find the gas-weighted reward at each
-	// percentile. This is consistent because in SAE, fi.GasUsed equals
-	// the sum of all tx gas limits.
 	var txIndex int
-	sumGasLimit := fi.txs[0].gasLimit
+	sumGas := fi.tips[0].gas
 	for i, p := range percentiles {
 		threshold := uint64(float64(fi.gasUsed) * p / 100)
-		for sumGasLimit < threshold && txIndex < txLen-1 {
+		for sumGas < threshold && txIndex < len(fi.tips)-1 {
 			txIndex++
-			sumGasLimit += fi.txs[txIndex].gasLimit
+			sumGas += fi.tips[txIndex].gas
 		}
-		reward[i] = fi.txs[txIndex].reward
+		out[i] = fi.tips[txIndex].tip
 	}
-	return reward
+	return out
 }
 
 // newFeeInfoProvider returns a bounded buffer with [size] slots to
@@ -133,9 +131,9 @@ func newFeeInfoProvider(backend Backend, size uint64, closeCh <-chan struct{}) (
 	return fc, fc.populateCache(size)
 }
 
-// addBlock processes block into a feeInfo and caches the result.
+// addBlock builds a feeInfo for [block] and stores it in the cache.
 func (f *feeInfoProvider) addBlock(block *types.Block) *feeInfo {
-	fi := processBlock(block)
+	fi := buildFeeInfo(block)
 	f.cache.Put(block.NumberU64(), fi)
 	return fi
 }
