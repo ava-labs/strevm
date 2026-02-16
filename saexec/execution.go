@@ -21,7 +21,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/ava-labs/strevm/blocks"
-	"github.com/ava-labs/strevm/params"
+	"github.com/ava-labs/strevm/saedb"
 )
 
 var errExecutorClosed = errors.New("saexec.Executor closed")
@@ -32,9 +32,6 @@ var errExecutorClosed = errors.New("saexec.Executor closed")
 func (e *Executor) Enqueue(ctx context.Context, block *blocks.Block) error {
 	select {
 	case e.queue <- block:
-		e.lastEnqueued.Store(block)
-		e.enqueueEvents.Send(block.EthBlock())
-
 		size := cap(e.queue)
 		warningThreshold := size - size/16
 		if n := len(e.queue); n >= warningThreshold {
@@ -47,6 +44,7 @@ func (e *Executor) Enqueue(ctx context.Context, block *blocks.Block) error {
 			)
 		}
 		return nil
+
 	case <-ctx.Done():
 		return ctx.Err()
 	case <-e.quit:
@@ -209,7 +207,7 @@ func (e *Executor) execute(b *blocks.Block, logger logging.Logger) error {
 	if err != nil {
 		return fmt.Errorf("%T.Commit() at end of block %d: %w", stateDB, b.NumberU64(), err)
 	}
-	if num := b.NumberU64(); params.CommitTrieDB(num) {
+	if num := b.NumberU64(); saedb.ShouldCommitTrieDB(num) {
 		tdb := e.stateCache.TrieDB()
 		if err := tdb.Commit(root, false /* log */); err != nil {
 			return fmt.Errorf("%T.Commit(%#x) at end of block %d: %v", tdb, root, num, err)
@@ -221,7 +219,7 @@ func (e *Executor) execute(b *blocks.Block, logger logging.Logger) error {
 	// 1. [blocks.Block.MarkExecuted] guarantees disk then in-memory changes.
 	// 2. Internal indicator of last executed MUST follow in-memory change.
 	// 3. External indicator of last executed MUST follow internal indicator.
-	if err := b.MarkExecuted(e.db, gasClock.Clone(), endTime, header.BaseFee, receipts, root, &e.lastExecuted /* (2) */); err != nil {
+	if err := b.MarkExecuted(e.db, e.xdb, gasClock.Clone(), endTime, header.BaseFee, receipts, root, &e.lastExecuted /* (2) */); err != nil {
 		return err
 	}
 	e.sendPostExecutionEvents(b.EthBlock(), receipts) // (3)

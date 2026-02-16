@@ -1,3 +1,6 @@
+// Copyright (C) 2025-2026, Ava Labs, Inc. All rights reserved.
+// See the file LICENSE for licensing terms.
+
 package sae
 
 import (
@@ -21,13 +24,16 @@ import (
 	"github.com/ava-labs/strevm/blocks"
 	"github.com/ava-labs/strevm/cmputils"
 	saeparams "github.com/ava-labs/strevm/params"
+	"github.com/ava-labs/strevm/saedb"
+	"github.com/ava-labs/strevm/saetest"
 )
 
 func TestRecoverFromDatabase(t *testing.T) {
 	sutOpt, vmTime := withVMTime(t, time.Unix(saeparams.TauSeconds, 0))
 
 	var srcDB database.Database
-	ctx, src := newSUT(t, 1, sutOpt, options.Func[sutConfig](func(c *sutConfig) {
+	srcHDB := saetest.NewHeightIndexDB()
+	ctx, src := newSUT(t, 1, sutOpt, withExecResultsDB(srcHDB), options.Func[sutConfig](func(c *sutConfig) {
 		srcDB = c.db
 		c.logLevel = logging.Warn
 	}))
@@ -43,8 +49,8 @@ func TestRecoverFromDatabase(t *testing.T) {
 		// iteration.
 		last := src.lastAcceptedBlock(t)
 		height := last.Height()
-		quick := height < saeparams.CommitTrieDBEvery && src.rawVM.last.settled.Load().Height() > 1
-		final = height > saeparams.CommitTrieDBEvery
+		quick := height < saedb.CommitTrieDBEvery && src.rawVM.last.settled.Load().Height() > 1
+		final = height > saedb.CommitTrieDBEvery
 
 		if !quick {
 			src.mustSendTx(t, src.wallet.SetNonceAndSign(t, 0, &types.LegacyTx{
@@ -61,7 +67,7 @@ func TestRecoverFromDatabase(t *testing.T) {
 		if !quick {
 			require.Len(t, b.Transactions(), 1, "transactions in block")
 		}
-		require.NoErrorf(t, b.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()")
+		require.NoErrorf(t, b.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", b)
 
 		if quick {
 			continue
@@ -74,7 +80,7 @@ func TestRecoverFromDatabase(t *testing.T) {
 			}
 			require.NoError(t, it.Error())
 
-			sutCtx, sut := newSUT(t, 1, sutOpt, options.Func[sutConfig](func(c *sutConfig) {
+			sutCtx, sut := newSUT(t, 1, sutOpt, withExecResultsDB(srcHDB.Clone()), options.Func[sutConfig](func(c *sutConfig) {
 				c.db = newDB
 				c.logLevel = logging.Warn
 			}))
@@ -100,7 +106,7 @@ func TestRecoverFromDatabase(t *testing.T) {
 
 					for _, sys := range []struct {
 						name string
-						ctx  context.Context // ephemeral so not in contravention of https://go.dev/blog/context-and-structs
+						ctx  context.Context //nolint:containedctx // Ephemeral so not in contravention of https://go.dev/blog/context-and-structs
 						*SUT
 					}{
 						{"source", srcCtx, src},

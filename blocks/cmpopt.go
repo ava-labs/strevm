@@ -6,11 +6,11 @@
 package blocks
 
 import (
+	"github.com/ava-labs/avalanchego/utils/logging"
+	"github.com/ava-labs/libevm/core/types"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 
-	"github.com/ava-labs/avalanchego/utils/logging"
-	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/strevm/cmputils"
 	"github.com/ava-labs/strevm/saetest"
 )

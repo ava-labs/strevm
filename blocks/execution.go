@@ -22,11 +22,9 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/ava-labs/strevm/gastime"
-	"github.com/ava-labs/strevm/params"
 	"github.com/ava-labs/strevm/proxytime"
+	"github.com/ava-labs/strevm/saedb"
 )
-
-//go:generate go run github.com/StephenButtolph/canoto/canoto $GOFILE
 
 // SetInterimExecutionTime is expected to be called during execution of b's
 // transactions, with the highest-known gas time. This MAY be at any resolution
@@ -38,19 +36,25 @@ func (b *Block) SetInterimExecutionTime(t *proxytime.Time[gas.Gas]) {
 //go:generate go run github.com/StephenButtolph/canoto/canoto $GOFILE
 
 type executionResults struct {
-	byGas  gastime.Time `canoto:"value,1"`
-	byWall time.Time    // For metrics only; allowed to be incorrect.
+	byGas         gastime.Time `canoto:"value,1"`
+	baseFee       uint256.Int  `canoto:"fixed repeated uint,2"`
+	receiptRoot   common.Hash  `canoto:"fixed bytes,3"`
+	stateRootPost common.Hash  `canoto:"fixed bytes,4"`
 
-	baseFee uint256.Int `canoto:"fixed repeated uint,2"`
+	ephemeralExecutionResults // not for canotofication
+
+	canotoData canotoData_executionResults
+}
+
+type ephemeralExecutionResults struct {
+	// Wall-clock time is for metrics only and MAY be incorrect.
+	byWall time.Time
 	// Receipts are deliberately not stored by the canoto representation as they
 	// are already in the database. All methods that read the stored canoto
 	// either accept a [types.Receipts] for comparison against the
-	// `receiptRoot`, or don't care about receipts at all.
-	receipts      types.Receipts
-	receiptRoot   common.Hash `canoto:"fixed bytes,3"`
-	stateRootPost common.Hash `canoto:"fixed bytes,4"`
-
-	canotoData canotoData_executionResults
+	// `receiptRoot`, or don't care about receipts at all. They are, however,
+	// carried here for propagation to the settling block.
+	receipts types.Receipts
 }
 
 func (e *executionResults) setBaseFee(bf *big.Int) error {
@@ -61,14 +65,6 @@ func (e *executionResults) setBaseFee(bf *big.Int) error {
 		return fmt.Errorf("base fee %v overflows 256 bits", bf)
 	}
 	return nil
-}
-
-func (e *executionResults) persist(kv ethdb.KeyValueWriter, blockNum uint64) error {
-	return kv.Put(executionResultsKey(blockNum), e.MarshalCanoto())
-}
-
-func executionResultsKey(blockNum uint64) []byte {
-	return params.RawDBKeyForBlock("exec", blockNum)
 }
 
 // MarkExecuted marks the block as having been executed at the specified time(s)
@@ -87,6 +83,7 @@ func executionResultsKey(blockNum uint64) []byte {
 // for metrics only.
 func (b *Block) MarkExecuted(
 	db ethdb.Database,
+	xdb saedb.ExecutionResults,
 	byGas *gastime.Time,
 	byWall time.Time,
 	baseFee *big.Int,
@@ -107,10 +104,12 @@ func (b *Block) MarkExecuted(
 
 	e := &executionResults{
 		byGas:         *byGas.Clone(),
-		byWall:        byWall,
-		receipts:      slices.Clone(receipts),
 		receiptRoot:   types.DeriveSha(receipts, trie.NewStackTrie(nil)),
 		stateRootPost: stateRootPost,
+		ephemeralExecutionResults: ephemeralExecutionResults{
+			byWall:   byWall,
+			receipts: slices.Clone(receipts),
+		},
 	}
 	if err := e.setBaseFee(baseFee); err != nil {
 		return err
@@ -118,7 +117,7 @@ func (b *Block) MarkExecuted(
 
 	batch := db.NewBatch()
 	rawdb.WriteReceipts(batch, b.Hash(), b.NumberU64(), receipts)
-	return b.markExecuted(batch, e, true, lastExecuted)
+	return b.markExecuted(batch, xdb, e, true, lastExecuted)
 }
 
 var errMarkBlockExecutedAgain = errors.New("block re-marked as executed")
@@ -130,26 +129,26 @@ var errMarkBlockExecutedAgain = errors.New("block re-marked as executed")
 // regardless of the upstream trigger. See documentation re ordering invariants
 // for more information.
 //
-// Only the [executionResults] are required. If `setAsHeadBlock` is true then
-// the [ethdb.KeyValueWriter] MUST be true for setting to take effect. If the KV
-// writer also has a `Write()` method (e.g. an [ethdb.Batch]) then it will be
-// called after all `Put()` calls.
-func (b *Block) markExecuted(kv ethdb.KeyValueWriter, e *executionResults, setAsHeadBlock bool, lastExecuted *atomic.Pointer[Block]) error {
-	// Disk
-	if kv != nil {
-		if setAsHeadBlock {
-			b.SetAsHeadBlock(kv)
-		}
-		if err := e.persist(kv, b.Height()); err != nil {
-			return err
-		}
-		if k, ok := kv.(interface{ Write() error }); ok {
-			if err := k.Write(); err != nil {
-				return err
-			}
-		}
+// The batch is `Write()`n (yeah, it's a word now) after all disk artefacts are
+// persisted.
+func (b *Block) markExecuted(batch ethdb.Batch, xdb saedb.ExecutionResults, e *executionResults, setAsHeadBlock bool, lastExecuted *atomic.Pointer[Block]) error {
+	if err := b.markExecutedOnDisk(batch, xdb, e, setAsHeadBlock); err != nil {
+		return err
 	}
+	return b.markExecutedAfterDiskArtefacts(e, lastExecuted)
+}
 
+func (b *Block) markExecutedOnDisk(batch ethdb.Batch, xdb saedb.ExecutionResults, e *executionResults, setAsHeadBlock bool) error {
+	if err := xdb.Put(b.Height(), e.MarshalCanoto()); err != nil {
+		return err
+	}
+	if setAsHeadBlock {
+		b.SetAsHeadBlock(batch)
+	}
+	return batch.Write()
+}
+
+func (b *Block) markExecutedAfterDiskArtefacts(e *executionResults, lastExecuted *atomic.Pointer[Block]) error {
 	// Memory
 	if !b.execution.CompareAndSwap(nil, e) {
 		// This is fatal because we corrupted the database's head block if we
@@ -179,8 +178,8 @@ func (b *Block) SetAsHeadBlock(kv ethdb.KeyValueWriter) {
 // RestoreExecutionArtefacts reloads post-execution artefacts persisted by
 // [Block.MarkExecuted] such that the block is in an equivalent state to when
 // said function was originally called.
-func (b *Block) RestoreExecutionArtefacts(db ethdb.Database) error {
-	buf, err := db.Get(executionResultsKey(b.NumberU64()))
+func (b *Block) RestoreExecutionArtefacts(db ethdb.Database, xdb saedb.ExecutionResults) error {
+	buf, err := xdb.Get(b.NumberU64())
 	if err != nil {
 		return err
 	}
@@ -189,7 +188,7 @@ func (b *Block) RestoreExecutionArtefacts(db ethdb.Database) error {
 		return err
 	}
 	e.receipts = rawdb.ReadRawReceipts(db, b.Hash(), b.NumberU64())
-	return b.markExecuted(nil, e, false, nil)
+	return b.markExecutedAfterDiskArtefacts(e, nil)
 }
 
 // WaitUntilExecuted blocks until [Block.MarkExecuted] is called or the
@@ -241,8 +240,7 @@ func (b *Block) ExecutedByWallTime() time.Time {
 // no such successful call has been made.
 func (b *Block) BaseFee() *uint256.Int {
 	return executionArtefact(b, "baseFee", func(e *executionResults) *uint256.Int {
-		i := uint256.Int(e.baseFee)
-		return &i
+		return e.baseFee.Clone()
 	})
 }
 

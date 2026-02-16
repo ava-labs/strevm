@@ -57,8 +57,9 @@ func TestSettlementInvariants(t *testing.T) {
 	b := newBlock(t, newEthBlock(6, 10, parent.EthBlock()), parent, lastSettled)
 
 	db := rawdb.NewMemoryDatabase()
+	xdb := saetest.NewExecutionResultsDB()
 	for _, b := range []*Block{b, parent, lastSettled} {
-		b.markExecutedForTests(t, db, gastime.New(preciseTime(b.Header(), 0), 1, 0))
+		b.markExecutedForTests(t, db, xdb, gastime.New(preciseTime(b.Header(), 0), 1, 0))
 	}
 
 	t.Run("before_MarkSettled", func(t *testing.T) {
@@ -150,7 +151,7 @@ func TestSettles(t *testing.T) {
 		8: nil,
 		9: {4, 5, 6, 7},
 	}
-	blocks := newChain(t, rawdb.NewMemoryDatabase(), 0, 10, lastSettledAtHeight)
+	blocks := newChain(t, rawdb.NewMemoryDatabase(), saetest.NewExecutionResultsDB(), 0, 10, lastSettledAtHeight)
 
 	numsToBlocks := func(nums ...uint64) []*Block {
 		bs := make([]*Block, len(nums))
@@ -216,7 +217,8 @@ func TestSettles(t *testing.T) {
 
 func TestLastToSettleAt(t *testing.T) {
 	db := rawdb.NewMemoryDatabase()
-	blocks := newChain(t, db, 0, 30, nil)
+	xdb := saetest.NewExecutionResultsDB()
+	blocks := newChain(t, db, xdb, 0, 30, nil)
 	t.Run("helper_invariants", func(t *testing.T) {
 		for i, b := range blocks {
 			require.Equal(t, uint64(i), b.Height()) //nolint:gosec // Slice index won't overflow
@@ -241,39 +243,39 @@ func TestLastToSettleAt(t *testing.T) {
 	}
 
 	requireTime(t, 0, 0)
-	blocks[0].markExecutedForTests(t, db, tm)
+	blocks[0].markExecutedForTests(t, db, xdb, tm)
 
 	tm.Tick(13)
 	requireTime(t, 1, 3)
-	blocks[1].markExecutedForTests(t, db, tm)
+	blocks[1].markExecutedForTests(t, db, xdb, tm)
 
 	tm.Tick(20)
 	requireTime(t, 3, 3)
-	blocks[2].markExecutedForTests(t, db, tm)
+	blocks[2].markExecutedForTests(t, db, xdb, tm)
 
 	tm.Tick(5)
 	requireTime(t, 3, 8)
-	blocks[3].markExecutedForTests(t, db, tm)
+	blocks[3].markExecutedForTests(t, db, xdb, tm)
 
 	tm.Tick(23)
 	requireTime(t, 6, 1)
-	blocks[4].markExecutedForTests(t, db, tm)
+	blocks[4].markExecutedForTests(t, db, xdb, tm)
 
 	tm.Tick(9)
 	requireTime(t, 7, 0)
-	blocks[5].markExecutedForTests(t, db, tm)
+	blocks[5].markExecutedForTests(t, db, xdb, tm)
 
 	tm.Tick(10)
 	requireTime(t, 8, 0)
-	blocks[6].markExecutedForTests(t, db, tm)
+	blocks[6].markExecutedForTests(t, db, xdb, tm)
 
 	tm.Tick(1)
 	requireTime(t, 8, 1)
-	blocks[7].markExecutedForTests(t, db, tm)
+	blocks[7].markExecutedForTests(t, db, xdb, tm)
 
 	tm.Tick(50)
 	requireTime(t, 13, 1)
-	blocks[8].markExecutedForTests(t, db, tm)
+	blocks[8].markExecutedForTests(t, db, xdb, tm)
 
 	require.False(
 		t, blocks[9].Executed(),
@@ -346,7 +348,7 @@ func TestLastToSettleAt(t *testing.T) {
 		tm.Tick(120)
 		require.Equal(t, uint64(25), tm.Unix())
 		require.Equal(t, proxytime.FractionalSecond[gas.Gas]{Numerator: 1, Denominator: 10}, tm.Fraction())
-		blocks[24].markExecutedForTests(t, db, tm)
+		blocks[24].markExecutedForTests(t, db, xdb, tm)
 
 		partiallyExecutedAt := proxytime.New[gas.Gas](27, 100)
 		partiallyExecutedAt.Tick(1)

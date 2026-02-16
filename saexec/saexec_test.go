@@ -77,17 +77,18 @@ func newSUT(tb testing.TB, hooks *saehookstest.Stub) (context.Context, SUT) {
 	config := saetest.ChainConfig()
 	db := rawdb.NewMemoryDatabase()
 	tdbConfig := &triedb.Config{}
+	xdb := saetest.NewExecutionResultsDB()
 
 	wallet := saetest.NewUNSAFEWallet(tb, 1, types.LatestSigner(config))
 	alloc := saetest.MaxAllocFor(wallet.Addresses()...)
-	genesis := blockstest.NewGenesis(tb, db, config, alloc, blockstest.WithTrieDBConfig(tdbConfig), blockstest.WithGasTarget(hooks.Target))
+	genesis := blockstest.NewGenesis(tb, db, xdb, config, alloc, blockstest.WithTrieDBConfig(tdbConfig), blockstest.WithGasTarget(hooks.Target))
 
 	opts := blockstest.WithBlockOptions(
 		blockstest.WithLogger(logger),
 	)
 	chain := blockstest.NewChainBuilder(config, genesis, opts)
 
-	e, err := New(genesis, chain.GetBlock, config, db, tdbConfig, hooks, logger)
+	e, err := New(genesis, chain.GetBlock, config, db, xdb, tdbConfig, hooks, logger)
 	require.NoError(tb, err, "New()")
 	tb.Cleanup(func() {
 		require.NoErrorf(tb, e.Close(), "%T.Close()", e)

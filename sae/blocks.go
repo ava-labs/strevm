@@ -17,6 +17,7 @@ import (
 	"github.com/ava-labs/libevm/core/rawdb"
 	"github.com/ava-labs/libevm/core/txpool"
 	"github.com/ava-labs/libevm/core/types"
+	"github.com/ava-labs/libevm/ethdb"
 	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/rlp"
 	"go.uber.org/zap"
@@ -350,8 +351,12 @@ func (vm *VM) VerifyBlock(ctx context.Context, bCtx *block.Context, b *blocks.Bl
 	return nil
 }
 
-func (vm *VM) canonicalBlock(num uint64) *types.Block {
-	return rawdb.ReadBlock(vm.db, rawdb.ReadCanonicalHash(vm.db, num), num)
+func canonicalBlock(db ethdb.Database, num uint64) (*types.Block, error) {
+	b := rawdb.ReadBlock(db, rawdb.ReadCanonicalHash(db, num), num)
+	if b == nil {
+		return nil, fmt.Errorf("no canonical block at height %d", num)
+	}
+	return b, nil
 }
 
 // GetBlock returns the block with the given ID, or [database.ErrNotFound].

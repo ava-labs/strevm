@@ -51,6 +51,7 @@ import (
 	"github.com/ava-labs/strevm/hook"
 	"github.com/ava-labs/strevm/hook/hookstest"
 	saeparams "github.com/ava-labs/strevm/params"
+	"github.com/ava-labs/strevm/saedb"
 	"github.com/ava-labs/strevm/saetest"
 )
 
@@ -111,11 +112,15 @@ func newSUT(tb testing.TB, numAccounts uint, opts ...sutOption) (context.Context
 
 	keys := saetest.NewUNSAFEKeyChain(tb, numAccounts)
 
+	xdb := saetest.NewExecutionResultsDB()
 	conf := options.ApplyTo(&sutConfig{
 		vmConfig: Config{
 			MempoolConfig: mempoolConf,
 			Hooks: &hookstest.Stub{
 				Target: 100e6,
+				ExecutionResultsDBFn: func(string) (saedb.ExecutionResults, error) {
+					return xdb, nil
+				},
 			},
 		},
 		logLevel: logging.Debug,
@@ -226,6 +231,18 @@ func (t *vmTime) advance(d time.Duration) {
 	t.Time = t.Time.Add(d)
 }
 
+// advanceToSettle advances the time such that the next call to [vmTime.now] is
+// at or after the time required to settle `b`. Note that at least one more
+// accepted [blocks.Block] is still required to actually settle `b`.
+func (t *vmTime) advanceToSettle(ctx context.Context, tb testing.TB, b *blocks.Block) {
+	tb.Helper()
+	require.NoErrorf(tb, b.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", b)
+	to := b.ExecutedByGasTime().AsTime().Add(saeparams.Tau)
+	if t.Before(to) {
+		t.set(to)
+	}
+}
+
 // withVMTime returns an option to configure a new SUT's "now" function along
 // with a struct to access and set the time at nanosecond resolution.
 func withVMTime(tb testing.TB, startTime time.Time) (sutOption, *vmTime) {
@@ -244,6 +261,25 @@ func withVMTime(tb testing.TB, startTime time.Time) (sutOption, *vmTime) {
 	})
 
 	return opt, t
+}
+
+// withExecResultsDB returns an option that replaces the default
+// execution-results database with the provided one. If an earlier option
+// replaces the [hook.Points] with a concrete type other that [hookstest.Stub]
+// then this option will panic.
+func withExecResultsDB(hdb database.HeightIndex) sutOption {
+	return options.Func[sutConfig](func(c *sutConfig) {
+		s := c.vmConfig.Hooks.(*hookstest.Stub) //nolint:forcetypeassert // Test-only and panic() scenario documented above
+		s.ExecutionResultsDBFn = func(string) (saedb.ExecutionResults, error) {
+			return saedb.ExecutionResults{HeightIndex: hdb}, nil
+		}
+	})
+}
+
+func withBloomSectionSize(size uint64) sutOption {
+	return options.Func[sutConfig](func(c *sutConfig) {
+		c.vmConfig.RPCConfig.BlocksPerBloomSection = size
+	})
 }
 
 func (s *SUT) nodeID() ids.NodeID {

@@ -30,6 +30,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/holiman/uint256"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/ava-labs/strevm/blocks"
@@ -416,8 +417,7 @@ func TestEthGetters(t *testing.T) {
 	onDisk := sut.createAndAcceptBlock(t, createTx(t, zeroAddr))
 
 	settled := sut.createAndAcceptBlock(t, createTx(t, zeroAddr))
-	require.NoErrorf(t, settled.WaitUntilExecuted(ctx), "%T.WaitUntilSettled()", settled)
-	vmTime.set(settled.ExecutedByGasTime().AsTime().Add(saeparams.Tau)) // ensure it will be settled
+	vmTime.advanceToSettle(ctx, t, settled)
 
 	executed := sut.createAndAcceptBlock(t, createTx(t, zeroAddr))
 	require.NoErrorf(t, executed.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", executed)
@@ -463,9 +463,192 @@ func TestEthGetters(t *testing.T) {
 	})
 }
 
+func TestGetLogs(t *testing.T) {
+	// We shorten section size to reduce number of required blocks in the test.
+	const bloomSectionSize = 8
+	timeOpt, vmTime := withVMTime(t, time.Unix(saeparams.TauSeconds, 0))
+
+	ctx, sut := newSUT(t, 1, timeOpt, withBloomSectionSize(bloomSectionSize))
+	genesis := sut.lastAcceptedBlock(t)
+
+	emitter := common.Address{'l', 'o', 'g'}
+	rng := crypto.NewKeccakState()
+	stub := &libevmhookstest.Stub{
+		PrecompileOverrides: map[common.Address]libevm.PrecompiledContract{
+			emitter: vm.NewStatefulPrecompile(func(env vm.PrecompileEnvironment, _ []byte) ([]byte, error) {
+				data := make([]byte, 8)
+				rng.Read(data) //nolint:gosec,errcheck // Never returns an error; signature only to implement io.Reader
+				env.StateDB().AddLog(&types.Log{
+					Address: env.Addresses().EVMSemantic.Self,
+					Data:    data, // Guarantee uniqueness as this is the data under test
+				})
+				return nil, nil
+			}),
+		},
+	}
+	stub.Register(t)
+
+	txWithLog := func(t *testing.T) *types.Transaction {
+		t.Helper()
+		return sut.wallet.SetNonceAndSign(t, 0, &types.LegacyTx{
+			To:       &emitter,
+			GasPrice: big.NewInt(1),
+			Gas:      1e6,
+		})
+	}
+	txWithoutLog := func(t *testing.T) *types.Transaction {
+		t.Helper()
+		return sut.wallet.SetNonceAndSign(t, 0, &types.LegacyTx{
+			To:       &common.Address{},
+			GasPrice: big.NewInt(1),
+			Gas:      params.TxGas,
+		})
+	}
+
+	// Create enough blocks to ensure some are indexed.
+	// Since a block after this will be settled, these are all settled as well,
+	// and therefore moved to disk.
+	indexed := make([]*blocks.Block, bloomSectionSize)
+	for i := range indexed {
+		indexed[i] = sut.createAndAcceptBlock(t, txWithLog(t))
+	}
+
+	settled := sut.createAndAcceptBlock(t, txWithLog(t))
+	vmTime.advanceToSettle(ctx, t, settled)
+
+	noLogs := sut.createAndAcceptBlock(t, txWithoutLog(t))
+
+	executed := sut.createAndAcceptBlock(t, txWithLog(t))
+	require.NoErrorf(t, executed.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", executed)
+
+	// Although the FiltersAPI will work without any blocks indexed, such a
+	// scenario would not test the functionality of the bloom indexer.
+	require.EventuallyWithT(t, func(c *assert.CollectT) {
+		be := sut.rawVM.APIBackend()
+		_, got := be.BloomStatus()
+		require.Equal(c, uint64(1), got, "%T.BloomStatus() sections", be)
+	}, 5*time.Second, 100*time.Millisecond, "bloom indexer never finished")
+
+	logsFrom := func(bs ...*blocks.Block) []types.Log {
+		var logs []types.Log
+		for _, b := range bs {
+			for _, r := range b.Receipts() {
+				for _, l := range r.Logs {
+					logs = append(logs, *l)
+				}
+			}
+		}
+		return logs
+	}
+
+	ptr := func(h common.Hash) *common.Hash { return &h }
+
+	tests := []struct {
+		name            string
+		query           ethereum.FilterQuery
+		wantLogs        []types.Log
+		wantErrContains string
+	}{
+		{
+			name: "genesis",
+			query: ethereum.FilterQuery{
+				BlockHash: ptr(genesis.Hash()),
+			},
+		},
+		{
+			name: "no_logs",
+			query: ethereum.FilterQuery{
+				BlockHash: ptr(noLogs.Hash()),
+			},
+		},
+		{
+			name: "nonexistent_block",
+			query: ethereum.FilterQuery{
+				BlockHash: &common.Hash{0xde, 0xad},
+			},
+			wantErrContains: "unknown block",
+		},
+		{
+			name: "on_disk",
+			query: ethereum.FilterQuery{
+				BlockHash: ptr(indexed[0].Hash()),
+			},
+			wantLogs: logsFrom(indexed[0]),
+		},
+		{
+			name: "in_memory",
+			query: ethereum.FilterQuery{
+				BlockHash: ptr(executed.Hash()),
+			},
+			wantLogs: logsFrom(executed),
+		},
+		{
+			name: "unindexed",
+			query: ethereum.FilterQuery{
+				FromBlock: settled.Number(),
+				ToBlock:   executed.Number(),
+				Addresses: []common.Address{emitter},
+			},
+			wantLogs: logsFrom(settled, executed),
+		},
+		{
+			name: "unknown_contract",
+			query: ethereum.FilterQuery{
+				FromBlock: settled.Number(),
+				ToBlock:   executed.Number(),
+				Addresses: []common.Address{{0xf0, 0x00}},
+			},
+		},
+		{
+			name: "indexed",
+			query: ethereum.FilterQuery{
+				FromBlock: indexed[0].Number(),
+				ToBlock:   indexed[len(indexed)-1].Number(),
+				Addresses: []common.Address{emitter},
+			},
+			wantLogs: logsFrom(indexed...),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Logf("%T: %[1]v", tt.query)
+			got, err := sut.FilterLogs(ctx, tt.query)
+			if tt.wantErrContains != "" {
+				require.ErrorContains(t, err, tt.wantErrContains, "eth_getLogs(...)")
+				return
+			}
+			require.NoErrorf(t, err, "eth_getLogs(...)")
+			if diff := cmp.Diff(tt.wantLogs, got, cmpopts.EquateEmpty()); diff != "" {
+				t.Errorf("eth_getLogs(...) mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestEthPendingTransactions(t *testing.T) {
+	ctx, sut := newSUT(t, 1)
+
+	tx := sut.wallet.SetNonceAndSign(t, 0, &types.DynamicFeeTx{
+		To:        &zeroAddr,
+		Gas:       params.TxGas,
+		GasFeeCap: big.NewInt(1),
+		Value:     big.NewInt(100),
+	})
+	sut.mustSendTx(t, tx)
+	sut.requireInMempool(t, tx.Hash())
+
+	// eth_pendingTransactions filters results to only transactions from
+	// accounts configured in the AccountManager, which is always empty.
+	sut.testRPC(ctx, t, rpcTest{
+		method: "eth_pendingTransactions",
+		want:   []*ethapi.RPCTransaction{},
+	})
+}
+
 func TestReceiptAPIs(t *testing.T) {
 	opt, vmTime := withVMTime(t, time.Unix(saeparams.TauSeconds, 0))
-	ctx, sut := newSUT(t, 5, opt)
+	ctx, sut := newSUT(t, 5, opt) 
 
 	// Blocking precompile creates accepted-but-not-executed blocks
 	blockingPrecompile := common.Address{'b', 'l', 'o', 'c', 'k'}
@@ -631,27 +814,8 @@ func TestReceiptAPIs(t *testing.T) {
 	require.ErrorContains(t, err, "restoring execution artefacts")
 
 	require.NoError(t, sut.db.Put(execKey, []byte{0x01}))
-	err = sut.CallContext(ctx, &receipt, "eth_getTransactionReceipt", txSettled.Hash())
+	err = sut.CallContext(ctx, &receipt, "eth_getTransactionReceipt", txSettled.Hash()) 
 	require.ErrorContains(t, err, "restoring execution artefacts")
-}
-func TestEthPendingTransactions(t *testing.T) {
-	ctx, sut := newSUT(t, 1)
-
-	tx := sut.wallet.SetNonceAndSign(t, 0, &types.DynamicFeeTx{
-		To:        &zeroAddr,
-		Gas:       params.TxGas,
-		GasFeeCap: big.NewInt(1),
-		Value:     big.NewInt(100),
-	})
-	sut.mustSendTx(t, tx)
-	sut.requireInMempool(t, tx.Hash())
-
-	// eth_pendingTransactions filters results to only transactions from
-	// accounts configured in the AccountManager, which is always empty.
-	sut.testRPC(ctx, t, rpcTest{
-		method: "eth_pendingTransactions",
-		want:   []*ethapi.RPCTransaction{},
-	})
 }
 
 // SAE doesn't really support APIs that require a key on the node, as there is

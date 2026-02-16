@@ -40,8 +40,8 @@ type Block struct {
 	// Only the genesis block or the last pre-SAE block is synchronous. These
 	// are self-settling by definition so their `ancestry` MUST be nil.
 	synchronous bool
-	// Determined during block building and MUST be set before execution as
-	// expected by the Executor.
+	// Determined during block building and SHOULD be set before execution as
+	// an early warning system in case of near-miss incorrect predictions.
 	bounds *WorstCaseBounds
 	// Non-nil i.f.f. [Block.MarkExecuted] has returned without error.
 	execution atomic.Pointer[executionResults]
@@ -102,6 +102,7 @@ var (
 	errHashMismatch               = errors.New("block hash mismatch")
 )
 
+// SetAncestors sets the block's ancestry while enforcing invariants.
 func (b *Block) SetAncestors(parent, lastSettled *Block) error {
 	if parent != nil {
 		if got, want := parent.Hash(), b.ParentHash(); got != want {
