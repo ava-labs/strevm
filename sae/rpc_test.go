@@ -470,11 +470,15 @@ func TestGetLogs(t *testing.T) {
 	genesis := sut.lastAcceptedBlock(t)
 
 	emitter := common.Address{'l', 'o', 'g'}
+	rng := crypto.NewKeccakState()
 	stub := &libevmhookstest.Stub{
 		PrecompileOverrides: map[common.Address]libevm.PrecompiledContract{
 			emitter: vm.NewStatefulPrecompile(func(env vm.PrecompileEnvironment, _ []byte) ([]byte, error) {
+				data := make([]byte, 8)
+				rng.Read(data) //nolint:gosec,errcheck // Never returns an error; signature only to implement io.Reader
 				env.StateDB().AddLog(&types.Log{
 					Address: env.Addresses().EVMSemantic.Self,
+					Data:    data, // Guarantee uniqueness as this is the data under test
 				})
 				return nil, nil
 			}),
