@@ -26,14 +26,9 @@ var testChainConfig = saetest.ChainConfig()
 
 // testBlockGen is a simplified block generator for tests, replacing core.BlockGen.
 type testBlockGen struct {
-	coinbase common.Address
-	baseFee  *big.Int
-	txs      types.Transactions
-	nonces   map[common.Address]uint64
-}
-
-func (bg *testBlockGen) SetCoinbase(addr common.Address) {
-	bg.coinbase = addr
+	baseFee *big.Int
+	txs     types.Transactions
+	nonces  map[common.Address]uint64
 }
 
 func (bg *testBlockGen) BaseFee() *big.Int {
@@ -142,7 +137,6 @@ func newTestBackend(t *testing.T, numBlocks int, genBlock func(int, *testBlockGe
 			h.Time = parent.Time() + 2
 			h.GasLimit = 8_000_000
 			h.GasUsed = gasUsed
-			h.Coinbase = bg.coinbase
 		}))
 		blocks = append(blocks, block)
 		parent = block
@@ -220,8 +214,6 @@ func testGenBlock(t *testing.T, tip int64, numTx int) func(int, *testBlockGen) {
 	signer := types.LatestSigner(testChainConfig)
 
 	return func(i int, b *testBlockGen) {
-		b.SetCoinbase(common.Address{1})
-
 		txTip := big.NewInt(tip * params.GWei)
 		baseFee := b.BaseFee()
 		feeCap := new(big.Int).Add(baseFee, txTip)
@@ -247,7 +239,6 @@ func testGenBlockWithTips(t *testing.T, tips []int64) func(int, *testBlockGen) {
 	signer := types.LatestSigner(testChainConfig)
 
 	return func(i int, b *testBlockGen) {
-		b.SetCoinbase(common.Address{1})
 		baseFee := b.BaseFee()
 		for _, tip := range tips {
 			txTip := big.NewInt(tip * params.GWei)
@@ -349,7 +340,6 @@ func TestSuggestTipCap(t *testing.T) {
 			name:      "no_transactions",
 			numBlocks: 3,
 			genBlock: func(i int, b *testBlockGen) {
-				b.SetCoinbase(common.Address{1})
 				// No transactions added
 			},
 			expectedTip: DefaultMinPrice,
@@ -417,8 +407,6 @@ func TestFeeHistory(t *testing.T) {
 		signer := types.LatestSigner(testChainConfig)
 		tip := big.NewInt(1 * params.GWei)
 		backend := newTestBackend(t, 32, func(i int, b *testBlockGen) {
-			b.SetCoinbase(common.Address{1})
-
 			baseFee := b.BaseFee()
 			feeCap := new(big.Int).Add(baseFee, tip)
 
