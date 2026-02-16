@@ -5,8 +5,8 @@ package gasprice
 
 import (
 	"math/big"
-	"sync"
 	"testing"
+	"time"
 
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/stretchr/testify/require"
@@ -14,7 +14,9 @@ import (
 
 func TestFeeInfoProvider(t *testing.T) {
 	backend := newTestBackend(t, 2, testGenBlock(t, 55, 80))
-	f, err := newFeeInfoProvider(backend, 2)
+	closeCh := make(chan struct{})
+	defer close(closeCh)
+	f, err := newFeeInfoProvider(backend, 2, closeCh)
 	require.NoError(t, err)
 
 	// check that accepted event was subscribed
@@ -23,26 +25,24 @@ func TestFeeInfoProvider(t *testing.T) {
 	// check fee infos were cached
 	require.Equal(t, 2, f.cache.Len())
 
-	// some block that extends the current chain
-	var wg sync.WaitGroup
-	wg.Add(1)
-	f.newHeaderAdded = func() { wg.Done() }
-	header := &types.Header{Number: big.NewInt(3), ParentHash: backend.LastAcceptedBlock().Hash()}
+	// send a block through the subscription and verify it gets cached
+	header := &types.Header{Number: big.NewInt(3), ParentHash: backend.lastBlock().Hash()}
 	block := types.NewBlockWithHeader(header)
 	backend.acceptedCh <- block
 
-	// wait for the event to process before validating the new header was added.
-	wg.Wait()
-	feeInfo, ok := f.get(3)
-	require.True(t, ok)
-	require.NotNil(t, feeInfo)
+	require.Eventually(t, func() bool {
+		_, ok := f.get(3)
+		return ok
+	}, 5*time.Second, 10*time.Millisecond)
 }
 
 func TestFeeInfoProviderCacheSize(t *testing.T) {
 	size := 5
 	overflow := 3
 	backend := newTestBackend(t, 0, testGenBlock(t, 55, 370))
-	f, err := newFeeInfoProvider(backend, size)
+	closeCh := make(chan struct{})
+	defer close(closeCh)
+	f, err := newFeeInfoProvider(backend, size, closeCh)
 	require.NoError(t, err)
 
 	// add [overflow] more elements than what will fit in the cache

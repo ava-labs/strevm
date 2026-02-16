@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/ava-labs/libevm/common"
-	"github.com/ava-labs/libevm/core"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/event"
 	"github.com/ava-labs/libevm/params"
@@ -87,7 +86,7 @@ func (b *testBackend) HeaderByNumber(ctx context.Context, number rpc.BlockNumber
 }
 
 func (b *testBackend) BlockByNumber(ctx context.Context, number rpc.BlockNumber) (*types.Block, error) {
-	if number == rpc.LatestBlockNumber {
+	if number == rpc.LatestBlockNumber || number == rpc.PendingBlockNumber {
 		return b.lastBlock(), nil
 	}
 	n := uint64(number) //nolint:gosec // Test code
@@ -97,17 +96,12 @@ func (b *testBackend) BlockByNumber(ctx context.Context, number rpc.BlockNumber)
 	return b.blocks[n], nil
 }
 
-func (b *testBackend) SubscribeChainHeadEvent(ch chan<- core.ChainHeadEvent) event.Subscription {
-	return nil
-}
-
 func (b *testBackend) SubscribeChainAcceptedEvent(ch chan<- *types.Block) event.Subscription {
 	b.acceptedCh = ch
-	return nil
-}
-
-func (b *testBackend) LastAcceptedBlock() *types.Block {
-	return b.lastBlock()
+	return event.NewSubscription(func(quit <-chan struct{}) error {
+		<-quit
+		return nil
+	})
 }
 
 // newTestBackend creates a test backend with [numBlocks] blocks (plus genesis).
@@ -204,6 +198,7 @@ func applyGasPriceTest(t *testing.T, test suggestTipCapTest, opts ...OracleOptio
 	backend := newTestBackend(t, test.numBlocks, test.genBlock)
 	oracle, err := NewOracle(backend, opts...)
 	require.NoError(t, err)
+	defer oracle.Close()
 
 	// mock time to be consistent across different CI runs
 	// sets currentTime to be 20 seconds

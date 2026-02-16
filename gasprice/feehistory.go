@@ -66,10 +66,6 @@ func processBlock(block *types.Block) *slimBlock {
 // requested)
 func (sb *slimBlock) processPercentiles(percentiles []float64) ([]*big.Int, *big.Int, float64) {
 	gasUsedRatio := float64(sb.GasUsed) / float64(sb.GasLimit)
-	if len(percentiles) == 0 {
-		// rewards were not requested
-		return nil, sb.BaseFee, gasUsedRatio
-	}
 
 	txLen := len(sb.Txs)
 	reward := make([]*big.Int, len(percentiles))
@@ -99,7 +95,7 @@ func (sb *slimBlock) processPercentiles(percentiles []float64) ([]*big.Int, *big
 // enforcing backend specific limitations.
 // Note: an error is only returned if retrieving the head header has failed. If there are no
 // retrievable blocks in the specified range then zero block count is returned with no error.
-func (oracle *Oracle) resolveBlockRange(lastBlock rpc.BlockNumber, blocks uint64) (uint64, uint64, error) {
+func (oracle *Oracle) resolveBlockRange(ctx context.Context, lastBlock rpc.BlockNumber, blocks uint64) (uint64, uint64, error) {
 	if blocks == 0 {
 		return 0, 0, nil
 	}
@@ -109,14 +105,18 @@ func (oracle *Oracle) resolveBlockRange(lastBlock rpc.BlockNumber, blocks uint64
 		return 0, 0, err
 	}
 
-	head := oracle.backend.LastAcceptedBlock().Number().Uint64()
+	head, err := oracle.backend.HeaderByNumber(ctx, rpc.PendingBlockNumber)
+	if err != nil {
+		return 0, 0, err
+	}
+	headNumber := head.Number.Uint64()
 	maxQueryDepth := oracle.cfg.MaxBlockHistory - 1
 	// If the requested last block reaches further back than [config.MaxBlockHistory]
 	// from the last accepted block, return an error.
 	// Note: this allows some blocks past this point to be fetched since it will
 	// start fetching [blocks] from this point.
-	if head > maxQueryDepth && lastBlockNumber < head-maxQueryDepth {
-		return 0, 0, fmt.Errorf("%w: requested %d, head %d", errBeyondHistoricalLimit, lastBlock, head)
+	if headNumber > maxQueryDepth && lastBlockNumber < headNumber-maxQueryDepth {
+		return 0, 0, fmt.Errorf("%w: requested %d, head number %d", errBeyondHistoricalLimit, lastBlock, headNumber)
 	}
 	// Ensure not trying to retrieve before genesis
 	if blocks > lastBlockNumber+1 {
@@ -124,7 +124,7 @@ func (oracle *Oracle) resolveBlockRange(lastBlock rpc.BlockNumber, blocks uint64
 	}
 	// Truncate blocks range if extending past [config.MaxBlockHistory].
 	oldestQueriedIndex := lastBlockNumber - blocks + 1
-	if queryDepth := head - oldestQueriedIndex; queryDepth > maxQueryDepth {
+	if queryDepth := headNumber - oldestQueriedIndex; queryDepth > maxQueryDepth {
 		overage := uint64(queryDepth - maxQueryDepth)
 		blocks -= overage
 	}
@@ -167,7 +167,7 @@ func (oracle *Oracle) FeeHistory(ctx context.Context, blocks uint64, unresolvedL
 			return common.Big0, nil, nil, nil, fmt.Errorf("%w: #%d:%f >= #%d:%f", errInvalidPercentile, i-1, rewardPercentiles[i-1], i, p)
 		}
 	}
-	lastBlock, blocks, err := oracle.resolveBlockRange(unresolvedLastBlock, blocks)
+	lastBlock, blocks, err := oracle.resolveBlockRange(ctx, unresolvedLastBlock, blocks)
 	if err != nil || blocks == 0 {
 		return common.Big0, nil, nil, nil, err
 	}
@@ -177,7 +177,6 @@ func (oracle *Oracle) FeeHistory(ctx context.Context, blocks uint64, unresolvedL
 		reward       = make([][]*big.Int, blocks)
 		baseFee      = make([]*big.Int, blocks)
 		gasUsedRatio = make([]float64, blocks)
-		firstMissing = blocks
 	)
 
 	for blockNumber := oldestBlock; blockNumber < oldestBlock+blocks; blockNumber++ {
@@ -195,25 +194,17 @@ func (oracle *Oracle) FeeHistory(ctx context.Context, blocks uint64, unresolvedL
 			if err != nil {
 				return common.Big0, nil, nil, nil, err
 			}
-			// getting no block and no error means we are requesting into the future
-			if block == nil {
-				if i == 0 {
-					return common.Big0, nil, nil, nil, nil
-				}
-				firstMissing = i
-				break
-			}
 			sb = processBlock(block)
 			oracle.historyCache.Add(blockNumber, sb)
 		}
-		reward[i], baseFee[i], gasUsedRatio[i] = sb.processPercentiles(rewardPercentiles)
+		if len(rewardPercentiles) != 0 {
+			reward[i], baseFee[i], gasUsedRatio[i] = sb.processPercentiles(rewardPercentiles)
+		}
 	}
 
-	if len(rewardPercentiles) != 0 {
-		reward = reward[:firstMissing]
-	} else {
+	// Return nil if no reward percentiles were requested, otherwise it would return a slice.
+	if len(rewardPercentiles) == 0 {
 		reward = nil
 	}
-	baseFee, gasUsedRatio = baseFee[:firstMissing], gasUsedRatio[:firstMissing]
 	return new(big.Int).SetUint64(oldestBlock), reward, baseFee, gasUsedRatio, nil
 }

@@ -34,10 +34,10 @@ func TestFeeHistory(t *testing.T) {
 		{maxCallBlock: 0, maxBlock: 1000, count: 10, last: 30, percent: []float64{0, 10}, expFirst: 21, expCount: 10, expErr: nil},
 		{maxCallBlock: 0, maxBlock: 1000, count: 10, last: 30, percent: []float64{20, 10}, expFirst: 0, expCount: 0, expErr: errInvalidPercentile},
 		{maxCallBlock: 0, maxBlock: 1000, count: 1000000000, last: 30, percent: nil, expFirst: 0, expCount: 31, expErr: nil},
-		{maxCallBlock: 0, maxBlock: 1000, count: 1000000000, last: rpc.LatestBlockNumber, percent: nil, expFirst: 0, expCount: 33, expErr: nil},
+		{maxCallBlock: 0, maxBlock: 1000, count: 1000000000, last: rpc.PendingBlockNumber, percent: nil, expFirst: 0, expCount: 33, expErr: nil},
 		{maxCallBlock: 0, maxBlock: 1000, count: 10, last: 40, percent: nil, expFirst: 0, expCount: 0, expErr: errRequestBeyondHead},
 		{maxCallBlock: 0, maxBlock: 1000, count: 10, last: 40, percent: nil, expFirst: 0, expCount: 0, expErr: errRequestBeyondHead},
-		{maxCallBlock: 0, maxBlock: 2, count: 100, last: rpc.LatestBlockNumber, percent: []float64{0, 10}, expFirst: 31, expCount: 2, expErr: nil},
+		{maxCallBlock: 0, maxBlock: 2, count: 100, last: rpc.PendingBlockNumber, percent: []float64{0, 10}, expFirst: 31, expCount: 2, expErr: nil},
 		{maxCallBlock: 0, maxBlock: 2, count: 100, last: 32, percent: []float64{0, 10}, expFirst: 31, expCount: 2, expErr: nil},
 		// In SAE backend, `pending` resolves to accepted head (not head+1).
 		{maxCallBlock: 0, maxBlock: 1000, count: 1, last: rpc.PendingBlockNumber, percent: nil, expFirst: 32, expCount: 1, expErr: nil},
@@ -49,11 +49,11 @@ func TestFeeHistory(t *testing.T) {
 		{maxCallBlock: 0, maxBlock: 1000, count: 2, last: rpc.PendingBlockNumber, percent: []float64{0, 10}, expFirst: 31, expCount: 2, expErr: nil},
 
 		// Modified tests
-		{maxCallBlock: 0, maxBlock: 2, count: 100, last: rpc.LatestBlockNumber, percent: nil, expFirst: 31, expCount: 2, expErr: nil},    // apply block lookback limits even if only headers required
-		{maxCallBlock: 0, maxBlock: 10, count: 10, last: 30, percent: nil, expFirst: 23, expCount: 8, expErr: nil},                       // limit lookback based on maxHistory from latest block
-		{maxCallBlock: 0, maxBlock: 33, count: 1000000000, last: 10, percent: nil, expFirst: 0, expCount: 11, expErr: nil},               // handle truncation edge case
-		{maxCallBlock: 0, maxBlock: 2, count: 10, last: 20, percent: nil, expFirst: 0, expCount: 0, expErr: errBeyondHistoricalLimit},    // query behind historical limit
-		{maxCallBlock: 10, maxBlock: 30, count: 100, last: rpc.LatestBlockNumber, percent: nil, expFirst: 23, expCount: 10, expErr: nil}, // ensure [MaxCallBlockHistory] is honored
+		{maxCallBlock: 0, maxBlock: 2, count: 100, last: rpc.PendingBlockNumber, percent: nil, expFirst: 31, expCount: 2, expErr: nil},    // apply block lookback limits even if only headers required
+		{maxCallBlock: 0, maxBlock: 10, count: 10, last: 30, percent: nil, expFirst: 23, expCount: 8, expErr: nil},                        // limit lookback based on maxHistory from latest block
+		{maxCallBlock: 0, maxBlock: 33, count: 1000000000, last: 10, percent: nil, expFirst: 0, expCount: 11, expErr: nil},                // handle truncation edge case
+		{maxCallBlock: 0, maxBlock: 2, count: 10, last: 20, percent: nil, expFirst: 0, expCount: 0, expErr: errBeyondHistoricalLimit},     // query behind historical limit
+		{maxCallBlock: 10, maxBlock: 30, count: 100, last: rpc.PendingBlockNumber, percent: nil, expFirst: 23, expCount: 10, expErr: nil}, // ensure [MaxCallBlockHistory] is honored
 	}
 	for i, c := range cases {
 		kc := saetest.NewUNSAFEKeyChain(t, 1)
@@ -90,6 +90,7 @@ func TestFeeHistory(t *testing.T) {
 		}
 		oracle, err := NewOracle(backend, oracleOpts...)
 		require.NoError(t, err)
+		defer oracle.Close()
 
 		first, reward, baseFee, ratio, err := oracle.FeeHistory(context.Background(), c.count, c.last, c.percent)
 		expReward := c.expCount

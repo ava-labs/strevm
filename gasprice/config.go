@@ -50,9 +50,8 @@ type config struct {
 	// MaxBlockHistory specifies the furthest back behind the last accepted block that can
 	// be requested by fee history.
 	MaxBlockHistory uint64
-	MaxPrice        *big.Int `toml:",omitempty"`
-	MinPrice        *big.Int `toml:",omitempty"`
-	MinGasUsed      *big.Int `toml:",omitempty"`
+	MaxPrice        *big.Int
+	MinPrice        *big.Int
 }
 
 // Option configures oracle initialization.
@@ -66,7 +65,6 @@ func defaultConfig() config {
 		MaxBlockHistory:     DefaultMaxBlockHistory,
 		MaxPrice:            DefaultMaxPrice,
 		MinPrice:            DefaultMinPrice,
-		MinGasUsed:          DefaultMinGasUsed,
 	}
 }
 
@@ -137,15 +135,5 @@ func WithMinPrice(minPrice *big.Int) (OracleOption, error) {
 	}
 	return options.Func[config](func(c *config) {
 		c.MinPrice = minPrice
-	}), nil
-}
-
-// WithMinGasUsed sets the minimum gas-used threshold.
-func WithMinGasUsed(minGasUsed *big.Int) (OracleOption, error) {
-	if minGasUsed == nil || minGasUsed.Sign() < 0 {
-		return nil, fmt.Errorf("min gas used (%v) is nil or negative", minGasUsed)
-	}
-	return options.Func[config](func(c *config) {
-		c.MinGasUsed = minGasUsed
 	}), nil
 }

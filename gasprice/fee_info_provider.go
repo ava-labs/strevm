@@ -18,9 +18,8 @@ import (
 const feeCacheExtraSlots = 5
 
 type feeInfoProvider struct {
-	cache          *lru.Cache
-	backend        OracleBackend
-	newHeaderAdded func() // callback used in tests
+	cache   *lru.Cache
+	backend OracleBackend
 }
 
 // feeInfo is the type of data stored in feeInfoProvider's cache.
@@ -31,7 +30,8 @@ type feeInfo struct {
 
 // newFeeInfoProvider returns a bounded buffer with [size] slots to
 // store [*feeInfo] for the most recently accepted blocks.
-func newFeeInfoProvider(backend OracleBackend, size int) (*feeInfoProvider, error) {
+// The caller must close [closeCh] to stop the background goroutine.
+func newFeeInfoProvider(backend OracleBackend, size int, closeCh <-chan struct{}) (*feeInfoProvider, error) {
 	fc := &feeInfoProvider{
 		backend: backend,
 	}
@@ -46,12 +46,17 @@ func newFeeInfoProvider(backend OracleBackend, size int) (*feeInfoProvider, erro
 	fc.cache, _ = lru.New(size + feeCacheExtraSlots)
 	// subscribe to the chain accepted event
 	acceptedEvent := make(chan *types.Block, 1)
-	backend.SubscribeChainAcceptedEvent(acceptedEvent)
+	sub := backend.SubscribeChainAcceptedEvent(acceptedEvent)
 	go func() {
-		for ev := range acceptedEvent {
-			fc.addHeader(context.Background(), ev.Header(), ev.Transactions())
-			if fc.newHeaderAdded != nil {
-				fc.newHeaderAdded()
+		defer sub.Unsubscribe()
+		for {
+			select {
+			case ev := <-acceptedEvent:
+				fc.addHeader(context.Background(), ev.Header(), ev.Transactions())
+			case <-closeCh:
+				return
+			case <-sub.Err():
+				return
 			}
 		}
 	}()
@@ -91,7 +96,10 @@ func (f *feeInfoProvider) get(number uint64) (*feeInfo, bool) {
 // populateCache populates [f] with [size] blocks up to last accepted.
 // Note: assumes [size] is greater than zero.
 func (f *feeInfoProvider) populateCache(size int) error {
-	lastAccepted := f.backend.LastAcceptedBlock().NumberU64()
+	lastAccepted, err := f.backend.ResolveBlockNumber(rpc.PendingBlockNumber)
+	if err != nil {
+		return err
+	}
 	lowerBlockNumber := uint64(0)
 	if uint64(size-1) <= lastAccepted { // Note: "size-1" because we need a total of size blocks.
 		lowerBlockNumber = lastAccepted - uint64(size-1)

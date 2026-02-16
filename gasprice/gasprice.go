@@ -11,7 +11,7 @@ import (
 	"github.com/ava-labs/avalanchego/utils/timer/mockable"
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/common/lru"
-	"github.com/ava-labs/libevm/core"
+	"github.com/ava-labs/libevm/common/math"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/event"
 	"github.com/ava-labs/libevm/libevm/options"
@@ -24,25 +24,24 @@ type OracleBackend interface {
 	ResolveBlockNumber(bn rpc.BlockNumber) (uint64, error)
 	HeaderByNumber(ctx context.Context, number rpc.BlockNumber) (*types.Header, error)
 	BlockByNumber(ctx context.Context, number rpc.BlockNumber) (*types.Block, error)
-	SubscribeChainHeadEvent(ch chan<- core.ChainHeadEvent) event.Subscription
 	SubscribeChainAcceptedEvent(ch chan<- *types.Block) event.Subscription
-	LastAcceptedBlock() *types.Block
 }
 
 // Oracle recommends gas prices based on the content of recent
 // blocks. Suitable for both light and full clients.
 type Oracle struct {
-	backend   OracleBackend
+	backend OracleBackend
+	// cfg holds all oracle parameters set through options.
+	cfg config
+
+	lastLock  sync.RWMutex
 	lastHead  common.Hash
 	lastPrice *big.Int
-	// cfg holds all oracle parameters set through options.
-	cfg       config
-	cacheLock sync.RWMutex
-	fetchLock sync.Mutex
 
 	// clock to decide what set of rules to use when recommending a gas price
 	clock mockable.Clock
 
+	closeCh         chan struct{}
 	historyCache    *lru.Cache[uint64, *slimBlock]
 	feeInfoProvider *feeInfoProvider
 }
@@ -54,18 +53,8 @@ func NewOracle(backend OracleBackend, opts ...OracleOption) (*Oracle, error) {
 	options.ApplyTo(&config, opts...)
 
 	cache := lru.NewCache[uint64, *slimBlock](FeeHistoryCacheSize)
-	headEvent := make(chan core.ChainHeadEvent, 1)
-	backend.SubscribeChainHeadEvent(headEvent)
-	go func() {
-		var lastHead common.Hash
-		for ev := range headEvent {
-			if ev.Block.ParentHash() != lastHead {
-				cache.Purge()
-			}
-			lastHead = ev.Block.Hash()
-		}
-	}()
-	feeInfoProvider, err := newFeeInfoProvider(backend, config.BlocksCount)
+	closeCh := make(chan struct{})
+	feeInfoProvider, err := newFeeInfoProvider(backend, config.BlocksCount, closeCh)
 	if err != nil {
 		return nil, err
 	}
@@ -73,9 +62,15 @@ func NewOracle(backend OracleBackend, opts ...OracleOption) (*Oracle, error) {
 		backend:         backend,
 		lastPrice:       config.MinPrice,
 		cfg:             config,
+		closeCh:         closeCh,
 		historyCache:    cache,
 		feeInfoProvider: feeInfoProvider,
 	}, nil
+}
+
+// Close stops the oracle's background goroutines.
+func (oracle *Oracle) Close() {
+	close(oracle.closeCh)
 }
 
 // SuggestTipCap returns a tip cap so that newly created transaction can have a
@@ -93,19 +88,18 @@ func (oracle *Oracle) SuggestTipCap(ctx context.Context) (*big.Int, error) {
 	headHash := head.Hash()
 
 	// If the latest gasprice is still available, return it.
-	oracle.cacheLock.RLock()
+	oracle.lastLock.RLock()
 	lastHead, lastPrice := oracle.lastHead, oracle.lastPrice
-	oracle.cacheLock.RUnlock()
+	oracle.lastLock.RUnlock()
 	if headHash == lastHead {
 		return new(big.Int).Set(lastPrice), nil
 	}
-	oracle.fetchLock.Lock()
-	defer oracle.fetchLock.Unlock()
+
+	oracle.lastLock.Lock()
+	defer oracle.lastLock.Unlock()
 
 	// Try checking the cache again, maybe the last fetch fetched what we need
-	oracle.cacheLock.RLock()
 	lastHead, lastPrice = oracle.lastHead, oracle.lastPrice
-	oracle.cacheLock.RUnlock()
 	if headHash == lastHead {
 		return new(big.Int).Set(lastPrice), nil
 	}
@@ -140,16 +134,10 @@ func (oracle *Oracle) SuggestTipCap(ctx context.Context) (*big.Int, error) {
 		price = tipResults[(len(tipResults)-1)*oracle.cfg.Percentile/100]
 	}
 
-	if price.Cmp(oracle.cfg.MaxPrice) > 0 {
-		price = new(big.Int).Set(oracle.cfg.MaxPrice)
-	}
-	if price.Cmp(oracle.cfg.MinPrice) < 0 {
-		price = new(big.Int).Set(oracle.cfg.MinPrice)
-	}
-	oracle.cacheLock.Lock()
+	price = math.BigMax(math.BigMin(price, oracle.cfg.MaxPrice), oracle.cfg.MinPrice)
+
 	oracle.lastHead = headHash
 	oracle.lastPrice = price
-	oracle.cacheLock.Unlock()
 
 	return new(big.Int).Set(price), nil
 }
