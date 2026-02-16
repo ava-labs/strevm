@@ -30,6 +30,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/holiman/uint256"
+	"github.com/mrwormhole/errdiff"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -67,13 +68,11 @@ func (s *SUT) testRPC(ctx context.Context, t *testing.T, tcs ...rpcTest) {
 			got := reflect.New(reflect.TypeOf(tc.want))
 			t.Logf("%T.CallContext(ctx, %T, %q, %v...)", s.rpcClient, &tc.want, tc.method, tc.args)
 			err := s.CallContext(ctx, got.Interface(), tc.method, tc.args...)
-			if tc.wantErrContains != "" {
-				require.ErrorContains(t, err, tc.wantErrContains)
-				return
+			if diff := errdiff.Text(err, tc.wantErrContains); diff != "" {
+				t.Fatalf("CallContext(...) %s", diff)
 			}
-			require.NoError(t, err)
 			if diff := cmp.Diff(tc.want, got.Elem().Interface(), opts...); diff != "" {
-				t.Errorf("Diff (-want +got):\n%s", diff)
+				t.Errorf("Unmarshalled %T diff (-want +got):\n%s", got.Elem().Interface(), diff)
 			}
 		})
 	}
