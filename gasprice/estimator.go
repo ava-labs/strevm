@@ -150,7 +150,7 @@ func (e *Estimator) SuggestTipCap(ctx context.Context) (*big.Int, error) {
 		// Although txs are sorted per-block in each feeInfo, we need to
 		// re-sort across all recent blocks to find the global percentile.
 		slices.SortFunc(tipResults, func(a, b txGasAndReward) int { return a.reward.Cmp(b.reward) })
-		price = tipResults[(lenTipResults-1)*(e.cfg.Percentile)/100].reward //nolint:gosec // len is non-negative (checked above)
+		price = tipResults[(lenTipResults-1)*(e.cfg.Percentile)/100].reward
 	}
 
 	price = math.BigMax(math.BigMin(price, e.cfg.MaxPrice), e.cfg.MinPrice)
