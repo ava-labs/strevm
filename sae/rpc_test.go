@@ -13,7 +13,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ava-labs/avalanchego/utils"
 	"github.com/ava-labs/avalanchego/version"
 	ethereum "github.com/ava-labs/libevm"
 	"github.com/ava-labs/libevm/common"
@@ -416,8 +415,7 @@ func TestEthGetters(t *testing.T) {
 	onDisk := sut.createAndAcceptBlock(t, createTx(t, zeroAddr))
 
 	settled := sut.createAndAcceptBlock(t, createTx(t, zeroAddr))
-	require.NoErrorf(t, settled.WaitUntilExecuted(ctx), "%T.WaitUntilSettled()", settled)
-	vmTime.set(settled.ExecutedByGasTime().AsTime().Add(saeparams.Tau)) // ensure it will be settled
+	vmTime.advanceToSettle(ctx, t, settled)
 
 	executed := sut.createAndAcceptBlock(t, createTx(t, zeroAddr))
 	require.NoErrorf(t, executed.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", executed)
@@ -467,17 +465,16 @@ func TestGetLogs(t *testing.T) {
 	// We shorten section size to reduce number of required blocks in the test.
 	const bloomSectionSize = 8
 	timeOpt, vmTime := withVMTime(t, time.Unix(saeparams.TauSeconds, 0))
-	rpcOpt := withBloomSectionSize(bloomSectionSize)
 
-	ctx, sut := newSUT(t, 1, timeOpt, rpcOpt)
+	ctx, sut := newSUT(t, 1, timeOpt, withBloomSectionSize(bloomSectionSize))
 	genesis := sut.lastAcceptedBlock(t)
 
-	precompile := common.Address{'p', 'r', 'e'}
+	emitter := common.Address{'l', 'o', 'g'}
 	stub := &libevmhookstest.Stub{
 		PrecompileOverrides: map[common.Address]libevm.PrecompiledContract{
-			precompile: vm.NewStatefulPrecompile(func(env vm.PrecompileEnvironment, input []byte) (ret []byte, err error) {
+			emitter: vm.NewStatefulPrecompile(func(env vm.PrecompileEnvironment, _ []byte) ([]byte, error) {
 				env.StateDB().AddLog(&types.Log{
-					Address: precompile,
+					Address: env.Addresses().EVMSemantic.Self,
 				})
 				return nil, nil
 			}),
@@ -485,48 +482,46 @@ func TestGetLogs(t *testing.T) {
 	}
 	stub.Register(t)
 
-	createLog := func(t *testing.T) *types.Transaction {
+	txWithLog := func(t *testing.T) *types.Transaction {
 		t.Helper()
 		return sut.wallet.SetNonceAndSign(t, 0, &types.LegacyTx{
-			To:       &precompile,
+			To:       &emitter,
 			GasPrice: big.NewInt(1),
 			Gas:      1e6,
 		})
 	}
-	createTx := func(t *testing.T) *types.Transaction {
+	txWithoutLog := func(t *testing.T) *types.Transaction {
 		t.Helper()
-		return sut.wallet.SetNonceAndSign(t, 0, &types.DynamicFeeTx{
-			To:        &common.Address{},
-			Gas:       params.TxGas,
-			GasFeeCap: big.NewInt(1),
+		return sut.wallet.SetNonceAndSign(t, 0, &types.LegacyTx{
+			To:       &common.Address{},
+			GasPrice: big.NewInt(1),
+			Gas:      params.TxGas,
 		})
 	}
 
-	// Create enough blocks to ensure some are indexed
+	// Create enough blocks to ensure some are indexed.
 	// Since a block after this will be settled, these are all settled as well,
-	// and moved to disk.
+	// and therefore moved to disk.
 	indexed := make([]*blocks.Block, bloomSectionSize)
 	for i := range indexed {
-		indexed[i] = sut.createAndAcceptBlock(t, createLog(t))
+		indexed[i] = sut.createAndAcceptBlock(t, txWithLog(t))
 	}
 
-	settled := sut.createAndAcceptBlock(t, createLog(t))
-	require.NoErrorf(t, settled.WaitUntilExecuted(ctx), "%T.WaitUntilSettled()", settled)
-	vmTime.set(settled.ExecutedByGasTime().AsTime().Add(saeparams.Tau)) // ensure it will be settled
+	settled := sut.createAndAcceptBlock(t, txWithLog(t))
+	vmTime.advanceToSettle(ctx, t, settled)
 
-	noLogs := sut.createAndAcceptBlock(t, createTx(t))
+	noLogs := sut.createAndAcceptBlock(t, txWithoutLog(t))
 
-	executed := sut.createAndAcceptBlock(t, createLog(t))
+	executed := sut.createAndAcceptBlock(t, txWithLog(t))
 	require.NoErrorf(t, executed.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", executed)
 
-	// Although the FiltersAPI will work without any blocks indexed, it will not test
-	// the functionality of the bloom indexer.
+	// Although the FiltersAPI will work without any blocks indexed, such a
+	// scenario would not test the functionality of the bloom indexer.
 	require.EventuallyWithT(t, func(c *assert.CollectT) {
-		_, sections := sut.rawVM.APIBackend().BloomStatus()
-		if sections != 1 {
-			c.Errorf("%d sections indexed, expected 1", sections)
-		}
-	}, 5*time.Second, 500*time.Millisecond, "bloom indexer never finished")
+		be := sut.rawVM.APIBackend()
+		_, got := be.BloomStatus()
+		require.Equal(c, uint64(1), got, "%T.BloomStatus() sections", be)
+	}, 5*time.Second, 100*time.Millisecond, "bloom indexer never finished")
 
 	logsFrom := func(bs ...*blocks.Block) []types.Log {
 		var logs []types.Log
@@ -540,6 +535,8 @@ func TestGetLogs(t *testing.T) {
 		return logs
 	}
 
+	ptr := func(h common.Hash) *common.Hash { return &h }
+
 	tests := []struct {
 		name            string
 		query           ethereum.FilterQuery
@@ -549,33 +546,33 @@ func TestGetLogs(t *testing.T) {
 		{
 			name: "genesis",
 			query: ethereum.FilterQuery{
-				BlockHash: utils.PointerTo(genesis.Hash()),
+				BlockHash: ptr(genesis.Hash()),
 			},
 		},
 		{
 			name: "no_logs",
 			query: ethereum.FilterQuery{
-				BlockHash: utils.PointerTo(noLogs.Hash()),
+				BlockHash: ptr(noLogs.Hash()),
 			},
 		},
 		{
 			name: "nonexistent_block",
 			query: ethereum.FilterQuery{
-				BlockHash: utils.PointerTo(common.HexToHash("0xdeadbeef")),
+				BlockHash: &common.Hash{0xde, 0xad},
 			},
 			wantErrContains: "unknown block",
 		},
 		{
 			name: "on_disk",
 			query: ethereum.FilterQuery{
-				BlockHash: utils.PointerTo(indexed[0].Hash()),
+				BlockHash: ptr(indexed[0].Hash()),
 			},
 			wantLogs: logsFrom(indexed[0]),
 		},
 		{
 			name: "in_memory",
 			query: ethereum.FilterQuery{
-				BlockHash: utils.PointerTo(executed.Hash()),
+				BlockHash: ptr(executed.Hash()),
 			},
 			wantLogs: logsFrom(executed),
 		},
@@ -584,7 +581,7 @@ func TestGetLogs(t *testing.T) {
 			query: ethereum.FilterQuery{
 				FromBlock: settled.Number(),
 				ToBlock:   executed.Number(),
-				Addresses: []common.Address{precompile},
+				Addresses: []common.Address{emitter},
 			},
 			wantLogs: logsFrom(settled, executed),
 		},
@@ -593,7 +590,7 @@ func TestGetLogs(t *testing.T) {
 			query: ethereum.FilterQuery{
 				FromBlock: indexed[0].Number(),
 				ToBlock:   indexed[len(indexed)-1].Number(),
-				Addresses: []common.Address{precompile},
+				Addresses: []common.Address{emitter},
 			},
 			wantLogs: logsFrom(indexed...),
 		},
@@ -601,6 +598,7 @@ func TestGetLogs(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Logf("%T: %[1]v", tt.query)
 			got, err := sut.FilterLogs(ctx, tt.query)
 			if tt.wantErrContains != "" {
 				require.ErrorContains(t, err, tt.wantErrContains, "eth_getLogs(...)")

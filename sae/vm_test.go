@@ -214,6 +214,18 @@ func (t *vmTime) advance(d time.Duration) {
 	t.Time = t.Time.Add(d)
 }
 
+// advanceToSettle advances the time such that the next call to [vmTime.now] is
+// at or after the time required to settle `b`. Note that at least one more
+// accepted [blocks.Block] is still required to actually settle `b`.
+func (t *vmTime) advanceToSettle(ctx context.Context, tb testing.TB, b *blocks.Block) {
+	tb.Helper()
+	require.NoErrorf(tb, b.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", b)
+	to := b.ExecutedByGasTime().AsTime().Add(saeparams.Tau)
+	if t.Before(to) {
+		t.set(to)
+	}
+}
+
 // withVMTime returns an option to configure a new SUT's "now" function along
 // with a struct to access and set the time at nanosecond resolution.
 func withVMTime(tb testing.TB, startTime time.Time) (sutOption, *vmTime) {

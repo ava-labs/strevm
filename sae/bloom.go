@@ -48,8 +48,8 @@ func newBloomIndexer(db ethdb.Database, chain core.ChainIndexerChain, override f
 	return b
 }
 
-func (b *bloomIndexer) BloomStatus() (uint64, uint64) {
-	sections, _, _ := b.indexer.Sections()
+func (b *bloomIndexer) BloomStatus() (size uint64, sections uint64) {
+	sections, _, _ = b.indexer.Sections()
 	return b.size, sections
 }
 
