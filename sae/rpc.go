@@ -322,7 +322,7 @@ func (b *ethAPIBackend) GetBody(ctx context.Context, hash common.Hash, number rp
 	if hash == (common.Hash{}) {
 		return nil, errors.New("empty block hash")
 	}
-	n, err := b.resolveBlockNumber(number)
+	n, err := b.ResolveBlockNumber(number)
 	if err != nil {
 		return nil, err
 	}
