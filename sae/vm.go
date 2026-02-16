@@ -35,6 +35,7 @@ import (
 
 	"github.com/ava-labs/strevm/blocks"
 	"github.com/ava-labs/strevm/hook"
+	"github.com/ava-labs/strevm/saedb"
 	"github.com/ava-labs/strevm/saexec"
 	"github.com/ava-labs/strevm/txgossip"
 )
@@ -51,6 +52,7 @@ type VM struct {
 	metrics *prometheus.Registry
 
 	db     ethdb.Database
+	xdb    saedb.ExecutionResults
 	blocks *syncMap[common.Hash, *blocks.Block]
 
 	consensusState utils.Atomic[snow.State]
@@ -61,7 +63,7 @@ type VM struct {
 
 	exec       *saexec.Executor
 	mempool    *txgossip.Set
-	apiBackend APIBackend
+	apiBackend *ethAPIBackend
 	newTxs     chan struct{}
 
 	toClose [](func() error)
@@ -83,6 +85,8 @@ type Config struct {
 type RPCConfig struct {
 	BlocksPerBloomSection uint64
 	EnableProfiling       bool
+	EVMTimeout            time.Duration
+	GasCap                uint64
 }
 
 // NewVM returns a new [VM] that is ready for use immediately upon return.
@@ -126,6 +130,7 @@ func NewVM(
 	if err != nil {
 		return nil, fmt.Errorf("%T.ExecutionResultsDB(%q): %v", cfg.Hooks, snowCtx.ChainDataDir, err)
 	}
+	vm.xdb = xdb
 	vm.toClose = append(vm.toClose, xdb.Close)
 
 	lastSync, err := blocks.New(lastSynchronous, nil, nil, snowCtx.Log)

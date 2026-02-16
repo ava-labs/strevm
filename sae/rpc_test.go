@@ -6,6 +6,7 @@ package sae
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"math/big"
@@ -24,7 +25,7 @@ import (
 	"github.com/ava-labs/libevm/crypto"
 	"github.com/ava-labs/libevm/libevm"
 	"github.com/ava-labs/libevm/libevm/ethapi"
-	libevmhookstest "github.com/ava-labs/libevm/libevm/hookstest"
+	"github.com/ava-labs/libevm/libevm/hookstest"
 	"github.com/ava-labs/libevm/libevm/options"
 	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/rpc"
@@ -399,7 +400,7 @@ func TestEthGetters(t *testing.T) {
 	unblockPrecompile := make(chan struct{})
 	t.Cleanup(func() { close(unblockPrecompile) })
 
-	libevmHooks := &libevmhookstest.Stub{
+	libevmHooks := &hookstest.Stub{
 		PrecompileOverrides: map[common.Address]libevm.PrecompiledContract{
 			blockingPrecompile: vm.NewStatefulPrecompile(func(vm.PrecompileEnvironment, []byte) ([]byte, error) {
 				<-unblockPrecompile
@@ -481,7 +482,7 @@ func TestGetLogs(t *testing.T) {
 
 	emitter := common.Address{'l', 'o', 'g'}
 	rng := crypto.NewKeccakState()
-	stub := &libevmhookstest.Stub{
+	stub := &hookstest.Stub{
 		PrecompileOverrides: map[common.Address]libevm.PrecompiledContract{
 			emitter: vm.NewStatefulPrecompile(func(env vm.PrecompileEnvironment, _ []byte) ([]byte, error) {
 				data := make([]byte, 8)
@@ -939,4 +940,102 @@ func TestDebugNamespace(t *testing.T) {
 			want:   42,
 		},
 	}...)
+}
+
+func ptrTo[T any](v T) *T {
+	return &v
+}
+
+func TestResolveBlockNumberOrHash(t *testing.T) {
+	opt, vmTime := withVMTime(t, time.Unix(saeparams.TauSeconds, 0))
+	ctx, sut := newSUT(t, 0, opt)
+
+	settled := sut.runConsensusLoop(t, sut.lastAcceptedBlock(t))
+	vmTime.advanceToSettle(ctx, t, settled)
+
+	for range 2 {
+		b := sut.runConsensusLoop(t, sut.lastAcceptedBlock(t))
+		vmTime.advanceToSettle(ctx, t, b)
+	}
+	_, ok := sut.rawVM.blocks.Load(settled.Hash())
+	require.False(t, ok, "settled block still in VM memory")
+
+	accepted := sut.runConsensusLoop(t, sut.lastAcceptedBlock(t))
+	require.NoError(t, sut.SetPreference(ctx, accepted.ID()), "SetPreference()")
+
+	b, err := sut.BuildBlock(ctx)
+	require.NoError(t, err, "BuildBlock()")
+	// Blocks are added to the VM memory with [VM.VerifyBlock] but only become
+	// canonical (and on disk) with [VM.AcceptBlock].
+	require.NoErrorf(t, b.Verify(ctx), "%T.Verify()", b)
+	nonCanonical := unwrap(t, b)
+
+	tests := []struct {
+		name     string
+		nOrH     rpc.BlockNumberOrHash
+		wantNum  uint64
+		wantHash common.Hash
+		wantErr  error
+	}{
+		{
+			name:    "neither_num_nor_hash",
+			wantErr: errNeitherNumberNorHash,
+		},
+		{
+			name: "both_num_and_hash",
+			nOrH: rpc.BlockNumberOrHash{
+				BlockNumber: ptrTo(rpc.LatestBlockNumber),
+				BlockHash:   &common.Hash{},
+			},
+			wantErr: errBothNumberAndHash,
+		},
+		{
+			name:     "named_block",
+			nOrH:     rpc.BlockNumberOrHashWithNumber(rpc.PendingBlockNumber),
+			wantNum:  accepted.NumberU64(),
+			wantHash: accepted.Hash(),
+		},
+		{
+			name: "canonical_hash_in_memory",
+			nOrH: rpc.BlockNumberOrHash{
+				BlockHash: ptrTo(accepted.Hash()),
+			},
+			wantNum:  accepted.NumberU64(),
+			wantHash: accepted.Hash(),
+		},
+		{
+			name: "canonical_hash_on_disk",
+			nOrH: rpc.BlockNumberOrHash{
+				BlockHash: ptrTo(settled.Hash()),
+			},
+			wantNum:  settled.NumberU64(),
+			wantHash: settled.Hash(),
+		},
+		{
+			name: "non_canonical_when_canonical_not_required",
+			nOrH: rpc.BlockNumberOrHash{
+				BlockHash: ptrTo(nonCanonical.Hash()),
+			},
+			wantNum:  nonCanonical.NumberU64(),
+			wantHash: nonCanonical.Hash(),
+		},
+		{
+			name: "non_canonical_when_canonical_required",
+			nOrH: rpc.BlockNumberOrHash{
+				BlockHash:        ptrTo(nonCanonical.Hash()),
+				RequireCanonical: true,
+			},
+			wantErr: errNonCanonicalBlock,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			be := sut.rawVM.apiBackend
+			gotNum, gotHash, err := be.resolveBlockNumberOrHash(tt.nOrH)
+			if !errors.Is(err, tt.wantErr) || gotNum != tt.wantNum || gotHash != tt.wantHash {
+				t.Errorf("%T.resolveBlockNumberOrHash(%+v) got (%d, %#x, %v); want (%d, %#x, Is(%v))", be, tt.nOrH, gotNum, gotHash, err, tt.wantNum, tt.wantHash, tt.wantErr)
+			}
+		})
+	}
 }

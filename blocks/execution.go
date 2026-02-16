@@ -183,16 +183,35 @@ func (b *Block) SetAsHeadBlock(kv ethdb.KeyValueWriter) {
 // [Block.MarkExecuted] such that the block is in an equivalent state to when
 // said function was originally called.
 func (b *Block) RestoreExecutionArtefacts(db ethdb.Database, xdb saedb.ExecutionResults) error {
-	buf, err := xdb.Get(b.NumberU64())
+	e, err := loadExecutionResults(xdb, b.NumberU64())
 	if err != nil {
-		return err
-	}
-	e := new(executionResults)
-	if err := e.UnmarshalCanoto(buf); err != nil {
 		return err
 	}
 	e.receipts = rawdb.ReadRawReceipts(db, b.Hash(), b.NumberU64())
 	return b.markExecutedAfterDiskArtefacts(e, nil)
+}
+
+func loadExecutionResults(xdb saedb.ExecutionResults, blockNum uint64) (*executionResults, error) {
+	buf, err := xdb.Get(blockNum)
+	if err != nil {
+		return nil, err
+	}
+	e := new(executionResults)
+	if err := e.UnmarshalCanoto(buf); err != nil {
+		return nil, err
+	}
+	return e, nil
+}
+
+// PostExecutionStateRoot mirrors the behaviour of
+// [Block.RestoreExecutionArtefacts], without requiring a full [Block], and only
+// returning the state root after execution.
+func PostExecutionStateRoot(xdb saedb.ExecutionResults, blockNum uint64) (common.Hash, error) {
+	e, err := loadExecutionResults(xdb, blockNum)
+	if err != nil {
+		return common.Hash{}, err
+	}
+	return e.stateRootPost, nil
 }
 
 // WaitUntilExecuted blocks until [Block.MarkExecuted] is called or the
