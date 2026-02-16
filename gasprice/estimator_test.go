@@ -49,7 +49,7 @@ func (bg *testBlockGen) AddTx(tx *types.Transaction) {
 	bg.txs = append(bg.txs, tx)
 }
 
-// testBackend is an in-memory implementation of OracleBackend for tests.
+// testBackend is an in-memory implementation of EstimatorBackend for tests.
 type testBackend struct {
 	blocks     []*types.Block // blocks[i] is block with number i
 	acceptedCh chan<- *types.Block
@@ -61,10 +61,7 @@ func (b *testBackend) lastBlock() *types.Block {
 
 func (b *testBackend) ResolveBlockNumber(bn rpc.BlockNumber) (uint64, error) {
 	head := b.lastBlock().Number().Uint64()
-	switch bn {
-	case rpc.PendingBlockNumber:
-		return head, nil
-	case rpc.LatestBlockNumber, rpc.SafeBlockNumber, rpc.FinalizedBlockNumber:
+	if bn == rpc.PendingBlockNumber {
 		return head, nil
 	}
 	if bn < 0 {
@@ -86,7 +83,7 @@ func (b *testBackend) HeaderByNumber(ctx context.Context, number rpc.BlockNumber
 }
 
 func (b *testBackend) BlockByNumber(ctx context.Context, number rpc.BlockNumber) (*types.Block, error) {
-	if number == rpc.LatestBlockNumber || number == rpc.PendingBlockNumber {
+	if number == rpc.PendingBlockNumber {
 		return b.lastBlock(), nil
 	}
 	n := uint64(number) //nolint:gosec // Test code
@@ -159,7 +156,7 @@ type suggestTipCapTest struct {
 	expectedTip *big.Int
 }
 
-func defaultOracleOptions(t *testing.T) []OracleOption {
+func defaultEstimatorOptions(t *testing.T) []EstimatorOption {
 	blocksOpt, err := WithBlocks(20)
 	require.NoError(t, err)
 	percentileOpt, err := WithPercentile(60)
@@ -167,16 +164,16 @@ func defaultOracleOptions(t *testing.T) []OracleOption {
 	lookbackOpt, err := WithMaxLookbackSeconds(80)
 	require.NoError(t, err)
 
-	return []OracleOption{
+	return []EstimatorOption{
 		blocksOpt,
 		percentileOpt,
 		lookbackOpt,
 	}
 }
 
-// timeCrunchOracleConfig returns a config with [MaxLookbackSeconds] set to 5
+// timeCrunchEstimatorConfig returns a config with [MaxLookbackSeconds] set to 5
 // to ensure that during gas price estimation, we will hit the time based look back limit
-func timeCrunchOracleOptions(t *testing.T) []OracleOption {
+func timeCrunchEstimatorOptions(t *testing.T) []EstimatorOption {
 	blocksOpt, err := WithBlocks(20)
 	require.NoError(t, err)
 	percentileOpt, err := WithPercentile(60)
@@ -184,27 +181,27 @@ func timeCrunchOracleOptions(t *testing.T) []OracleOption {
 	lookbackOpt, err := WithMaxLookbackSeconds(5)
 	require.NoError(t, err)
 
-	return []OracleOption{
+	return []EstimatorOption{
 		blocksOpt,
 		percentileOpt,
 		lookbackOpt,
 	}
 }
 
-func applyGasPriceTest(t *testing.T, test suggestTipCapTest, opts ...OracleOption) {
+func applyGasPriceTest(t *testing.T, test suggestTipCapTest, opts ...EstimatorOption) {
 	if test.genBlock == nil {
 		test.genBlock = func(i int, b *testBlockGen) {}
 	}
 	backend := newTestBackend(t, test.numBlocks, test.genBlock)
-	oracle, err := NewOracle(backend, opts...)
+	estimator, err := NewEstimator(backend, opts...)
 	require.NoError(t, err)
-	defer oracle.Close()
+	defer estimator.Close()
 
 	// mock time to be consistent across different CI runs
 	// sets currentTime to be 20 seconds
-	oracle.clock.Set(time.Unix(20, 0))
+	estimator.clock.Set(time.Unix(20, 0))
 
-	got, err := oracle.SuggestTipCap(context.Background())
+	got, err := estimator.SuggestTipCap(context.Background())
 	require.NoError(t, err)
 
 	if got.Cmp(test.expectedTip) != 0 {
@@ -358,7 +355,7 @@ func TestSuggestTipCap(t *testing.T) {
 				numBlocks:   c.numBlocks,
 				genBlock:    c.genBlock,
 				expectedTip: c.expectedTip,
-			}, defaultOracleOptions(t)...)
+			}, defaultEstimatorOptions(t)...)
 		})
 	}
 }
@@ -368,5 +365,5 @@ func TestSuggestTipCapMaxBlocksSecondsLookback(t *testing.T) {
 		numBlocks:   20,
 		genBlock:    testGenBlock(t, 55, 80),
 		expectedTip: big.NewInt(55 * params.GWei),
-	}, timeCrunchOracleOptions(t)...)
+	}, timeCrunchEstimatorOptions(t)...)
 }

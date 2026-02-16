@@ -31,14 +31,14 @@ func TestFeeInfoProvider(t *testing.T) {
 	backend.acceptedCh <- block
 
 	require.Eventually(t, func() bool {
-		_, ok := f.get(3)
+		_, ok := f.cache.Get(3)
 		return ok
 	}, 5*time.Second, 10*time.Millisecond)
 }
 
 func TestFeeInfoProviderCacheSize(t *testing.T) {
-	size := 5
-	overflow := 3
+	size := uint64(5)
+	overflow := uint64(3)
 	backend := newTestBackend(t, 0, testGenBlock(t, 55, 370))
 	closeCh := make(chan struct{})
 	defer close(closeCh)
@@ -47,22 +47,23 @@ func TestFeeInfoProviderCacheSize(t *testing.T) {
 
 	// add [overflow] more elements than what will fit in the cache
 	// to test eviction behavior.
-	for i := 0; i < size+feeCacheExtraSlots+overflow; i++ {
+	for i := uint64(0); i < size+feeCacheExtraSlots+overflow; i++ {
 		header := &types.Header{Number: big.NewInt(int64(i))}
-		_, err := f.addHeader(t.Context(), header, []*types.Transaction{})
+		block := types.NewBlockWithHeader(header)
+		f.addBlock(block)
 		require.NoError(t, err)
 	}
 
 	// these numbers should be evicted
-	for i := 0; i < overflow; i++ {
-		feeInfo, ok := f.get(uint64(i))
+	for i := uint64(0); i < overflow; i++ {
+		feeInfo, ok := f.cache.Get(uint64(i))
 		require.False(t, ok)
 		require.Nil(t, feeInfo)
 	}
 
 	// these numbers should be present
 	for i := overflow; i < size+feeCacheExtraSlots+overflow; i++ {
-		feeInfo, ok := f.get(uint64(i))
+		feeInfo, ok := f.cache.Get(uint64(i))
 		require.True(t, ok)
 		require.NotNil(t, feeInfo)
 	}
