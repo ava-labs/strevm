@@ -48,7 +48,7 @@ func TestFeeInfoProviderCacheSize(t *testing.T) {
 	// add [overflow] more elements than what will fit in the cache
 	// to test eviction behavior.
 	for i := uint64(0); i < size+feeCacheExtraSlots+overflow; i++ {
-		header := &types.Header{Number: big.NewInt(int64(i))}
+		header := &types.Header{Number: new(big.Int).SetUint64(i)}
 		block := types.NewBlockWithHeader(header)
 		f.addBlock(block)
 		require.NoError(t, err)
@@ -56,14 +56,14 @@ func TestFeeInfoProviderCacheSize(t *testing.T) {
 
 	// these numbers should be evicted
 	for i := uint64(0); i < overflow; i++ {
-		feeInfo, ok := f.cache.Get(uint64(i))
+		feeInfo, ok := f.cache.Get(i)
 		require.False(t, ok)
 		require.Nil(t, feeInfo)
 	}
 
 	// these numbers should be present
 	for i := overflow; i < size+feeCacheExtraSlots+overflow; i++ {
-		feeInfo, ok := f.cache.Get(uint64(i))
+		feeInfo, ok := f.cache.Get(i)
 		require.True(t, ok)
 		require.NotNil(t, feeInfo)
 	}

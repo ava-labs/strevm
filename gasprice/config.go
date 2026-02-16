@@ -1,6 +1,7 @@
 // Copyright (C) 2025-2026, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
+// Package gasprice provides gas price estimation and fee history for the SAE.
 package gasprice
 
 import (
@@ -22,15 +23,18 @@ const (
 	// DefaultMaxBlockHistory is chosen to be a value larger than the required
 	// fee lookback window that MetaMask uses (20k blocks).
 	DefaultMaxBlockHistory = 25_000
-	// DefaultFeeHistoryCacheSize is chosen to be some value larger than
+	// FeeHistoryCacheSize is chosen to be some value larger than
 	// [DefaultMaxBlockHistory] to ensure all block lookups can be cached when
 	// serving a fee history query.
 	FeeHistoryCacheSize = 30_000
 )
 
 var (
-	DefaultMaxPrice           = big.NewInt(150 * params.GWei)
-	DefaultMinPrice           = big.NewInt(acp176.MinGasPrice)
+	// DefaultMaxPrice is the maximum suggested gas tip.
+	DefaultMaxPrice = big.NewInt(150 * params.GWei)
+	// DefaultMinPrice is the minimum suggested gas tip.
+	DefaultMinPrice = big.NewInt(acp176.MinGasPrice)
+	// DefaultMaxLookbackSeconds is the maximum age of blocks considered for tip estimation.
 	DefaultMaxLookbackSeconds = uint64(80)
 )
 
@@ -53,7 +57,7 @@ type config struct {
 	MinPrice        *big.Int
 }
 
-// Option configures estimator initialization.
+// EstimatorOption configures estimator initialization.
 type EstimatorOption = options.Option[config]
 
 func defaultConfig() config {

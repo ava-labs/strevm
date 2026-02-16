@@ -113,7 +113,7 @@ func newFeeInfoProvider(backend Backend, size uint64, closeCh <-chan struct{}) (
 		return fc, nil
 	}
 
-	fc.cache = lru.NewCache[uint64, *feeInfo](int(size + feeCacheExtraSlots))
+	fc.cache = lru.NewCache[uint64, *feeInfo](int(size + feeCacheExtraSlots)) //nolint:gosec // size is bounded by config
 	// subscribe to the chain accepted event
 	acceptedEvent := make(chan *types.Block, 1)
 	sub := backend.SubscribeChainAcceptedEvent(acceptedEvent)
@@ -150,7 +150,7 @@ func (f *feeInfoProvider) getFeeInfo(ctx context.Context, number uint64) (*feeIn
 	}
 
 	// on cache miss, read from database
-	block, err := f.backend.BlockByNumber(ctx, rpc.BlockNumber(number))
+	block, err := f.backend.BlockByNumber(ctx, rpc.BlockNumber(number)) //nolint:gosec // block numbers are always within int64 range
 	if err != nil {
 		return nil, err
 	}
@@ -165,12 +165,12 @@ func (f *feeInfoProvider) populateCache(size uint64) error {
 		return err
 	}
 	lowerBlockNumber := uint64(0)
-	if uint64(size-1) <= lastAccepted { // Note: "size-1" because we need a total of size blocks.
-		lowerBlockNumber = lastAccepted - uint64(size-1)
+	if size-1 <= lastAccepted { // Note: "size-1" because we need a total of size blocks.
+		lowerBlockNumber = lastAccepted - (size - 1)
 	}
 
 	for i := lowerBlockNumber; i <= lastAccepted; i++ {
-		block, err := f.backend.BlockByNumber(context.Background(), rpc.BlockNumber(i))
+		block, err := f.backend.BlockByNumber(context.Background(), rpc.BlockNumber(i)) //nolint:gosec // block numbers are always within int64 range
 		if err != nil {
 			return err
 		}

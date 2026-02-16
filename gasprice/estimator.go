@@ -126,8 +126,8 @@ func (e *Estimator) SuggestTipCap(ctx context.Context) (*big.Int, error) {
 		tipResults            []txGasAndReward
 	)
 
-	if uint64(e.cfg.BlocksCount) <= latestBlockNumber {
-		lowerBlockNumberLimit = latestBlockNumber - uint64(e.cfg.BlocksCount)
+	if e.cfg.BlocksCount <= latestBlockNumber {
+		lowerBlockNumberLimit = latestBlockNumber - e.cfg.BlocksCount
 	}
 
 	// Process block headers in the range calculated for this gas price estimation.
@@ -145,11 +145,12 @@ func (e *Estimator) SuggestTipCap(ctx context.Context) (*big.Int, error) {
 	}
 
 	price := lastPrice
-	if len(tipResults) > 0 {
+	lenTipResults := uint64(len(tipResults))
+	if lenTipResults > 0 {
 		// Although txs are sorted per-block in each feeInfo, we need to
 		// re-sort across all recent blocks to find the global percentile.
 		slices.SortFunc(tipResults, func(a, b txGasAndReward) int { return a.reward.Cmp(b.reward) })
-		price = tipResults[(len(tipResults)-1)*int(e.cfg.Percentile)/100].reward
+		price = tipResults[(lenTipResults-1)*(e.cfg.Percentile)/100].reward //nolint:gosec // len is non-negative (checked above)
 	}
 
 	price = math.BigMax(math.BigMin(price, e.cfg.MaxPrice), e.cfg.MinPrice)
@@ -245,7 +246,7 @@ func (e *Estimator) getFeeHistoryInfo(ctx context.Context, number uint64) (*feeI
 		e.historyCache.Put(number, feeInfo)
 		return feeInfo, nil
 	}
-	block, err := e.backend.BlockByNumber(ctx, rpc.BlockNumber(number))
+	block, err := e.backend.BlockByNumber(ctx, rpc.BlockNumber(number)) //nolint:gosec // block numbers are always within int64 range
 	if err != nil {
 		return nil, err
 	}
@@ -289,7 +290,7 @@ func (e *Estimator) resolveBlockRange(ctx context.Context, lastBlock rpc.BlockNu
 	// Truncate blocks range if extending past [config.MaxBlockHistory].
 	oldestQueriedIndex := lastBlockNumber - blocks + 1
 	if queryDepth := headNumber - oldestQueriedIndex; queryDepth > maxQueryDepth {
-		overage := uint64(queryDepth - maxQueryDepth)
+		overage := queryDepth - maxQueryDepth
 		blocks -= overage
 	}
 	// It is not possible that [blocks] could be <= 0 after
