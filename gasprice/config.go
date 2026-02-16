@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"math/big"
 
-	"github.com/ava-labs/avalanchego/vms/evm/acp176"
 	"github.com/ava-labs/libevm/libevm/options"
 	"github.com/ava-labs/libevm/params"
 )
@@ -33,7 +32,7 @@ var (
 	// DefaultMaxPrice is the maximum suggested gas tip.
 	DefaultMaxPrice = big.NewInt(150 * params.GWei)
 	// DefaultMinPrice is the minimum suggested gas tip.
-	DefaultMinPrice = big.NewInt(acp176.MinGasPrice)
+	DefaultMinPrice = big.NewInt(1 * params.Wei)
 	// DefaultMaxLookbackSeconds is the maximum age of blocks considered for tip estimation.
 	DefaultMaxLookbackSeconds = uint64(80)
 )
@@ -53,8 +52,10 @@ type config struct {
 	// MaxBlockHistory specifies the furthest back behind the last accepted block that can
 	// be requested by fee history.
 	MaxBlockHistory uint64
-	MaxPrice        *big.Int
-	MinPrice        *big.Int
+	// MaxPrice specifies the maximum suggested tip that's used to calculate the gas price estimate.
+	MaxPrice *big.Int
+	// MinPrice specifies the minimum suggested tip that's used to calculate the gas price estimate.
+	MinPrice *big.Int
 }
 
 // EstimatorOption configures estimator initialization.
