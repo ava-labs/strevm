@@ -9,6 +9,7 @@ require (
 	github.com/ava-labs/libevm v1.13.15-0.20260212133604-62502c671227
 	github.com/google/go-cmp v0.7.0
 	github.com/holiman/uint256 v1.2.4
+	github.com/mrwormhole/errdiff v1.2.0
 	github.com/stretchr/testify v1.11.1
 	go.uber.org/goleak v1.3.0
 	golang.org/x/exp v0.0.0-20250620022241-b7579e27df2b
