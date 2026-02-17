@@ -83,7 +83,7 @@ func (h *hIndex) Clone() ClonableHeightIndex {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 
-	cp := NewHeightIndexDB().(*hIndex) //nolint,forcetypeassert // Internal invariant
+	cp := NewHeightIndexDB().(*hIndex) //nolint:forcetypeassert // Internal invariant
 	for k, v := range h.data {
 		if !h.pending[k] {
 			cp.data[k] = v
