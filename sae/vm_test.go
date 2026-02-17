@@ -520,9 +520,11 @@ func TestEmptyChainConfig(t *testing.T) {
 			ChainID: big.NewInt(42),
 		}
 	}))
+	var b *blocks.Block
 	for range 5 {
-		sut.runConsensusLoop(t, sut.lastAcceptedBlock(t))
+		b = sut.runConsensusLoop(t, sut.lastAcceptedBlock(t))
 	}
+	sut.waitUntilExecuted(t, b)
 }
 
 func TestSyntacticBlockChecks(t *testing.T) {
