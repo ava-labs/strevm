@@ -13,28 +13,10 @@ import (
 )
 
 const (
-	// DefaultMaxCallBlockHistory is the number of blocks that can be fetched in
-	// a single call to eth_feeHistory.
-	DefaultMaxCallBlockHistory = 2048
-	// DefaultMaxBlockHistory is the number of blocks from the last accepted
-	// block that can be fetched in eth_feeHistory.
-	//
-	// DefaultMaxBlockHistory is chosen to be a value larger than the required
-	// fee lookback window that MetaMask uses (20k blocks).
-	DefaultMaxBlockHistory = 25_000
 	// FeeHistoryCacheSize is chosen to be some value larger than
 	// [DefaultMaxBlockHistory] to ensure all block lookups can be cached when
 	// serving a fee history query.
 	FeeHistoryCacheSize = 30_000
-)
-
-var (
-	// DefaultMaxPrice is the maximum suggested gas tip.
-	DefaultMaxPrice = big.NewInt(150 * params.GWei)
-	// DefaultMinPrice is the minimum suggested gas tip.
-	DefaultMinPrice = big.NewInt(1 * params.Wei)
-	// DefaultMaxLookbackSeconds is the maximum age of blocks considered for tip estimation.
-	DefaultMaxLookbackSeconds = uint64(80)
 )
 
 type config struct {
@@ -63,12 +45,15 @@ type EstimatorOption = options.Option[config]
 
 func defaultConfig() config {
 	return config{
-		BlocksCount:         1,
-		MaxLookbackSeconds:  DefaultMaxLookbackSeconds,
-		MaxCallBlockHistory: DefaultMaxCallBlockHistory,
-		MaxBlockHistory:     DefaultMaxBlockHistory,
-		MaxPrice:            DefaultMaxPrice,
-		MinPrice:            DefaultMinPrice,
+		BlocksCount:         20,
+		Percentile:          60,
+		MaxLookbackSeconds:  uint64(80),
+		MaxCallBlockHistory: 2048,
+		// Default MaxBlockHistory is chosen to be a value larger than the required
+		// fee lookback window that MetaMask uses (20k blocks).
+		MaxBlockHistory: 25_000,
+		MaxPrice:        big.NewInt(150 * params.GWei),
+		MinPrice:        big.NewInt(1 * params.Wei),
 	}
 }
 

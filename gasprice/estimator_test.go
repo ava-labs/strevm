@@ -154,22 +154,6 @@ type suggestTipCapTest struct {
 	expectedTip *big.Int
 }
 
-func defaultEstimatorOptions(t *testing.T) []EstimatorOption {
-	t.Helper()
-	blocksOpt, err := WithBlocks(20)
-	require.NoError(t, err)
-	percentileOpt, err := WithPercentile(60)
-	require.NoError(t, err)
-	lookbackOpt, err := WithMaxLookbackSeconds(80)
-	require.NoError(t, err)
-
-	return []EstimatorOption{
-		blocksOpt,
-		percentileOpt,
-		lookbackOpt,
-	}
-}
-
 // timeCrunchEstimatorConfig returns a config with [MaxLookbackSeconds] set to 5
 // to ensure that during gas price estimation, we will hit the time based look back limit
 func timeCrunchEstimatorOptions(t *testing.T) []EstimatorOption {
@@ -273,7 +257,7 @@ func TestSuggestTipCap(t *testing.T) {
 			name:        "simple_latest_no_tip",
 			numBlocks:   3,
 			genBlock:    testGenBlock(t, 0, 80),
-			expectedTip: DefaultMinPrice,
+			expectedTip: defaultConfig().MinPrice,
 		},
 		{
 			name:        "simple_latest_1_gwei_tip",
@@ -303,7 +287,7 @@ func TestSuggestTipCap(t *testing.T) {
 			name:        "max_tip_cap",
 			numBlocks:   200,
 			genBlock:    testGenBlock(t, 550, 80),
-			expectedTip: DefaultMaxPrice,
+			expectedTip: defaultConfig().MaxPrice,
 		},
 		{
 			name:        "single_transaction_with_tip",
@@ -333,7 +317,7 @@ func TestSuggestTipCap(t *testing.T) {
 			name:        "zero_tips",
 			numBlocks:   3,
 			genBlock:    testGenBlockWithTips(t, []int64{0, 0, 0}),
-			expectedTip: DefaultMinPrice,
+			expectedTip: defaultConfig().MinPrice,
 		},
 		{
 			name:        "duplicate_tips",
@@ -347,7 +331,7 @@ func TestSuggestTipCap(t *testing.T) {
 			genBlock: func(i int, b *testBlockGen) {
 				// No transactions added
 			},
-			expectedTip: DefaultMinPrice,
+			expectedTip: defaultConfig().MinPrice,
 		},
 		{
 			// 5 blocks, each with 1 tx. Tips by block number:
@@ -385,7 +369,7 @@ func TestSuggestTipCap(t *testing.T) {
 				genBlock:    c.genBlock,
 				pruned:      c.pruned,
 				expectedTip: c.expectedTip,
-			}, defaultEstimatorOptions(t)...)
+			})
 		})
 	}
 }
