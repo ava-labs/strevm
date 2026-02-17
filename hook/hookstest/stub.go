@@ -52,8 +52,8 @@ func (*Stub) BuildBlock(
 	header *types.Header,
 	txs []*types.Transaction,
 	receipts []*types.Receipt,
-) *types.Block {
-	return types.NewBlock(header, txs, nil, receipts, saetest.TrieHasher())
+) (*types.Block, error) {
+	return types.NewBlock(header, txs, nil, receipts, saetest.TrieHasher()), nil
 }
 
 // BlockRebuilderFrom returns a block builder that uses the provided block as a
