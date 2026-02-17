@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/arr4n/shed/testerr"
 	"github.com/ava-labs/avalanchego/version"
 	ethereum "github.com/ava-labs/libevm"
 	"github.com/ava-labs/libevm/common"
@@ -30,7 +31,6 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/holiman/uint256"
-	"github.com/mrwormhole/errdiff"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -44,48 +44,48 @@ import (
 var zeroAddr common.Address
 
 type rpcTest struct {
-	method          string
-	args            []any
-	want            any    // untyped nil means no return value.
-	wantErrContains string // empty means no error expected
-	eventually      bool
+	method     string
+	args       []any
+	want       any // untyped nil means no return value.
+	wantErr    testerr.Want
+	eventually bool
 }
 
 func (s *SUT) testRPC(ctx context.Context, t *testing.T, tcs ...rpcTest) {
 	t.Helper()
 	opts := []cmp.Option{
-		cmpopts.EquateEmpty(),
+		cmputils.NilSlicesAreEmpty[hexutil.Bytes](),
 		cmputils.Headers(),
 		cmputils.HexutilBigs(),
 		cmputils.TransactionsByHash(),
 	}
 
 	for _, tc := range tcs {
-		t.Run(tc.method, func(t *testing.T) {
+		test := func(t require.TestingT) {
 			if tc.want == nil { // Reminder: only applies to untyped nil
-				tc.want = json.RawMessage{}
+				tc.want = struct{ json.RawMessage }{} // struct avoids nil vs empty
 			}
 
-			check := func(t require.TestingT) {
-				got := reflect.New(reflect.TypeOf(tc.want))
-				err := s.CallContext(ctx, got.Interface(), tc.method, tc.args...)
-				if diff := errdiff.Text(err, tc.wantErrContains); diff != "" {
-					t.Errorf("CallContext(...) %s", diff)
-					return
-				}
-				if diff := cmp.Diff(tc.want, got.Elem().Interface(), opts...); diff != "" {
-					t.Errorf("Diff (-want +got):\n%s", diff)
-				}
+			got := reflect.New(reflect.TypeOf(tc.want))
+			err := s.CallContext(ctx, got.Interface(), tc.method, tc.args...)
+			if diff := testerr.Diff(err, tc.wantErr); diff != "" {
+				t.Errorf("CallContext(...) %s", diff)
+				t.FailNow()
 			}
+			if diff := cmp.Diff(tc.want, got.Elem().Interface(), opts...); diff != "" {
+				t.Errorf("Diff (-want +got):\n%s", diff)
+			}
+		}
 
-			if tc.eventually {
-				require.EventuallyWithT(t, func(c *assert.CollectT) {
-					check(c)
-				}, time.Second, 10*time.Millisecond)
-			} else {
-				t.Logf("%T.CallContext(ctx, %T, %q, %v...)", s.rpcClient, &tc.want, tc.method, tc.args)
-				check(t)
+		t.Run(tc.method, func(t *testing.T) {
+			t.Logf("%T.CallContext(ctx, %T, %q, %v...)", s.rpcClient, &tc.want, tc.method, tc.args)
+			if !tc.eventually {
+				test(t)
+				return
 			}
+			require.EventuallyWithT(t, func(c *assert.CollectT) {
+				test(c)
+			}, time.Second, 10*time.Millisecond)
 		})
 	}
 }
@@ -386,9 +386,9 @@ func TestFilterAPIs(t *testing.T) {
 				want:   true,
 			},
 			{
-				method:          "eth_getFilterChanges",
-				args:            []any{filterID},
-				wantErrContains: "filter not found",
+				method:  "eth_getFilterChanges",
+				args:    []any{filterID},
+				wantErr: testerr.Contains("filter not found"),
 			},
 		}...)
 	}
@@ -816,7 +816,7 @@ func TestEthPendingTransactions(t *testing.T) {
 func TestEthSigningAPIs(t *testing.T) {
 	ctx, sut := newSUT(t, 1)
 
-	const wantErr = "unknown account"
+	wantErr := testerr.Contains("unknown account")
 	txFields := map[string]any{
 		"from":     zeroAddr,
 		"to":       zeroAddr,
@@ -832,21 +832,21 @@ func TestEthSigningAPIs(t *testing.T) {
 				zeroAddr,
 				hexutil.Bytes("test message"),
 			},
-			wantErrContains: wantErr,
+			wantErr: wantErr,
 		},
 		{
 			method: "eth_signTransaction",
 			args: []any{
 				txFields,
 			},
-			wantErrContains: wantErr,
+			wantErr: wantErr,
 		},
 		{
 			method: "eth_sendTransaction",
 			args: []any{
 				txFields,
 			},
-			wantErrContains: wantErr,
+			wantErr: wantErr,
 		},
 	}...)
 }

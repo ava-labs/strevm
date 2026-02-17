@@ -18,13 +18,13 @@ import (
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/ethdb"
 	"github.com/ava-labs/libevm/trie"
+	"github.com/holiman/uint256"
 	"go.uber.org/zap"
 
 	"github.com/ava-labs/strevm/gastime"
 	"github.com/ava-labs/strevm/proxytime"
+	"github.com/ava-labs/strevm/saedb"
 )
-
-//go:generate go run github.com/StephenButtolph/canoto/canoto $GOFILE
 
 // SetInterimExecutionTime is expected to be called during execution of b's
 // transactions, with the highest-known gas time. This MAY be at any resolution
@@ -33,18 +33,38 @@ func (b *Block) SetInterimExecutionTime(t *proxytime.Time[gas.Gas]) {
 	b.interimExecutionTime.Store(t.Clone())
 }
 
-type executionResults struct {
-	byGas  gastime.Time
-	byWall time.Time // For metrics only; allowed to be incorrect.
+//go:generate go run github.com/StephenButtolph/canoto/canoto $GOFILE
 
-	baseFee *big.Int
+type executionResults struct {
+	byGas         gastime.Time `canoto:"value,1"`
+	baseFee       uint256.Int  `canoto:"fixed repeated uint,2"`
+	receiptRoot   common.Hash  `canoto:"fixed bytes,3"`
+	stateRootPost common.Hash  `canoto:"fixed bytes,4"`
+
+	ephemeralExecutionResults // not for canotofication
+
+	canotoData canotoData_executionResults
+}
+
+type ephemeralExecutionResults struct {
+	// Wall-clock time is for metrics only and MAY be incorrect.
+	byWall time.Time
 	// Receipts are deliberately not stored by the canoto representation as they
 	// are already in the database. All methods that read the stored canoto
 	// either accept a [types.Receipts] for comparison against the
-	// `receiptRoot`, or don't care about receipts at all.
-	receipts      types.Receipts
-	receiptRoot   common.Hash
-	stateRootPost common.Hash
+	// `receiptRoot`, or don't care about receipts at all. They are, however,
+	// carried here for propagation to the settling block.
+	receipts types.Receipts
+}
+
+func (e *executionResults) setBaseFee(bf *big.Int) error {
+	if bf == nil { // genesis blocks
+		return nil
+	}
+	if overflow := e.baseFee.SetFromBig(bf); overflow {
+		return fmt.Errorf("base fee %v overflows 256 bits", bf)
+	}
+	return nil
 }
 
 // MarkExecuted marks the block as having been executed at the specified time(s)
@@ -63,6 +83,7 @@ type executionResults struct {
 // for metrics only.
 func (b *Block) MarkExecuted(
 	db ethdb.Database,
+	xdb saedb.ExecutionResults,
 	byGas *gastime.Time,
 	byWall time.Time,
 	baseFee *big.Int,
@@ -70,44 +91,69 @@ func (b *Block) MarkExecuted(
 	stateRootPost common.Hash,
 	lastExecuted *atomic.Pointer[Block],
 ) error {
-	e := &executionResults{
-		byGas:         *byGas.Clone(),
-		byWall:        byWall,
-		baseFee:       new(big.Int).Set(baseFee),
-		receipts:      slices.Clone(receipts),
-		receiptRoot:   types.DeriveSha(receipts, trie.NewStackTrie(nil)),
-		stateRootPost: stateRootPost,
-	}
-
-	// Disk
-	batch := db.NewBatch()
-	hash := b.Hash()
-	rawdb.WriteHeadBlockHash(batch, hash)
-	rawdb.WriteHeadHeaderHash(batch, hash)
-	rawdb.WriteReceipts(batch, hash, b.NumberU64(), receipts)
-	// TODO(arr4n) persist the [executionResults]
-	if err := batch.Write(); err != nil {
-		return err
-	}
-
-	// Memory and indicators
-	return b.markExecuted(e, lastExecuted)
-}
-
-var errMarkBlockExecutedAgain = errors.New("block re-marked as executed")
-
-func (b *Block) markExecuted(e *executionResults, lastExecuted *atomic.Pointer[Block]) error {
-	if it := b.interimExecutionTime.Load(); it != nil && e.byGas.Compare(it) < 0 {
+	if it := b.interimExecutionTime.Load(); it != nil && byGas.Compare(it) < 0 {
 		// The final execution time is scaled to the new gas target but interim
 		// times are not, which can result in rounding errors. Scaling always
 		// rounds up, to maintain a monotonic clock, but we confirm for safety.
 		// The logger used in tests will also convert this to a failure.
 		b.log.Error("Final execution gas time before last interim time",
 			zap.Stringer("interim_time", it),
-			zap.Stringer("final_time", e.byGas.Time),
+			zap.Stringer("final_time", byGas.Time),
 		)
 	}
 
+	e := &executionResults{
+		byGas:         *byGas.Clone(),
+		receiptRoot:   types.DeriveSha(receipts, trie.NewStackTrie(nil)),
+		stateRootPost: stateRootPost,
+		ephemeralExecutionResults: ephemeralExecutionResults{
+			byWall:   byWall,
+			receipts: slices.Clone(receipts),
+		},
+	}
+	if err := e.setBaseFee(baseFee); err != nil {
+		return err
+	}
+
+	batch := db.NewBatch()
+	rawdb.WriteReceipts(batch, b.Hash(), b.NumberU64(), receipts)
+	return b.markExecuted(batch, xdb, e, true, lastExecuted)
+}
+
+var errMarkBlockExecutedAgain = errors.New("block re-marked as executed")
+
+// markExecuted is the intersection point of [Block.MarkExecuted],
+// [Block.MarkSynchronous], and [Block.RestoreExecutionArtefacts], all of which
+// have side effects drawn from the same ordered set of events. This method
+// exists to guarantee that the correct selection and ordering of events occurs,
+// regardless of the upstream trigger. See documentation re ordering invariants
+// for more information.
+//
+// The batch is `Write()`n (yeah, it's a word now) after all disk artefacts are
+// persisted.
+func (b *Block) markExecuted(batch ethdb.Batch, xdb saedb.ExecutionResults, e *executionResults, setAsHeadBlock bool, lastExecuted *atomic.Pointer[Block]) error {
+	if err := b.markExecutedOnDisk(batch, xdb, e, setAsHeadBlock); err != nil {
+		return err
+	}
+	return b.markExecutedAfterDiskArtefacts(e, lastExecuted)
+}
+
+func (b *Block) markExecutedOnDisk(batch ethdb.Batch, xdb saedb.ExecutionResults, e *executionResults, setAsHeadBlock bool) error {
+	n := b.NumberU64()
+	if err := xdb.Put(n, e.MarshalCanoto()); err != nil {
+		return err
+	}
+	if err := xdb.Sync(n, n); err != nil {
+		return err
+	}
+	if setAsHeadBlock {
+		b.SetAsHeadBlock(batch)
+	}
+	return batch.Write()
+}
+
+func (b *Block) markExecutedAfterDiskArtefacts(e *executionResults, lastExecuted *atomic.Pointer[Block]) error {
+	// Memory
 	if !b.execution.CompareAndSwap(nil, e) {
 		// This is fatal because we corrupted the database's head block if we
 		// got here by [Block.MarkExecuted] being called twice (an invalid use
@@ -115,9 +161,38 @@ func (b *Block) markExecuted(e *executionResults, lastExecuted *atomic.Pointer[B
 		b.log.Fatal("Block re-marked as executed")
 		return fmt.Errorf("%w: height %d", errMarkBlockExecutedAgain, b.Height())
 	}
-	lastExecuted.Store(b)
+	// Internal indicator
+	if lastExecuted != nil {
+		lastExecuted.Store(b)
+	}
+	// External indicator
 	close(b.executed)
 	return nil
+}
+
+// SetAsHeadBlock calls all necessary [rawdb] write methods for setting the
+// block as head. Said writes are not atomic and an [ethdb.Batch] SHOULD be used
+// if this is a desired property.
+func (b *Block) SetAsHeadBlock(kv ethdb.KeyValueWriter) {
+	h := b.Hash()
+	rawdb.WriteHeadBlockHash(kv, h)
+	rawdb.WriteHeadHeaderHash(kv, h)
+}
+
+// RestoreExecutionArtefacts reloads post-execution artefacts persisted by
+// [Block.MarkExecuted] such that the block is in an equivalent state to when
+// said function was originally called.
+func (b *Block) RestoreExecutionArtefacts(db ethdb.Database, xdb saedb.ExecutionResults) error {
+	buf, err := xdb.Get(b.NumberU64())
+	if err != nil {
+		return err
+	}
+	e := new(executionResults)
+	if err := e.UnmarshalCanoto(buf); err != nil {
+		return err
+	}
+	e.receipts = rawdb.ReadRawReceipts(db, b.Hash(), b.NumberU64())
+	return b.markExecutedAfterDiskArtefacts(e, nil)
 }
 
 // WaitUntilExecuted blocks until [Block.MarkExecuted] is called or the
@@ -167,9 +242,9 @@ func (b *Block) ExecutedByWallTime() time.Time {
 
 // BaseFee returns the base gas price passed to [Block.MarkExecuted] or nil if
 // no such successful call has been made.
-func (b *Block) BaseFee() *big.Int {
-	return executionArtefact(b, "receipts", func(e *executionResults) *big.Int {
-		return new(big.Int).Set(e.baseFee)
+func (b *Block) BaseFee() *uint256.Int {
+	return executionArtefact(b, "baseFee", func(e *executionResults) *uint256.Int {
+		return e.baseFee.Clone()
 	})
 }
 

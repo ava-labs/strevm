@@ -24,12 +24,6 @@ func (e *Executor) sendPostExecutionEvents(b *types.Block, receipts types.Receip
 	e.logEvents.Send(logs)
 }
 
-// SubscribeBlockEnqueueEvent returns a new subscription for each block queued
-// [Executor.Enqueue].
-func (e *Executor) SubscribeBlockEnqueueEvent(ch chan<- *types.Block) event.Subscription {
-	return e.enqueueEvents.Subscribe(ch)
-}
-
 // SubscribeChainHeadEvent returns a new subscription for each
 // [core.ChainHeadEvent] emitted after execution of a [blocks.Block].
 func (e *Executor) SubscribeChainHeadEvent(ch chan<- core.ChainHeadEvent) event.Subscription {
