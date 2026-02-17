@@ -258,11 +258,15 @@ func (vm *VM) buildBlock(
 		receipts = append(receipts, b.Receipts()...)
 	}
 
-	ethB := builder.BuildBlock(
+	ethB, err := builder.BuildBlock(
 		hdr,
 		included,
 		receipts,
 	)
+	if err != nil {
+		return nil, err
+	}
+
 	b, err := vm.newBlock(ethB, parent, lastSettled)
 	if err != nil {
 		return nil, err

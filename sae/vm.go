@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -64,6 +65,9 @@ type VM struct {
 	apiBackend APIBackend
 	newTxs     chan struct{}
 
+	// toClose are closed in reverse order during [VM.Shutdown]. If a resource
+	// depends on another resource, it MUST be added AFTER the resource it
+	// depends on.
 	toClose [](func() error)
 }
 
@@ -399,7 +403,7 @@ func (vm *VM) Shutdown(context.Context) error {
 
 func (vm *VM) close() error {
 	errs := make([]error, len(vm.toClose))
-	for i, fn := range vm.toClose {
+	for i, fn := range slices.Backward(vm.toClose) {
 		errs[i] = fn()
 	}
 	return errors.Join(errs...)
