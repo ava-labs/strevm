@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/arr4n/shed/testerr"
 	"github.com/ava-labs/avalanchego/version"
 	ethereum "github.com/ava-labs/libevm"
 	"github.com/ava-labs/libevm/common"
@@ -30,7 +31,6 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/holiman/uint256"
-	"github.com/mrwormhole/errdiff"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -44,10 +44,10 @@ import (
 var zeroAddr common.Address
 
 type rpcTest struct {
-	method          string
-	args            []any
-	want            any    // untyped nil means no return value.
-	wantErrContains string // empty means no error expected
+	method  string
+	args    []any
+	want    any // untyped nil means no return value.
+	wantErr testerr.Want
 }
 
 func (s *SUT) testRPC(ctx context.Context, t *testing.T, tcs ...rpcTest) {
@@ -68,7 +68,7 @@ func (s *SUT) testRPC(ctx context.Context, t *testing.T, tcs ...rpcTest) {
 			got := reflect.New(reflect.TypeOf(tc.want))
 			t.Logf("%T.CallContext(ctx, %T, %q, %v...)", s.rpcClient, &tc.want, tc.method, tc.args)
 			err := s.CallContext(ctx, got.Interface(), tc.method, tc.args...)
-			if diff := errdiff.Text(err, tc.wantErrContains); diff != "" {
+			if diff := testerr.Diff(err, tc.wantErr); diff != "" {
 				t.Fatalf("CallContext(...) %s", diff)
 			}
 			if diff := cmp.Diff(tc.want, got.Elem().Interface(), opts...); diff != "" {
@@ -659,7 +659,7 @@ func TestEthPendingTransactions(t *testing.T) {
 func TestEthSigningAPIs(t *testing.T) {
 	ctx, sut := newSUT(t, 1)
 
-	const wantErr = "unknown account"
+	wantErr := testerr.Contains("unknown account")
 	txFields := map[string]any{
 		"from":     zeroAddr,
 		"to":       zeroAddr,
@@ -675,21 +675,21 @@ func TestEthSigningAPIs(t *testing.T) {
 				zeroAddr,
 				hexutil.Bytes("test message"),
 			},
-			wantErrContains: wantErr,
+			wantErr: wantErr,
 		},
 		{
 			method: "eth_signTransaction",
 			args: []any{
 				txFields,
 			},
-			wantErrContains: wantErr,
+			wantErr: wantErr,
 		},
 		{
 			method: "eth_sendTransaction",
 			args: []any{
 				txFields,
 			},
-			wantErrContains: wantErr,
+			wantErr: wantErr,
 		},
 	}...)
 }
