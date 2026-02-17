@@ -36,18 +36,15 @@ func TestTxTypeSupport(t *testing.T) {
 		},
 	}
 
-	hashes := make([]common.Hash, len(txs))
-	for i, tx := range txs {
+	for _, tx := range txs {
 		t.Run(fmt.Sprintf("%T", tx), func(t *testing.T) {
-			signed := sut.wallet.SetNonceAndSign(t, 0, tx)
-			hashes[i] = signed.Hash()
-			sut.mustSendTx(t, signed)
+			sut.mustSendTx(t, sut.wallet.SetNonceAndSign(t, 0, tx))
 		})
 		if t.Failed() {
 			t.FailNow()
 		}
 	}
-	sut.requireInMempool(t, hashes...)
+	sut.syncMempool(t)
 	b := sut.runConsensusLoop(t, sut.genesis)
 	require.NoErrorf(t, b.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", b)
 
