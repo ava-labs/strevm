@@ -53,7 +53,7 @@ type rpcTest struct {
 func (s *SUT) testRPC(ctx context.Context, t *testing.T, tcs ...rpcTest) {
 	t.Helper()
 	opts := []cmp.Option{
-		cmpopts.EquateEmpty(),
+		cmputils.NilSlicesAreEmpty[hexutil.Bytes](),
 		cmputils.Headers(),
 		cmputils.HexutilBigs(),
 		cmputils.TransactionsByHash(),
@@ -62,7 +62,7 @@ func (s *SUT) testRPC(ctx context.Context, t *testing.T, tcs ...rpcTest) {
 	for _, tc := range tcs {
 		t.Run(tc.method, func(t *testing.T) {
 			if tc.want == nil { // Reminder: only applies to untyped nil
-				tc.want = json.RawMessage{}
+				tc.want = struct{ json.RawMessage }{} // struct avoids nil vs empty
 			}
 
 			got := reflect.New(reflect.TypeOf(tc.want))
