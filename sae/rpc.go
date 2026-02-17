@@ -302,6 +302,10 @@ func (b *ethAPIBackend) HeaderByHash(ctx context.Context, hash common.Hash) (*ty
 }
 
 func (b *ethAPIBackend) BlockByHash(ctx context.Context, hash common.Hash) (*types.Block, error) {
+	return b.blockByHash(ctx, hash, false)
+}
+
+func (b *ethAPIBackend) blockByHash(ctx context.Context, hash common.Hash, canonical bool) (*types.Block, error) {
 	if b, ok := b.vm.blocks.Load(hash); ok {
 		return b.EthBlock(), nil
 	}
@@ -309,7 +313,7 @@ func (b *ethAPIBackend) BlockByHash(ctx context.Context, hash common.Hash) (*typ
 }
 
 func (b *ethAPIBackend) BlockByNumberOrHash(ctx context.Context, blockNrOrHash rpc.BlockNumberOrHash) (*types.Block, error) {
-	return readByNumberOrHash(ctx, blockNrOrHash, b.BlockByNumber, b.BlockByHash)
+	return readByNumberOrHash(ctx, blockNrOrHash, b.BlockByNumber, b.blockByHash)
 }
 
 func (b *ethAPIBackend) HeaderByNumberOrHash(ctx context.Context, blockNrOrHash rpc.BlockNumberOrHash) (*types.Header, error) {
@@ -427,7 +431,7 @@ func readByNumberOrHash[T any](
 		return byNum(ctx, n)
 	}
 	if h, ok := blockNrOrHash.Hash(); ok {
-		return byHash(ctx, h)
+		return byHash(ctx, h, blockNrOrHash.RequireCanonical)
 	}
 	return nil, errNoBlockNorHash
 }
