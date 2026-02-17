@@ -644,7 +644,7 @@ func TestEthPendingTransactions(t *testing.T) {
 		Value:     big.NewInt(100),
 	})
 	sut.mustSendTx(t, tx)
-	sut.syncMempool(t)
+	sut.requireInMempool(t, tx.Hash())
 
 	// eth_pendingTransactions filters results to only transactions from
 	// accounts configured in the AccountManager, which is always empty.
