@@ -30,15 +30,12 @@ var errExecutorClosed = errors.New("saexec.Executor closed")
 func (e *Executor) Enqueue(ctx context.Context, block *blocks.Block) error {
 	select {
 	case e.queue <- block:
-		size := cap(e.queue)
-		warningThreshold := size - size/16
-		if n := len(e.queue); n >= warningThreshold {
+		if n := len(e.queue); n == cap(e.queue) {
 			// If this happens then increase the channel's buffer size.
 			e.log.Warn(
-				"Execution queue buffer too small",
+				"Execution queue buffer full",
 				zap.Uint64("block_height", block.Height()),
-				zap.Int("queue_length", n),
-				zap.Int("queue_capacity", size),
+				zap.Int("queue_capacity", n),
 			)
 		}
 		return nil
