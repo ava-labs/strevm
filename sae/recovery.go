@@ -31,12 +31,12 @@ type recovery struct {
 	lastSynchronous *blocks.Block
 }
 
-func (rec *recovery) newCanonicalBlock(num uint64, parent, lastSettled *blocks.Block) (*blocks.Block, error) {
+func (rec *recovery) newCanonicalBlock(num uint64, parent *blocks.Block) (*blocks.Block, error) {
 	ethB, err := canonicalBlock(rec.db, num)
 	if err != nil {
 		return nil, err
 	}
-	return blocks.New(ethB, parent, lastSettled, rec.log)
+	return blocks.New(ethB, parent, nil, rec.log)
 }
 
 func (rec *recovery) lastBlockWithStateRootAvailable() (*blocks.Block, error) {
@@ -47,7 +47,7 @@ func (rec *recovery) lastBlockWithStateRootAvailable() (*blocks.Block, error) {
 		return rec.lastSynchronous, nil
 	}
 
-	b, err := rec.newCanonicalBlock(num, nil, nil)
+	b, err := rec.newCanonicalBlock(num, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -84,7 +84,7 @@ func (rec *recovery) recoverFromDB() (*blocks.Block, iter.Seq2[*blocks.Block, er
 	return execAfter, func(yield func(*blocks.Block, error) bool) {
 		parent := execAfter
 		for _, num := range toExecute {
-			b, err := rec.newCanonicalBlock(num, parent, nil)
+			b, err := rec.newCanonicalBlock(num, parent)
 			if !yield(b, err) || err != nil {
 				return
 			}
@@ -126,7 +126,7 @@ func (rec *recovery) rebuildBlocksInMemory(lastExecuted *blocks.Block) (_ *syncM
 				chain = append(chain, rec.lastSynchronous)
 
 			default:
-				parent, err := rec.newCanonicalBlock(b.Height()-1, nil, nil)
+				parent, err := rec.newCanonicalBlock(b.Height()-1, nil)
 				if err != nil {
 					return err
 				}
