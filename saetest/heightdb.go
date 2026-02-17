@@ -4,7 +4,6 @@
 package saetest
 
 import (
-	"maps"
 	"slices"
 	"sync"
 
@@ -22,10 +21,12 @@ type ClonableHeightIndex interface {
 
 // NewHeightIndexDB returns an in-memory [database.HeightIndex]; its additional
 // `Clone()` method can be called before or after closing, and the clone will
-// not be closed in either circumstance.
+// not be closed in either circumstance. Only heights for which `Sync()` has
+// returned without error will be cloned.
 func NewHeightIndexDB() ClonableHeightIndex {
 	return &hIndex{
-		data: make(map[uint64][]byte),
+		pending: make(map[uint64]bool),
+		data:    make(map[uint64][]byte),
 	}
 }
 
@@ -35,9 +36,10 @@ func NewExecutionResultsDB() saedb.ExecutionResults {
 }
 
 type hIndex struct {
-	mu     sync.RWMutex
-	data   map[uint64][]byte
-	closed bool
+	mu      sync.RWMutex
+	pending map[uint64]bool
+	data    map[uint64][]byte
+	closed  bool
 }
 
 func readHIndex[T any](h *hIndex, fn func() (T, error)) (T, error) {
@@ -61,6 +63,7 @@ func (h *hIndex) write(fn func() error) error {
 
 func (h *hIndex) Put(n uint64, b []byte) error {
 	return h.write(func() error {
+		h.pending[n] = true
 		h.data[n] = slices.Clone(b)
 		return nil
 	})
@@ -79,9 +82,14 @@ func (h *hIndex) Get(n uint64) ([]byte, error) {
 func (h *hIndex) Clone() ClonableHeightIndex {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
-	return &hIndex{
-		data: maps.Clone(h.data),
+
+	cp := NewHeightIndexDB().(*hIndex) //nolint,forcetypeassert // Internal invariant
+	for k, v := range h.data {
+		if !h.pending[k] {
+			cp.data[k] = v
+		}
 	}
+	return cp
 }
 
 func (h *hIndex) Has(n uint64) (bool, error) {
@@ -91,8 +99,13 @@ func (h *hIndex) Has(n uint64) (bool, error) {
 	})
 }
 
-func (h *hIndex) Sync(_, _ uint64) error {
-	return h.write(func() error { return nil })
+func (h *hIndex) Sync(from, to uint64) error {
+	return h.write(func() error {
+		for i := from; i <= to; i++ {
+			delete(h.pending, i)
+		}
+		return nil
+	})
 }
 
 func (h *hIndex) Close() error {

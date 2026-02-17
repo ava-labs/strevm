@@ -139,7 +139,11 @@ func (b *Block) markExecuted(batch ethdb.Batch, xdb saedb.ExecutionResults, e *e
 }
 
 func (b *Block) markExecutedOnDisk(batch ethdb.Batch, xdb saedb.ExecutionResults, e *executionResults, setAsHeadBlock bool) error {
-	if err := xdb.Put(b.Height(), e.MarshalCanoto()); err != nil {
+	n := b.NumberU64()
+	if err := xdb.Put(n, e.MarshalCanoto()); err != nil {
+		return err
+	}
+	if err := xdb.Sync(n, n); err != nil {
 		return err
 	}
 	if setAsHeadBlock {
