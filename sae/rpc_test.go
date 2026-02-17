@@ -711,9 +711,9 @@ func TestDebugRPCs(t *testing.T) {
 			want:   json.RawMessage("null"),
 		},
 		{
-			method:          "debug_chaindbProperty",
-			args:            []any{"leveldb.stats"},
-			wantErrContains: "stat is not supported",
+			method:  "debug_chaindbProperty",
+			args:    []any{"leveldb.stats"},
+			wantErr: testerr.Contains("stat is not supported"),
 		},
 		{
 			method: "debug_dbGet",
@@ -721,13 +721,13 @@ func TestDebugRPCs(t *testing.T) {
 			want:   hexutil.Bytes(rawdb.ReadHeadBlockHash(sut.db).Bytes()),
 		},
 		{
-			method:          "debug_dbAncient",
-			args:            []any{"headers", uint64(0)},
-			wantErrContains: "this operation is not supported",
+			method:  "debug_dbAncient",
+			args:    []any{"headers", uint64(0)},
+			wantErr: testerr.Contains("this operation is not supported"),
 		},
 		{
-			method:          "debug_dbAncients",
-			wantErrContains: "this operation is not supported",
+			method:  "debug_dbAncients",
+			wantErr: testerr.Contains("this operation is not supported"),
 		},
 	}...)
 
