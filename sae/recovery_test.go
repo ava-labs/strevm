@@ -59,7 +59,6 @@ func TestRecoverFromDatabase(t *testing.T) {
 				Gas:      params.TxGas + params.CreateGas + params.TxDataNonZeroGasFrontier + rng.Uint64N(2e6),
 				GasPrice: big.NewInt(100),
 			}))
-			src.syncMempool(t)
 		}
 
 		vmTime.advance(850 * time.Millisecond)
@@ -114,7 +113,6 @@ func TestRecoverFromDatabase(t *testing.T) {
 					} {
 						t.Run(sys.name, func(t *testing.T) {
 							sys.mustSendTx(t, tx)
-							sys.syncMempool(t)
 							b := sys.runConsensusLoop(t, sys.lastAcceptedBlock(t))
 							require.Len(t, b.Transactions(), 1)
 							require.NoError(t, b.WaitUntilExecuted(sys.ctx))
