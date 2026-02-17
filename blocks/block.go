@@ -40,8 +40,8 @@ type Block struct {
 	// Only the genesis block or the last pre-SAE block is synchronous. These
 	// are self-settling by definition so their `ancestry` MUST be nil.
 	synchronous bool
-	// Determined during block building and MUST be set before execution as
-	// expected by the Executor.
+	// Determined during block building and SHOULD be set before execution as
+	// an early warning system in case of near-miss incorrect predictions.
 	bounds *WorstCaseBounds
 	// Non-nil i.f.f. [Block.MarkExecuted] has returned without error.
 	execution atomic.Pointer[executionResults]
@@ -86,7 +86,7 @@ func New(eth *types.Block, parent, lastSettled *Block, log logging.Logger) (*Blo
 		inMemoryBlockCount.Add(-1)
 	}, struct{}{})
 
-	if err := b.setAncestors(parent, lastSettled); err != nil {
+	if err := b.SetAncestors(parent, lastSettled); err != nil {
 		return nil, err
 	}
 	b.log = log.With(
@@ -102,7 +102,8 @@ var (
 	errHashMismatch               = errors.New("block hash mismatch")
 )
 
-func (b *Block) setAncestors(parent, lastSettled *Block) error {
+// SetAncestors sets the block's ancestry while enforcing invariants.
+func (b *Block) SetAncestors(parent, lastSettled *Block) error {
 	if parent != nil {
 		if got, want := parent.Hash(), b.ParentHash(); got != want {
 			return fmt.Errorf("%w: constructing Block with parent hash %v; expecting %v", errParentHashMismatch, got, want)
@@ -130,7 +131,7 @@ func (b *Block) CopyAncestorsFrom(c *Block) error {
 		return fmt.Errorf("%w: copying internals from block %#x to %#x", errHashMismatch, from, to)
 	}
 	a := c.ancestry.Load()
-	return b.setAncestors(a.parent, a.lastSettled)
+	return b.SetAncestors(a.parent, a.lastSettled)
 }
 
 // A Source returns a [Block] that matches both a hash and number, and a boolean

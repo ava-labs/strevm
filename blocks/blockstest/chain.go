@@ -81,8 +81,6 @@ func (cb *ChainBuilder) NewBlock(tb testing.TB, txs []*types.Transaction, opts .
 	last := cb.Last()
 	eth := NewEthBlock(last.EthBlock(), txs, allOpts.eth...)
 	b := NewBlock(tb, eth, last, nil, allOpts.sae...) // TODO(arr4n) support last-settled blocks
-	signer := types.MakeSigner(cb.config, b.Number(), b.BuildTime())
-	SetUninformativeWorstCaseBounds(tb, signer, b)
 
 	cb.chain = append(cb.chain, b)
 	cb.blocksByHash.Store(b.Hash(), b)

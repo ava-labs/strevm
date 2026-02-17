@@ -16,17 +16,31 @@ import (
 	"github.com/ava-labs/libevm/params"
 
 	"github.com/ava-labs/strevm/hook"
+	"github.com/ava-labs/strevm/saedb"
 	"github.com/ava-labs/strevm/saetest"
 )
 
 // Stub implements [hook.Points].
 type Stub struct {
-	Now    func() time.Time
-	Target gas.Gas
-	Ops    []hook.Op
+	Now                  func() time.Time
+	Target               gas.Gas
+	Ops                  []hook.Op
+	ExecutionResultsDBFn func(string) (saedb.ExecutionResults, error)
 }
 
 var _ hook.Points = (*Stub)(nil)
+
+// ExecutionResultsDB propagates arguments to and from
+// [Stub.ExecutionResultsDBFn] if non-nil, otherwise it returns a fresh
+// [saetest.NewHeightIndexDB] on every call.
+func (s *Stub) ExecutionResultsDB(dataDir string) (saedb.ExecutionResults, error) {
+	if fn := s.ExecutionResultsDBFn; fn != nil {
+		return fn(dataDir)
+	}
+	return saedb.ExecutionResults{
+		HeightIndex: saetest.NewHeightIndexDB(),
+	}, nil
+}
 
 // BuildHeader constructs a header that builds on top of the parent header. The
 // `Extra` field SHOULD NOT be modified as it encodes sub-second block time.
