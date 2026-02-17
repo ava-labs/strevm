@@ -17,7 +17,6 @@ import (
 	"github.com/ava-labs/libevm/accounts"
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/common/hexutil"
-	"github.com/ava-labs/libevm/consensus/misc/eip4844"
 	"github.com/ava-labs/libevm/core"
 	"github.com/ava-labs/libevm/core/rawdb"
 	"github.com/ava-labs/libevm/core/txpool"
@@ -481,27 +480,14 @@ func (b *ethAPIBackend) GetReceipts(ctx context.Context, hash common.Hash) (type
 		return block.Receipts(), nil
 	}
 
-	numberPtr := rawdb.ReadHeaderNumber(b.vm.db, hash)
-	if numberPtr == nil {
-		return nil, nil
-	}
-	number := *numberPtr
-
-	receipts := rawdb.ReadRawReceipts(b.vm.db, hash, number)
-	if receipts == nil {
-		// The block is known but has not completed execution yet, so no
-		// receipts are available.
-		return nil, nil
-	}
-
-	ethBlock := rawdb.ReadBlock(b.vm.db, hash, number)
+	ethBlock := readByHash(b, hash, rawdb.ReadBlock)
 	if ethBlock == nil {
 		return nil, nil
 	}
 
 	// Restore execution artefacts to access the execution-time base fee.
 	// The header's base fee is from acceptance time, but execution may use a
-	// higher base fee due to dynamic fee adjustments during the τ delay.
+	// lower base fee.
 	block, err := b.vm.newBlock(ethBlock, nil, nil)
 	if err != nil {
 		return nil, err
@@ -510,19 +496,14 @@ func (b *ethAPIBackend) GetReceipts(ctx context.Context, hash common.Hash) (type
 		return nil, fmt.Errorf("restoring execution artefacts: %w", err)
 	}
 
-	header := ethBlock.Header()
-	var blobGasPrice *big.Int
-	if header.ExcessBlobGas != nil {
-		blobGasPrice = eip4844.CalcBlobFee(*header.ExcessBlobGas)
-	}
-
+	receipts := block.Receipts()
 	if err := receipts.DeriveFields(
 		b.vm.exec.ChainConfig(),
 		hash,
-		number,
-		header.Time,
+		block.NumberU64(),
+		block.BuildTime(),
 		block.BaseFee().ToBig(),
-		blobGasPrice,
+		nil,
 		ethBlock.Transactions(),
 	); err != nil {
 		return nil, fmt.Errorf("deriving receipt fields: %w", err)

@@ -8,12 +8,10 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"math/big"
 	"time"
 
 	"github.com/ava-labs/avalanchego/utils/logging"
 	"github.com/ava-labs/avalanchego/vms/components/gas"
-	"github.com/ava-labs/libevm/consensus/misc/eip4844"
 	"github.com/ava-labs/libevm/core"
 	"github.com/ava-labs/libevm/core/state"
 	"github.com/ava-labs/libevm/core/types"
@@ -185,14 +183,7 @@ func (e *Executor) execute(b *blocks.Block, logger logging.Logger) error {
 		}
 	}
 
-	// DeriveField recomputes receipt/log metadata (e.g., block hash, effective
-	// gas price, etc.) against the final block header so cached receipts match the DB path.
-	var blobGasPrice *big.Int
-	if header.ExcessBlobGas != nil {
-		blobGasPrice = eip4844.CalcBlobFee(*header.ExcessBlobGas)
-	}
-	if err := receipts.DeriveFields(e.chainConfig, b.Hash(), b.NumberU64(),
-		header.Time, header.BaseFee, blobGasPrice, b.Transactions()); err != nil {
+	if err := receipts.DeriveFields(e.chainConfig, b.Hash(), b.NumberU64(), header.Time, header.BaseFee, nil, b.Transactions()); err != nil {
 		return err
 	}
 
