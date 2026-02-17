@@ -5,11 +5,11 @@ package sae
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"math"
 	"math/big"
 	"reflect"
-	"regexp"
 	"runtime/debug"
 	"testing"
 	"time"
@@ -28,10 +28,11 @@ import (
 	"github.com/ava-labs/libevm/libevm/options"
 	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/rpc"
-	"github.com/davecgh/go-spew/spew"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/holiman/uint256"
+	"github.com/mrwormhole/errdiff"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/ava-labs/strevm/blocks"
@@ -41,21 +42,13 @@ import (
 	"github.com/ava-labs/strevm/saetest/escrow"
 )
 
-var (
-	zeroAddr common.Address
-
-	// goPointerAddr matches Go pointer addresses, e.g. "(0x140003c0280)".
-	// These vary across allocations and must be stripped for stable string
-	// comparison.
-	goPointerAddr = regexp.MustCompile(`\(0x[0-9a-f]+\)`)
-)
+var zeroAddr common.Address
 
 type rpcTest struct {
-	method  string
-	args    []any
-	want    any          // expected value compared via [cmp.Diff]
-	wantErr string       // if non-empty, assert ErrorContains instead of comparing want
-	cmpOpts []cmp.Option // additional per-test [cmp.Option]s
+	method          string
+	args            []any
+	want            any    // untyped nil means no return value.
+	wantErrContains string // empty means no error expected
 }
 
 func (s *SUT) testRPC(ctx context.Context, t *testing.T, tcs ...rpcTest) {
@@ -69,21 +62,18 @@ func (s *SUT) testRPC(ctx context.Context, t *testing.T, tcs ...rpcTest) {
 
 	for _, tc := range tcs {
 		t.Run(tc.method, func(t *testing.T) {
-			if tc.wantErr != "" {
-				err := s.CallContext(ctx, nil, tc.method, tc.args...)
-				require.ErrorContains(t, err, tc.wantErr)
-				return
+			if tc.want == nil { // Reminder: only applies to untyped nil
+				tc.want = json.RawMessage{}
 			}
-			if tc.want == nil {
-				// Void RPC (e.g. debug_setHead, debug_chaindbCompact).
-				require.NoError(t, s.CallContext(ctx, nil, tc.method, tc.args...))
-				return
-			}
+
 			got := reflect.New(reflect.TypeOf(tc.want))
-			t.Logf("%T.CallContext(ctx, %T, %q, %v...)", s.rpcClient, &tc.want /*i.e. the type*/, tc.method, tc.args)
-			require.NoError(t, s.CallContext(ctx, got.Interface(), tc.method, tc.args...))
-			if diff := cmp.Diff(tc.want, got.Elem().Interface(), append(opts, tc.cmpOpts...)...); diff != "" {
-				t.Errorf("Diff (-want +got):\n%s", diff)
+			t.Logf("%T.CallContext(ctx, %T, %q, %v...)", s.rpcClient, &tc.want, tc.method, tc.args)
+			err := s.CallContext(ctx, got.Interface(), tc.method, tc.args...)
+			if diff := errdiff.Text(err, tc.wantErrContains); diff != "" {
+				t.Fatalf("CallContext(...) %s", diff)
+			}
+			if diff := cmp.Diff(tc.want, got.Elem().Interface(), opts...); diff != "" {
+				t.Errorf("Unmarshalled %T diff (-want +got):\n%s", got.Elem().Interface(), diff)
 			}
 		})
 	}
@@ -436,8 +426,7 @@ func TestEthGetters(t *testing.T) {
 	onDisk := sut.createAndAcceptBlock(t, createTx(t, zeroAddr))
 
 	settled := sut.createAndAcceptBlock(t, createTx(t, zeroAddr))
-	require.NoErrorf(t, settled.WaitUntilExecuted(ctx), "%T.WaitUntilSettled()", settled)
-	vmTime.set(settled.ExecutedByGasTime().AsTime().Add(saeparams.Tau)) // ensure it will be settled
+	vmTime.advanceToSettle(ctx, t, settled)
 
 	executed := sut.createAndAcceptBlock(t, createTx(t, zeroAddr))
 	require.NoErrorf(t, executed.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", executed)
@@ -483,6 +472,169 @@ func TestEthGetters(t *testing.T) {
 	})
 }
 
+func TestGetLogs(t *testing.T) {
+	// We shorten section size to reduce number of required blocks in the test.
+	const bloomSectionSize = 8
+	timeOpt, vmTime := withVMTime(t, time.Unix(saeparams.TauSeconds, 0))
+
+	ctx, sut := newSUT(t, 1, timeOpt, withBloomSectionSize(bloomSectionSize))
+	genesis := sut.lastAcceptedBlock(t)
+
+	emitter := common.Address{'l', 'o', 'g'}
+	rng := crypto.NewKeccakState()
+	stub := &libevmhookstest.Stub{
+		PrecompileOverrides: map[common.Address]libevm.PrecompiledContract{
+			emitter: vm.NewStatefulPrecompile(func(env vm.PrecompileEnvironment, _ []byte) ([]byte, error) {
+				data := make([]byte, 8)
+				rng.Read(data) //nolint:gosec,errcheck // Never returns an error; signature only to implement io.Reader
+				env.StateDB().AddLog(&types.Log{
+					Address: env.Addresses().EVMSemantic.Self,
+					Data:    data, // Guarantee uniqueness as this is the data under test
+				})
+				return nil, nil
+			}),
+		},
+	}
+	stub.Register(t)
+
+	txWithLog := func(t *testing.T) *types.Transaction {
+		t.Helper()
+		return sut.wallet.SetNonceAndSign(t, 0, &types.LegacyTx{
+			To:       &emitter,
+			GasPrice: big.NewInt(1),
+			Gas:      1e6,
+		})
+	}
+	txWithoutLog := func(t *testing.T) *types.Transaction {
+		t.Helper()
+		return sut.wallet.SetNonceAndSign(t, 0, &types.LegacyTx{
+			To:       &common.Address{},
+			GasPrice: big.NewInt(1),
+			Gas:      params.TxGas,
+		})
+	}
+
+	// Create enough blocks to ensure some are indexed.
+	// Since a block after this will be settled, these are all settled as well,
+	// and therefore moved to disk.
+	indexed := make([]*blocks.Block, bloomSectionSize)
+	for i := range indexed {
+		indexed[i] = sut.createAndAcceptBlock(t, txWithLog(t))
+	}
+
+	settled := sut.createAndAcceptBlock(t, txWithLog(t))
+	vmTime.advanceToSettle(ctx, t, settled)
+
+	noLogs := sut.createAndAcceptBlock(t, txWithoutLog(t))
+
+	executed := sut.createAndAcceptBlock(t, txWithLog(t))
+	require.NoErrorf(t, executed.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", executed)
+
+	// Although the FiltersAPI will work without any blocks indexed, such a
+	// scenario would not test the functionality of the bloom indexer.
+	require.EventuallyWithT(t, func(c *assert.CollectT) {
+		be := sut.rawVM.APIBackend()
+		_, got := be.BloomStatus()
+		require.Equal(c, uint64(1), got, "%T.BloomStatus() sections", be)
+	}, 5*time.Second, 100*time.Millisecond, "bloom indexer never finished")
+
+	logsFrom := func(bs ...*blocks.Block) []types.Log {
+		var logs []types.Log
+		for _, b := range bs {
+			for _, r := range b.Receipts() {
+				for _, l := range r.Logs {
+					logs = append(logs, *l)
+				}
+			}
+		}
+		return logs
+	}
+
+	ptr := func(h common.Hash) *common.Hash { return &h }
+
+	tests := []struct {
+		name            string
+		query           ethereum.FilterQuery
+		wantLogs        []types.Log
+		wantErrContains string
+	}{
+		{
+			name: "genesis",
+			query: ethereum.FilterQuery{
+				BlockHash: ptr(genesis.Hash()),
+			},
+		},
+		{
+			name: "no_logs",
+			query: ethereum.FilterQuery{
+				BlockHash: ptr(noLogs.Hash()),
+			},
+		},
+		{
+			name: "nonexistent_block",
+			query: ethereum.FilterQuery{
+				BlockHash: &common.Hash{0xde, 0xad},
+			},
+			wantErrContains: "unknown block",
+		},
+		{
+			name: "on_disk",
+			query: ethereum.FilterQuery{
+				BlockHash: ptr(indexed[0].Hash()),
+			},
+			wantLogs: logsFrom(indexed[0]),
+		},
+		{
+			name: "in_memory",
+			query: ethereum.FilterQuery{
+				BlockHash: ptr(executed.Hash()),
+			},
+			wantLogs: logsFrom(executed),
+		},
+		{
+			name: "unindexed",
+			query: ethereum.FilterQuery{
+				FromBlock: settled.Number(),
+				ToBlock:   executed.Number(),
+				Addresses: []common.Address{emitter},
+			},
+			wantLogs: logsFrom(settled, executed),
+		},
+		{
+			name: "unknown_contract",
+			query: ethereum.FilterQuery{
+				FromBlock: settled.Number(),
+				ToBlock:   executed.Number(),
+				Addresses: []common.Address{{0xf0, 0x00}},
+			},
+		},
+		{
+			name: "indexed",
+			query: ethereum.FilterQuery{
+				FromBlock: indexed[0].Number(),
+				ToBlock:   indexed[len(indexed)-1].Number(),
+				Addresses: []common.Address{emitter},
+			},
+			wantLogs: logsFrom(indexed...),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Logf("%T: %[1]v", tt.query)
+			got, err := sut.FilterLogs(ctx, tt.query)
+			if tt.wantErrContains != "" {
+				require.ErrorContains(t, err, tt.wantErrContains, "eth_getLogs(...)")
+				return
+			}
+			require.NoErrorf(t, err, "eth_getLogs(...)")
+			if diff := cmp.Diff(tt.wantLogs, got, cmpopts.EquateEmpty()); diff != "" {
+				t.Errorf("eth_getLogs(...) mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
 func TestEthPendingTransactions(t *testing.T) {
 	ctx, sut := newSUT(t, 1)
 
@@ -508,6 +660,7 @@ func TestEthPendingTransactions(t *testing.T) {
 func TestEthSigningAPIs(t *testing.T) {
 	ctx, sut := newSUT(t, 1)
 
+	const wantErr = "unknown account"
 	txFields := map[string]any{
 		"from":     zeroAddr,
 		"to":       zeroAddr,
@@ -516,66 +669,51 @@ func TestEthSigningAPIs(t *testing.T) {
 		"value":    hexutil.Big(*big.NewInt(100)),
 		"nonce":    hexutil.Uint64(0),
 	}
-	tests := []struct {
-		method string
-		args   []any
-	}{
+	sut.testRPC(ctx, t, []rpcTest{
 		{
 			method: "eth_sign",
 			args: []any{
 				zeroAddr,
 				hexutil.Bytes("test message"),
 			},
+			wantErrContains: wantErr,
 		},
 		{
 			method: "eth_signTransaction",
 			args: []any{
 				txFields,
 			},
+			wantErrContains: wantErr,
 		},
 		{
 			method: "eth_sendTransaction",
 			args: []any{
 				txFields,
 			},
+			wantErrContains: wantErr,
 		},
-	}
-	for _, test := range tests {
-		t.Run(test.method, func(t *testing.T) {
-			err := sut.CallContext(ctx, &struct{}{}, test.method, test.args...)
-			require.ErrorContains(t, err, "unknown account")
-		})
-	}
+	}...)
 }
 
 func TestDebugRPCs(t *testing.T) {
 	ctx, sut := newSUT(t, 0, withDebugAPI())
-
-	genesis := rawdb.ReadBlock(sut.db, sut.genesis.Hash(), 0)
-	stripPtrAddrs := cmp.Transformer("stripPtrAddrs", func(s string) string {
-		return goPointerAddr.ReplaceAllString(s, "")
-	})
 
 	sut.testRPC(ctx, t, []rpcTest{
 		{
 			// SAE does not support rewinding - setHead is a no-op.
 			method: "debug_setHead",
 			args:   []any{hexutil.Uint64(0)},
-		},
-		{
-			method:  "debug_printBlock",
-			args:    []any{uint64(0)},
-			want:    spew.Sdump(genesis),
-			cmpOpts: []cmp.Option{stripPtrAddrs},
+			want:   json.RawMessage("null"),
 		},
 		{
 			// Compaction is a no-op but succeeds without error.
 			method: "debug_chaindbCompact",
+			want:   json.RawMessage("null"),
 		},
 		{
-			method:  "debug_chaindbProperty",
-			args:    []any{"leveldb.stats"},
-			wantErr: "stat is not supported",
+			method:          "debug_chaindbProperty",
+			args:            []any{"leveldb.stats"},
+			wantErrContains: "stat is not supported",
 		},
 		{
 			method: "debug_dbGet",
@@ -583,13 +721,13 @@ func TestDebugRPCs(t *testing.T) {
 			want:   hexutil.Bytes(rawdb.ReadHeadBlockHash(sut.db).Bytes()),
 		},
 		{
-			method:  "debug_dbAncient",
-			args:    []any{"headers", uint64(0)},
-			wantErr: "this operation is not supported",
+			method:          "debug_dbAncient",
+			args:            []any{"headers", uint64(0)},
+			wantErrContains: "this operation is not supported",
 		},
 		{
-			method:  "debug_dbAncients",
-			wantErr: "this operation is not supported",
+			method:          "debug_dbAncients",
+			wantErrContains: "this operation is not supported",
 		},
 	}...)
 
