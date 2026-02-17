@@ -286,8 +286,25 @@ func (s *SUT) syncMempool(tb testing.TB) {
 	require.NoErrorf(tb, p.Sync(), "%T.Sync()", p)
 }
 
-// createAndAcceptBlock sends all of the transactions to the mempool, syncs the
-// mempool, then returns the result of [SUT.runConsensusLoop] with
+// requireInMempool requires that the transaction with the specified hash is
+// eventually in the mempool. It calls [SUT.syncMempool] before every check.
+func (s *SUT) requireInMempool(tb testing.TB, txs ...common.Hash) {
+	tb.Helper()
+	require.EventuallyWithTf(
+		tb,
+		func(c *assert.CollectT) {
+			s.syncMempool(tb)
+			for i, tx := range txs {
+				assert.Truef(c, s.rawVM.mempool.Pool.Has(tx), "tx %d:%v not in mempool", i, tx)
+			}
+		},
+		250*time.Millisecond, 25*time.Millisecond,
+		"all of txs [%v] to in mempool", txs,
+	)
+}
+
+// createAndAcceptBlock sends all of the transactions to the mempool, asserts
+// that they are present in the mempool, then returns the result of [SUT.runConsensusLoop] with
 // [SUT.lastAcceptedBlock] as its argument.
 // Because the mempool may already include other transactions, or the transactions
 // provided may fail validation, there is no guarantee that the returned block
@@ -295,10 +312,12 @@ func (s *SUT) syncMempool(tb testing.TB) {
 func (s *SUT) createAndAcceptBlock(tb testing.TB, txs ...*types.Transaction) *blocks.Block {
 	tb.Helper()
 
-	for _, tx := range txs {
+	txHashes := make([]common.Hash, len(txs))
+	for i, tx := range txs {
 		s.mustSendTx(tb, tx)
+		txHashes[i] = tx.Hash()
 	}
-	s.syncMempool(tb)
+	s.requireInMempool(tb, txHashes...)
 
 	return s.runConsensusLoop(tb, s.lastAcceptedBlock(tb))
 }
