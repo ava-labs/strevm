@@ -59,7 +59,7 @@ func TestRecoverFromDatabase(t *testing.T) {
 				Gas:      params.TxGas + params.CreateGas + params.TxDataNonZeroGasFrontier + rng.Uint64N(2e6),
 				GasPrice: big.NewInt(100),
 			}))
-			}
+		}
 
 		vmTime.advance(850 * time.Millisecond)
 		b := src.runConsensusLoop(t, src.lastAcceptedBlock(t))
