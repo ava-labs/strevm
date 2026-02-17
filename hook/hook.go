@@ -83,7 +83,7 @@ type BlockBuilder interface {
 		header *types.Header,
 		txs []*types.Transaction,
 		receipts []*types.Receipt,
-	) *types.Block
+	) (*types.Block, error)
 }
 
 // AccountDebit includes an amount that an account should have debited,
