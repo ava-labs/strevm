@@ -111,13 +111,13 @@ func (rec *recovery) rebuildBlocksInMemory(lastExecuted *blocks.Block) (_ *syncM
 		settleAt := blocks.PreciseTime(rec.config.Hooks, settler.Header()).Add(-params.Tau)
 		tm := proxytime.Of[gas.Gas](settleAt)
 
-		for extended := false; ; extended = true {
+		for {
 			switch b := lastOf(chain); {
 			case b.Synchronous():
 				return nil
 
 			case b.ExecutedByGasTime().Compare(tm) <= 0:
-				if !extended {
+				if b.Settled() {
 					return nil
 				}
 				return b.MarkSettled(blackhole)
@@ -134,6 +134,13 @@ func (rec *recovery) rebuildBlocksInMemory(lastExecuted *blocks.Block) (_ *syncM
 					return err
 				}
 				chain = append(chain, parent)
+
+				if !b.Settled() {
+					continue
+				}
+				if err := parent.MarkSettled(blackhole); err != nil {
+					return err
+				}
 			}
 		}
 	}
