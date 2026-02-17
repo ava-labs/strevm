@@ -31,12 +31,12 @@ type recovery struct {
 	lastSynchronous *blocks.Block
 }
 
-func (rec *recovery) newCanonicalBlock(num uint64, parent, lastSettled *blocks.Block) (*blocks.Block, error) {
+func (rec *recovery) newCanonicalBlock(num uint64, parent *blocks.Block) (*blocks.Block, error) {
 	ethB, err := canonicalBlock(rec.db, num)
 	if err != nil {
 		return nil, err
 	}
-	return blocks.New(ethB, parent, lastSettled, rec.log)
+	return blocks.New(ethB, parent, nil, rec.log)
 }
 
 func (rec *recovery) lastBlockWithStateRootAvailable() (*blocks.Block, error) {
@@ -47,7 +47,7 @@ func (rec *recovery) lastBlockWithStateRootAvailable() (*blocks.Block, error) {
 		return rec.lastSynchronous, nil
 	}
 
-	b, err := rec.newCanonicalBlock(num, nil, nil)
+	b, err := rec.newCanonicalBlock(num, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -55,9 +55,10 @@ func (rec *recovery) lastBlockWithStateRootAvailable() (*blocks.Block, error) {
 		return nil, err
 	}
 	{
-		// This would require the node to crash at such a precise point in time
-		// that it's not worth a preemptive fix. If this ever occurs then just
-		// try the root [params.CommitTrieDBEvery] blocks earlier.
+		// TODO(alarso16) This error can only occur once we support Firewood.
+		// Reassess the likelihood of occurrence vs the need for a preemptive
+		// fix, which would require trying the root [params.CommitTrieDBEvery]
+		// blocks earlier.
 		root := b.PostExecutionStateRoot()
 		if _, err := state.NewDatabaseWithConfig(rec.db, rec.config.TrieDBConfig).OpenTrie(root); err != nil {
 			return nil, fmt.Errorf("database corrupted: latest expected state root (block %d / %#x) unavailable: %v", b.NumberU64(), b.Hash(), err)
@@ -84,7 +85,7 @@ func (rec *recovery) recoverFromDB() (*blocks.Block, iter.Seq2[*blocks.Block, er
 	return execAfter, func(yield func(*blocks.Block, error) bool) {
 		parent := execAfter
 		for _, num := range toExecute {
-			b, err := rec.newCanonicalBlock(num, parent, nil)
+			b, err := rec.newCanonicalBlock(num, parent)
 			if !yield(b, err) || err != nil {
 				return
 			}
@@ -111,13 +112,13 @@ func (rec *recovery) rebuildBlocksInMemory(lastExecuted *blocks.Block) (_ *syncM
 		settleAt := blocks.PreciseTime(rec.config.Hooks, settler.Header()).Add(-params.Tau)
 		tm := proxytime.Of[gas.Gas](settleAt)
 
-		for extended := false; ; extended = true {
+		for {
 			switch b := lastOf(chain); {
 			case b.Synchronous():
 				return nil
 
 			case b.ExecutedByGasTime().Compare(tm) <= 0:
-				if !extended {
+				if b.Settled() {
 					return nil
 				}
 				return b.MarkSettled(blackhole)
@@ -126,7 +127,7 @@ func (rec *recovery) rebuildBlocksInMemory(lastExecuted *blocks.Block) (_ *syncM
 				chain = append(chain, rec.lastSynchronous)
 
 			default:
-				parent, err := rec.newCanonicalBlock(b.Height()-1, nil, nil)
+				parent, err := rec.newCanonicalBlock(b.Height()-1, nil)
 				if err != nil {
 					return err
 				}
@@ -134,6 +135,13 @@ func (rec *recovery) rebuildBlocksInMemory(lastExecuted *blocks.Block) (_ *syncM
 					return err
 				}
 				chain = append(chain, parent)
+
+				if !b.Settled() {
+					continue
+				}
+				if err := parent.MarkSettled(blackhole); err != nil {
+					return err
+				}
 			}
 		}
 	}

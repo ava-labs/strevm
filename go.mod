@@ -5,6 +5,7 @@ go 1.24.12
 tool github.com/go-task/task/v3/cmd/task
 
 require (
+	github.com/arr4n/shed v0.0.0-20260217105731-4cd15adfa100
 	github.com/ava-labs/avalanchego v1.14.2-0.20260123184805-18c4dbe2714e
 	github.com/ava-labs/libevm v1.13.15-0.20260212133604-62502c671227
 	github.com/google/go-cmp v0.7.0

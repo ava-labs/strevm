@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -66,6 +67,9 @@ type VM struct {
 	apiBackend APIBackend
 	newTxs     chan struct{}
 
+	// toClose are closed in reverse order during [VM.Shutdown]. If a resource
+	// depends on another resource, it MUST be added AFTER the resource it
+	// depends on.
 	toClose [](func() error)
 }
 
@@ -99,7 +103,7 @@ func NewVM(
 	snowCtx *snow.Context,
 	chainConfig *params.ChainConfig,
 	db ethdb.Database,
-	lastSynchronous *blocks.Block,
+	lastSynchronous *types.Block,
 	sender snowcommon.AppSender,
 ) (_ *VM, retErr error) {
 	if cfg.Now == nil {
@@ -128,19 +132,24 @@ func NewVM(
 	if err != nil {
 		return nil, fmt.Errorf("%T.ExecutionResultsDB(%q): %v", cfg.Hooks, snowCtx.ChainDataDir, err)
 	}
-	vm.xdb = xdb
 	vm.toClose = append(vm.toClose, xdb.Close)
 
+	lastSync, err := blocks.New(lastSynchronous, nil, nil, snowCtx.Log)
+	if err != nil {
+		return nil, fmt.Errorf("blocks.New([last synchronous], ...): %v", err)
+	}
+
 	{ // ==========  Sync -> Async  ==========
-		if err := lastSynchronous.MarkSynchronous(cfg.Hooks, db, xdb, cfg.ExcessAfterLastSynchronous); err != nil {
-			return nil, fmt.Errorf("%T{genesis}.MarkSynchronous(): %v", lastSynchronous, err)
+		// TODO(arr4n) refactor to avoid DB writes on every startup.
+		if err := lastSync.MarkSynchronous(cfg.Hooks, db, xdb, cfg.ExcessAfterLastSynchronous); err != nil {
+			return nil, fmt.Errorf("%T{genesis}.MarkSynchronous(): %v", lastSync, err)
 		}
-		if err := canonicaliseLastSynchronous(db, lastSynchronous); err != nil {
+		if err := canonicaliseLastSynchronous(db, lastSync); err != nil {
 			return nil, err
 		}
 	}
 
-	rec := &recovery{db, xdb, snowCtx.Log, cfg, lastSynchronous}
+	rec := &recovery{db, xdb, snowCtx.Log, cfg, lastSync}
 	{ // ==========  Executor  ==========
 		lastExecuted, unexecuted, err := rec.recoverFromDB()
 		if err != nil {
@@ -396,7 +405,7 @@ func (vm *VM) Shutdown(context.Context) error {
 
 func (vm *VM) close() error {
 	errs := make([]error, len(vm.toClose))
-	for i, fn := range vm.toClose {
+	for i, fn := range slices.Backward(vm.toClose) {
 		errs[i] = fn()
 	}
 	return errors.Join(errs...)

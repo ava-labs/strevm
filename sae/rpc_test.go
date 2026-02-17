@@ -5,6 +5,7 @@ package sae
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"math"
 	"math/big"
@@ -13,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/arr4n/shed/testerr"
 	"github.com/ava-labs/avalanchego/version"
 	ethereum "github.com/ava-labs/libevm"
 	"github.com/ava-labs/libevm/common"
@@ -43,9 +45,10 @@ import (
 var zeroAddr common.Address
 
 type rpcTest struct {
-	method string
-	args   []any
-	want   any
+	method  string
+	args    []any
+	want    any // untyped nil means no return value.
+	wantErr testerr.Want
 }
 
 func (s *SUT) testRPC(ctx context.Context, t *testing.T, tcs ...rpcTest) {
@@ -60,11 +63,18 @@ func (s *SUT) testRPC(ctx context.Context, t *testing.T, tcs ...rpcTest) {
 
 	for _, tc := range tcs {
 		t.Run(tc.method, func(t *testing.T) {
+			if tc.want == nil { // Reminder: only applies to untyped nil
+				tc.want = struct{ json.RawMessage }{} // struct avoids nil vs empty
+			}
+
 			got := reflect.New(reflect.TypeOf(tc.want))
-			t.Logf("%T.CallContext(ctx, %T, %q, %v...)", s.rpcClient, &tc.want /*i.e. the type*/, tc.method, tc.args)
-			require.NoError(t, s.CallContext(ctx, got.Interface(), tc.method, tc.args...))
+			t.Logf("%T.CallContext(ctx, %T, %q, %v...)", s.rpcClient, &tc.want, tc.method, tc.args)
+			err := s.CallContext(ctx, got.Interface(), tc.method, tc.args...)
+			if diff := testerr.Diff(err, tc.wantErr); diff != "" {
+				t.Fatalf("CallContext(...) %s", diff)
+			}
 			if diff := cmp.Diff(tc.want, got.Elem().Interface(), opts...); diff != "" {
-				t.Errorf("Diff (-want +got):\n%s", diff)
+				t.Errorf("Unmarshalled %T diff (-want +got):\n%s", got.Elem().Interface(), diff)
 			}
 		})
 	}
@@ -818,6 +828,7 @@ func TestReceiptAPIs(t *testing.T) {
 func TestEthSigningAPIs(t *testing.T) {
 	ctx, sut := newSUT(t, 1)
 
+	wantErr := testerr.Contains("unknown account")
 	txFields := map[string]any{
 		"from":     zeroAddr,
 		"to":       zeroAddr,
@@ -826,36 +837,30 @@ func TestEthSigningAPIs(t *testing.T) {
 		"value":    hexutil.Big(*big.NewInt(100)),
 		"nonce":    hexutil.Uint64(0),
 	}
-	tests := []struct {
-		method string
-		args   []any
-	}{
+	sut.testRPC(ctx, t, []rpcTest{
 		{
 			method: "eth_sign",
 			args: []any{
 				zeroAddr,
 				hexutil.Bytes("test message"),
 			},
+			wantErr: wantErr,
 		},
 		{
 			method: "eth_signTransaction",
 			args: []any{
 				txFields,
 			},
+			wantErr: wantErr,
 		},
 		{
 			method: "eth_sendTransaction",
 			args: []any{
 				txFields,
 			},
+			wantErr: wantErr,
 		},
-	}
-	for _, test := range tests {
-		t.Run(test.method, func(t *testing.T) {
-			err := sut.CallContext(ctx, &struct{}{}, test.method, test.args...)
-			require.ErrorContains(t, err, "unknown account")
-		})
-	}
+	}...)
 }
 
 func (sut *SUT) testGetByHash(ctx context.Context, t *testing.T, want *types.Block) {
