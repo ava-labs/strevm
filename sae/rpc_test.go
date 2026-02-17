@@ -817,10 +817,11 @@ func TestReceiptAPIs(t *testing.T) {
 	// Malformed execution results must surface as backend failures.
 	xdb := sut.rawVM.xdb
 	require.NoError(t, xdb.Put(blockSettled.Height(), []byte{0x01}))
-
-	var receipt *types.Receipt
-	err := sut.CallContext(ctx, &receipt, "eth_getTransactionReceipt", txSettled.Hash())
-	require.ErrorContains(t, err, "restoring execution artefacts")
+	sut.testRPC(ctx, t, rpcTest{
+		method:  "eth_getTransactionReceipt",
+		args:    []any{txSettled.Hash()},
+		wantErr: testerr.Contains("restoring execution artefacts"),
+	})
 }
 
 // SAE doesn't really support APIs that require a key on the node, as there is

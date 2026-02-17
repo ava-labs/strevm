@@ -132,6 +132,7 @@ func NewVM(
 	if err != nil {
 		return nil, fmt.Errorf("%T.ExecutionResultsDB(%q): %v", cfg.Hooks, snowCtx.ChainDataDir, err)
 	}
+	vm.xdb = xdb
 	vm.toClose = append(vm.toClose, xdb.Close)
 
 	lastSync, err := blocks.New(lastSynchronous, nil, nil, snowCtx.Log)
