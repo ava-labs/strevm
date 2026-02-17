@@ -553,6 +553,7 @@ func TestEmptyChainConfig(t *testing.T) {
 	for range 5 {
 		sut.runConsensusLoop(t, sut.lastAcceptedBlock(t))
 	}
+	sut.waitUntilExecuted(t, sut.lastAcceptedBlock(t))
 }
 
 func TestSyntacticBlockChecks(t *testing.T) {
