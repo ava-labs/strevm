@@ -14,10 +14,11 @@ import (
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/crypto"
 	"github.com/ava-labs/libevm/rpc"
-	"github.com/ava-labs/strevm/params"
-	"github.com/ava-labs/strevm/saetest/escrow"
 	"github.com/holiman/uint256"
 	"github.com/stretchr/testify/require"
+
+	"github.com/ava-labs/strevm/params"
+	"github.com/ava-labs/strevm/saetest/escrow"
 )
 
 func TestEthCall(t *testing.T) {
@@ -83,5 +84,4 @@ func TestEthCall(t *testing.T) {
 			}
 		})
 	}
-
 }

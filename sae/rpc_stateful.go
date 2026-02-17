@@ -17,6 +17,7 @@ import (
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/core/vm"
 	"github.com/ava-labs/libevm/rpc"
+
 	"github.com/ava-labs/strevm/blocks"
 )
 
