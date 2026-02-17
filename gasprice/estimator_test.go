@@ -5,9 +5,9 @@ package gasprice
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"math/big"
+	"slices"
 	"testing"
 	"time"
 
@@ -16,6 +16,7 @@ import (
 	"github.com/ava-labs/libevm/event"
 	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/rpc"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/ava-labs/strevm/blocks/blockstest"
@@ -49,6 +50,7 @@ func (bg *testBlockGen) AddTx(tx *types.Transaction) {
 type testBackend struct {
 	blocks     []*types.Block // blocks[i] is block with number i
 	acceptedCh chan<- *types.Block
+	pruned     []uint64 // block numbers that return (nil, nil)
 }
 
 func (b *testBackend) lastBlock() *types.Block {
@@ -83,7 +85,7 @@ func (b *testBackend) BlockByNumber(ctx context.Context, number rpc.BlockNumber)
 		return b.lastBlock(), nil
 	}
 	n := uint64(number) //nolint:gosec // Test code
-	if n >= uint64(len(b.blocks)) {
+	if n >= uint64(len(b.blocks)) || slices.Contains(b.pruned, n) {
 		return nil, nil
 	}
 	return b.blocks[n], nil
@@ -148,6 +150,7 @@ func newTestBackend(t *testing.T, numBlocks int, genBlock func(int, *testBlockGe
 type suggestTipCapTest struct {
 	numBlocks   int
 	genBlock    func(int, *testBlockGen)
+	pruned      []uint64
 	expectedTip *big.Int
 }
 
@@ -191,6 +194,7 @@ func applyGasPriceTest(t *testing.T, test suggestTipCapTest, opts ...EstimatorOp
 		test.genBlock = func(i int, b *testBlockGen) {}
 	}
 	backend := newTestBackend(t, test.numBlocks, test.genBlock)
+	backend.pruned = test.pruned
 	estimator, err := NewEstimator(backend, opts...)
 	require.NoError(t, err)
 	defer estimator.Close()
@@ -262,6 +266,7 @@ func TestSuggestTipCap(t *testing.T) {
 		name        string
 		numBlocks   int
 		genBlock    func(int, *testBlockGen)
+		pruned      []uint64
 		expectedTip *big.Int
 	}{
 		{
@@ -344,12 +349,41 @@ func TestSuggestTipCap(t *testing.T) {
 			},
 			expectedTip: DefaultMinPrice,
 		},
+		{
+			// 5 blocks, each with 1 tx. Tips by block number:
+			// 1: 10 GWei, 2: 20 GWei, 3: 30 GWei, 4: 40 GWei, 5: 50 GWei.
+			// Without pruning: sorted [10,20,30,40,50], 60th pct → index 2 → 30 GWei.
+			// Prune block 5 (50 GWei): sorted [10,20,30,40], 60th pct → index 1 → 20 GWei.
+			name:      "pruned_blocks_skipped",
+			numBlocks: 5,
+			genBlock: func(i int, b *testBlockGen) {
+				kc := saetest.NewUNSAFEKeyChain(t, 1)
+				addr := kc.Addresses()[0]
+				signer := types.LatestSigner(testChainConfig)
+				txTip := big.NewInt(int64(i+1) * 10 * params.GWei)
+				baseFee := b.BaseFee()
+				feeCap := new(big.Int).Add(baseFee, txTip)
+				tx := kc.SignTx(t, signer, 0, &types.DynamicFeeTx{
+					ChainID:   testChainConfig.ChainID,
+					Nonce:     b.TxNonce(addr),
+					To:        &common.Address{},
+					Gas:       params.TxGas,
+					GasFeeCap: feeCap,
+					GasTipCap: txTip,
+					Data:      []byte{},
+				})
+				b.AddTx(tx)
+			},
+			pruned:      []uint64{5},
+			expectedTip: big.NewInt(20 * params.GWei),
+		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			applyGasPriceTest(t, suggestTipCapTest{
 				numBlocks:   c.numBlocks,
 				genBlock:    c.genBlock,
+				pruned:      c.pruned,
 				expectedTip: c.expectedTip,
 			}, defaultEstimatorOptions(t)...)
 		})
@@ -371,6 +405,7 @@ func TestFeeHistory(t *testing.T) {
 		count        uint64
 		last         rpc.BlockNumber
 		percent      []float64
+		pruned       []uint64
 		expFirst     uint64
 		expCount     int
 		expErr       error
@@ -382,14 +417,11 @@ func TestFeeHistory(t *testing.T) {
 		{maxCallBlock: 0, maxBlock: 1000, count: 1000000000, last: 30, percent: nil, expFirst: 0, expCount: 31, expErr: nil},
 		{maxCallBlock: 0, maxBlock: 1000, count: 1000000000, last: rpc.PendingBlockNumber, percent: nil, expFirst: 0, expCount: 33, expErr: nil},
 		{maxCallBlock: 0, maxBlock: 1000, count: 10, last: 40, percent: nil, expFirst: 0, expCount: 0, expErr: errFutureBlock},
-		{maxCallBlock: 0, maxBlock: 1000, count: 10, last: 40, percent: nil, expFirst: 0, expCount: 0, expErr: errFutureBlock},
 		{maxCallBlock: 0, maxBlock: 2, count: 100, last: rpc.PendingBlockNumber, percent: []float64{0, 10}, expFirst: 31, expCount: 2, expErr: nil},
 		{maxCallBlock: 0, maxBlock: 2, count: 100, last: 32, percent: []float64{0, 10}, expFirst: 31, expCount: 2, expErr: nil},
 		// In SAE backend, `pending` resolves to accepted head (not head+1).
 		{maxCallBlock: 0, maxBlock: 1000, count: 1, last: rpc.PendingBlockNumber, percent: nil, expFirst: 32, expCount: 1, expErr: nil},
 		// With count=2, pending spans [head-1, head].
-		{maxCallBlock: 0, maxBlock: 1000, count: 2, last: rpc.PendingBlockNumber, percent: nil, expFirst: 31, expCount: 2, expErr: nil},
-		// Same behavior when "pending" mode is enabled in test matrix.
 		{maxCallBlock: 0, maxBlock: 1000, count: 2, last: rpc.PendingBlockNumber, percent: nil, expFirst: 31, expCount: 2, expErr: nil},
 		// Reward percentiles should not alter the pending range semantics.
 		{maxCallBlock: 0, maxBlock: 1000, count: 2, last: rpc.PendingBlockNumber, percent: []float64{0, 10}, expFirst: 31, expCount: 2, expErr: nil},
@@ -400,6 +432,11 @@ func TestFeeHistory(t *testing.T) {
 		{maxCallBlock: 0, maxBlock: 33, count: 1000000000, last: 10, percent: nil, expFirst: 0, expCount: 11, expErr: nil},                // handle truncation edge case
 		{maxCallBlock: 0, maxBlock: 2, count: 10, last: 20, percent: nil, expFirst: 0, expCount: 0, expErr: errHistoryDepthExhausted},     // query behind historical limit
 		{maxCallBlock: 10, maxBlock: 30, count: 100, last: rpc.PendingBlockNumber, percent: nil, expFirst: 23, expCount: 10, expErr: nil}, // ensure [MaxCallBlockHistory] is honored
+
+		// Pruned block tests
+		{maxCallBlock: 0, maxBlock: 1000, count: 5, last: 7, percent: []float64{50}, pruned: []uint64{5}, expFirst: 3, expCount: 2, expErr: nil}, // pruned in middle truncates
+		{maxCallBlock: 0, maxBlock: 1000, count: 3, last: 5, percent: []float64{50}, pruned: []uint64{3}, expFirst: 0, expCount: 0, expErr: nil}, // first block pruned returns empty
+		{maxCallBlock: 0, maxBlock: 1000, count: 3, last: 7, percent: nil, pruned: []uint64{7}, expFirst: 5, expCount: 2, expErr: nil},           // last block pruned
 	}
 	for i, c := range cases {
 		kc := saetest.NewUNSAFEKeyChain(t, 1)
@@ -421,6 +458,7 @@ func TestFeeHistory(t *testing.T) {
 			})
 			b.AddTx(tx)
 		})
+		backend.pruned = c.pruned
 		estimatorOpts := make([]EstimatorOption, 0, 2)
 		if c.maxCallBlock != 0 {
 			maxCallBlockOpt, err := WithMaxCallBlockHistory(c.maxCallBlock)
@@ -443,20 +481,10 @@ func TestFeeHistory(t *testing.T) {
 		}
 		expBaseFee := c.expCount
 
-		if first.Uint64() != c.expFirst {
-			t.Fatalf("Test case %d: first block mismatch, want %d, got %d", i, c.expFirst, first)
-		}
-		if len(reward) != expReward {
-			t.Fatalf("Test case %d: reward array length mismatch, want %d, got %d", i, expReward, len(reward))
-		}
-		if len(baseFee) != expBaseFee {
-			t.Fatalf("Test case %d: baseFee array length mismatch, want %d, got %d", i, expBaseFee, len(baseFee))
-		}
-		if len(ratio) != c.expCount {
-			t.Fatalf("Test case %d: gasUsedRatio array length mismatch, want %d, got %d", i, c.expCount, len(ratio))
-		}
-		if err != c.expErr && !errors.Is(err, c.expErr) {
-			t.Fatalf("Test case %d: error mismatch, want %v, got %v", i, c.expErr, err)
-		}
+		assert.Equal(t, c.expFirst, first.Uint64(), "case %d: first block", i)
+		assert.Len(t, reward, expReward, "case %d: reward length", i)
+		assert.Len(t, baseFee, expBaseFee, "case %d: baseFee length", i)
+		assert.Len(t, ratio, c.expCount, "case %d: gasUsedRatio length", i)
+		assert.ErrorIs(t, err, c.expErr, "case %d: error", i)
 	}
 }

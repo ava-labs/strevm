@@ -10,6 +10,7 @@ import (
 
 	"github.com/ava-labs/avalanchego/cache/lru"
 	"github.com/ava-labs/libevm/core/types"
+	"github.com/ava-labs/libevm/log"
 	"github.com/ava-labs/libevm/rpc"
 )
 
@@ -44,8 +45,8 @@ type feeInfo struct {
 	tips []tipEntry
 }
 
-// buildFeeInfo extracts fee-relevant data from [block] and returns a
-// cacheable [*feeInfo]. The returned tips slice is sorted ascending by
+// buildFeeInfo extracts fee-relevant data from block and returns a
+// cacheable *[feeInfo]. The returned tips slice is sorted ascending by
 // effective tip so that percentile lookups are O(n).
 func buildFeeInfo(block *types.Block) *feeInfo {
 	fi := feeInfo{
@@ -96,9 +97,9 @@ func (fi *feeInfo) rewardPercentiles(percentiles []float64) []*big.Int {
 	return out
 }
 
-// newFeeInfoProvider returns a bounded buffer with [size] slots to
-// store [*feeInfo] for the most recently accepted blocks.
-// The caller must close [closeCh] to stop the background goroutine.
+// newFeeInfoProvider returns a bounded buffer with size slots to
+// store *[feeInfo] for the most recently accepted blocks.
+// The caller must close closeCh to stop the background goroutine.
 func newFeeInfoProvider(backend Backend, size uint64, closeCh <-chan struct{}) (*feeInfoProvider, error) {
 	fc := &feeInfoProvider{
 		backend: backend,
@@ -131,32 +132,32 @@ func newFeeInfoProvider(backend Backend, size uint64, closeCh <-chan struct{}) (
 	return fc, fc.populateCache(size)
 }
 
-// addBlock builds a feeInfo for [block] and stores it in the cache.
+// addBlock builds a [feeInfo] for block and stores it in the cache.
 func (f *feeInfoProvider) addBlock(block *types.Block) *feeInfo {
 	fi := buildFeeInfo(block)
 	f.cache.Put(block.NumberU64(), fi)
 	return fi
 }
 
-// getFeeInfo calculates the minimum required tip to be included in a given
-// block and returns the value as a feeInfo struct.
-// It adds the entry to the cache if missing.
+// getFeeInfo returns the cached [feeInfo] for the given block number, falling
+// back to the backend on a cache miss. Returns (nil, nil) when the block does
+// not exist; callers should handle this gracefully.
 func (f *feeInfoProvider) getFeeInfo(ctx context.Context, number uint64) (*feeInfo, error) {
-	feeInfo, ok := f.cache.Get(number)
-	if ok {
-		return feeInfo, nil
+	if fi, ok := f.cache.Get(number); ok {
+		return fi, nil
 	}
-
-	// on cache miss, read from database
 	block, err := f.backend.BlockByNumber(ctx, rpc.BlockNumber(number)) //nolint:gosec // block numbers are always within int64 range
 	if err != nil {
 		return nil, err
 	}
+	if block == nil {
+		return nil, nil
+	}
 	return f.addBlock(block), nil
 }
 
-// populateCache populates [f] with [size] blocks up to last accepted.
-// Note: assumes [size] is greater than zero.
+// populateCache fills the cache with up to size blocks ending at last accepted.
+// Assumes size is greater than zero.
 func (f *feeInfoProvider) populateCache(size uint64) error {
 	lastAccepted, err := f.backend.ResolveBlockNumber(rpc.PendingBlockNumber)
 	if err != nil {
@@ -171,6 +172,10 @@ func (f *feeInfoProvider) populateCache(size uint64) error {
 		block, err := f.backend.BlockByNumber(context.Background(), rpc.BlockNumber(i)) //nolint:gosec // block numbers are always within int64 range
 		if err != nil {
 			return err
+		}
+		if block == nil {
+			log.Warn("Block not found", "number", i)
+			continue
 		}
 		_ = f.addBlock(block)
 	}

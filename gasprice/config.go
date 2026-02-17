@@ -81,6 +81,9 @@ func WithBlocks(blocks uint64) (EstimatorOption, error) {
 
 // WithPercentile sets the sampled percentile used for tip estimation.
 func WithPercentile(percentile uint64) (EstimatorOption, error) {
+	if percentile == 0 || percentile > 100 {
+		return nil, fmt.Errorf("percentile (%d) is out of range (0, 100]", percentile)
+	}
 	return options.Func[config](func(c *config) {
 		c.Percentile = percentile
 	}), nil

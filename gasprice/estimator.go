@@ -18,7 +18,6 @@ import (
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/event"
 	"github.com/ava-labs/libevm/libevm/options"
-	"github.com/ava-labs/libevm/log"
 	"github.com/ava-labs/libevm/rpc"
 )
 
@@ -56,9 +55,9 @@ type Estimator struct {
 	clock mockable.Clock
 
 	closeCh chan struct{}
-	// historyCache is a cache of feeInfo for the last [FeeHistoryCacheSize] blocks.
-	// We maintain this cache separately from the feeInfoProvider because the FeeHistory
-	// can evict recent blocks from the feeInfoProvider's cache.
+	// historyCache is a cache of [feeInfo] for the last [FeeHistoryCacheSize] blocks.
+	// We maintain this cache separately from [feeInfoProvider] because
+	// [FeeHistory] can evict recent blocks from the provider's bounded cache.
 	historyCache    *lru.Cache[uint64, *feeInfo]
 	feeInfoProvider *feeInfoProvider
 }
@@ -132,10 +131,14 @@ func (e *Estimator) SuggestTipCap(ctx context.Context) (*big.Int, error) {
 
 	// Walk backwards through recent blocks, collecting tips until we
 	// either exhaust the configured window or hit the lookback age limit.
+	// A nil [feeInfo] means the block is unavailable (e.g. pruned); skip it.
 	for n := newest; n > oldest; n-- {
 		fi, err := e.feeInfoProvider.getFeeInfo(ctx, n)
 		if err != nil {
 			return new(big.Int).Set(lastPrice), err
+		}
+		if fi == nil {
+			continue
 		}
 		if fi.timestamp+e.cfg.MaxLookbackSeconds < now {
 			break
@@ -181,7 +184,6 @@ func (e *Estimator) FeeHistory(ctx context.Context, blocks uint64, unresolvedLas
 		return common.Big0, nil, nil, nil, err
 	}
 	if blocks > e.cfg.MaxCallBlockHistory {
-		log.Warn("Sanitizing fee history length", "requested", blocks, "truncated", e.cfg.MaxCallBlockHistory)
 		blocks = e.cfg.MaxCallBlockHistory
 	}
 
@@ -195,32 +197,44 @@ func (e *Estimator) FeeHistory(ctx context.Context, blocks uint64, unresolvedLas
 		reward       = make([][]*big.Int, blocks)
 		baseFee      = make([]*big.Int, blocks)
 		gasUsedRatio = make([]float64, blocks)
+		filled       uint64
 	)
 	for n := first; n <= last; n++ {
 		if err := ctx.Err(); err != nil {
 			return common.Big0, nil, nil, nil, err
 		}
-		idx := n - first
 		fi, err := e.getFeeHistoryInfo(ctx, n)
 		if err != nil {
 			return common.Big0, nil, nil, nil, err
 		}
-		baseFee[idx] = fi.baseFee
-		gasUsedRatio[idx] = float64(fi.gasUsed) / float64(fi.gasLimit)
-		if len(rewardPercentiles) != 0 {
-			reward[idx] = fi.rewardPercentiles(rewardPercentiles)
+		if fi == nil {
+			// Block unavailable (e.g. pruned). Stop and return whatever
+			// contiguous data we collected so far.
+			break
 		}
+		baseFee[filled] = fi.baseFee
+		gasUsedRatio[filled] = float64(fi.gasUsed) / float64(fi.gasLimit)
+		if len(rewardPercentiles) != 0 {
+			reward[filled] = fi.rewardPercentiles(rewardPercentiles)
+		}
+		filled++
 	}
-
-	// Return nil if no reward percentiles were requested, otherwise it would return a slice.
-	if len(rewardPercentiles) == 0 {
+	if filled == 0 {
+		return common.Big0, nil, nil, nil, nil
+	}
+	// Truncate to the actually processed range.
+	baseFee = baseFee[:filled]
+	gasUsedRatio = gasUsedRatio[:filled]
+	if len(rewardPercentiles) != 0 {
+		reward = reward[:filled]
+	} else {
 		reward = nil
 	}
 	return new(big.Int).SetUint64(first), reward, baseFee, gasUsedRatio, nil
 }
 
-// validatePercentiles checks that [percentiles] are in [0,100] and strictly
-// ascending. Returns nil when the slice is empty.
+// validatePercentiles checks that every value in percentiles is in 0..100 and
+// strictly ascending. Returns nil when the slice is empty.
 func validatePercentiles(percentiles []float64) error {
 	if len(percentiles) > maxPercentilesPerQuery {
 		return fmt.Errorf("%w: requested %d percentiles, max %d", errBadPercentile, len(percentiles), maxPercentilesPerQuery)
@@ -236,9 +250,13 @@ func validatePercentiles(percentiles []float64) error {
 	return nil
 }
 
-// getFeeHistoryInfo returns the feeInfo for [number], consulting (in order)
-// the history LRU cache, the feeInfoProvider's recent-block cache, and
-// finally the backend. Results are promoted into the history cache on miss.
+// getFeeHistoryInfo returns the [feeInfo] for the given block number,
+// consulting (in order) the history LRU cache, the [feeInfoProvider]'s
+// recent-block cache, and finally the backend. Results are promoted into
+// the history cache on miss.
+//
+// Returns (nil, nil) when the block is unavailable.
+// Callers must handle a nil *[feeInfo] gracefully.
 func (e *Estimator) getFeeHistoryInfo(ctx context.Context, number uint64) (*feeInfo, error) {
 	if feeInfo, ok := e.historyCache.Get(number); ok {
 		return feeInfo, nil
@@ -255,6 +273,9 @@ func (e *Estimator) getFeeHistoryInfo(ctx context.Context, number uint64) (*feeI
 	if err != nil {
 		return nil, err
 	}
+	if block == nil {
+		return nil, nil
+	}
 	feeInfo = buildFeeInfo(block)
 	// We only add the feeInfo to the history cache if we could not find it in the feeInfoProvider's cache.
 	// because the FeeHistory can evict recent blocks from the history cache.
@@ -264,8 +285,8 @@ func (e *Estimator) getFeeHistoryInfo(ctx context.Context, number uint64) (*feeI
 
 // clampBlockRange turns a caller-supplied (possibly symbolic) block number and
 // count into a concrete, accepted-head-relative range. It enforces the
-// configured MaxBlockHistory depth and clamps [count] so the range never
-// extends before genesis.
+// configured [config.MaxBlockHistory] depth and clamps count so the range
+// never extends before genesis.
 //
 // Returns the resolved last block number and the (possibly reduced) count.
 // A zero count with nil error means no retrievable blocks exist in the range.
@@ -289,7 +310,7 @@ func (e *Estimator) clampBlockRange(ctx context.Context, reqEnd rpc.BlockNumber,
 			errHistoryDepthExhausted, reqEnd, lastAcceptedNumber, e.cfg.MaxBlockHistory)
 	}
 
-	// Don't reach before genesis.
+	// Won't reach before genesis.
 	if count > endNum+1 {
 		count = endNum + 1
 	}
