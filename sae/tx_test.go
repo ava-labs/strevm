@@ -44,7 +44,6 @@ func TestTxTypeSupport(t *testing.T) {
 			t.FailNow()
 		}
 	}
-	sut.syncMempool(t)
 	b := sut.runConsensusLoop(t, sut.genesis)
 	require.NoErrorf(t, b.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", b)
 
