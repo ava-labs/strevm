@@ -30,6 +30,7 @@ import (
 	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/rpc"
 
+	"github.com/ava-labs/strevm/blocks"
 	"github.com/ava-labs/strevm/saexec"
 	"github.com/ava-labs/strevm/txgossip"
 )
@@ -295,53 +296,33 @@ func (b *ethAPIBackend) BlockByNumber(ctx context.Context, n rpc.BlockNumber) (*
 }
 
 func (b *ethAPIBackend) HeaderByHash(ctx context.Context, hash common.Hash) (*types.Header, error) {
-	if blk, ok := b.vm.blocks.Load(hash); ok {
-		return blk.Header(), nil
-	}
-	num := rawdb.ReadHeaderNumber(b.vm.db, hash)
-	if num == nil {
-		return nil, nil
-	}
-	return rawdb.ReadHeader(b.vm.db, hash, *num), nil
+	return readByHash(b, hash, (*blocks.Block).Header, rawdb.ReadHeader)
 }
 
 func (b *ethAPIBackend) BlockByHash(ctx context.Context, hash common.Hash) (*types.Block, error) {
-	if blk, ok := b.vm.blocks.Load(hash); ok {
-		return blk.EthBlock(), nil
-	}
-	num := rawdb.ReadHeaderNumber(b.vm.db, hash)
-	if num == nil {
-		return nil, nil
-	}
-	return rawdb.ReadBlock(b.vm.db, hash, *num), nil
+	return readByHash(b, hash, (*blocks.Block).EthBlock, rawdb.ReadBlock)
 }
 
 func (b *ethAPIBackend) BlockByNumberOrHash(ctx context.Context, blockNrOrHash rpc.BlockNumberOrHash) (*types.Block, error) {
 	if n, ok := blockNrOrHash.Number(); ok {
 		return b.BlockByNumber(ctx, n)
 	}
-	num, hash, err := b.resolveBlockNumberOrHash(blockNrOrHash)
+	_, hash, err := b.resolveBlockNumberOrHash(blockNrOrHash)
 	if err != nil {
 		return nil, err
 	}
-	if blk, ok := b.vm.blocks.Load(hash); ok {
-		return blk.EthBlock(), nil
-	}
-	return rawdb.ReadBlock(b.vm.db, hash, num), nil
+	return b.BlockByHash(ctx, hash)
 }
 
 func (b *ethAPIBackend) HeaderByNumberOrHash(ctx context.Context, blockNrOrHash rpc.BlockNumberOrHash) (*types.Header, error) {
 	if n, ok := blockNrOrHash.Number(); ok {
 		return b.HeaderByNumber(ctx, n)
 	}
-	num, hash, err := b.resolveBlockNumberOrHash(blockNrOrHash)
+	_, hash, err := b.resolveBlockNumberOrHash(blockNrOrHash)
 	if err != nil {
 		return nil, err
 	}
-	if blk, ok := b.vm.blocks.Load(hash); ok {
-		return blk.Header(), nil
-	}
-	return rawdb.ReadHeader(b.vm.db, hash, num), nil
+	return b.HeaderByHash(ctx, hash)
 }
 
 func (b *ethAPIBackend) GetTransaction(ctx context.Context, txHash common.Hash) (exists bool, tx *types.Transaction, blockHash common.Hash, blockNumber uint64, index uint64, err error) {
@@ -398,7 +379,21 @@ func (b *ethAPIBackend) GetPoolTransactions() (types.Transactions, error) {
 	return txs, nil
 }
 
-type canonicalReader[T any] func(ethdb.Reader, common.Hash, uint64) *T
+type (
+	canonicalReader[T any] func(ethdb.Reader, common.Hash, uint64) *T
+	memExtractor[T any]    func(*blocks.Block) *T
+)
+
+func readByHash[T any](b *ethAPIBackend, hash common.Hash, fromMem memExtractor[T], fromDB canonicalReader[T]) (*T, error) {
+	if blk, ok := b.vm.blocks.Load(hash); ok {
+		return fromMem(blk), nil
+	}
+	num := rawdb.ReadHeaderNumber(b.vm.db, hash)
+	if num == nil {
+		return nil, nil
+	}
+	return fromDB(b.vm.db, hash, *num), nil
+}
 
 func readByNumber[T any](b *ethAPIBackend, n rpc.BlockNumber, read canonicalReader[T]) (*T, error) {
 	num, err := b.resolveBlockNumber(n)
