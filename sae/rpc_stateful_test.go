@@ -4,7 +4,6 @@
 package sae
 
 import (
-	"bytes"
 	"math/big"
 	"testing"
 	"time"
@@ -15,6 +14,7 @@ import (
 	"github.com/ava-labs/libevm/crypto"
 	"github.com/ava-labs/libevm/rpc"
 	"github.com/holiman/uint256"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/ava-labs/strevm/params"
@@ -77,11 +77,11 @@ func TestEthCall(t *testing.T) {
 				To:   &escrowAddr,
 				Data: escrow.CallDataForBalance(recv),
 			}
+
 			got, err := sut.CallContract(ctx, msg, big.NewInt(int64(tt.num)))
-			want := uint256.NewInt(val).PaddedBytes(32)
-			if err != nil || !bytes.Equal(got, want) {
-				t.Errorf("%T.CallContract(%+v, %d) got (%#x, %v); want (%#x, nil)", sut.Client, msg, tt.num, got, err, want)
-			}
+			t.Logf("%T.CallContract(%+v, %d)", sut.Client, msg, tt.num) // avoids having to repeat in failure messages
+			require.NoError(t, err)
+			assert.Equal(t, uint256.NewInt(val).PaddedBytes(32), got)
 		})
 	}
 }

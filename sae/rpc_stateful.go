@@ -5,7 +5,6 @@ package sae
 
 import (
 	"context"
-	"crypto/rand"
 	"errors"
 	"time"
 
@@ -42,26 +41,12 @@ func (*coinbaseAsAuthor) Author(h *types.Header) (common.Address, error) {
 }
 
 func (b *ethAPIBackend) GetEVM(ctx context.Context, msg *core.Message, sdb *state.StateDB, hdr *types.Header, cfg *vm.Config, bCtx *vm.BlockContext) *vm.EVM {
-	// <rant>The linter warns that "this check suggests that the pointer can be
-	// nil". WTF else could it suggest?! It then complains that I dereference a
-	// possibly nil pointer later! :facepalm:</rant>
-	//
-	//nolint:staticcheck
 	if bCtx == nil {
-		bCtx := new(vm.BlockContext)
-		*bCtx = core.NewEVMBlockContext(hdr, b.vm.exec.ChainContext(), randomAddress())
+		bCtx = new(vm.BlockContext)
+		*bCtx = core.NewEVMBlockContext(hdr, b.vm.exec.ChainContext(), &hdr.Coinbase)
 	}
 	txCtx := core.NewEVMTxContext(msg)
-	return vm.NewEVM(*bCtx, txCtx, sdb, b.ChainConfig(), *cfg) //nolint:staticcheck // Nil-pointer check performed above
-}
-
-// randomAddress returns a randomly generated address for use as a fake
-// [types.Header.Coinbase] instead of hard-coding a value that can be detected
-// by malicious contracts that then modify their behaviour during simulation.
-func randomAddress() *common.Address {
-	var a common.Address
-	rand.Read(a[:]) //nolint:gosec,errcheck // Documented as never returning an error
-	return &a
+	return vm.NewEVM(*bCtx, txCtx, sdb, b.ChainConfig(), *cfg)
 }
 
 // StateAndHeaderByNumber performs the same faking as
