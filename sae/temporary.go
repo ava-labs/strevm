@@ -22,11 +22,11 @@ import (
 
 var errUnimplemented = errors.New("unimplemented")
 
-func (b *ethAPIBackend) SuggestGasTipCap(ctx context.Context) (*big.Int, error) {
+func (b *ethAPIBackend) SuggestGasTipCap(context.Context) (*big.Int, error) {
 	panic(errUnimplemented)
 }
 
-func (b *ethAPIBackend) FeeHistory(ctx context.Context, blockCount uint64, lastBlock rpc.BlockNumber, rewardPercentiles []float64) (*big.Int, [][]*big.Int, []*big.Int, []float64, error) {
+func (b *ethAPIBackend) FeeHistory(context.Context, uint64, rpc.BlockNumber, []float64) (*big.Int, [][]*big.Int, []*big.Int, []float64, error) {
 	panic(errUnimplemented)
 }
 
