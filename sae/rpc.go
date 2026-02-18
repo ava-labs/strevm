@@ -391,8 +391,6 @@ func (b *ethAPIBackend) resolveBlockNumberOrHash(numOrHash rpc.BlockNumberOrHash
 	hash, isHash := numOrHash.Hash()
 
 	switch {
-	case !isNum && !isHash:
-		return 0, common.Hash{}, errNeitherNumberNorHash
 	case isNum && isHash:
 		return 0, common.Hash{}, errBothNumberAndHash
 
@@ -408,7 +406,7 @@ func (b *ethAPIBackend) resolveBlockNumberOrHash(numOrHash rpc.BlockNumberOrHash
 		}
 		return num, hash, nil
 
-	default: // isHash
+	case isHash:
 		if bl, ok := b.vm.blocks.Load(hash); ok {
 			n := bl.NumberU64()
 			if numOrHash.RequireCanonical && hash != rawdb.ReadCanonicalHash(b.db, n) {
@@ -424,6 +422,9 @@ func (b *ethAPIBackend) resolveBlockNumberOrHash(numOrHash rpc.BlockNumberOrHash
 		// We only write canonical blocks to the database so there's no need to
 		// perform a check.
 		return *numPtr, hash, nil
+
+	default:
+		return 0, common.Hash{}, errNeitherNumberNorHash
 	}
 }
 
