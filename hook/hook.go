@@ -22,6 +22,7 @@ import (
 
 	"github.com/ava-labs/strevm/intmath"
 	saeparams "github.com/ava-labs/strevm/params"
+	"github.com/ava-labs/strevm/saedb"
 )
 
 // Points define user-injected hook points.
@@ -31,6 +32,11 @@ import (
 // existing block is indicative of this node reconstructing a block built
 // elsewhere during verification.
 type Points interface {
+	// ExecutionResultsDB opens and returns a height-indexed database, which
+	// will be closed by the VM when no longer needed. It MAY use the provided
+	// directory for persistence and MUST NOT write data outside of it.
+	ExecutionResultsDB(dataDir string) (saedb.ExecutionResults, error)
+
 	BlockBuilder
 	// BlockRebuilderFrom returns a [BlockBuilder] that will attempt to
 	// reconstruct the provided block. If the provided block is valid for
@@ -77,7 +83,7 @@ type BlockBuilder interface {
 		header *types.Header,
 		txs []*types.Transaction,
 		receipts []*types.Receipt,
-	) *types.Block
+	) (*types.Block, error)
 }
 
 // AccountDebit includes an amount that an account should have debited,

@@ -10,7 +10,6 @@ import (
 	"math/big"
 	"strconv"
 	"sync"
-	"time"
 
 	"github.com/ava-labs/avalanchego/network/p2p"
 	"github.com/ava-labs/avalanchego/version"
@@ -18,9 +17,7 @@ import (
 	"github.com/ava-labs/libevm/accounts"
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/common/hexutil"
-	"github.com/ava-labs/libevm/consensus"
 	"github.com/ava-labs/libevm/core"
-	"github.com/ava-labs/libevm/core/bloombits"
 	"github.com/ava-labs/libevm/core/rawdb"
 	"github.com/ava-labs/libevm/core/state"
 	"github.com/ava-labs/libevm/core/txpool"
@@ -37,16 +34,19 @@ import (
 	"github.com/ava-labs/libevm/rpc"
 	"go.uber.org/zap"
 
+	"github.com/ava-labs/strevm/saexec"
 	"github.com/ava-labs/strevm/txgossip"
 )
 
+// APIBackend is the union of all interfaces required to implement the SAE APIs.
 type APIBackend interface {
-	filters.Backend
 	ethapi.Backend
+	filters.Backend
+	filters.BloomOverrider
 	tracers.Backend
 }
 
-// APIBackend returns an API backend backed by the VM.
+// APIBackend returns an API backend backed by the [VM].
 func (vm *VM) APIBackend() APIBackend {
 	return vm.apiBackend
 }
@@ -182,6 +182,33 @@ func (vm *VM) ethRPCServer() (*rpc.Server, error) {
 		// - debug_traceTransaction
 		{"debug", tracers.NewAPI(b)},
 	}
+	if vm.config.RPCConfig.EnableProfiling {
+		apis = append(apis, api{
+			// Geth-specific APIs:
+			// - debug_blockProfile
+			// - debug_cpuProfile
+			// - debug_freeOSMemory
+			// - debug_gcStats
+			// - debug_goTrace
+			// - debug_memStats
+			// - debug_mutexProfile
+			// - debug_setBlockProfileRate
+			// - debug_setGCPercent
+			// - debug_setMutexProfileFraction
+			// - debug_stacks
+			// - debug_startCPUProfile
+			// - debug_startGoTrace
+			// - debug_stopCPUProfile
+			// - debug_stopGoTrace
+			// - debug_verbosity
+			// - debug_vmodule
+			// - debug_writeBlockProfile
+			// - debug_writeMemProfile
+			// - debug_writeMutexProfile
+			"debug", debug.Handler,
+		})
+	}
+
 	// Unsupported APIs:
 	//
 	// Standard Ethereum node APIs:
@@ -211,34 +238,6 @@ func (vm *VM) ethRPCServer() (*rpc.Server, error) {
 	//
 	// The graphql service.
 	s := rpc.NewServer()
-
-	if vm.config.RPCConfig.EnableProfiling {
-		apis = append(apis, api{
-			// Geth-specific APIs:
-			// - debug_blockProfile
-			// - debug_cpuProfile
-			// - debug_freeOSMemory
-			// - debug_gcStats
-			// - debug_goTrace
-			// - debug_memStats
-			// - debug_mutexProfile
-			// - debug_setBlockProfileRate
-			// - debug_setGCPercent
-			// - debug_setMutexProfileFraction
-			// - debug_stacks
-			// - debug_startCPUProfile
-			// - debug_startGoTrace
-			// - debug_stopCPUProfile
-			// - debug_stopGoTrace
-			// - debug_verbosity
-			// - debug_vmodule
-			// - debug_writeBlockProfile
-			// - debug_writeMemProfile
-			// - debug_writeMutexProfile
-			"debug", debug.Handler,
-		})
-	}
-
 	for _, api := range apis {
 		if err := s.RegisterName(api.namespace, api.api); err != nil {
 			return nil, fmt.Errorf("%T.RegisterName(%q, %T): %v", s, api.namespace, api.api, err)
@@ -296,14 +295,53 @@ func (s *netAPI) Version() string {
 	return s.chainID
 }
 
-var _ APIBackend = (*ethAPIBackend)(nil)
+// chainIndexer implements the subset of [ethapi.Backend] required to back a
+// [core.ChainIndexer].
+type chainIndexer struct {
+	exec *saexec.Executor
+}
+
+var _ core.ChainIndexerChain = chainIndexer{}
+
+func (c chainIndexer) CurrentHeader() *types.Header {
+	return types.CopyHeader(c.exec.LastExecuted().Header())
+}
+
+func (c chainIndexer) SubscribeChainHeadEvent(ch chan<- core.ChainHeadEvent) event.Subscription {
+	return c.exec.SubscribeChainHeadEvent(ch)
+}
+
+// A bloomOverrider constructs Bloom filters from persisted receipts instead of
+// relying on the [types.Header] field.
+type bloomOverrider struct {
+	db ethdb.Database
+}
+
+var _ filters.BloomOverrider = bloomOverrider{}
+
+// OverrideHeaderBloom returns the Bloom filter of the receipts generated when
+// executing the respective block, whereas the [types.Header] carries those
+// settled by the block.
+func (b bloomOverrider) OverrideHeaderBloom(header *types.Header) types.Bloom {
+	return types.CreateBloom(rawdb.ReadRawReceipts(
+		b.db,
+		header.Hash(),
+		header.Number.Uint64(),
+	))
+}
 
 // TODO: Rename to apiBackend
 type ethAPIBackend struct {
-	*txgossip.Set
 	vm             *VM
 	accountManager *accounts.Manager
+
+	*txgossip.Set
+	chainIndexer
+	bloomOverrider
+	*bloomIndexer
 }
+
+var _ APIBackend = (*ethAPIBackend)(nil)
 
 func (b *ethAPIBackend) ChainConfig() *params.ChainConfig {
 	return b.vm.exec.ChainConfig()
@@ -321,10 +359,6 @@ func (b *ethAPIBackend) UnprotectedAllowed() bool {
 
 func (b *ethAPIBackend) AccountManager() *accounts.Manager {
 	return b.accountManager
-}
-
-func (b *ethAPIBackend) CurrentHeader() *types.Header {
-	return types.CopyHeader(b.vm.exec.LastExecuted().Header())
 }
 
 func (b *ethAPIBackend) CurrentBlock() *types.Header {
@@ -357,16 +391,6 @@ func (b *ethAPIBackend) ExtRPCEnabled() bool {
 	// only used as an additional security measure for the personal API, which
 	// we do not support in its entirety.
 	return false
-}
-
-func (b *ethAPIBackend) RPCGasCap() uint64 {
-	// TODO(StephenButtolph) Expose this as a config.
-	return 25_000_000
-}
-
-func (b *ethAPIBackend) RPCEVMTimeout() time.Duration {
-	// TODO(StephenButtolph) Expose this as a config.
-	return 5 * time.Second
 }
 
 func (b *ethAPIBackend) SetHead(number uint64) {
@@ -419,6 +443,29 @@ func (b *ethAPIBackend) GetPoolTransaction(txHash common.Hash) *types.Transactio
 	return b.Set.Pool.Get(txHash)
 }
 
+func (b *ethAPIBackend) GetBody(ctx context.Context, hash common.Hash, number rpc.BlockNumber) (*types.Body, error) {
+	if hash == (common.Hash{}) {
+		return nil, errors.New("empty block hash")
+	}
+	n, err := b.resolveBlockNumber(number)
+	if err != nil {
+		return nil, err
+	}
+
+	if block, ok := b.vm.blocks.Load(hash); ok {
+		if block.NumberU64() != n {
+			return nil, fmt.Errorf("found block number %d for hash %#x, expected %d", block.NumberU64(), hash, number)
+		}
+		return block.EthBlock().Body(), nil
+	}
+
+	return rawdb.ReadBody(b.vm.db, hash, n), nil
+}
+
+func (b *ethAPIBackend) GetLogs(ctx context.Context, blockHash common.Hash, number uint64) ([][]*types.Log, error) {
+	return rawdb.ReadLogs(b.vm.db, blockHash, number), nil
+}
+
 func (b *ethAPIBackend) GetPoolTransactions() (types.Transactions, error) {
 	pending := b.Pool.Pending(txpool.PendingFilter{})
 
@@ -456,6 +503,54 @@ func readByHash[T any](b *ethAPIBackend, hash common.Hash, read canonicalReader[
 		return nil
 	}
 	return read(b.vm.db, hash, *num)
+}
+
+var (
+	errNeitherNumberNorHash = fmt.Errorf("%T carrying neither number nor hash", rpc.BlockNumberOrHash{})
+	errBothNumberAndHash    = fmt.Errorf("%T carrying both number and hash", rpc.BlockNumberOrHash{})
+	errNonCanonicalBlock    = errors.New("non-canonical block")
+)
+
+func (b *ethAPIBackend) resolveBlockNumberOrHash(numOrHash rpc.BlockNumberOrHash) (uint64, common.Hash, error) {
+	rpcNum, isNum := numOrHash.Number()
+	hash, isHash := numOrHash.Hash()
+
+	switch {
+	case isNum && isHash:
+		return 0, common.Hash{}, errBothNumberAndHash
+
+	case isNum:
+		num, err := b.resolveBlockNumber(rpcNum)
+		if err != nil {
+			return 0, common.Hash{}, err
+		}
+
+		hash := rawdb.ReadCanonicalHash(b.db, num)
+		if hash == (common.Hash{}) {
+			return 0, common.Hash{}, fmt.Errorf("block %d not found", num)
+		}
+		return num, hash, nil
+
+	case isHash:
+		if bl, ok := b.vm.blocks.Load(hash); ok {
+			n := bl.NumberU64()
+			if numOrHash.RequireCanonical && hash != rawdb.ReadCanonicalHash(b.db, n) {
+				return 0, common.Hash{}, errNonCanonicalBlock
+			}
+			return n, hash, nil
+		}
+
+		numPtr := rawdb.ReadHeaderNumber(b.db, hash)
+		if numPtr == nil {
+			return 0, common.Hash{}, fmt.Errorf("block %#x not found", hash)
+		}
+		// We only write canonical blocks to the database so there's no need to
+		// perform a check.
+		return *numPtr, hash, nil
+
+	default:
+		return 0, common.Hash{}, errNeitherNumberNorHash
+	}
 }
 
 var errFutureBlockNotResolved = errors.New("not accepted yet")
@@ -499,10 +594,6 @@ func (b *ethAPIBackend) SubscribeChainEvent(ch chan<- core.ChainEvent) event.Sub
 	return b.vm.exec.SubscribeChainEvent(ch)
 }
 
-func (b *ethAPIBackend) SubscribeChainHeadEvent(ch chan<- core.ChainHeadEvent) event.Subscription {
-	return b.vm.exec.SubscribeChainHeadEvent(ch)
-}
-
 func (*ethAPIBackend) SubscribeChainSideEvent(chan<- core.ChainSideEvent) event.Subscription {
 	// SAE never reorgs, so there are no side events.
 	return newNoopSubscription()
@@ -527,14 +618,6 @@ func (*ethAPIBackend) SubscribePendingLogsEvent(chan<- []*types.Log) event.Subsc
 	return newNoopSubscription()
 }
 
-func (b *ethAPIBackend) StateAndHeaderByNumber(ctx context.Context, number rpc.BlockNumber) (*state.StateDB, *types.Header, error) {
-	panic(errUnimplemented)
-}
-
-func (b *ethAPIBackend) StateAndHeaderByNumberOrHash(ctx context.Context, blockNrOrHash rpc.BlockNumberOrHash) (*state.StateDB, *types.Header, error) {
-	panic(errUnimplemented)
-}
-
 func (b *ethAPIBackend) PendingBlockAndReceipts() (*types.Block, types.Receipts) {
 	panic(errUnimplemented)
 }
@@ -543,32 +626,8 @@ func (b *ethAPIBackend) GetReceipts(ctx context.Context, hash common.Hash) (type
 	panic(errUnimplemented)
 }
 
-func (b *ethAPIBackend) GetEVM(ctx context.Context, msg *core.Message, state *state.StateDB, header *types.Header, vmConfig *vm.Config, blockCtx *vm.BlockContext) *vm.EVM {
-	panic(errUnimplemented)
-}
-
 func (b *ethAPIBackend) GetPoolNonce(ctx context.Context, addr common.Address) (uint64, error) {
 	return b.Pool.Nonce(addr), nil
-}
-
-func (b *ethAPIBackend) Engine() consensus.Engine {
-	panic(errUnimplemented)
-}
-
-func (b *ethAPIBackend) GetBody(ctx context.Context, hash common.Hash, number rpc.BlockNumber) (*types.Body, error) {
-	panic(errUnimplemented)
-}
-
-func (b *ethAPIBackend) GetLogs(ctx context.Context, blockHash common.Hash, number uint64) ([][]*types.Log, error) {
-	panic(errUnimplemented)
-}
-
-func (b *ethAPIBackend) BloomStatus() (uint64, uint64) {
-	panic(errUnimplemented)
-}
-
-func (b *ethAPIBackend) ServiceFilter(ctx context.Context, session *bloombits.MatcherSession) {
-	panic(errUnimplemented)
 }
 
 func (b *ethAPIBackend) StateAtBlock(ctx context.Context, block *types.Block, reexec uint64, base *state.StateDB, readOnly bool, preferDisk bool) (*state.StateDB, tracers.StateReleaseFunc, error) {

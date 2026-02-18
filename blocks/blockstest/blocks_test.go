@@ -119,7 +119,8 @@ func TestNewGenesis(t *testing.T) {
 	alloc := saetest.MaxAllocFor(wallet.Addresses()...)
 
 	db := rawdb.NewMemoryDatabase()
-	gen := NewGenesis(t, db, config, alloc)
+	xdb := saetest.NewExecutionResultsDB()
+	gen := NewGenesis(t, db, xdb, config, alloc)
 
 	assert.True(t, gen.Executed(), "genesis.Executed()")
 	assert.NoError(t, gen.WaitUntilSettled(t.Context()), "genesis.WaitUntilSettled()")
