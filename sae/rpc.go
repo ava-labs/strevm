@@ -377,10 +377,9 @@ func (b *ethAPIBackend) ChainDb() ethdb.Database {
 }
 
 func (b *ethAPIBackend) ExtRPCEnabled() bool {
-	// We never recommend to expose the RPC externally. Additionally, this is
-	// only used as an additional security measure for the personal API, which
-	// we do not support in its entirety.
-	return false
+	// This is only used as an additional security measure for the personal API,
+	// which we do not support in its entirety.
+	return true
 }
 
 func (b *ethAPIBackend) SetHead(number uint64) {
