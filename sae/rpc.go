@@ -299,7 +299,7 @@ func (b *ethAPIBackend) HeaderByHash(ctx context.Context, hash common.Hash) (*ty
 	return b.headerByHash(ctx, hash, false)
 }
 
-func (b *ethAPIBackend) headerByHash(_ context.Context, hash common.Hash, canonical bool) (*types.Header, error) {
+func (b *ethAPIBackend) headerByHash(ctx context.Context, hash common.Hash, canonical bool) (*types.Header, error) {
 	return byHash(b, hash, canonical, (*blocks.Block).Header, rawdb.ReadHeader)
 }
 
