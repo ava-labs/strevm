@@ -307,7 +307,7 @@ func (b *ethAPIBackend) BlockByHash(ctx context.Context, hash common.Hash) (*typ
 	return b.blockByHash(ctx, hash, false)
 }
 
-func (b *ethAPIBackend) blockByHash(_ context.Context, hash common.Hash, canonical bool) (*types.Block, error) {
+func (b *ethAPIBackend) blockByHash(ctx context.Context, hash common.Hash, canonical bool) (*types.Block, error) {
 	return byHash(b, hash, canonical, (*blocks.Block).EthBlock, rawdb.ReadBlock)
 }
 
