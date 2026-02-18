@@ -318,7 +318,7 @@ func byHash[T any](
 	b *ethAPIBackend,
 	hash common.Hash,
 	canonical bool,
-	fromCache func(*blocks.Block) *T,
+	fromSAEBlock func(*blocks.Block) *T,
 	fromDB canonicalReader[T],
 ) (*T, error) {
 	num := rawdb.ReadHeaderNumber(b.vm.db, hash)
@@ -335,15 +335,7 @@ func byHash[T any](
 }
 
 func (b *ethAPIBackend) BlockByNumberOrHash(ctx context.Context, blockNrOrHash rpc.BlockNumberOrHash) (*types.Block, error) {
-	block, err := readByNumberOrHash(ctx, blockNrOrHash, b.BlockByNumber, b.blockByHash)
-	if block == nil || err != nil {
-		return block, err
-	}
-	if inMemory, ok := b.vm.blocks.Load(block.Hash()); ok && !inMemory.Executed() {
-		// Block receipts/state are unavailable until execution completes.
-		return nil, nil
-	}
-	return block, nil
+	return readByNumberOrHash(ctx, blockNrOrHash, b.BlockByNumber, b.blockByHash)
 }
 
 func (b *ethAPIBackend) HeaderByNumberOrHash(ctx context.Context, blockNrOrHash rpc.BlockNumberOrHash) (*types.Header, error) {

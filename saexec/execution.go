@@ -158,7 +158,7 @@ func (e *Executor) execute(b *blocks.Block, logger logging.Logger) error {
 		//
 		// [core.ApplyTransaction] also doesn't set EffectiveGasPrice for some
 		// reason. Fix both here so cached receipts are correct without a
-		// DeriveFields pass.
+		// [types.Receipt.DeriveFields] pass.
 		receipt.BlockHash = b.Hash()
 		for _, l := range receipt.Logs {
 			l.BlockHash = b.Hash()
