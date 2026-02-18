@@ -30,6 +30,7 @@ import (
 	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/rpc"
 
+	"github.com/ava-labs/strevm/blocks"
 	"github.com/ava-labs/strevm/saexec"
 	"github.com/ava-labs/strevm/txgossip"
 )
@@ -298,33 +299,8 @@ func (b *ethAPIBackend) HeaderByHash(ctx context.Context, hash common.Hash) (*ty
 	return b.headerByHash(ctx, hash, false)
 }
 
-func (b *ethAPIBackend) ensureCanonicalHash(hash common.Hash) error {
-	num := rawdb.ReadHeaderNumber(b.vm.db, hash)
-	if num == nil || rawdb.ReadCanonicalHash(b.vm.db, *num) != hash {
-		return errHashNotCanonical
-	}
-	return nil
-}
-
 func (b *ethAPIBackend) headerByHash(_ context.Context, hash common.Hash, canonical bool) (*types.Header, error) {
-	if blk, ok := b.vm.blocks.Load(hash); ok {
-		if canonical {
-			if err := b.ensureCanonicalHash(hash); err != nil {
-				return nil, err
-			}
-		}
-		return blk.Header(), nil
-	}
-	num := rawdb.ReadHeaderNumber(b.vm.db, hash)
-	if num == nil {
-		return nil, nil
-	}
-	if canonical {
-		if err := b.ensureCanonicalHash(hash); err != nil {
-			return nil, err
-		}
-	}
-	return rawdb.ReadHeader(b.vm.db, hash, *num), nil
+	return byHash(b, hash, canonical, (*blocks.Block).Header, rawdb.ReadHeader)
 }
 
 func (b *ethAPIBackend) BlockByHash(ctx context.Context, hash common.Hash) (*types.Block, error) {
@@ -332,24 +308,30 @@ func (b *ethAPIBackend) BlockByHash(ctx context.Context, hash common.Hash) (*typ
 }
 
 func (b *ethAPIBackend) blockByHash(_ context.Context, hash common.Hash, canonical bool) (*types.Block, error) {
-	if blk, ok := b.vm.blocks.Load(hash); ok {
-		if canonical {
-			if err := b.ensureCanonicalHash(hash); err != nil {
-				return nil, err
-			}
-		}
-		return blk.EthBlock(), nil
-	}
+	return byHash(b, hash, canonical, (*blocks.Block).EthBlock, rawdb.ReadBlock)
+}
+
+// byHash looks up a value by block hash, checking the in-memory cache first and
+// falling back to the database. When canonical is true, the hash must map to the
+// canonical chain.
+func byHash[T any](
+	b *ethAPIBackend,
+	hash common.Hash,
+	canonical bool,
+	fromCache func(*blocks.Block) *T,
+	fromDB canonicalReader[T],
+) (*T, error) {
 	num := rawdb.ReadHeaderNumber(b.vm.db, hash)
+	if canonical && (num == nil || rawdb.ReadCanonicalHash(b.vm.db, *num) != hash) {
+		return nil, errHashNotCanonical
+	}
+	if blk, ok := b.vm.blocks.Load(hash); ok {
+		return fromCache(blk), nil
+	}
 	if num == nil {
 		return nil, nil
 	}
-	if canonical {
-		if err := b.ensureCanonicalHash(hash); err != nil {
-			return nil, err
-		}
-	}
-	return rawdb.ReadBlock(b.vm.db, hash, *num), nil
+	return fromDB(b.vm.db, hash, *num), nil
 }
 
 func (b *ethAPIBackend) BlockByNumberOrHash(ctx context.Context, blockNrOrHash rpc.BlockNumberOrHash) (*types.Block, error) {
