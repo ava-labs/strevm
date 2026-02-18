@@ -15,10 +15,10 @@ import (
 	"github.com/ava-labs/libevm/core/rawdb"
 	"github.com/ava-labs/libevm/core/state"
 	"github.com/ava-labs/libevm/ethdb"
-	evmparams "github.com/ava-labs/libevm/params"
+	"github.com/ava-labs/libevm/params"
 
 	"github.com/ava-labs/strevm/blocks"
-	"github.com/ava-labs/strevm/params"
+	saeparams "github.com/ava-labs/strevm/params"
 	"github.com/ava-labs/strevm/proxytime"
 	"github.com/ava-labs/strevm/saedb"
 	"github.com/ava-labs/strevm/saexec"
@@ -27,7 +27,7 @@ import (
 type recovery struct {
 	db              ethdb.Database
 	xdb             saedb.ExecutionResults
-	chainConfig     *evmparams.ChainConfig
+	chainConfig     *params.ChainConfig
 	log             logging.Logger
 	config          Config
 	lastSynchronous *blocks.Block
@@ -111,7 +111,7 @@ func (rec *recovery) rebuildBlocksInMemory(lastExecuted *blocks.Block) (_ *syncM
 	// extend appends to the chain all the blocks in settler's ancestry up to
 	// and including the block that it settled.
 	extend := func(settler *blocks.Block) error {
-		settleAt := blocks.PreciseTime(rec.config.Hooks, settler.Header()).Add(-params.Tau)
+		settleAt := blocks.PreciseTime(rec.config.Hooks, settler.Header()).Add(-saeparams.Tau)
 		tm := proxytime.Of[gas.Gas](settleAt)
 
 		for {

@@ -263,7 +263,7 @@ func (b *Block) RestoreExecutionArtefacts(db ethdb.Database, xdb saedb.Execution
 		nil, // SAE does not support blob transactions.
 		b.Transactions(),
 	); err != nil {
-		return fmt.Errorf("deriving receipt fields: %w", err)
+		return fmt.Errorf("deriving receipt fields: %v", err)
 	}
 	return b.markExecutedAfterDiskArtefacts(e, nil)
 }
