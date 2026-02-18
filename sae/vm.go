@@ -64,7 +64,7 @@ type VM struct {
 
 	exec       *saexec.Executor
 	mempool    *txgossip.Set
-	apiBackend APIBackend
+	apiBackend *ethAPIBackend
 	newTxs     chan struct{}
 
 	// toClose are closed in reverse order during [VM.Shutdown]. If a resource
@@ -89,6 +89,8 @@ type Config struct {
 type RPCConfig struct {
 	BlocksPerBloomSection uint64
 	EnableProfiling       bool
+	EVMTimeout            time.Duration
+	GasCap                uint64
 }
 
 // NewVM returns a new [VM] that is ready for use immediately upon return.
