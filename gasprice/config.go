@@ -5,7 +5,7 @@
 package gasprice
 
 import (
-	"fmt"
+	"errors"
 	"math/big"
 
 	"github.com/ava-labs/libevm/params"
@@ -16,6 +16,18 @@ const (
 	// [DefaultMaxBlockHistory] to ensure all block lookups can be cached when
 	// serving a fee history query.
 	FeeHistoryCacheSize = 30_000
+)
+
+var (
+	errPercentileOutOfRange     = errors.New("percentile is out of range (0, 100]")
+	errMaxLookbackSecondsZero   = errors.New("max lookback seconds is 0")
+	errMaxCallBlockHistoryZero  = errors.New("max call block history is 0")
+	errMaxBlockHistoryZero      = errors.New("max block history is 0")
+	errMaxPriceNil              = errors.New("max price is nil")
+	errMaxPriceNegative         = errors.New("max price is negative")
+	errMinPriceNil              = errors.New("min price is nil")
+	errMinPriceNegative         = errors.New("min price is negative")
+	errMaxPriceLessThanMinPrice = errors.New("max price is less than min price")
 )
 
 type Config struct {
@@ -55,25 +67,31 @@ func DefaultConfig() Config {
 
 func (c *Config) Validate() error {
 	if c.Percentile == 0 || c.Percentile > 100 {
-		return fmt.Errorf("percentile (%d) is out of range (0, 100]", c.Percentile)
+		return errPercentileOutOfRange
 	}
 	if c.MaxLookbackSeconds == 0 {
-		return fmt.Errorf("max lookback seconds (%d) is 0", c.MaxLookbackSeconds)
+		return errMaxLookbackSecondsZero
 	}
 	if c.MaxCallBlockHistory == 0 {
-		return fmt.Errorf("max call block history (%d) is 0", c.MaxCallBlockHistory)
+		return errMaxCallBlockHistoryZero
 	}
 	if c.MaxBlockHistory == 0 {
-		return fmt.Errorf("max block history (%d) is less than 1", c.MaxBlockHistory)
+		return errMaxBlockHistoryZero
 	}
-	if c.MaxPrice == nil || c.MaxPrice.Sign() <= 0 {
-		return fmt.Errorf("max price (%v) is nil or non-positive", c.MaxPrice)
+	if c.MaxPrice == nil {
+		return errMaxPriceNil
 	}
-	if c.MinPrice == nil || c.MinPrice.Sign() < 0 {
-		return fmt.Errorf("min price (%v) is nil or negative", c.MinPrice)
+	if c.MaxPrice.Sign() <= 0 {
+		return errMaxPriceNegative
+	}
+	if c.MinPrice == nil {
+		return errMinPriceNil
+	}
+	if c.MinPrice.Sign() < 0 {
+		return errMinPriceNegative
 	}
 	if c.MaxPrice.Cmp(c.MinPrice) < 0 {
-		return fmt.Errorf("max price (%v) is less than min price (%v)", c.MaxPrice, c.MinPrice)
+		return errMaxPriceLessThanMinPrice
 	}
 	return nil
 }
