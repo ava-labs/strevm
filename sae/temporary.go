@@ -1,0 +1,92 @@
+// Copyright (C) 2025-2026, Ava Labs, Inc. All rights reserved.
+// See the file LICENSE for licensing terms.
+
+package sae
+
+// This file MUST be deleted before release. It is intended solely to house
+// interim identifiers needed for development over multiple PRs.
+
+import (
+	"context"
+	"errors"
+	"math/big"
+	"time"
+
+	"github.com/ava-labs/libevm/common"
+	"github.com/ava-labs/libevm/consensus"
+	"github.com/ava-labs/libevm/core"
+	"github.com/ava-labs/libevm/core/state"
+	"github.com/ava-labs/libevm/core/types"
+	"github.com/ava-labs/libevm/core/vm"
+	"github.com/ava-labs/libevm/ethdb"
+	"github.com/ava-labs/libevm/rpc"
+)
+
+var errUnimplemented = errors.New("unimplemented")
+
+// TODO(arr4n) remove these methods once no longer embedding [ethapi.Backend] in
+// [ethAPIBackend] as they're only required for disambiguation.
+
+func (b *ethAPIBackend) SuggestGasTipCap(context.Context) (*big.Int, error) {
+	panic(errUnimplemented)
+}
+
+func (b *ethAPIBackend) FeeHistory(context.Context, uint64, rpc.BlockNumber, []float64) (*big.Int, [][]*big.Int, []*big.Int, []float64, error) {
+	panic(errUnimplemented)
+}
+
+func (b *ethAPIBackend) ChainDb() ethdb.Database {
+	panic(errUnimplemented)
+}
+
+func (b *ethAPIBackend) ExtRPCEnabled() bool {
+	panic(errUnimplemented)
+}
+
+func (b *ethAPIBackend) RPCGasCap() uint64 {
+	panic(errUnimplemented)
+}
+
+func (b *ethAPIBackend) RPCEVMTimeout() time.Duration {
+	panic(errUnimplemented)
+}
+
+func (b *ethAPIBackend) SetHead(uint64) {
+	panic(errUnimplemented)
+}
+
+func (b *ethAPIBackend) HeaderByNumberOrHash(context.Context, rpc.BlockNumberOrHash) (*types.Header, error) {
+	panic(errUnimplemented)
+}
+
+func (b *ethAPIBackend) BlockByNumberOrHash(context.Context, rpc.BlockNumberOrHash) (*types.Block, error) {
+	panic(errUnimplemented)
+}
+
+func (b *ethAPIBackend) StateAndHeaderByNumber(context.Context, rpc.BlockNumber) (*state.StateDB, *types.Header, error) {
+	panic(errUnimplemented)
+}
+
+func (b *ethAPIBackend) StateAndHeaderByNumberOrHash(context.Context, rpc.BlockNumberOrHash) (*state.StateDB, *types.Header, error) {
+	panic(errUnimplemented)
+}
+
+func (b *ethAPIBackend) PendingBlockAndReceipts() (*types.Block, types.Receipts) {
+	panic(errUnimplemented)
+}
+
+func (b *ethAPIBackend) GetReceipts(context.Context, common.Hash) (types.Receipts, error) {
+	panic(errUnimplemented)
+}
+
+func (b *ethAPIBackend) GetEVM(context.Context, *core.Message, *state.StateDB, *types.Header, *vm.Config, *vm.BlockContext) *vm.EVM {
+	panic(errUnimplemented)
+}
+
+func (b *ethAPIBackend) GetPoolNonce(context.Context, common.Address) (uint64, error) {
+	panic(errUnimplemented)
+}
+
+func (b *ethAPIBackend) Engine() consensus.Engine {
+	panic(errUnimplemented)
+}
