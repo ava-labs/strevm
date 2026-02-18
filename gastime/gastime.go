@@ -74,18 +74,14 @@ func DefaultGasPriceConfig() hook.GasPriceConfig {
 // second. Targets are clamped to [MaxTarget]. The gasPriceConfig parameter
 // specifies the gas pricing configurations.
 func New(at time.Time, target, startingExcess gas.Gas, gasPriceConfig hook.GasPriceConfig) (*Time, error) {
-	internalCfg := config{
-		targetToExcessScaling: gasPriceConfig.TargetToExcessScaling,
-		minPrice:              gasPriceConfig.MinPrice,
-		staticPricing:         gasPriceConfig.StaticPricing,
-	}
-	if err := internalCfg.validate(); err != nil {
+	cfg, err := newConfig(gasPriceConfig)
+	if err != nil {
 		return nil, err
 	}
 	target = clampTarget(target)
 	tm := proxytime.Of[gas.Gas](at)
 	_ = tm.SetRate(rateOf(target))
-	return makeTime(tm, target, startingExcess, internalCfg), nil
+	return makeTime(tm, target, startingExcess, cfg), nil
 }
 
 // SubSecond scales the value returned by [hook.Points.SubSecondBlockTime] to
@@ -143,6 +139,19 @@ var (
 	errMinPriceZero              = errors.New("minPrice must be non-zero")
 )
 
+// newConfig builds and validates an internal config from [hook.GasPriceConfig].
+func newConfig(from hook.GasPriceConfig) (config, error) {
+	c := config{
+		targetToExcessScaling: from.TargetToExcessScaling,
+		minPrice:              from.MinPrice,
+		staticPricing:         from.StaticPricing,
+	}
+	if err := c.validate(); err != nil {
+		return config{}, err
+	}
+	return c, nil
+}
+
 func (c *config) validate() error {
 	if c.targetToExcessScaling == 0 {
 		return errTargetToExcessScalingZero
@@ -151,6 +160,14 @@ func (c *config) validate() error {
 		return errMinPriceZero
 	}
 	return nil
+}
+
+// Equal returns true if the logical fields of c and other are equal.
+// It ignores canoto internal fields.
+func (c config) Equal(other config) bool {
+	return c.targetToExcessScaling == other.targetToExcessScaling &&
+		c.minPrice == other.minPrice &&
+		c.staticPricing == other.staticPricing
 }
 
 // SetConfig sets the full config with excess scaling to maintain price continuity.
@@ -162,16 +179,12 @@ func (c *config) validate() error {
 //   - M increases AND current price >= new M: Scale excess to maintain current price
 //   - M increases AND current price < new M: Price bumps to new M (excess becomes 0)
 func (tm *Time) SetConfig(cfg hook.GasPriceConfig) error {
-	newCfg := config{
-		targetToExcessScaling: cfg.TargetToExcessScaling,
-		minPrice:              cfg.MinPrice,
-		staticPricing:         cfg.StaticPricing,
+	newCfg, err := newConfig(cfg)
+	if err != nil {
+		return err
 	}
 	if newCfg.Equal(tm.config) {
 		return nil
-	}
-	if err := newCfg.validate(); err != nil {
-		return err
 	}
 
 	currentPrice := tm.Price()

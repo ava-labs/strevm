@@ -20,14 +20,6 @@ type config struct {
 	canotoData canotoData_config
 }
 
-// Equal returns true if the logical fields of c and other are equal.
-// It ignores canoto internal fields.
-func (c config) Equal(other config) bool {
-	return c.targetToExcessScaling == other.targetToExcessScaling &&
-		c.minPrice == other.minPrice &&
-		c.staticPricing == other.staticPricing
-}
-
 // A TimeMarshaler can marshal a time to and from canoto. It is of limited use
 // by itself and MUST only be used via a wrapping [Time].
 type TimeMarshaler struct { //nolint:tagliatelle // TODO(arr4n) submit linter bug report
