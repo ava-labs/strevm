@@ -722,7 +722,7 @@ func TestReceiptAPIs(t *testing.T) {
 
 	// Block 5: Accepted but not executed (must be last to avoid blocking)
 	txPending := createTx(t, 4, blockingPrecompile)
-	_ = sut.createAndAcceptBlock(t, txPending)
+	blockPending := sut.createAndAcceptBlock(t, txPending)
 
 	if diff := cmp.Diff(receiptFromCache, receiptFromDB, cmputils.Receipts()); diff != "" {
 		t.Fatalf("cache vs db receipt diff (-cache +db):\n%s", diff)
@@ -811,7 +811,39 @@ func TestReceiptAPIs(t *testing.T) {
 				args:   []any{genesis.Hash()},
 				want:   []*types.Receipt{},
 			},
+			{
+				method: "eth_getBlockReceipts",
+				args:   []any{blockPending.Hash()},
+				want:   ([]*types.Receipt)(nil),
+			},
+			{
+				method: "eth_getBlockReceipts",
+				args:   []any{hexutil.Uint64(blockPending.Height())},
+				want:   ([]*types.Receipt)(nil),
+			},
 		}...)
+
+		t.Run("requireCanonical_on_cache_hit", func(t *testing.T) {
+			height := blockMultiTxs.Height()
+			originalCanonical := rawdb.ReadCanonicalHash(sut.db, height)
+			require.Equal(t, blockMultiTxs.Hash(), originalCanonical)
+
+			rawdb.WriteCanonicalHash(sut.db, common.HexToHash("0x6869207374657068656E"), height)
+			t.Cleanup(func() {
+				rawdb.WriteCanonicalHash(sut.db, originalCanonical, height)
+			})
+
+			sut.testRPC(ctx, t, rpcTest{
+				method: "eth_getBlockReceipts",
+				args: []any{
+					map[string]any{
+						"blockHash":        blockMultiTxs.Hash(),
+						"requireCanonical": true,
+					},
+				},
+				want: ([]*types.Receipt)(nil),
+			})
+		})
 	})
 
 	// Malformed execution results must surface as backend failures.

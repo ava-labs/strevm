@@ -298,17 +298,31 @@ func (b *ethAPIBackend) HeaderByHash(ctx context.Context, hash common.Hash) (*ty
 	return b.headerByHash(ctx, hash, false)
 }
 
+func (b *ethAPIBackend) ensureCanonicalHash(hash common.Hash) error {
+	num := rawdb.ReadHeaderNumber(b.vm.db, hash)
+	if num == nil || rawdb.ReadCanonicalHash(b.vm.db, *num) != hash {
+		return errHashNotCanonical
+	}
+	return nil
+}
+
 func (b *ethAPIBackend) headerByHash(_ context.Context, hash common.Hash, canonical bool) (*types.Header, error) {
-	// In-memory cache blocks are always canonical (SAE never reorgs).
 	if blk, ok := b.vm.blocks.Load(hash); ok {
+		if canonical {
+			if err := b.ensureCanonicalHash(hash); err != nil {
+				return nil, err
+			}
+		}
 		return blk.Header(), nil
 	}
 	num := rawdb.ReadHeaderNumber(b.vm.db, hash)
 	if num == nil {
 		return nil, nil
 	}
-	if canonical && rawdb.ReadCanonicalHash(b.vm.db, *num) != hash {
-		return nil, errHashNotCanonical
+	if canonical {
+		if err := b.ensureCanonicalHash(hash); err != nil {
+			return nil, err
+		}
 	}
 	return rawdb.ReadHeader(b.vm.db, hash, *num), nil
 }
@@ -318,22 +332,36 @@ func (b *ethAPIBackend) BlockByHash(ctx context.Context, hash common.Hash) (*typ
 }
 
 func (b *ethAPIBackend) blockByHash(_ context.Context, hash common.Hash, canonical bool) (*types.Block, error) {
-	// In-memory cache blocks are always canonical (SAE never reorgs).
 	if blk, ok := b.vm.blocks.Load(hash); ok {
+		if canonical {
+			if err := b.ensureCanonicalHash(hash); err != nil {
+				return nil, err
+			}
+		}
 		return blk.EthBlock(), nil
 	}
 	num := rawdb.ReadHeaderNumber(b.vm.db, hash)
 	if num == nil {
 		return nil, nil
 	}
-	if canonical && rawdb.ReadCanonicalHash(b.vm.db, *num) != hash {
-		return nil, errHashNotCanonical
+	if canonical {
+		if err := b.ensureCanonicalHash(hash); err != nil {
+			return nil, err
+		}
 	}
 	return rawdb.ReadBlock(b.vm.db, hash, *num), nil
 }
 
 func (b *ethAPIBackend) BlockByNumberOrHash(ctx context.Context, blockNrOrHash rpc.BlockNumberOrHash) (*types.Block, error) {
-	return readByNumberOrHash(ctx, blockNrOrHash, b.BlockByNumber, b.blockByHash)
+	block, err := readByNumberOrHash(ctx, blockNrOrHash, b.BlockByNumber, b.blockByHash)
+	if block == nil || err != nil {
+		return block, err
+	}
+	if inMemory, ok := b.vm.blocks.Load(block.Hash()); ok && !inMemory.Executed() {
+		// Block receipts/state are unavailable until execution completes.
+		return nil, nil
+	}
+	return block, nil
 }
 
 func (b *ethAPIBackend) HeaderByNumberOrHash(ctx context.Context, blockNrOrHash rpc.BlockNumberOrHash) (*types.Header, error) {
