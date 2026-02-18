@@ -386,6 +386,7 @@ func TestChainID(t *testing.T) {
 // is called. It is safe to call the unblocker multiple times, which will also
 // be done during cleanup.
 func registerBlockingPrecompile(tb testing.TB, addr common.Address) func() {
+	tb.Helper()
 	unblock := make(chan struct{})
 	libevmHooks := &libevmhookstest.Stub{
 		PrecompileOverrides: map[common.Address]libevm.PrecompiledContract{
