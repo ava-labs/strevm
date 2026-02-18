@@ -122,6 +122,12 @@ func (e *Executor) ChainConfig() *params.ChainConfig {
 	return e.chainConfig
 }
 
+// ChainContext returns a context backed by the [blocks.Source] originally
+// passed to [New].
+func (e *Executor) ChainContext() core.ChainContext {
+	return e.chainContext
+}
+
 // StateCache returns caching database underpinning execution.
 func (e *Executor) StateCache() state.Database {
 	return e.stateCache
