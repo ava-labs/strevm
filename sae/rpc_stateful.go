@@ -68,7 +68,7 @@ func (b *ethAPIBackend) StateAndHeaderByNumberOrHash(ctx context.Context, numOrH
 		if err != nil {
 			return nil, nil, err
 		}
-		return sdb, types.CopyHeader(bl.Header()), nil
+		return sdb, bl.Header(), nil
 	}
 
 	root, err := blocks.PostExecutionStateRoot(b.vm.xdb, num)
