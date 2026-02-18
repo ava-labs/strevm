@@ -444,8 +444,6 @@ func readByNumberOrHash[T any](
 	byHash func(context.Context, common.Hash, bool) (*T, error),
 ) (*T, error) {
 	if n, ok := blockNrOrHash.Number(); ok {
-		// Lookup by number is always canonical because readByNumber resolves
-		// the hash via rawdb.ReadCanonicalHash.
 		return byNum(ctx, n)
 	}
 	if h, ok := blockNrOrHash.Hash(); ok {
