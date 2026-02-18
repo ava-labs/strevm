@@ -30,7 +30,6 @@ import (
 	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/rpc"
 
-	"github.com/ava-labs/strevm/blocks"
 	"github.com/ava-labs/strevm/saexec"
 	"github.com/ava-labs/strevm/txgossip"
 )
@@ -296,50 +295,53 @@ func (b *ethAPIBackend) BlockByNumber(ctx context.Context, n rpc.BlockNumber) (*
 }
 
 func (b *ethAPIBackend) HeaderByHash(ctx context.Context, hash common.Hash) (*types.Header, error) {
-	return b.headerByHash(ctx, hash, false)
-}
-
-func (b *ethAPIBackend) headerByHash(ctx context.Context, hash common.Hash, canonical bool) (*types.Header, error) {
-	return byHash(b, hash, canonical, (*blocks.Block).Header, rawdb.ReadHeader)
-}
-
-func (b *ethAPIBackend) BlockByHash(ctx context.Context, hash common.Hash) (*types.Block, error) {
-	return b.blockByHash(ctx, hash, false)
-}
-
-func (b *ethAPIBackend) blockByHash(ctx context.Context, hash common.Hash, canonical bool) (*types.Block, error) {
-	return byHash(b, hash, canonical, (*blocks.Block).EthBlock, rawdb.ReadBlock)
-}
-
-// byHash looks up a value by block hash. When canonical is true, the hash must
-// map to the canonical chain (verified via database). It then checks the
-// in-memory blocks map, falling back to the database.
-func byHash[T any](
-	b *ethAPIBackend,
-	hash common.Hash,
-	canonical bool,
-	fromSAEBlock func(*blocks.Block) *T,
-	fromDB canonicalReader[T],
-) (*T, error) {
+	if blk, ok := b.vm.blocks.Load(hash); ok {
+		return blk.Header(), nil
+	}
 	num := rawdb.ReadHeaderNumber(b.vm.db, hash)
 	if num == nil {
 		return nil, nil
 	}
-	if canonical && rawdb.ReadCanonicalHash(b.vm.db, *num) != hash {
-		return nil, errHashNotCanonical
-	}
+	return rawdb.ReadHeader(b.vm.db, hash, *num), nil
+}
+
+func (b *ethAPIBackend) BlockByHash(ctx context.Context, hash common.Hash) (*types.Block, error) {
 	if blk, ok := b.vm.blocks.Load(hash); ok {
-		return fromSAEBlock(blk), nil
+		return blk.EthBlock(), nil
 	}
-	return fromDB(b.vm.db, hash, *num), nil
+	num := rawdb.ReadHeaderNumber(b.vm.db, hash)
+	if num == nil {
+		return nil, nil
+	}
+	return rawdb.ReadBlock(b.vm.db, hash, *num), nil
 }
 
 func (b *ethAPIBackend) BlockByNumberOrHash(ctx context.Context, blockNrOrHash rpc.BlockNumberOrHash) (*types.Block, error) {
-	return readByNumberOrHash(ctx, blockNrOrHash, b.BlockByNumber, b.blockByHash)
+	if n, ok := blockNrOrHash.Number(); ok {
+		return b.BlockByNumber(ctx, n)
+	}
+	num, hash, err := b.resolveBlockNumberOrHash(blockNrOrHash)
+	if err != nil {
+		return nil, err
+	}
+	if blk, ok := b.vm.blocks.Load(hash); ok {
+		return blk.EthBlock(), nil
+	}
+	return rawdb.ReadBlock(b.vm.db, hash, num), nil
 }
 
 func (b *ethAPIBackend) HeaderByNumberOrHash(ctx context.Context, blockNrOrHash rpc.BlockNumberOrHash) (*types.Header, error) {
-	return readByNumberOrHash(ctx, blockNrOrHash, b.HeaderByNumber, b.headerByHash)
+	if n, ok := blockNrOrHash.Number(); ok {
+		return b.HeaderByNumber(ctx, n)
+	}
+	num, hash, err := b.resolveBlockNumberOrHash(blockNrOrHash)
+	if err != nil {
+		return nil, err
+	}
+	if blk, ok := b.vm.blocks.Load(hash); ok {
+		return blk.Header(), nil
+	}
+	return rawdb.ReadHeader(b.vm.db, hash, num), nil
 }
 
 func (b *ethAPIBackend) GetTransaction(ctx context.Context, txHash common.Hash) (exists bool, tx *types.Transaction, blockHash common.Hash, blockNumber uint64, index uint64, err error) {
@@ -406,14 +408,6 @@ func readByNumber[T any](b *ethAPIBackend, n rpc.BlockNumber, read canonicalRead
 		return nil, err
 	}
 	return read(b.vm.db, rawdb.ReadCanonicalHash(b.vm.db, num), num), nil
-}
-
-func readByHash[T any](b *ethAPIBackend, hash common.Hash, read canonicalReader[T]) *T {
-	num := rawdb.ReadHeaderNumber(b.vm.db, hash)
-	if num == nil {
-		return nil
-	}
-	return read(b.vm.db, hash, *num)
 }
 
 var (
@@ -487,21 +481,6 @@ func (b *ethAPIBackend) resolveBlockNumber(bn rpc.BlockNumber) (uint64, error) {
 		return 0, fmt.Errorf("%w: block %d", errFutureBlockNotResolved, n)
 	}
 	return n, nil
-}
-
-func readByNumberOrHash[T any](
-	ctx context.Context,
-	blockNrOrHash rpc.BlockNumberOrHash,
-	byNum func(context.Context, rpc.BlockNumber) (*T, error),
-	byHash func(context.Context, common.Hash, bool) (*T, error),
-) (*T, error) {
-	if n, ok := blockNrOrHash.Number(); ok {
-		return byNum(ctx, n)
-	}
-	if h, ok := blockNrOrHash.Hash(); ok {
-		return byHash(ctx, h, blockNrOrHash.RequireCanonical)
-	}
-	return nil, errNoBlockNorHash
 }
 
 func (b *ethAPIBackend) Stats() (pending int, queued int) {
