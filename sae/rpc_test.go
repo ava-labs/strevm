@@ -11,6 +11,7 @@ import (
 	"math/big"
 	"reflect"
 	"runtime/debug"
+	"sync"
 	"testing"
 	"time"
 
@@ -382,6 +383,28 @@ func TestChainID(t *testing.T) {
 	}
 }
 
+// registerBlockingPrecompile registers `addr` as a libevm precompile such that
+// any transactions sent to the precompile will block until the returned
+// function is called. It is safe to call the unblocker multiple times, which
+// will also be done during cleanup.
+func registerBlockingPrecompile(tb testing.TB, addr common.Address) func() {
+	tb.Helper()
+	unblock := make(chan struct{})
+	libevmHooks := &libevmhookstest.Stub{
+		PrecompileOverrides: map[common.Address]libevm.PrecompiledContract{
+			addr: vm.NewStatefulPrecompile(func(vm.PrecompileEnvironment, []byte) ([]byte, error) {
+				<-unblock
+				return nil, nil
+			}),
+		},
+	}
+	libevmHooks.Register(tb)
+
+	fn := sync.OnceFunc(func() { close(unblock) })
+	tb.Cleanup(fn)
+	return fn
+}
+
 func TestEthGetters(t *testing.T) {
 	opt, vmTime := withVMTime(t, time.Unix(saeparams.TauSeconds, 0))
 
@@ -398,18 +421,7 @@ func TestEthGetters(t *testing.T) {
 	// executed. Although unlikely to be useful in practice, it still needs to
 	// be tested.
 	blockingPrecompile := common.Address{'b', 'l', 'o', 'c', 'k'}
-	unblockPrecompile := make(chan struct{})
-	t.Cleanup(func() { close(unblockPrecompile) })
-
-	libevmHooks := &libevmhookstest.Stub{
-		PrecompileOverrides: map[common.Address]libevm.PrecompiledContract{
-			blockingPrecompile: vm.NewStatefulPrecompile(func(vm.PrecompileEnvironment, []byte) ([]byte, error) {
-				<-unblockPrecompile
-				return nil, nil
-			}),
-		},
-	}
-	libevmHooks.Register(t)
+	registerBlockingPrecompile(t, blockingPrecompile)
 
 	createTx := func(t *testing.T, to common.Address) *types.Transaction {
 		t.Helper()

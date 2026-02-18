@@ -180,37 +180,6 @@ func (b *Block) SetAsHeadBlock(kv ethdb.KeyValueWriter) {
 	rawdb.WriteHeadHeaderHash(kv, h)
 }
 
-// RestoreExecutionArtefacts reloads post-execution artefacts persisted by
-// [Block.MarkExecuted] such that the block is in an equivalent state to when
-// said function was originally called.
-func (b *Block) RestoreExecutionArtefacts(db ethdb.Database, xdb saedb.ExecutionResults, chainConfig *params.ChainConfig) error {
-	if chainConfig == nil {
-		return errors.New("nil chain config")
-	}
-
-	buf, err := xdb.Get(b.NumberU64())
-	if err != nil {
-		return err
-	}
-	e := new(executionResults)
-	if err := e.UnmarshalCanoto(buf); err != nil {
-		return err
-	}
-	e.receipts = rawdb.ReadRawReceipts(db, b.Hash(), b.NumberU64())
-	if err := e.receipts.DeriveFields(
-		chainConfig,
-		b.Hash(),
-		b.NumberU64(),
-		b.BuildTime(),
-		e.baseFee.ToBig(),
-		nil, // SAE does not support blob transactions.
-		b.Transactions(),
-	); err != nil {
-		return fmt.Errorf("deriving receipt fields: %w", err)
-	}
-	return b.markExecutedAfterDiskArtefacts(e, nil)
-}
-
 // WaitUntilExecuted blocks until [Block.MarkExecuted] is called or the
 // [context.Context] is cancelled.
 func (b *Block) WaitUntilExecuted(ctx context.Context) error {
@@ -240,42 +209,89 @@ func executionArtefact[T any](b *Block, desc string, get func(*executionResults)
 	return get(e)
 }
 
+func (e *executionResults) executedByGasTime() *gastime.Time    { return e.byGas.Clone() }
+func (e *executionResults) executedByWallTime() time.Time       { return e.byWall }
+func (e *executionResults) cloneBaseFee() *uint256.Int          { return e.baseFee.Clone() }
+func (e *executionResults) cloneReceiptsSlice() types.Receipts  { return slices.Clone(e.receipts) }
+func (e *executionResults) postExecutionStateRoot() common.Hash { return e.stateRootPost }
+
 // ExecutedByGasTime returns a clone of the gas time passed to
 // [Block.MarkExecuted] or nil if no such successful call has been made.
 func (b *Block) ExecutedByGasTime() *gastime.Time {
-	return executionArtefact(b, "execution (gas) time", func(e *executionResults) *gastime.Time {
-		return e.byGas.Clone()
-	})
+	return executionArtefact(b, "execution (gas) time", (*executionResults).executedByGasTime)
 }
 
 // ExecutedByWallTime returns the wall time passed to [Block.MarkExecuted] or
 // the zero time if no such successful call has been made.
 func (b *Block) ExecutedByWallTime() time.Time {
-	return executionArtefact(b, "execution (wall) time", func(e *executionResults) time.Time {
-		return e.byWall
-	})
+	return executionArtefact(b, "execution (wall) time", (*executionResults).executedByWallTime)
 }
 
 // BaseFee returns the base gas price passed to [Block.MarkExecuted] or nil if
 // no such successful call has been made.
 func (b *Block) BaseFee() *uint256.Int {
-	return executionArtefact(b, "baseFee", func(e *executionResults) *uint256.Int {
-		return e.baseFee.Clone()
-	})
+	return executionArtefact(b, "baseFee", (*executionResults).cloneBaseFee)
 }
 
 // Receipts returns the receipts passed to [Block.MarkExecuted] or nil if no
 // such successful call has been made.
 func (b *Block) Receipts() types.Receipts {
-	return executionArtefact(b, "receipts", func(e *executionResults) types.Receipts {
-		return slices.Clone(e.receipts)
-	})
+	return executionArtefact(b, "receipts", (*executionResults).cloneReceiptsSlice)
 }
 
 // PostExecutionStateRoot returns the state root passed to [Block.MarkExecuted]
 // or the zero hash if no such successful call has been made.
 func (b *Block) PostExecutionStateRoot() common.Hash {
-	return executionArtefact(b, "state root", func(e *executionResults) common.Hash {
-		return e.stateRootPost
-	})
+	return executionArtefact(b, "state root", (*executionResults).postExecutionStateRoot)
+}
+
+// RestoreExecutionArtefacts reloads post-execution artefacts persisted by
+// [Block.MarkExecuted] such that the block is in an equivalent state to when
+// said function was originally called.
+func (b *Block) RestoreExecutionArtefacts(db ethdb.Database, xdb saedb.ExecutionResults, chainConfig *params.ChainConfig) error {
+	e, err := loadExecutionResults(xdb, b.NumberU64())
+	if err != nil {
+		return err
+	}
+	e.receipts = rawdb.ReadRawReceipts(db, b.Hash(), b.NumberU64())
+	if err := e.receipts.DeriveFields(
+		chainConfig,
+		b.Hash(),
+		b.NumberU64(),
+		b.BuildTime(),
+		e.baseFee.ToBig(),
+		nil, // SAE does not support blob transactions.
+		b.Transactions(),
+	); err != nil {
+		return fmt.Errorf("deriving receipt fields: %w", err)
+	}
+	return b.markExecutedAfterDiskArtefacts(e, nil)
+}
+
+func loadExecutionResults(xdb saedb.ExecutionResults, blockNum uint64) (*executionResults, error) {
+	buf, err := xdb.Get(blockNum)
+	if err != nil {
+		return nil, err
+	}
+	e := new(executionResults)
+	if err := e.UnmarshalCanoto(buf); err != nil {
+		return nil, err
+	}
+	return e, nil
+}
+
+func persistedExecutionArtefact[T any](xdb saedb.ExecutionResults, blockNum uint64, get func(*executionResults) T) (T, error) {
+	e, err := loadExecutionResults(xdb, blockNum)
+	if err != nil {
+		var zero T
+		return zero, err
+	}
+	return get(e), nil
+}
+
+// PostExecutionStateRoot mirrors the behaviour of
+// [Block.RestoreExecutionArtefacts], without requiring a full [Block], and only
+// returning the state root after execution.
+func PostExecutionStateRoot(xdb saedb.ExecutionResults, blockNum uint64) (common.Hash, error) {
+	return persistedExecutionArtefact(xdb, blockNum, (*executionResults).postExecutionStateRoot)
 }
