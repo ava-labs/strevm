@@ -382,9 +382,9 @@ func TestChainID(t *testing.T) {
 }
 
 // registerBlockingPrecompile registers `addr` as a libevm precompile such that
-// any transactions sent to the precopile will block until the returned function
-// is called. It is safe to call the unblocker multiple times, which will also
-// be done during cleanup.
+// any transactions sent to the precompile will block until the returned
+// function is called. It is safe to call the unblocker multiple times, which
+// will also be done during cleanup.
 func registerBlockingPrecompile(tb testing.TB, addr common.Address) func() {
 	tb.Helper()
 	unblock := make(chan struct{})
