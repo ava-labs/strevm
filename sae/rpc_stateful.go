@@ -61,21 +61,39 @@ func (b *ethAPIBackend) StateAndHeaderByNumberOrHash(ctx context.Context, numOrH
 		return nil, nil, err
 	}
 
+	// The API implementations expect this to be synchronous, sourcing the state
+	// root and the base fee from fields. At the time of writing, the returned
+	// header's hash is never used so it's safe to modify it.
+	//
+	// TODO(arr4n) the above assumption is brittle under geth/libevm updates;
+	// devise an approach to ensure that it is confirmed on each.
+	var hdr *types.Header
+
 	if bl, ok := b.vm.blocks.Load(hash); ok {
-		sdb, err := state.New(bl.PostExecutionStateRoot(), b.exec.StateCache(), nil)
+		hdr = bl.Header()
+		hdr.Root = bl.PostExecutionStateRoot()
+		hdr.BaseFee = bl.BaseFee().ToBig()
+	} else {
+		hdr = rawdb.ReadHeader(b.db, hash, num)
+
+		// TODO(arr4n) export [blocks.executionResults] to avoid multiple
+		// database reads and canoto unmarshallings here.
+		var err error
+		hdr.Root, err = blocks.PostExecutionStateRoot(b.vm.xdb, num)
 		if err != nil {
 			return nil, nil, err
 		}
-		return sdb, bl.Header(), nil
+
+		bf, err := blocks.ExecutionBaseFee(b.vm.xdb, num)
+		if err != nil {
+			return nil, nil, err
+		}
+		hdr.BaseFee = bf.ToBig()
 	}
 
-	root, err := blocks.PostExecutionStateRoot(b.vm.xdb, num)
+	sdb, err := state.New(hdr.Root, b.exec.StateCache(), nil)
 	if err != nil {
 		return nil, nil, err
 	}
-	sdb, err := state.New(root, b.exec.StateCache(), nil)
-	if err != nil {
-		return nil, nil, err
-	}
-	return sdb, rawdb.ReadHeader(b.db, hash, num), nil
+	return sdb, hdr, nil
 }
