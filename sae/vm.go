@@ -35,6 +35,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/ava-labs/strevm/blocks"
+	"github.com/ava-labs/strevm/cache"
 	"github.com/ava-labs/strevm/hook"
 	"github.com/ava-labs/strevm/saexec"
 	"github.com/ava-labs/strevm/txgossip"
@@ -64,6 +65,7 @@ type VM struct {
 	mempool    *txgossip.Set
 	apiBackend APIBackend
 	newTxs     chan struct{}
+	receipts   *cache.UniformlyKeyed[common.Hash, *saexec.ReceiptForRPC]
 
 	// toClose are closed in reverse order during [VM.Shutdown]. If a resource
 	// depends on another resource, it MUST be added AFTER the resource it
@@ -108,11 +110,12 @@ func NewVM(
 		cfg.Now = time.Now
 	}
 	vm := &VM{
-		config:  cfg,
-		snowCtx: snowCtx,
-		metrics: prometheus.NewRegistry(),
-		db:      db,
-		blocks:  newSyncMap[common.Hash, *blocks.Block](),
+		config:   cfg,
+		snowCtx:  snowCtx,
+		metrics:  prometheus.NewRegistry(),
+		db:       db,
+		blocks:   newSyncMap[common.Hash, *blocks.Block](),
+		receipts: cache.NewUniformlyKeyed[common.Hash, *saexec.ReceiptForRPC](),
 	}
 	defer func() {
 		if retErr != nil {
@@ -161,6 +164,7 @@ func NewVM(
 			db,
 			xdb,
 			cfg.TrieDBConfig,
+			vm.receipts,
 			vm.hooks(),
 			snowCtx.Log,
 		)
@@ -179,6 +183,7 @@ func NewVM(
 				return nil, err
 			}
 			last = b
+			vm.receipts.Clear()
 		}
 		if err := last.WaitUntilExecuted(ctx); err != nil {
 			return nil, err

@@ -35,6 +35,7 @@ import (
 	"go.uber.org/goleak"
 
 	"github.com/ava-labs/strevm/blocks/blockstest"
+	"github.com/ava-labs/strevm/cache"
 	"github.com/ava-labs/strevm/cmputils"
 	"github.com/ava-labs/strevm/gastime"
 	"github.com/ava-labs/strevm/hook"
@@ -87,8 +88,9 @@ func newSUT(tb testing.TB, hooks *saehookstest.Stub) (context.Context, SUT) {
 		blockstest.WithLogger(logger),
 	)
 	chain := blockstest.NewChainBuilder(config, genesis, opts)
+	receipts := cache.NewUniformlyKeyed[common.Hash, *ReceiptForRPC]()
 
-	e, err := New(genesis, chain.GetBlock, config, db, xdb, tdbConfig, hooks, logger)
+	e, err := New(genesis, chain.GetBlock, config, db, xdb, tdbConfig, receipts, hooks, logger)
 	require.NoError(tb, err, "New()")
 	tb.Cleanup(func() {
 		require.NoErrorf(tb, e.Close(), "%T.Close()", e)

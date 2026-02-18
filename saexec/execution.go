@@ -12,6 +12,7 @@ import (
 
 	"github.com/ava-labs/avalanchego/utils/logging"
 	"github.com/ava-labs/avalanchego/vms/components/gas"
+	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core"
 	"github.com/ava-labs/libevm/core/state"
 	"github.com/ava-labs/libevm/core/types"
@@ -159,8 +160,12 @@ func (e *Executor) execute(b *blocks.Block, logger logging.Logger) error {
 			l.BlockHash = b.Hash()
 		}
 
-		// TODO(arr4n) add a receipt cache to the [executor] to allow API calls
-		// to access them before the end of the block.
+		go e.receipts.Store(
+			tx.Hash(),
+			// Deliberately not using field names to ensure that any new fields
+			// are populated as the compiler will then complain.
+			&ReceiptForRPC{receipt, b.Hash(), b.NumberU64(), signer, tx, ti},
+		)
 		receipts[ti] = receipt
 	}
 
@@ -217,4 +222,15 @@ func (e *Executor) execute(b *blocks.Block, logger logging.Logger) error {
 	}
 	e.sendPostExecutionEvents(b.EthBlock(), receipts) // (3)
 	return nil
+}
+
+// A ReceiptForRPC carries all information necessary for marshalling a receipt
+// to return as an RPC argument.
+type ReceiptForRPC struct {
+	Receipt     *types.Receipt
+	BlockHash   common.Hash
+	BlockNumber uint64
+	Signer      types.Signer
+	Tx          *types.Transaction
+	TxIndex     int
 }

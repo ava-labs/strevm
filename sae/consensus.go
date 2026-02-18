@@ -6,10 +6,12 @@ package sae
 import (
 	"context"
 	"fmt"
+	"slices"
 
 	"github.com/ava-labs/avalanchego/ids"
 	"github.com/ava-labs/avalanchego/snow"
 	"github.com/ava-labs/avalanchego/snow/engine/snowman/block"
+	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core/rawdb"
 	"go.uber.org/zap"
 
@@ -102,12 +104,19 @@ func (vm *VM) AcceptBlock(ctx context.Context, b *blocks.Block) error {
 	// Same rationale as the invariant described in [blocks.Block]. Praised be
 	// the GC!
 	keep := b.LastSettled().Hash()
+	var settledTxs []common.Hash
 	for _, s := range settles {
-		if s.Hash() == keep {
-			continue
+		if s.Hash() != keep {
+			vm.blocks.Delete(s.Hash())
 		}
-		vm.blocks.Delete(s.Hash())
+
+		txs := s.Transactions()
+		settledTxs = slices.Grow(settledTxs, len(txs))
+		for _, tx := range txs {
+			settledTxs = append(settledTxs, tx.Hash())
+		}
 	}
+	go vm.receipts.Delete(settledTxs...)
 	if h := parentLastSettled.Hash(); h != keep { // i.e. `parentLastSettled` was the last block's `keep`
 		vm.blocks.Delete(h)
 	}

@@ -12,6 +12,7 @@ import (
 	"sync/atomic"
 
 	"github.com/ava-labs/avalanchego/utils/logging"
+	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core"
 	"github.com/ava-labs/libevm/core/state"
 	"github.com/ava-labs/libevm/core/state/snapshot"
@@ -22,6 +23,7 @@ import (
 	"github.com/ava-labs/libevm/triedb"
 
 	"github.com/ava-labs/strevm/blocks"
+	"github.com/ava-labs/strevm/cache"
 	"github.com/ava-labs/strevm/hook"
 	"github.com/ava-labs/strevm/saedb"
 )
@@ -38,6 +40,7 @@ type Executor struct {
 	headEvents  event.FeedOf[core.ChainHeadEvent]
 	chainEvents event.FeedOf[core.ChainEvent]
 	logEvents   event.FeedOf[[]*types.Log]
+	receipts    *cache.UniformlyKeyed[common.Hash, *ReceiptForRPC]
 
 	chainContext core.ChainContext
 	chainConfig  *params.ChainConfig
@@ -62,6 +65,7 @@ func New(
 	db ethdb.Database,
 	xdb saedb.ExecutionResults,
 	triedbConfig *triedb.Config,
+	receipts *cache.UniformlyKeyed[common.Hash, *ReceiptForRPC],
 	hooks hook.Points,
 	log logging.Logger,
 ) (*Executor, error) {
@@ -90,6 +94,7 @@ func New(
 		stateCache:   cache,
 		snaps:        snaps,
 		xdb:          xdb,
+		receipts:     receipts,
 	}
 	e.lastExecuted.Store(lastExecuted)
 
