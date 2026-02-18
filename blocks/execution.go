@@ -17,6 +17,7 @@ import (
 	"github.com/ava-labs/libevm/core/rawdb"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/ethdb"
+	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/trie"
 	"github.com/holiman/uint256"
 	"go.uber.org/zap"
@@ -182,7 +183,11 @@ func (b *Block) SetAsHeadBlock(kv ethdb.KeyValueWriter) {
 // RestoreExecutionArtefacts reloads post-execution artefacts persisted by
 // [Block.MarkExecuted] such that the block is in an equivalent state to when
 // said function was originally called.
-func (b *Block) RestoreExecutionArtefacts(db ethdb.Database, xdb saedb.ExecutionResults) error {
+func (b *Block) RestoreExecutionArtefacts(db ethdb.Database, xdb saedb.ExecutionResults, chainConfig *params.ChainConfig) error {
+	if chainConfig == nil {
+		return errors.New("nil chain config")
+	}
+
 	buf, err := xdb.Get(b.NumberU64())
 	if err != nil {
 		return err
@@ -192,6 +197,17 @@ func (b *Block) RestoreExecutionArtefacts(db ethdb.Database, xdb saedb.Execution
 		return err
 	}
 	e.receipts = rawdb.ReadRawReceipts(db, b.Hash(), b.NumberU64())
+	if err := e.receipts.DeriveFields(
+		chainConfig,
+		b.Hash(),
+		b.NumberU64(),
+		b.BuildTime(),
+		e.baseFee.ToBig(),
+		nil, // SAE does not support blob transactions.
+		b.Transactions(),
+	); err != nil {
+		return fmt.Errorf("deriving receipt fields: %w", err)
+	}
 	return b.markExecutedAfterDiskArtefacts(e, nil)
 }
 

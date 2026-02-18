@@ -311,7 +311,7 @@ func (b *ethAPIBackend) blockByHash(_ context.Context, hash common.Hash, canonic
 	return byHash(b, hash, canonical, (*blocks.Block).EthBlock, rawdb.ReadBlock)
 }
 
-// byHash looks up a value by block hash, checking the in-memory cache first and
+// byHash looks up a value by block hash, checking the in-memory blocks map first and
 // falling back to the database. When canonical is true, the hash must map to the
 // canonical chain.
 func byHash[T any](
@@ -526,24 +526,10 @@ func (b *ethAPIBackend) GetReceipts(ctx context.Context, hash common.Hash) (type
 	if err != nil {
 		return nil, err
 	}
-	if err := block.RestoreExecutionArtefacts(b.vm.db, b.vm.xdb); err != nil {
+	if err := block.RestoreExecutionArtefacts(b.vm.db, b.vm.xdb, b.vm.exec.ChainConfig()); err != nil {
 		return nil, fmt.Errorf("restoring execution artefacts: %w", err)
 	}
-
-	receipts := block.Receipts()
-	if err := receipts.DeriveFields(
-		b.vm.exec.ChainConfig(),
-		hash,
-		block.NumberU64(),
-		block.BuildTime(),
-		block.BaseFee().ToBig(),
-		nil,
-		ethBlock.Transactions(),
-	); err != nil {
-		return nil, fmt.Errorf("deriving receipt fields: %w", err)
-	}
-
-	return receipts, nil
+	return block.Receipts(), nil
 }
 
 type noopSubscription struct {

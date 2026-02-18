@@ -15,6 +15,7 @@ import (
 	"github.com/ava-labs/libevm/core/rawdb"
 	"github.com/ava-labs/libevm/core/state"
 	"github.com/ava-labs/libevm/ethdb"
+	evmparams "github.com/ava-labs/libevm/params"
 
 	"github.com/ava-labs/strevm/blocks"
 	"github.com/ava-labs/strevm/params"
@@ -26,6 +27,7 @@ import (
 type recovery struct {
 	db              ethdb.Database
 	xdb             saedb.ExecutionResults
+	chainConfig     *evmparams.ChainConfig
 	log             logging.Logger
 	config          Config
 	lastSynchronous *blocks.Block
@@ -51,7 +53,7 @@ func (rec *recovery) lastBlockWithStateRootAvailable() (*blocks.Block, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := b.RestoreExecutionArtefacts(rec.db, rec.xdb); err != nil {
+	if err := b.RestoreExecutionArtefacts(rec.db, rec.xdb, rec.chainConfig); err != nil {
 		return nil, err
 	}
 	{
@@ -131,7 +133,7 @@ func (rec *recovery) rebuildBlocksInMemory(lastExecuted *blocks.Block) (_ *syncM
 				if err != nil {
 					return err
 				}
-				if err := parent.RestoreExecutionArtefacts(rec.db, rec.xdb); err != nil {
+				if err := parent.RestoreExecutionArtefacts(rec.db, rec.xdb, rec.chainConfig); err != nil {
 					return err
 				}
 				chain = append(chain, parent)

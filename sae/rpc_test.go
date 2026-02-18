@@ -704,7 +704,7 @@ func TestReceiptAPIs(t *testing.T) {
 	receiptFromCache := getReceipt(t, txSettled)
 	vmTime.set(blockSettled.ExecutedByGasTime().AsTime().Add(saeparams.Tau))
 
-	// Block 3: Multiple txs, executed in cache
+	// Block 3: Multiple txs, executed and available via the in-memory blocks map
 	txMulti1 := createTx(t, 2, zeroAddr)
 	txMulti2 := createTx(t, 2, zeroAddr)
 	txMulti3 := createTx(t, 2, zeroAddr)
@@ -725,7 +725,7 @@ func TestReceiptAPIs(t *testing.T) {
 	blockPending := sut.createAndAcceptBlock(t, txPending)
 
 	if diff := cmp.Diff(receiptFromCache, receiptFromDB, cmputils.Receipts()); diff != "" {
-		t.Fatalf("cache vs db receipt diff (-cache +db):\n%s", diff)
+		t.Fatalf("in-memory vs db receipt diff (-in-memory +db):\n%s", diff)
 	}
 
 	t.Run("eth_getTransactionReceipt", func(t *testing.T) {
@@ -734,7 +734,7 @@ func TestReceiptAPIs(t *testing.T) {
 			tx   *types.Transaction
 		}{
 			{
-				"executed_in_cache",
+				"executed_in_memory",
 				txExecutedInCache,
 			},
 			{
@@ -772,12 +772,12 @@ func TestReceiptAPIs(t *testing.T) {
 			txs  []*types.Transaction
 		}{
 			{
-				"executed_in_cache",
+				"executed_in_memory",
 				blockMultiTxs.Hash(),
 				multiTxs,
 			},
 			{
-				"executed_in_cache_by_number",
+				"executed_in_memory_by_number",
 				hexutil.Uint64(blockMultiTxs.Height()),
 				multiTxs,
 			},
@@ -823,7 +823,7 @@ func TestReceiptAPIs(t *testing.T) {
 			},
 		}...)
 
-		t.Run("requireCanonical_on_cache_hit", func(t *testing.T) {
+		t.Run("requireCanonical_on_in_memory_hit", func(t *testing.T) {
 			height := blockMultiTxs.Height()
 			originalCanonical := rawdb.ReadCanonicalHash(sut.db, height)
 			require.Equal(t, blockMultiTxs.Hash(), originalCanonical)
@@ -854,6 +854,40 @@ func TestReceiptAPIs(t *testing.T) {
 		args:    []any{txSettled.Hash()},
 		wantErr: testerr.Contains("restoring execution artefacts"),
 	})
+}
+
+func TestReceiptFieldsFromRestoredInMemoryBlock(t *testing.T) {
+	ctx, sut := newSUT(t, 1)
+
+	tx := sut.wallet.SetNonceAndSign(t, 0, &types.LegacyTx{
+		To:       &zeroAddr,
+		Gas:      params.TxGas,
+		GasPrice: big.NewInt(100),
+	})
+	block := sut.createAndAcceptBlock(t, tx)
+	require.NoErrorf(t, block.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", block)
+	wantReceipt, err := sut.TransactionReceipt(ctx, tx.Hash())
+	require.NoErrorf(t, err, "%T.TransactionReceipt()", sut.Client)
+
+	// Simulate a post-restart in-memory hit where a block was rebuilt via
+	// RestoreExecutionArtefacts (raw receipts from disk). In production this path
+	// starts once chain height reaches/exceeds saedb.CommitTrieDBEvery (first at
+	// 4096), because recovery then starts from the last committed trie height
+	// instead of replaying all blocks from genesis. Receipt RPC output must still
+	// match the pre-recovery in-memory path.
+	ethBlock := rawdb.ReadBlock(sut.db, block.Hash(), block.Height())
+	require.NotNil(t, ethBlock)
+	restoredBlock, err := sut.rawVM.newBlock(ethBlock, nil, nil)
+	require.NoError(t, err)
+	require.NoError(t, restoredBlock.CopyAncestorsFrom(block))
+	require.NoError(t, restoredBlock.RestoreExecutionArtefacts(sut.db, sut.rawVM.xdb, sut.rawVM.exec.ChainConfig()))
+	sut.rawVM.blocks.Store(block.Hash(), restoredBlock)
+
+	gotReceipt, err := sut.TransactionReceipt(ctx, tx.Hash())
+	require.NoErrorf(t, err, "%T.TransactionReceipt()", sut.Client)
+	if diff := cmp.Diff(wantReceipt, gotReceipt, cmputils.Receipts()); diff != "" {
+		t.Fatalf("restored-in-memory receipt diff (-want +got):\n%s", diff)
+	}
 }
 
 // SAE doesn't really support APIs that require a key on the node, as there is
