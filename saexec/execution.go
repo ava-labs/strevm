@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"math/big"
 	"time"
 
 	"github.com/ava-labs/avalanchego/utils/logging"
@@ -154,10 +155,18 @@ func (e *Executor) execute(b *blocks.Block, logger logging.Logger) error {
 		// modified to reduce gas price from the worst-case value agreed by
 		// consensus. This changes the hash, which is what is copied to receipts
 		// and logs.
+		//
+		// [core.ApplyTransaction] also doesn't set EffectiveGasPrice for some
+		// reason. Fix both here so cached receipts are correct without a
+		// DeriveFields pass.
 		receipt.BlockHash = b.Hash()
 		for _, l := range receipt.Logs {
 			l.BlockHash = b.Hash()
 		}
+		receipt.EffectiveGasPrice = new(big.Int).Add(
+			header.BaseFee,
+			tx.EffectiveGasTipValue(header.BaseFee),
+		)
 
 		// TODO(arr4n) add a receipt cache to the [executor] to allow API calls
 		// to access them before the end of the block.
@@ -181,10 +190,6 @@ func (e *Executor) execute(b *blocks.Block, logger logging.Logger) error {
 			)
 			return err
 		}
-	}
-
-	if err := receipts.DeriveFields(e.chainConfig, b.Hash(), b.NumberU64(), header.Time, header.BaseFee, nil, b.Transactions()); err != nil {
-		return err
 	}
 
 	e.hooks.AfterExecutingBlock(stateDB, b.EthBlock(), receipts)
