@@ -86,12 +86,8 @@ type Config struct {
 // RPCConfig provides options for initialization of RPCs for the node.
 type RPCConfig struct {
 	BlocksPerBloomSection uint64
-	// EnableDebugNamespace gates the debug_* methods from
-	// [ethapi.NewDebugAPI] (chaindb access, raw transactions, setHead,
-	// printBlock). It does not include the profiling sub-set of methods
-	// which are controlled by [EnableProfiling].
-	EnableDebugNamespace bool
-	EnableProfiling      bool
+	EnableDBInspecting    bool
+	EnableProfiling       bool
 }
 
 // NewVM returns a new [VM] that is ready for use immediately upon return.

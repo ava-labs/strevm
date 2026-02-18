@@ -718,7 +718,6 @@ func TestDebugRPCs(t *testing.T) {
 			want:   json.RawMessage("null"),
 		},
 		{
-			// Compaction is a no-op but succeeds without error.
 			method: "debug_chaindbCompact",
 			want:   json.RawMessage("null"),
 		},
@@ -1032,7 +1031,7 @@ func (sut *SUT) testGetByUnknownNumber(ctx context.Context, t *testing.T) {
 // withDebugAPI returns a sutOption that enables the debug API.
 func withDebugAPI() sutOption {
 	return options.Func[sutConfig](func(c *sutConfig) {
-		c.vmConfig.RPCConfig.EnableDebugNamespace = true
+		c.vmConfig.RPCConfig.EnableDBInspecting = true
 		c.vmConfig.RPCConfig.EnableProfiling = true
 	})
 }
