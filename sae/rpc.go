@@ -367,7 +367,7 @@ func (b *ethAPIBackend) GetPoolTransactions() (types.Transactions, error) {
 
 type (
 	canonicalReader[T any] func(ethdb.Reader, common.Hash, uint64) *T
-	memExtractor[T any]    func(*blocks.Block) *T
+	blockAccessor[T any]   func(*blocks.Block) *T
 )
 
 func readByNumber[T any](b *ethAPIBackend, n rpc.BlockNumber, read canonicalReader[T]) (*T, error) {
@@ -380,7 +380,7 @@ func readByNumber[T any](b *ethAPIBackend, n rpc.BlockNumber, read canonicalRead
 	return read(b.vm.db, rawdb.ReadCanonicalHash(b.vm.db, num), num), nil
 }
 
-func readByHash[T any](b *ethAPIBackend, hash common.Hash, fromMem memExtractor[T], fromDB canonicalReader[T]) (*T, error) {
+func readByHash[T any](b *ethAPIBackend, hash common.Hash, fromMem blockAccessor[T], fromDB canonicalReader[T]) (*T, error) {
 	if blk, ok := b.vm.blocks.Load(hash); ok {
 		return fromMem(blk), nil
 	}
@@ -391,7 +391,7 @@ func readByHash[T any](b *ethAPIBackend, hash common.Hash, fromMem memExtractor[
 	return fromDB(b.vm.db, hash, *num), nil
 }
 
-func readByNumberOrHash[T any](b *ethAPIBackend, blockNrOrHash rpc.BlockNumberOrHash, fromMem memExtractor[T], fromDB canonicalReader[T]) (*T, error) {
+func readByNumberOrHash[T any](b *ethAPIBackend, blockNrOrHash rpc.BlockNumberOrHash, fromMem blockAccessor[T], fromDB canonicalReader[T]) (*T, error) {
 	n, hash, err := b.resolveBlockNumberOrHash(blockNrOrHash)
 	if err != nil {
 		return nil, err
