@@ -311,9 +311,9 @@ func (b *ethAPIBackend) blockByHash(_ context.Context, hash common.Hash, canonic
 	return byHash(b, hash, canonical, (*blocks.Block).EthBlock, rawdb.ReadBlock)
 }
 
-// byHash looks up a value by block hash, checking the in-memory blocks map first and
-// falling back to the database. When canonical is true, the hash must map to the
-// canonical chain.
+// byHash looks up a value by block hash. When canonical is true, the hash must
+// map to the canonical chain (verified via database). It then checks the
+// in-memory blocks map, falling back to the database.
 func byHash[T any](
 	b *ethAPIBackend,
 	hash common.Hash,
@@ -322,14 +322,14 @@ func byHash[T any](
 	fromDB canonicalReader[T],
 ) (*T, error) {
 	num := rawdb.ReadHeaderNumber(b.vm.db, hash)
+	if num == nil {
+		return nil, nil
+	}
 	if canonical && (num == nil || rawdb.ReadCanonicalHash(b.vm.db, *num) != hash) {
 		return nil, errHashNotCanonical
 	}
 	if blk, ok := b.vm.blocks.Load(hash); ok {
 		return fromCache(blk), nil
-	}
-	if num == nil {
-		return nil, nil
 	}
 	return fromDB(b.vm.db, hash, *num), nil
 }
