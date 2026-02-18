@@ -17,7 +17,6 @@ import (
 	"github.com/ava-labs/libevm/common/math"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/event"
-	"github.com/ava-labs/libevm/libevm/options"
 	"github.com/ava-labs/libevm/rpc"
 )
 
@@ -44,8 +43,7 @@ type Backend interface {
 // by analysing recently accepted blocks.
 type Estimator struct {
 	backend Backend
-	// cfg holds all estimator parameters set through options.
-	cfg config
+	cfg     Config
 
 	lastLock   sync.RWMutex
 	lastNumber uint64
@@ -63,20 +61,21 @@ type Estimator struct {
 }
 
 // NewEstimator creates an Estimator that serves gas price estimation and fee history.
-func NewEstimator(backend Backend, opts ...EstimatorOption) (*Estimator, error) {
-	config := defaultConfig()
-	options.ApplyTo(&config, opts...)
+func NewEstimator(backend Backend, cfg Config) (*Estimator, error) {
+	if err := cfg.Validate(); err != nil {
+		return nil, err
+	}
 
 	cache := lru.NewCache[uint64, *feeInfo](FeeHistoryCacheSize)
 	closeCh := make(chan struct{})
-	feeInfoProvider, err := newFeeInfoProvider(backend, config.BlocksCount, closeCh)
+	feeInfoProvider, err := newFeeInfoProvider(backend, cfg.BlocksCount, closeCh)
 	if err != nil {
 		return nil, err
 	}
 	return &Estimator{
 		backend:         backend,
-		lastPrice:       config.MinPrice,
-		cfg:             config,
+		lastPrice:       cfg.MinPrice,
+		cfg:             cfg,
 		closeCh:         closeCh,
 		historyCache:    cache,
 		feeInfoProvider: feeInfoProvider,

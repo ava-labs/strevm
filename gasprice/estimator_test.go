@@ -154,32 +154,22 @@ type suggestTipCapTest struct {
 	expectedTip *big.Int
 }
 
-// timeCrunchEstimatorConfig returns a config with [MaxLookbackSeconds] set to 5
+// timeCrunchConfig returns a [DefaultConfig] with [Config.MaxLookbackSeconds] set to 5
 // to ensure that during gas price estimation, we will hit the time based look back limit
-func timeCrunchEstimatorOptions(t *testing.T) []EstimatorOption {
-	t.Helper()
-	blocksOpt, err := WithBlocks(20)
-	require.NoError(t, err)
-	percentileOpt, err := WithPercentile(60)
-	require.NoError(t, err)
-	lookbackOpt, err := WithMaxLookbackSeconds(5)
-	require.NoError(t, err)
-
-	return []EstimatorOption{
-		blocksOpt,
-		percentileOpt,
-		lookbackOpt,
-	}
+func timeCrunchConfig() Config {
+	cfg := DefaultConfig()
+	cfg.MaxLookbackSeconds = 5
+	return cfg
 }
 
-func applyGasPriceTest(t *testing.T, test suggestTipCapTest, opts ...EstimatorOption) {
+func applyGasPriceTest(t *testing.T, test suggestTipCapTest, cfg Config) {
 	t.Helper()
 	if test.genBlock == nil {
 		test.genBlock = func(i int, b *testBlockGen) {}
 	}
 	backend := newTestBackend(t, test.numBlocks, test.genBlock)
 	backend.pruned = test.pruned
-	estimator, err := NewEstimator(backend, opts...)
+	estimator, err := NewEstimator(backend, cfg)
 	require.NoError(t, err)
 	defer estimator.Close()
 
@@ -257,7 +247,7 @@ func TestSuggestTipCap(t *testing.T) {
 			name:        "simple_latest_no_tip",
 			numBlocks:   3,
 			genBlock:    testGenBlock(t, 0, 80),
-			expectedTip: defaultConfig().MinPrice,
+			expectedTip: DefaultConfig().MinPrice,
 		},
 		{
 			name:        "simple_latest_1_gwei_tip",
@@ -287,7 +277,7 @@ func TestSuggestTipCap(t *testing.T) {
 			name:        "max_tip_cap",
 			numBlocks:   200,
 			genBlock:    testGenBlock(t, 550, 80),
-			expectedTip: defaultConfig().MaxPrice,
+			expectedTip: DefaultConfig().MaxPrice,
 		},
 		{
 			name:        "single_transaction_with_tip",
@@ -317,7 +307,7 @@ func TestSuggestTipCap(t *testing.T) {
 			name:        "zero_tips",
 			numBlocks:   3,
 			genBlock:    testGenBlockWithTips(t, []int64{0, 0, 0}),
-			expectedTip: defaultConfig().MinPrice,
+			expectedTip: DefaultConfig().MinPrice,
 		},
 		{
 			name:        "duplicate_tips",
@@ -331,7 +321,7 @@ func TestSuggestTipCap(t *testing.T) {
 			genBlock: func(i int, b *testBlockGen) {
 				// No transactions added
 			},
-			expectedTip: defaultConfig().MinPrice,
+			expectedTip: DefaultConfig().MinPrice,
 		},
 		{
 			// 5 blocks, each with 1 tx. Tips by block number:
@@ -369,7 +359,7 @@ func TestSuggestTipCap(t *testing.T) {
 				genBlock:    c.genBlock,
 				pruned:      c.pruned,
 				expectedTip: c.expectedTip,
-			})
+			}, DefaultConfig())
 		})
 	}
 }
@@ -379,7 +369,7 @@ func TestSuggestTipCapMaxBlocksSecondsLookback(t *testing.T) {
 		numBlocks:   20,
 		genBlock:    testGenBlock(t, 55, 80),
 		expectedTip: big.NewInt(55 * params.GWei),
-	}, timeCrunchEstimatorOptions(t)...)
+	}, timeCrunchConfig())
 }
 
 func TestFeeHistory(t *testing.T) {
@@ -443,18 +433,14 @@ func TestFeeHistory(t *testing.T) {
 			b.AddTx(tx)
 		})
 		backend.pruned = c.pruned
-		estimatorOpts := make([]EstimatorOption, 0, 2)
+		cfg := DefaultConfig()
 		if c.maxCallBlock != 0 {
-			maxCallBlockOpt, err := WithMaxCallBlockHistory(c.maxCallBlock)
-			require.NoError(t, err)
-			estimatorOpts = append(estimatorOpts, maxCallBlockOpt)
+			cfg.MaxCallBlockHistory = c.maxCallBlock
 		}
 		if c.maxBlock != 0 {
-			maxBlockOpt, err := WithMaxBlockHistory(c.maxBlock)
-			require.NoError(t, err)
-			estimatorOpts = append(estimatorOpts, maxBlockOpt)
+			cfg.MaxBlockHistory = c.maxBlock
 		}
-		estimator, err := NewEstimator(backend, estimatorOpts...)
+		estimator, err := NewEstimator(backend, cfg)
 		require.NoError(t, err)
 		defer estimator.Close()
 
