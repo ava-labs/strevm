@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"math/big"
 	"time"
 
 	"github.com/ava-labs/avalanchego/utils/logging"
@@ -156,17 +155,15 @@ func (e *Executor) execute(b *blocks.Block, logger logging.Logger) error {
 		// consensus. This changes the hash, which is what is copied to receipts
 		// and logs.
 		//
-		// [core.ApplyTransaction] also doesn't set EffectiveGasPrice for some
-		// reason. Fix both here so cached receipts are correct without a
+		// [core.ApplyTransaction] also doesn't set [types.Receipt.EffectiveGasPrice]
+		// for some reason. Fix both here so cached receipts are correct without a
 		// [types.Receipt.DeriveFields] pass.
 		receipt.BlockHash = b.Hash()
 		for _, l := range receipt.Logs {
 			l.BlockHash = b.Hash()
 		}
-		receipt.EffectiveGasPrice = new(big.Int).Add(
-			header.BaseFee,
-			tx.EffectiveGasTipValue(header.BaseFee),
-		)
+		tip := tx.EffectiveGasTipValue(header.BaseFee)
+		receipt.EffectiveGasPrice = tip.Add(header.BaseFee, tip)
 
 		// TODO(arr4n) add a receipt cache to the [executor] to allow API calls
 		// to access them before the end of the block.

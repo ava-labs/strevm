@@ -329,7 +329,7 @@ func byHash[T any](
 		return nil, errHashNotCanonical
 	}
 	if blk, ok := b.vm.blocks.Load(hash); ok {
-		return fromCache(blk), nil
+		return fromSAEBlock(blk), nil
 	}
 	return fromDB(b.vm.db, hash, *num), nil
 }
