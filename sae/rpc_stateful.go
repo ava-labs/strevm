@@ -6,7 +6,6 @@ package sae
 import (
 	"context"
 	"errors"
-	"math/big"
 	"time"
 
 	"github.com/ava-labs/libevm/common"
@@ -43,6 +42,8 @@ func (*coinbaseAsAuthor) Author(h *types.Header) (common.Address, error) {
 
 func (b *ethAPIBackend) GetEVM(ctx context.Context, msg *core.Message, sdb *state.StateDB, hdr *types.Header, cfg *vm.Config, bCtx *vm.BlockContext) *vm.EVM {
 	txCtx := core.NewEVMTxContext(msg)
+	// TODO(arr4n) eth_accessList provides a nil [vm.BlockContext] so it will
+	// need to be constructed.
 	return vm.NewEVM(*bCtx, txCtx, sdb, b.ChainConfig(), *cfg)
 }
 
