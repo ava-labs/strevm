@@ -6,7 +6,6 @@ package sae
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"math"
 	"math/big"
@@ -1045,9 +1044,10 @@ func TestResolveBlockNumberOrHash(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			be := sut.rawVM.apiBackend
 			gotNum, gotHash, err := be.resolveBlockNumberOrHash(tt.nOrH)
-			if !errors.Is(err, tt.wantErr) || gotNum != tt.wantNum || gotHash != tt.wantHash {
-				t.Errorf("%T.resolveBlockNumberOrHash(%+v) got (%d, %#x, %v); want (%d, %#x, Is(%v))", be, tt.nOrH, gotNum, gotHash, err, tt.wantNum, tt.wantHash, tt.wantErr)
-			}
+			t.Logf("%T.resolveBlockNumberOrhash(%+v)", be, tt.nOrH) // avoids having to repeat in failure messages
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantNum, gotNum)
+			assert.Equal(t, tt.wantHash, gotHash)
 		})
 	}
 }
