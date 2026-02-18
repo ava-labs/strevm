@@ -18,19 +18,21 @@ import (
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/ethdb"
 	"github.com/google/go-cmp/cmp"
+	"github.com/holiman/uint256"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/ava-labs/strevm/gastime"
 	"github.com/ava-labs/strevm/hook"
+	"github.com/ava-labs/strevm/saedb"
 	"github.com/ava-labs/strevm/saetest"
 )
 
 // markExecutedForTests calls [Block.MarkExecuted] with zero-value
 // post-execution artefacts (other than the gas time).
-func (b *Block) markExecutedForTests(tb testing.TB, db ethdb.Database, tm *gastime.Time) {
+func (b *Block) markExecutedForTests(tb testing.TB, db ethdb.Database, xdb saedb.ExecutionResults, tm *gastime.Time) {
 	tb.Helper()
-	require.NoError(tb, b.MarkExecuted(db, tm, time.Time{}, new(big.Int), nil, common.Hash{}, new(atomic.Pointer[Block])), "MarkExecuted()")
+	require.NoError(tb, b.MarkExecuted(db, xdb, tm, time.Time{}, new(big.Int), nil, common.Hash{}, new(atomic.Pointer[Block])), "MarkExecuted()")
 }
 
 func TestMarkExecuted(t *testing.T) {
@@ -52,10 +54,11 @@ func TestMarkExecuted(t *testing.T) {
 	)
 	db := rawdb.NewMemoryDatabase()
 	rawdb.WriteBlock(db, ethB)
+	xdb := saetest.NewExecutionResultsDB()
 
 	settles := newBlock(t, newEthBlock(0, 0, nil), nil, nil)
 	tm := mustNewGasTime(t, time.Unix(0, 0), 1, 0, gastime.DefaultGasPriceConfig())
-	settles.markExecutedForTests(t, db, tm)
+	settles.markExecutedForTests(t, db, xdb, tm)
 	b := newBlock(t, ethB, nil, settles)
 
 	t.Run("before_MarkExecuted", func(t *testing.T) {
@@ -91,7 +94,7 @@ func TestMarkExecuted(t *testing.T) {
 	gasTime := mustNewGasTime(t, time.Unix(42, 0), 1e6, 42, gastime.DefaultGasPriceConfig())
 	wallTime := time.Unix(42, 100)
 	stateRoot := common.Hash{'s', 't', 'a', 't', 'e'}
-	baseFee := big.NewInt(314159)
+	baseFee := uint256.NewInt(314159)
 	var receipts types.Receipts
 	for _, tx := range txs {
 		receipts = append(receipts, &types.Receipt{
@@ -99,35 +102,58 @@ func TestMarkExecuted(t *testing.T) {
 		})
 	}
 	lastExecuted := new(atomic.Pointer[Block])
-	require.NoError(t, b.MarkExecuted(db, gasTime, wallTime, baseFee, receipts, stateRoot, lastExecuted), "MarkExecuted()")
+	require.NoError(t, b.MarkExecuted(db, xdb, gasTime, wallTime, baseFee.ToBig(), receipts, stateRoot, lastExecuted), "MarkExecuted()")
 
-	t.Run("after_MarkExecuted", func(t *testing.T) {
-		require.True(t, b.Executed(), "Executed()")
-		assert.NoError(t, b.CheckInvariants(Executed), "CheckInvariants(Executed)")
+	fromDB := newBlock(t, b.EthBlock(), b.ParentBlock(), b.LastSettled())
+	require.NoError(t, fromDB.RestoreExecutionArtefacts(db, xdb), "RestoreExecutionArtefacts()")
+	tests := []struct {
+		name           string
+		isLastExecuted bool
+		block          *Block
+	}{
+		{
+			name:           "after_MarkExecuted",
+			isLastExecuted: true,
+			block:          b,
+		},
+		{
+			name:           "after_ReloadExecutionResults",
+			isLastExecuted: false,
+			block:          fromDB,
+		},
+	}
+	for _, tt := range tests {
+		b := tt.block
+		t.Run(tt.name, func(t *testing.T) {
+			require.True(t, b.Executed(), "Executed()")
+			assert.NoError(t, b.CheckInvariants(Executed), "CheckInvariants(Executed)")
 
-		require.NoError(t, b.WaitUntilExecuted(context.Background()), "WaitUntilExecuted()")
+			require.NoError(t, b.WaitUntilExecuted(context.Background()), "WaitUntilExecuted()")
 
-		assert.Zero(t, b.ExecutedByGasTime().Compare(gasTime.Time), "ExecutedByGasTime().Compare([original input])")
-		assert.Zero(t, b.BaseFee().Cmp(baseFee), "BaseFee().Cmp([original input])")
-		assert.Empty(t, cmp.Diff(receipts, b.Receipts(), saetest.CmpByMerkleRoots[types.Receipts]()), "Receipts()")
+			assert.Zero(t, b.ExecutedByGasTime().Compare(gasTime.Time), "ExecutedByGasTime().Compare([original input])")
+			assert.Zero(t, b.BaseFee().Cmp(baseFee), "BaseFee().Cmp([original input])")
+			assert.Empty(t, cmp.Diff(receipts, b.Receipts(), saetest.CmpByMerkleRoots[types.Receipts]()), "Receipts()")
 
-		assert.Equal(t, stateRoot, b.PostExecutionStateRoot(), "PostExecutionStateRoot()") // i.e. this block
-		// Although not directly relevant to MarkExecuted, demonstrate that the
-		// two notions of a state root are in fact different.
-		assert.Equal(t, settles.EthBlock().Root(), b.SettledStateRoot(), "SettledStateRoot()") // i.e. the block this block settles
-		assert.NotEqual(t, b.SettledStateRoot(), b.PostExecutionStateRoot(), "PostExecutionStateRoot() != SettledStateRoot()")
+			assert.Equal(t, stateRoot, b.PostExecutionStateRoot(), "PostExecutionStateRoot()") // i.e. this block
+			// Although not directly relevant to MarkExecuted, demonstrate that the
+			// two notions of a state root are in fact different.
+			assert.Equal(t, settles.EthBlock().Root(), b.SettledStateRoot(), "SettledStateRoot()") // i.e. the block this block settles
+			assert.NotEqual(t, b.SettledStateRoot(), b.PostExecutionStateRoot(), "PostExecutionStateRoot() != SettledStateRoot()")
 
-		assert.Equal(t, b, lastExecuted.Load(), "Atomic pointer to last-executed block")
+			if tt.isLastExecuted {
+				assert.Equal(t, b, lastExecuted.Load(), "Atomic pointer to last-executed block")
+			}
 
-		t.Run("MarkExecuted_again", func(t *testing.T) {
-			rec := saetest.NewLogRecorder(logging.Warn)
-			b.log = rec
-			assert.ErrorIs(t, b.MarkExecuted(db, gasTime, wallTime, baseFee, receipts, stateRoot, lastExecuted), errMarkBlockExecutedAgain)
-			// The database's head block might have been corrupted so this MUST
-			// be a fatal action.
-			assert.Len(t, rec.At(logging.Fatal), 1, "FATAL logs")
+			t.Run("MarkExecuted_again", func(t *testing.T) {
+				rec := saetest.NewLogRecorder(logging.Warn)
+				b.log = rec
+				assert.ErrorIs(t, b.MarkExecuted(db, xdb, gasTime, wallTime, baseFee.ToBig(), receipts, stateRoot, lastExecuted), errMarkBlockExecutedAgain)
+				// The database's head block might have been corrupted so this MUST
+				// be a fatal action.
+				assert.Len(t, rec.At(logging.Fatal), 1, "FATAL logs")
+			})
 		})
-	})
+	}
 
 	t.Run("database", func(t *testing.T) {
 		t.Run("head_block", func(t *testing.T) {

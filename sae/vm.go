@@ -7,6 +7,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -19,6 +21,7 @@ import (
 	"github.com/ava-labs/avalanchego/utils/bloom"
 	"github.com/ava-labs/avalanchego/utils/logging"
 	"github.com/ava-labs/avalanchego/version"
+	"github.com/ava-labs/avalanchego/vms/components/gas"
 	"github.com/ava-labs/libevm/accounts"
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core"
@@ -27,7 +30,6 @@ import (
 	"github.com/ava-labs/libevm/core/txpool/legacypool"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/ethdb"
-	"github.com/ava-labs/libevm/libevm/ethapi"
 	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/triedb"
 	"github.com/prometheus/client_golang/prometheus"
@@ -50,7 +52,7 @@ type VM struct {
 	metrics *prometheus.Registry
 
 	db     ethdb.Database
-	blocks *sMap[common.Hash, *blocks.Block]
+	blocks *syncMap[common.Hash, *blocks.Block]
 
 	consensusState utils.Atomic[snow.State]
 	preference     atomic.Pointer[blocks.Block]
@@ -60,9 +62,12 @@ type VM struct {
 
 	exec       *saexec.Executor
 	mempool    *txgossip.Set
-	apiBackend ethapi.Backend
+	apiBackend APIBackend
 	newTxs     chan struct{}
 
+	// toClose are closed in reverse order during [VM.Shutdown]. If a resource
+	// depends on another resource, it MUST be added AFTER the resource it
+	// depends on.
 	toClose [](func() error)
 }
 
@@ -70,68 +75,92 @@ type VM struct {
 type Config struct {
 	Hooks         hook.Points
 	MempoolConfig legacypool.Config
-	TrieDBConfig  *triedb.Config
 	RPCConfig     RPCConfig
+	TrieDBConfig  *triedb.Config
+
+	ExcessAfterLastSynchronous gas.Gas
 
 	Now func() time.Time // defaults to [time.Now] if nil
 }
 
-// RPCConfig configures RPC API behavior.
+// RPCConfig provides options for initialization of RPCs for the node.
 type RPCConfig struct {
-	EnableProfiling bool
+	BlocksPerBloomSection uint64
+	EnableProfiling       bool
 }
 
 // NewVM returns a new [VM] that is ready for use immediately upon return.
 // [VM.Shutdown] MUST be called to release resources.
+//
+// The state root of the last synchronous block MUST be available when creating
+// a [triedb.Database] from the provided [ethdb.Database] and [triedb.Config]
+// (the latter provided via the [Config]).
 func NewVM(
-	c Config,
+	ctx context.Context,
+	cfg Config,
 	snowCtx *snow.Context,
 	chainConfig *params.ChainConfig,
 	db ethdb.Database,
-	lastSynchronous *blocks.Block,
+	lastSynchronous *types.Block,
 	sender snowcommon.AppSender,
-) (*VM, error) {
-	if c.Now == nil {
-		c.Now = time.Now
+) (_ *VM, retErr error) {
+	if cfg.Now == nil {
+		cfg.Now = time.Now
 	}
-
 	vm := &VM{
-		config:  c,
+		config:  cfg,
 		snowCtx: snowCtx,
 		metrics: prometheus.NewRegistry(),
 		db:      db,
-		blocks:  newSMap[common.Hash, *blocks.Block](),
+		blocks:  newSyncMap[common.Hash, *blocks.Block](),
 	}
-	vm.blocks.Store(lastSynchronous.Hash(), lastSynchronous)
-
-	// Disk
-	for _, fn := range [](func(ethdb.KeyValueWriter, common.Hash)){
-		rawdb.WriteHeadBlockHash,
-		rawdb.WriteFinalizedBlockHash,
-	} {
-		fn(db, lastSynchronous.Hash())
-	}
-	rawdb.WriteCanonicalHash(db, lastSynchronous.Hash(), lastSynchronous.NumberU64())
-	// Internal indicators
-	for _, ptr := range []*atomic.Pointer[blocks.Block]{
-		&vm.preference,
-		&vm.last.accepted,
-		&vm.last.settled,
-	} {
-		ptr.Store(lastSynchronous)
-	}
+	defer func() {
+		if retErr != nil {
+			retErr = errors.Join(retErr, vm.close())
+		}
+	}()
 
 	if err := snowCtx.Metrics.Register("sae", vm.metrics); err != nil {
 		return nil, err
 	}
 
+	xdb, err := cfg.Hooks.ExecutionResultsDB(
+		filepath.Join(snowCtx.ChainDataDir, "sae_execution_results"),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("%T.ExecutionResultsDB(%q): %v", cfg.Hooks, snowCtx.ChainDataDir, err)
+	}
+	vm.toClose = append(vm.toClose, xdb.Close)
+
+	lastSync, err := blocks.New(lastSynchronous, nil, nil, snowCtx.Log)
+	if err != nil {
+		return nil, fmt.Errorf("blocks.New([last synchronous], ...): %v", err)
+	}
+
+	{ // ==========  Sync -> Async  ==========
+		// TODO(arr4n) refactor to avoid DB writes on every startup.
+		if err := lastSync.MarkSynchronous(cfg.Hooks, db, xdb, cfg.ExcessAfterLastSynchronous); err != nil {
+			return nil, fmt.Errorf("%T{genesis}.MarkSynchronous(): %v", lastSync, err)
+		}
+		if err := canonicaliseLastSynchronous(db, lastSync); err != nil {
+			return nil, err
+		}
+	}
+
+	rec := &recovery{db, xdb, snowCtx.Log, cfg, lastSync}
 	{ // ==========  Executor  ==========
+		lastExecuted, unexecuted, err := rec.recoverFromDB()
+		if err != nil {
+			return nil, err
+		}
+
 		exec, err := saexec.New(
-			lastSynchronous,
+			lastExecuted,
 			vm.blockSource,
 			chainConfig,
 			db,
-			vm.config.TrieDBConfig,
+			xdb,
+			cfg.TrieDBConfig,
 			vm.hooks(),
 			snowCtx.Log,
 		)
@@ -140,12 +169,40 @@ func NewVM(
 		}
 		vm.exec = exec
 		vm.toClose = append(vm.toClose, exec.Close)
+
+		last := lastExecuted
+		for b, err := range unexecuted {
+			if err != nil {
+				return nil, err
+			}
+			if err := exec.Enqueue(ctx, b); err != nil {
+				return nil, err
+			}
+			last = b
+		}
+		if err := last.WaitUntilExecuted(ctx); err != nil {
+			return nil, err
+		}
+	}
+
+	{ // ==========  Blocks in memory  ==========
+		head := vm.exec.LastExecuted()
+
+		bMap, lastSettled, err := rec.rebuildBlocksInMemory(head)
+		if err != nil {
+			return nil, err
+		}
+		vm.blocks = bMap
+
+		vm.last.settled.Store(lastSettled)
+		vm.last.accepted.Store(head)
+		vm.preference.Store(head)
 	}
 
 	{ // ==========  Mempool  ==========
 		bc := txgossip.NewBlockChain(vm.exec, vm.blockSource)
 		pools := []txpool.SubPool{
-			legacypool.New(vm.config.MempoolConfig, bc),
+			legacypool.New(cfg.MempoolConfig, bc),
 		}
 		txPool, err := txpool.New(0, bc, pools)
 		if err != nil {
@@ -225,14 +282,48 @@ func NewVM(
 		accountManager := accounts.NewManager(&accounts.Config{})
 		vm.toClose = append(vm.toClose, accountManager.Close)
 
+		chainIdx := chainIndexer{vm.exec}
+		override := bloomOverrider{vm.db}
+		// TODO(alarso16): if we are state syncing, we need to provide the first
+		// block available to the indexer via [core.ChainIndexer.AddCheckpoint].
+		bloomIdx := newBloomIndexer(vm.db, chainIdx, override, cfg.RPCConfig.BlocksPerBloomSection)
+		vm.toClose = append(vm.toClose, bloomIdx.Close)
+
 		vm.apiBackend = &ethAPIBackend{
-			Set:            vm.mempool,
 			vm:             vm,
 			accountManager: accountManager,
+			Set:            vm.mempool,
+			chainIndexer:   chainIdx,
+			bloomIndexer:   bloomIdx,
+			bloomOverrider: override,
 		}
 	}
 
 	return vm, nil
+}
+
+// canonicaliseLastSynchronous writes all necessary information to the database
+// to have the block be considered accepted/canonical by SAE. If there are any
+// canonical blocks at a height greater than the provided block then this
+// function is a no-op, which makes it effectively idempotent with respect to
+// the rest of SAE processing.
+func canonicaliseLastSynchronous(db ethdb.Database, block *blocks.Block) error {
+	if !block.Synchronous() {
+		return fmt.Errorf("only synchronous block can be canonicalised: %d / %#x is async", block.NumberU64(), block.Hash())
+	}
+	num := block.NumberU64()
+	if rawdb.ReadCanonicalHash(db, num+1) != (common.Hash{}) {
+		// If any other block has been accepted then the last synchronous block
+		// must have been canonicalised in a previous initialisation.
+		return nil
+	}
+
+	h := block.Hash()
+	b := db.NewBatch()
+	rawdb.WriteCanonicalHash(b, h, num)
+	block.SetAsHeadBlock(b)
+	rawdb.WriteFinalizedBlockHash(b, h)
+	return b.Write()
 }
 
 // signalNewTxsToEngine subscribes to the [txpool.TxPool] to unblock
@@ -307,8 +398,12 @@ func (vm *VM) SetState(ctx context.Context, state snow.State) error {
 
 // Shutdown gracefully closes the VM.
 func (vm *VM) Shutdown(context.Context) error {
+	return vm.close()
+}
+
+func (vm *VM) close() error {
 	errs := make([]error, len(vm.toClose))
-	for i, fn := range vm.toClose {
+	for i, fn := range slices.Backward(vm.toClose) {
 		errs[i] = fn()
 	}
 	return errors.Join(errs...)

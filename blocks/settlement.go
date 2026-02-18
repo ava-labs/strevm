@@ -7,19 +7,18 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math/big"
 	"slices"
 	"sync/atomic"
 	"time"
 
 	"github.com/ava-labs/avalanchego/vms/components/gas"
-	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/ethdb"
 	"go.uber.org/zap"
 
 	"github.com/ava-labs/strevm/gastime"
 	"github.com/ava-labs/strevm/hook"
 	"github.com/ava-labs/strevm/proxytime"
+	"github.com/ava-labs/strevm/saedb"
 )
 
 type ancestry struct {
@@ -80,12 +79,16 @@ func (b *Block) markSettled(lastSettled *atomic.Pointer[Block]) error {
 // Wherever MarkSynchronous results in different behaviour to
 // [Block.MarkSettled], the respective methods are documented as such. They can
 // otherwise be considered identical.
-func (b *Block) MarkSynchronous(hooks hook.Points, db ethdb.Database, excessAfter gas.Gas) error {
+//
+// Unlike [Block.MarkExecuted], MarkSynchronous does not call
+// [Block.SetAsHeadBlock], which MUST be done by the caller, i.f.f. the chain
+// has not yet commenced asynchronous execution.
+func (b *Block) MarkSynchronous(hooks hook.Points, db ethdb.Database, xdb saedb.ExecutionResults, excessAfter gas.Gas) error {
 	ethB := b.EthBlock()
-	baseFee := ethB.BaseFee()
-	if baseFee == nil { // genesis blocks
-		baseFee = new(big.Int)
-	}
+	// Receipts of a synchronous block have already been "settled" by the block
+	// itself. As the only reason to pass receipts here is for later settlement
+	// in another block, there is no need to pass anything meaningful as it
+	// would also require them to be received as an argument to MarkSynchronous.
 	target, cfg := hooks.GasConfigAfter(b.Header())
 	execTime, err := gastime.New(
 		PreciseTime(hooks, b.Header()),
@@ -98,12 +101,15 @@ func (b *Block) MarkSynchronous(hooks hook.Points, db ethdb.Database, excessAfte
 	if err != nil {
 		return err
 	}
-	// Receipts of a synchronous block have already been "settled" by the block
-	// itself. As the only reason to pass receipts here is for later settlement
-	// in another block, there is no need to pass anything meaningful as it
-	// would also require them to be received as an argument to MarkSynchronous.
-	var rs types.Receipts
-	if err := b.MarkExecuted(db, execTime, time.Time{}, baseFee, rs, ethB.Root(), new(atomic.Pointer[Block])); err != nil {
+	e := &executionResults{
+		byGas:         *execTime, //nolint:govet  // freshly created; no concurrent access to the atomic
+		receiptRoot:   ethB.ReceiptHash(),
+		stateRootPost: ethB.Root(),
+	}
+	if err := e.setBaseFee(ethB.BaseFee()); err != nil {
+		return err
+	}
+	if err := b.markExecuted(db.NewBatch(), xdb, e, false, nil); err != nil {
 		return err
 	}
 	b.synchronous = true

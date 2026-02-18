@@ -16,6 +16,7 @@ import (
 
 	"github.com/ava-labs/strevm/gastime"
 	"github.com/ava-labs/strevm/hook/hookstest"
+	"github.com/ava-labs/strevm/saedb"
 	"github.com/ava-labs/strevm/saetest"
 )
 
@@ -37,7 +38,7 @@ func newBlock(tb testing.TB, eth *types.Block, parent, lastSettled *Block) *Bloc
 	return b
 }
 
-func newChain(tb testing.TB, db ethdb.Database, startHeight, total uint64, lastSettledAtHeight map[uint64]uint64) []*Block {
+func newChain(tb testing.TB, db ethdb.Database, xdb saedb.ExecutionResults, startHeight, total uint64, lastSettledAtHeight map[uint64]uint64) []*Block {
 	tb.Helper()
 
 	var (
@@ -72,7 +73,7 @@ func newChain(tb testing.TB, db ethdb.Database, startHeight, total uint64, lastS
 			// [newChain], and non-zero sub-second time for genesis is
 			// unnecessary.
 			h := &hookstest.Stub{Target: 1, GasPriceConfig: gastime.DefaultGasPriceConfig()}
-			require.NoError(tb, b.MarkSynchronous(h, db, 0), "MarkSynchronous()")
+			require.NoError(tb, b.MarkSynchronous(h, db, xdb, 0), "MarkSynchronous()")
 		}
 
 		parent = byNum[n]
