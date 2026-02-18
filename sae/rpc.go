@@ -253,7 +253,7 @@ type ethAPIBackend struct {
 	*bloomIndexer
 }
 
-var _ ethapi.Backend = (*ethAPIBackend)(nil)
+var _ APIBackend = (*ethAPIBackend)(nil)
 
 func (b *ethAPIBackend) ChainConfig() *params.ChainConfig {
 	return b.vm.exec.ChainConfig()
