@@ -1045,7 +1045,7 @@ func TestResolveBlockNumberOrHash(t *testing.T) {
 			be := sut.rawVM.apiBackend
 			gotNum, gotHash, err := be.resolveBlockNumberOrHash(tt.nOrH)
 			t.Logf("%T.resolveBlockNumberOrhash(%+v)", be, tt.nOrH) // avoids having to repeat in failure messages
-			require.NoError(t, err)
+			require.ErrorIs(t, err, tt.wantErr)
 			assert.Equal(t, tt.wantNum, gotNum)
 			assert.Equal(t, tt.wantHash, gotHash)
 		})
