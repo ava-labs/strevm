@@ -283,3 +283,10 @@ func persistedExecutionArtefact[T any](xdb saedb.ExecutionResults, blockNum uint
 func PostExecutionStateRoot(xdb saedb.ExecutionResults, blockNum uint64) (common.Hash, error) {
 	return persistedExecutionArtefact(xdb, blockNum, (*executionResults).postExecutionStateRoot)
 }
+
+// ExecutionBaseFee mirrors the behaviour of [Block.RestoreExecutionArtefacts],
+// without requiring a full [Block], and only returning the base fee when the
+// block was executed (as against the worst-case prediction).
+func ExecutionBaseFee(xdb saedb.ExecutionResults, blockNum uint64) (*uint256.Int, error) {
+	return persistedExecutionArtefact(xdb, blockNum, (*executionResults).cloneBaseFee)
+}
