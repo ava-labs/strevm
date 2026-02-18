@@ -380,6 +380,54 @@ func readByHash[T any](b *ethAPIBackend, hash common.Hash, read canonicalReader[
 	return read(b.vm.db, hash, *num)
 }
 
+var (
+	errNeitherNumberNorHash = fmt.Errorf("%T carrying neither number nor hash", rpc.BlockNumberOrHash{})
+	errBothNumberAndHash    = fmt.Errorf("%T carrying both number and hash", rpc.BlockNumberOrHash{})
+	errNonCanonicalBlock    = errors.New("non-canonical block")
+)
+
+func (b *ethAPIBackend) resolveBlockNumberOrHash(numOrHash rpc.BlockNumberOrHash) (uint64, common.Hash, error) {
+	rpcNum, isNum := numOrHash.Number()
+	hash, isHash := numOrHash.Hash()
+
+	switch {
+	case isNum && isHash:
+		return 0, common.Hash{}, errBothNumberAndHash
+
+	case isNum:
+		num, err := b.resolveBlockNumber(rpcNum)
+		if err != nil {
+			return 0, common.Hash{}, err
+		}
+
+		hash := rawdb.ReadCanonicalHash(b.db, num)
+		if hash == (common.Hash{}) {
+			return 0, common.Hash{}, fmt.Errorf("block %d not found", num)
+		}
+		return num, hash, nil
+
+	case isHash:
+		if bl, ok := b.vm.blocks.Load(hash); ok {
+			n := bl.NumberU64()
+			if numOrHash.RequireCanonical && hash != rawdb.ReadCanonicalHash(b.db, n) {
+				return 0, common.Hash{}, errNonCanonicalBlock
+			}
+			return n, hash, nil
+		}
+
+		numPtr := rawdb.ReadHeaderNumber(b.db, hash)
+		if numPtr == nil {
+			return 0, common.Hash{}, fmt.Errorf("block %#x not found", hash)
+		}
+		// We only write canonical blocks to the database so there's no need to
+		// perform a check.
+		return *numPtr, hash, nil
+
+	default:
+		return 0, common.Hash{}, errNeitherNumberNorHash
+	}
+}
+
 var errFutureBlockNotResolved = errors.New("not accepted yet")
 
 func (b *ethAPIBackend) resolveBlockNumber(bn rpc.BlockNumber) (uint64, error) {
