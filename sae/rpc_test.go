@@ -697,6 +697,7 @@ func TestGetReceipts(t *testing.T) {
 	}
 
 	slice := func(t *testing.T, from, to int) (*blocks.Block, []*types.Receipt) {
+		t.Helper()
 		b := sut.createAndAcceptBlock(t, txs[from:to]...)
 		rs := want[from:to]
 
