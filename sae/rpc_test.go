@@ -693,15 +693,15 @@ func TestReceiptAPIs(t *testing.T) {
 	genesis := sut.lastAcceptedBlock(t)
 
 	// Block 1: Executed; will also be settled when block 2 settles (it's older)
-	txExecutedInCache := createTx(t, 0, zeroAddr)
-	blockExecutedInCache := sut.createAndAcceptBlock(t, txExecutedInCache)
-	require.NoErrorf(t, blockExecutedInCache.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", blockExecutedInCache)
+	txExecutedInMemory := createTx(t, 0, zeroAddr)
+	blockExecutedInMemory := sut.createAndAcceptBlock(t, txExecutedInMemory)
+	require.NoErrorf(t, blockExecutedInMemory.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", blockExecutedInMemory)
 
 	// Block 2: Executed; will be settled to DB when block 4 triggers settlement
 	txSettled := createTx(t, 1, zeroAddr)
 	blockSettled := sut.createAndAcceptBlock(t, txSettled)
 	require.NoErrorf(t, blockSettled.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", blockSettled)
-	receiptFromCache := getReceipt(t, txSettled)
+	receiptFromInMemory := getReceipt(t, txSettled)
 	vmTime.set(blockSettled.ExecutedByGasTime().AsTime().Add(saeparams.Tau))
 
 	// Block 3: Multiple txs, executed and available via the in-memory blocks map
@@ -724,7 +724,7 @@ func TestReceiptAPIs(t *testing.T) {
 	txPending := createTx(t, 4, blockingPrecompile)
 	blockPending := sut.createAndAcceptBlock(t, txPending)
 
-	if diff := cmp.Diff(receiptFromCache, receiptFromDB, cmputils.Receipts()); diff != "" {
+	if diff := cmp.Diff(receiptFromInMemory, receiptFromDB, cmputils.Receipts()); diff != "" {
 		t.Fatalf("in-memory vs db receipt diff (-in-memory +db):\n%s", diff)
 	}
 
@@ -735,7 +735,7 @@ func TestReceiptAPIs(t *testing.T) {
 		}{
 			{
 				"executed_in_memory",
-				txExecutedInCache,
+				txExecutedInMemory,
 			},
 			{
 				"settled_in_db",
@@ -870,11 +870,11 @@ func TestReceiptFieldsFromRestoredInMemoryBlock(t *testing.T) {
 	require.NoErrorf(t, err, "%T.TransactionReceipt()", sut.Client)
 
 	// Simulate a post-restart in-memory hit where a block was rebuilt via
-	// RestoreExecutionArtefacts (raw receipts from disk). In production this path
-	// starts once chain height reaches/exceeds saedb.CommitTrieDBEvery (first at
-	// 4096), because recovery then starts from the last committed trie height
-	// instead of replaying all blocks from genesis. Receipt RPC output must still
-	// match the pre-recovery in-memory path.
+	// [blocks.Block.RestoreExecutionArtefacts] (raw receipts from disk). In
+	// production this path starts once chain height reaches/exceeds
+	// `saedb.CommitTrieDBEvery`, because recovery then starts from the last
+	// committed trie height instead of replaying all blocks from genesis. Receipt
+	// RPC output must still match the pre-recovery in-memory path.
 	ethBlock := rawdb.ReadBlock(sut.db, block.Hash(), block.Height())
 	require.NotNil(t, ethBlock)
 	restoredBlock, err := sut.rawVM.newBlock(ethBlock, nil, nil)

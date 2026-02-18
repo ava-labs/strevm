@@ -325,7 +325,7 @@ func byHash[T any](
 	if num == nil {
 		return nil, nil
 	}
-	if canonical && (num == nil || rawdb.ReadCanonicalHash(b.vm.db, *num) != hash) {
+	if canonical && rawdb.ReadCanonicalHash(b.vm.db, *num) != hash {
 		return nil, errHashNotCanonical
 	}
 	if blk, ok := b.vm.blocks.Load(hash); ok {
