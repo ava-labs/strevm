@@ -59,10 +59,15 @@ func randomAddress() *common.Address {
 	return &a
 }
 
+// StateAndHeaderByNumber performs the same faking as
+// [ethAPIBackend.StateAndHeaderByNumberOrHash].
 func (b *ethAPIBackend) StateAndHeaderByNumber(ctx context.Context, num rpc.BlockNumber) (*state.StateDB, *types.Header, error) {
 	return b.StateAndHeaderByNumberOrHash(ctx, rpc.BlockNumberOrHashWithNumber(num))
 }
 
+// StateAndHeaderByNumberOrHash fakes the returned [types.Header] to contain
+// post-execution results, mimicking a synchronous block. The [state.StateDB] is
+// opened at the post-execution root, as carried by the faked header.
 func (b *ethAPIBackend) StateAndHeaderByNumberOrHash(ctx context.Context, numOrHash rpc.BlockNumberOrHash) (*state.StateDB, *types.Header, error) {
 	if n, ok := numOrHash.Number(); ok && n == rpc.PendingBlockNumber {
 		return nil, nil, errors.New("state not available for pending block")
