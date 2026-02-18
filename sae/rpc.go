@@ -10,6 +10,7 @@ import (
 	"math/big"
 	"strconv"
 	"sync"
+	"time"
 
 	"github.com/ava-labs/avalanchego/network/p2p"
 	"github.com/ava-labs/avalanchego/version"
@@ -17,10 +18,13 @@ import (
 	"github.com/ava-labs/libevm/accounts"
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/common/hexutil"
+	"github.com/ava-labs/libevm/consensus"
 	"github.com/ava-labs/libevm/core"
 	"github.com/ava-labs/libevm/core/rawdb"
+	"github.com/ava-labs/libevm/core/state"
 	"github.com/ava-labs/libevm/core/txpool"
 	"github.com/ava-labs/libevm/core/types"
+	"github.com/ava-labs/libevm/core/vm"
 	"github.com/ava-labs/libevm/crypto"
 	"github.com/ava-labs/libevm/eth/filters"
 	"github.com/ava-labs/libevm/ethdb"
@@ -251,9 +255,11 @@ type ethAPIBackend struct {
 	chainIndexer
 	bloomOverrider
 	*bloomIndexer
-
-	ethapi.Backend // TODO(arr4n) remove once all methods are implemented
 }
+
+var _ ethapi.Backend = (*ethAPIBackend)(nil)
+
+var errUnimplemented = errors.New("unimplemented")
 
 func (b *ethAPIBackend) ChainConfig() *params.ChainConfig {
 	return b.vm.exec.ChainConfig()
@@ -443,6 +449,70 @@ func (b *ethAPIBackend) SubscribePendingLogsEvent(chan<- []*types.Log) event.Sub
 	// In SAE, "pending" refers to the execution status. There are no logs known
 	// for transactions pending execution.
 	return newNoopSubscription()
+}
+
+func (b *ethAPIBackend) SuggestGasTipCap(context.Context) (*big.Int, error) {
+	panic(errUnimplemented)
+}
+
+func (b *ethAPIBackend) FeeHistory(context.Context, uint64, rpc.BlockNumber, []float64) (*big.Int, [][]*big.Int, []*big.Int, []float64, error) {
+	panic(errUnimplemented)
+}
+
+func (b *ethAPIBackend) ChainDb() ethdb.Database {
+	panic(errUnimplemented)
+}
+
+func (b *ethAPIBackend) ExtRPCEnabled() bool {
+	panic(errUnimplemented)
+}
+
+func (b *ethAPIBackend) RPCGasCap() uint64 {
+	panic(errUnimplemented)
+}
+
+func (b *ethAPIBackend) RPCEVMTimeout() time.Duration {
+	panic(errUnimplemented)
+}
+
+func (b *ethAPIBackend) SetHead(uint64) {
+	panic(errUnimplemented)
+}
+
+func (b *ethAPIBackend) HeaderByNumberOrHash(context.Context, rpc.BlockNumberOrHash) (*types.Header, error) {
+	panic(errUnimplemented)
+}
+
+func (b *ethAPIBackend) BlockByNumberOrHash(context.Context, rpc.BlockNumberOrHash) (*types.Block, error) {
+	panic(errUnimplemented)
+}
+
+func (b *ethAPIBackend) StateAndHeaderByNumber(context.Context, rpc.BlockNumber) (*state.StateDB, *types.Header, error) {
+	panic(errUnimplemented)
+}
+
+func (b *ethAPIBackend) StateAndHeaderByNumberOrHash(context.Context, rpc.BlockNumberOrHash) (*state.StateDB, *types.Header, error) {
+	panic(errUnimplemented)
+}
+
+func (b *ethAPIBackend) PendingBlockAndReceipts() (*types.Block, types.Receipts) {
+	panic(errUnimplemented)
+}
+
+func (b *ethAPIBackend) GetReceipts(context.Context, common.Hash) (types.Receipts, error) {
+	panic(errUnimplemented)
+}
+
+func (b *ethAPIBackend) GetEVM(context.Context, *core.Message, *state.StateDB, *types.Header, *vm.Config, *vm.BlockContext) *vm.EVM {
+	panic(errUnimplemented)
+}
+
+func (b *ethAPIBackend) GetPoolNonce(context.Context, common.Address) (uint64, error) {
+	panic(errUnimplemented)
+}
+
+func (b *ethAPIBackend) Engine() consensus.Engine {
+	panic(errUnimplemented)
 }
 
 type noopSubscription struct {
