@@ -493,11 +493,11 @@ func (b *ethAPIBackend) SubscribePendingLogsEvent(chan<- []*types.Log) event.Sub
 }
 
 func (b *ethAPIBackend) GetReceipts(ctx context.Context, hash common.Hash) (types.Receipts, error) {
-	if block, ok := b.vm.blocks.Load(hash); ok {
-		if !block.Executed() {
+	if bl, ok := b.vm.blocks.Load(hash); ok {
+		if !bl.Executed() {
 			return nil, nil
 		}
-		return block.Receipts(), nil
+		return bl.Receipts(), nil
 	}
 
 	num := rawdb.ReadHeaderNumber(b.vm.db, hash)
