@@ -6,9 +6,13 @@
 package cmputils
 
 import (
+	"fmt"
 	"math/big"
+	"reflect"
+	"sync/atomic"
 
 	"github.com/ava-labs/libevm/common/hexutil"
+	"github.com/ava-labs/libevm/core/state"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
@@ -73,4 +77,51 @@ func Headers() cmp.Option {
 		// ambiguous comparers as [cmp] can't deduplicate them.
 		IfIn[types.Header](BigInts()),
 	}
+}
+
+// LoadAtomicPointers returns a set of [cmp.Transformer] options that convert
+// [atomic.Pointer] instances of `T` into their underlying `*T`. If the atomic
+// under test is not itself a pointer (i.e. not *atomic.Pointer) then the
+// returned options are NOT safe for concurrent use with said atomic as its lock
+// is copied when passed as an argument to the transformer.
+func LoadAtomicPointers[T any]() cmp.Options {
+	return cmp.Options{
+		// Although accepting an [atomic.Pointer] value copies a lock, this is
+		// unavoidable but OK in tests given the non-concurrency documentation
+		// above.
+		cmp.Transformer(fmt.Sprintf("atomicOf_%s", typeName[T]()), func(p atomic.Pointer[T]) *T { //nolint:govet
+			return p.Load()
+		}),
+		cmp.Transformer(fmt.Sprintf("pointerOfAtomicOf_%s", typeName[T]()), func(p *atomic.Pointer[T]) *T {
+			return p.Load()
+		}),
+	}
+}
+
+// NilSlicesAreEmpty returns a [cmp.Transformer] that converts `S(nil)` values
+// into `S{}`, for use when [cmpopts.EquateEmpty] is too general.
+func NilSlicesAreEmpty[S ~[]E, E any]() cmp.Option {
+	name := fmt.Sprintf("nilSliceOf_%s_isEmpty", typeName[E]())
+	return cmp.Transformer(name, func(s S) S {
+		if s == nil {
+			return S{}
+		}
+		return s
+	})
+}
+
+func typeName[T any]() string {
+	t := reflect.TypeFor[T]()
+	if t.Kind() == reflect.Pointer {
+		return fmt.Sprintf("pointerTo_%s", t.Elem().String())
+	}
+	return t.String()
+}
+
+// StateDBs returns a [cmp.Transformer] that converts [state.StateDB] instances
+// into [state.Dump] equivalents.
+func StateDBs() cmp.Option {
+	return cmp.Transformer("StateDB.RawDump", func(db *state.StateDB) state.Dump {
+		return db.RawDump(&state.DumpConfig{})
+	})
 }

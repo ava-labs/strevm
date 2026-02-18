@@ -56,15 +56,7 @@ func (vm *SinceGenesis) Initialize(
 		return fmt.Errorf("core.SetupGenesisBlock(...): %v", err)
 	}
 
-	genBlock, err := blocks.New(genesis.ToBlock(), nil, nil, snowCtx.Log)
-	if err != nil {
-		return fmt.Errorf("blocks.New(%T.ToBlock(), ...): %v", genesis, err)
-	}
-	if err := genBlock.MarkSynchronous(vm.config.Hooks, db, 0 /*gas excess*/); err != nil {
-		return fmt.Errorf("%T{genesis}.MarkSynchronous(): %v", genBlock, err)
-	}
-
-	inner, err := NewVM(vm.config, snowCtx, config, db, genBlock, appSender)
+	inner, err := NewVM(ctx, vm.config, snowCtx, config, db, genesis.ToBlock(), appSender)
 	if err != nil {
 		return err
 	}

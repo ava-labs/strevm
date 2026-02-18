@@ -23,6 +23,7 @@ import (
 
 	"github.com/ava-labs/strevm/blocks"
 	"github.com/ava-labs/strevm/hook"
+	"github.com/ava-labs/strevm/saedb"
 )
 
 // An Executor accepts and executes a [blocks.Block] FIFO queue.
@@ -31,17 +32,17 @@ type Executor struct {
 	log        logging.Logger
 	hooks      hook.Points
 
-	queue                      chan *blocks.Block
-	lastEnqueued, lastExecuted atomic.Pointer[blocks.Block]
+	queue        chan *blocks.Block
+	lastExecuted atomic.Pointer[blocks.Block]
 
-	enqueueEvents event.FeedOf[*types.Block]
-	headEvents    event.FeedOf[core.ChainHeadEvent]
-	chainEvents   event.FeedOf[core.ChainEvent]
-	logEvents     event.FeedOf[[]*types.Log]
+	headEvents  event.FeedOf[core.ChainHeadEvent]
+	chainEvents event.FeedOf[core.ChainEvent]
+	logEvents   event.FeedOf[[]*types.Log]
 
 	chainContext core.ChainContext
 	chainConfig  *params.ChainConfig
 	db           ethdb.Database
+	xdb          saedb.ExecutionResults
 	stateCache   state.Database
 	// snaps MUST NOT be accessed by any methods other than [Executor.execute]
 	// and [Executor.Close].
@@ -59,6 +60,7 @@ func New(
 	blockSrc blocks.Source,
 	chainConfig *params.ChainConfig,
 	db ethdb.Database,
+	xdb saedb.ExecutionResults,
 	triedbConfig *triedb.Config,
 	hooks hook.Points,
 	log logging.Logger,
@@ -74,18 +76,21 @@ func New(
 	}
 
 	e := &Executor{
-		quit:         make(chan struct{}), // closed by [Executor.Close]
-		done:         make(chan struct{}), // closed by [Executor.processQueue] after `quit` is closed
-		log:          log,
-		hooks:        hooks,
-		queue:        make(chan *blocks.Block, 4096), // arbitrarily sized
+		quit:  make(chan struct{}), // closed by [Executor.Close]
+		done:  make(chan struct{}), // closed by [Executor.processQueue] after `quit` is closed
+		log:   log,
+		hooks: hooks,
+		// On startup we enqueue every block since the last time the trie DB was
+		// committed, so the queue needs sufficient capacity to avoid
+		// [Executor.Enqueue] warning about it being too full.
+		queue:        make(chan *blocks.Block, 2*saedb.CommitTrieDBEvery),
 		chainContext: &chainContext{blockSrc, log},
 		chainConfig:  chainConfig,
 		db:           db,
 		stateCache:   cache,
 		snaps:        snaps,
+		xdb:          xdb,
 	}
-	e.lastEnqueued.Store(lastExecuted)
 	e.lastExecuted.Store(lastExecuted)
 
 	go e.processQueue()
@@ -125,9 +130,4 @@ func (e *Executor) StateCache() state.Database {
 // LastExecuted returns the last-executed block in a threadsafe manner.
 func (e *Executor) LastExecuted() *blocks.Block {
 	return e.lastExecuted.Load()
-}
-
-// LastEnqueued returns the last-enqueued block in a threadsafe manner.
-func (e *Executor) LastEnqueued() *blocks.Block {
-	return e.lastEnqueued.Load()
 }
