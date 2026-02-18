@@ -163,5 +163,14 @@ func (rec *recovery) rebuildBlocksInMemory(lastExecuted *blocks.Block) (_ *syncM
 			return nil, nil, err
 		}
 	}
+	for _, b := range bMap.m {
+		stage := blocks.Executed
+		if b.Hash() == lastSettled.Hash() {
+			stage = blocks.Settled
+		}
+		if err := b.CheckInvariants(stage); err != nil {
+			return nil, nil, err
+		}
+	}
 	return bMap, lastSettled, nil
 }
