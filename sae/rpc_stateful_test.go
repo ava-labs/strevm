@@ -52,7 +52,7 @@ func TestEthCall(t *testing.T) {
 
 	vmTime.advanceToSettle(ctx, t, b)
 	for range 2 {
-		bb := sut.runConsensusLoop(t, sut.lastAcceptedBlock(t))
+		bb := sut.runConsensusLoop(t, sut.lastAcceptedBlock(t), true)
 		vmTime.advanceToSettle(ctx, t, bb)
 	}
 	_, ok := sut.rawVM.blocks.Load(b.Hash())

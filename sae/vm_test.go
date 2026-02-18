@@ -40,6 +40,8 @@ import (
 	"github.com/ava-labs/libevm/log"
 	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/rpc"
+	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/holiman/uint256"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -343,21 +345,32 @@ func (s *SUT) requireInMempool(tb testing.TB, txs ...common.Hash) {
 func (s *SUT) createAndAcceptBlock(tb testing.TB, txs ...*types.Transaction) *blocks.Block {
 	tb.Helper()
 
+	return s.createBlockWithTxs(tb, true, txs...)
+}
+
+func (s *SUT) createAndVerifyBlock(tb testing.TB, txs ...*types.Transaction) *blocks.Block {
+	tb.Helper()
+
+	return s.createBlockWithTxs(tb, false, txs...)
+}
+
+func (s *SUT) createBlockWithTxs(tb testing.TB, accept bool, txs ...*types.Transaction) *blocks.Block {
+	tb.Helper()
+
 	txHashes := make([]common.Hash, len(txs))
 	for i, tx := range txs {
 		s.mustSendTx(tb, tx)
 		txHashes[i] = tx.Hash()
 	}
 	s.requireInMempool(tb, txHashes...)
-
-	return s.runConsensusLoop(tb, s.lastAcceptedBlock(tb))
+	return s.runConsensusLoop(tb, s.lastAcceptedBlock(tb), true)
 }
 
 // runConsensusLoop syncs the mempool, sets the preference to the specified
 // block, then builds, verifies, accepts, and returns the new block. It does NOT
 // wait for it to be executed; to do this automatically, set the [VM] to
 // [snow.Bootstrapping].
-func (s *SUT) runConsensusLoop(tb testing.TB, preference *blocks.Block) *blocks.Block {
+func (s *SUT) runConsensusLoop(tb testing.TB, preference *blocks.Block, accept bool) *blocks.Block {
 	tb.Helper()
 
 	s.syncMempool(tb)
@@ -372,6 +385,11 @@ func (s *SUT) runConsensusLoop(tb testing.TB, preference *blocks.Block) *blocks.
 	require.NoError(tb, err, "ParseBlock(BuildBlock().Bytes())")
 
 	require.NoErrorf(tb, b.Verify(ctx), "%T.Verify()", b)
+
+	if !accept {
+		return b.(adaptor.Block[*blocks.Block]).Unwrap() //nolint:forcetypeassert // it's a test and guaranteed
+	}
+
 	require.NoErrorf(tb, b.Accept(ctx), "%T.Accept()", b)
 
 	return s.lastAcceptedBlock(tb)
@@ -519,7 +537,7 @@ func TestIntegration(t *testing.T) {
 	sut.syncMempool(t) // technically we've only proven 1 tx added, as unlikely as a race is
 	require.Equal(t, numTxs, sut.rawVM.numPendingTxs(), "number of pending txs")
 
-	b := sut.runConsensusLoop(t, sut.genesis)
+	b := sut.runConsensusLoop(t, sut.genesis, true)
 	assert.Equal(t, sut.genesis.ID(), b.Parent(), "BuildBlock() builds on preference")
 	require.Lenf(t, b.Transactions(), numTxs, "%T.Transactions()", b)
 
@@ -533,7 +551,7 @@ func TestIntegration(t *testing.T) {
 		// If the tx-inclusion logic were broken then this would include the
 		// transactions again, resulting in a FATAL in the execution loop due to
 		// non-increasing nonce.
-		b := sut.runConsensusLoop(t, b)
+		b := sut.runConsensusLoop(t, b, true)
 		assert.Emptyf(t, b.Transactions(), "%T.Transactions()", b)
 		require.NoErrorf(t, b.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", b)
 	})
@@ -554,7 +572,7 @@ func TestEmptyChainConfig(t *testing.T) {
 		}
 	}))
 	for range 5 {
-		sut.runConsensusLoop(t, sut.lastAcceptedBlock(t))
+		sut.runConsensusLoop(t, sut.lastAcceptedBlock(t), true)
 	}
 	sut.waitUntilExecuted(t, sut.lastAcceptedBlock(t))
 }
@@ -623,7 +641,7 @@ func TestAcceptBlock(t *testing.T) {
 		ffMillis := 100 + rng.IntN(1000*(1+saeparams.TauSeconds))
 		vmTime.advance(time.Millisecond * time.Duration(ffMillis))
 
-		b := sut.runConsensusLoop(t, last())
+		b := sut.runConsensusLoop(t, last(), true)
 		unsettled = append(unsettled, b)
 		sut.assertBlockHashInvariants(ctx, t)
 
@@ -773,4 +791,98 @@ func TestGossip(t *testing.T) {
 	api.mustSendTx(t, tx)
 	requireReceiveTx(t, n.allValidators(), tx.Hash())
 	requireNotReceiveTx(t, nonValidators[1:], tx.Hash())
+}
+
+func TestGetBlock(t *testing.T) {
+	opt, vmTime := withVMTime(t, time.Unix(saeparams.TauSeconds, 0))
+
+	ctx, sut := newSUT(t, 1, opt)
+
+	t.Run("Unknown GetBlockIDAtHeight", func(t *testing.T) {
+		id, err := sut.GetBlockIDAtHeight(t.Context(), 1)
+		require.ErrorIs(t, err, database.ErrNotFound, "sut.GetBlockIDAtHeight()")
+		assert.Zero(t, id)
+	})
+
+	t.Run("Unknown GetBlock", func(t *testing.T) {
+		b, err := sut.GetBlock(t.Context(), ids.ID{})
+		require.ErrorIs(t, err, database.ErrNotFound)
+		assert.Nil(t, b)
+	})
+
+	// The named block "pending" is the last to be enqueued but yet to be
+	// executed. Although unlikely to be useful in practice, it still needs to
+	// be tested.
+	blockingPrecompile := common.Address{'b', 'l', 'o', 'c', 'k'}
+	registerBlockingPrecompile(t, blockingPrecompile)
+
+	createTx := func(t *testing.T, to common.Address) *types.Transaction {
+		t.Helper()
+		return sut.wallet.SetNonceAndSign(t, 0, &types.DynamicFeeTx{
+			To:        &to,
+			Gas:       params.TxGas,
+			GasFeeCap: big.NewInt(1),
+		})
+	}
+
+	genesis := sut.lastAcceptedBlock(t)
+
+	// Once a block is settled, its ancestors are only accessible from the
+	// database.
+	onDisk := sut.createAndAcceptBlock(t, createTx(t, zeroAddr))
+
+	settled := sut.createAndAcceptBlock(t, createTx(t, zeroAddr))
+	vmTime.advanceToSettle(ctx, t, settled)
+
+	executed := sut.createAndAcceptBlock(t, createTx(t, zeroAddr))
+	require.NoErrorf(t, executed.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", executed)
+
+	accepted := sut.createAndAcceptBlock(t, createTx(t, blockingPrecompile))
+
+	verified := sut.createAndVerifyBlock(t, createTx(t, zeroAddr))
+
+	tests := []struct {
+		name string
+		want *blocks.Block
+	}{
+		{
+			name: "genesis",
+			want: genesis,
+		},
+		{
+			name: "on disk",
+			want: onDisk,
+		},
+		{
+			name: "settled",
+			want: settled,
+		},
+		{
+			name: "executed",
+			want: executed,
+		},
+		{
+			name: "accepted",
+			want: accepted,
+		},
+		{
+			name: "verified",
+			want: verified,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			snowB, err := sut.GetBlock(t.Context(), tt.want.ID())
+			require.NoError(t, err, "GetBlock()")
+			gotB, ok := snowB.(adaptor.Block[*blocks.Block])
+			require.True(t, ok, "GetBlock() return a %T, expected an adaptor.Block[*blocks.Block]", snowB)
+			if diff := cmp.Diff(tt.want, gotB.Unwrap(), blocks.CmpOpt(), cmpopts.IgnoreFields(blocks.Block{}, "synchronous")); diff != "" {
+				t.Errorf("vm.GetBlock(...) mismatch (-want +got):\n%s", diff)
+			}
+
+			id, err := sut.GetBlockIDAtHeight(t.Context(), snowB.Height())
+			require.NoError(t, err, "GetBlockIdAtHeight()")
+			require.Equal(t, snowB.ID(), id)
+		})
+	}
 }

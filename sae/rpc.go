@@ -345,11 +345,11 @@ func (b *ethAPIBackend) BlockByNumber(ctx context.Context, n rpc.BlockNumber) (*
 }
 
 func (b *ethAPIBackend) HeaderByHash(ctx context.Context, hash common.Hash) (*types.Header, error) {
-	return readByHash(b, hash, (*blocks.Block).Header, rawdb.ReadHeader), nil
+	return readByHash(b.vm, hash, (*blocks.Block).Header, rawdb.ReadHeader), nil
 }
 
 func (b *ethAPIBackend) BlockByHash(ctx context.Context, hash common.Hash) (*types.Block, error) {
-	return readByHash(b, hash, (*blocks.Block).EthBlock, rawdb.ReadBlock), nil
+	return readByHash(b.vm, hash, (*blocks.Block).EthBlock, rawdb.ReadBlock), nil
 }
 
 func (b *ethAPIBackend) HeaderByNumberOrHash(ctx context.Context, blockNrOrHash rpc.BlockNumberOrHash) (*types.Header, error) {
@@ -429,15 +429,15 @@ func readByNumber[T any](b *ethAPIBackend, n rpc.BlockNumber, read canonicalRead
 	return read(b.vm.db, rawdb.ReadCanonicalHash(b.vm.db, num), num), nil
 }
 
-func readByHash[T any](b *ethAPIBackend, hash common.Hash, fromMem blockAccessor[T], fromDB canonicalReader[T]) *T {
-	if blk, ok := b.vm.blocks.Load(hash); ok {
+func readByHash[T any](vm *VM, hash common.Hash, fromMem blockAccessor[T], fromDB canonicalReader[T]) *T {
+	if blk, ok := vm.blocks.Load(hash); ok {
 		return fromMem(blk)
 	}
-	num := rawdb.ReadHeaderNumber(b.vm.db, hash)
+	num := rawdb.ReadHeaderNumber(vm.db, hash)
 	if num == nil {
 		return nil
 	}
-	return fromDB(b.vm.db, hash, *num)
+	return fromDB(vm.db, hash, *num)
 }
 
 // TODO(arr4n) DRY [readByHash] and [readByNumberOrHash]
