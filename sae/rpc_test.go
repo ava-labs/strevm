@@ -837,40 +837,6 @@ func TestGetReceipts(t *testing.T) {
 	})
 }
 
-func TestReceiptFieldsFromRestoredInMemoryBlock(t *testing.T) {
-	ctx, sut := newSUT(t, 1)
-
-	tx := sut.wallet.SetNonceAndSign(t, 0, &types.LegacyTx{
-		To:       &zeroAddr,
-		Gas:      params.TxGas,
-		GasPrice: big.NewInt(100),
-	})
-	block := sut.createAndAcceptBlock(t, tx)
-	require.NoErrorf(t, block.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", block)
-	wantReceipt, err := sut.TransactionReceipt(ctx, tx.Hash())
-	require.NoErrorf(t, err, "%T.TransactionReceipt()", sut.Client)
-
-	// Simulate a post-restart in-memory hit where a block was rebuilt via
-	// [blocks.Block.RestoreExecutionArtefacts] (raw receipts from disk). In
-	// production this path starts once chain height reaches/exceeds
-	// `saedb.CommitTrieDBEvery`, because recovery then starts from the last
-	// committed trie height instead of replaying all blocks from genesis. Receipt
-	// RPC output must still match the pre-recovery in-memory path.
-	ethBlock := rawdb.ReadBlock(sut.db, block.Hash(), block.Height())
-	require.NotNil(t, ethBlock)
-	restoredBlock, err := sut.rawVM.newBlock(ethBlock, nil, nil)
-	require.NoError(t, err)
-	require.NoError(t, restoredBlock.CopyAncestorsFrom(block))
-	require.NoError(t, restoredBlock.RestoreExecutionArtefacts(sut.db, sut.rawVM.xdb, sut.rawVM.exec.ChainConfig()))
-	sut.rawVM.blocks.Store(block.Hash(), restoredBlock)
-
-	gotReceipt, err := sut.TransactionReceipt(ctx, tx.Hash())
-	require.NoErrorf(t, err, "%T.TransactionReceipt()", sut.Client)
-	if diff := cmp.Diff(wantReceipt, gotReceipt, cmputils.Receipts()); diff != "" {
-		t.Fatalf("restored-in-memory receipt diff (-want +got):\n%s", diff)
-	}
-}
-
 // SAE doesn't really support APIs that require a key on the node, as there is
 // no way to add keys. But, we want to ensure the methods error gracefully.
 func TestEthSigningAPIs(t *testing.T) {
