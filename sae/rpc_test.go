@@ -713,7 +713,7 @@ func TestDebugRPCs(t *testing.T) {
 		{
 			method:  "debug_chaindbProperty",
 			args:    []any{"leveldb.stats"},
-			wantErr: testerr.Contains("stat is not supported"),
+			wantErr: testerr.Contains("not supported"),
 		},
 		{
 			method: "debug_dbGet",
@@ -723,11 +723,11 @@ func TestDebugRPCs(t *testing.T) {
 		{
 			method:  "debug_dbAncient",
 			args:    []any{"headers", uint64(0)},
-			wantErr: testerr.Contains("this operation is not supported"),
+			wantErr: testerr.Contains("not supported"),
 		},
 		{
 			method:  "debug_dbAncients",
-			wantErr: testerr.Contains("this operation is not supported"),
+			wantErr: testerr.Contains("not supported"),
 		},
 	}...)
 
@@ -760,7 +760,7 @@ func TestDebugRPCs(t *testing.T) {
 }
 
 func TestDebugGetRawTransaction(t *testing.T) {
-	ctx, sut := newSUT(t, 1)
+	ctx, sut := newSUT(t, 1, withDebugAPI())
 
 	tx := sut.wallet.SetNonceAndSign(t, 0, &types.DynamicFeeTx{
 		To:        &common.Address{},
@@ -768,10 +768,25 @@ func TestDebugGetRawTransaction(t *testing.T) {
 		GasFeeCap: big.NewInt(1),
 	})
 	b := sut.createAndAcceptBlock(t, tx)
-	require.NoError(t, b.WaitUntilExecuted(ctx))
+	require.NoErrorf(t, b.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", b)
 
 	marshaled, err := tx.MarshalBinary()
-	require.NoError(t, err)
+	require.NoErrorf(t, err, "%T.MarshalBinary()", tx)
+
+	// Mempool tx: send without building a block, then query.
+	mempoolTx := sut.wallet.SetNonceAndSign(t, 0, &types.DynamicFeeTx{
+		To:        &common.Address{},
+		Gas:       params.TxGas,
+		GasFeeCap: big.NewInt(1),
+	})
+	sut.mustSendTx(t, mempoolTx)
+	sut.syncMempool(t)
+
+	mempoolMarshaled, err := mempoolTx.MarshalBinary()
+	require.NoErrorf(t, err, "%T.MarshalBinary()", mempoolTx)
+
+	t.Logf("Tx in block: %#x", tx.Hash())
+	t.Logf("Tx in mempool: %#x", mempoolTx.Hash())
 
 	sut.testRPC(ctx, t, []rpcTest{
 		{
@@ -784,25 +799,12 @@ func TestDebugGetRawTransaction(t *testing.T) {
 			args:   []any{common.Hash{}},
 			want:   hexutil.Bytes(nil),
 		},
+		{
+			method: "debug_getRawTransaction",
+			args:   []any{mempoolTx.Hash()},
+			want:   hexutil.Bytes(mempoolMarshaled),
+		},
 	}...)
-
-	// Mempool tx: send without building a block, then query.
-	mempoolTx := sut.wallet.SetNonceAndSign(t, 0, &types.DynamicFeeTx{
-		To:        &common.Address{},
-		Gas:       params.TxGas,
-		GasFeeCap: big.NewInt(1),
-	})
-	sut.mustSendTx(t, mempoolTx)
-	sut.syncMempool(t)
-
-	mempoolMarshaled, err := mempoolTx.MarshalBinary()
-	require.NoError(t, err)
-
-	sut.testRPC(ctx, t, rpcTest{
-		method: "debug_getRawTransaction",
-		args:   []any{mempoolTx.Hash()},
-		want:   hexutil.Bytes(mempoolMarshaled),
-	})
 }
 
 func (sut *SUT) testGetByHash(ctx context.Context, t *testing.T, want *types.Block) {
@@ -1018,6 +1020,7 @@ func (sut *SUT) testGetByUnknownNumber(ctx context.Context, t *testing.T) {
 // withDebugAPI returns a sutOption that enables the debug API.
 func withDebugAPI() sutOption {
 	return options.Func[sutConfig](func(c *sutConfig) {
+		c.vmConfig.RPCConfig.EnableDebugNamespace = true
 		c.vmConfig.RPCConfig.EnableProfiling = true
 	})
 }

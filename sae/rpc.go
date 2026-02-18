@@ -121,21 +121,26 @@ func (vm *VM) ethRPCServer() (*rpc.Server, error) {
 		//  - newPendingTransactions
 		//  - logs
 		{"eth", filterAPI},
-		// Geth-specific APIs:
-		// - debug_chaindbCompact
-		// - debug_chaindbProperty
-		// - debug_dbGet
-		// - debug_getRawTransaction
-		// - debug_printBlock
-		// - debug_setHead          (no-op, logs info)
-		// - debug_dbAncient        (always errors, SAE has no freezer)
-		// - debug_dbAncients       (always errors, SAE has no freezer)
-		//
-		// TODO: implement once BlockByNumberOrHash and GetReceipts exist:
-		// - debug_getRawBlock
-		// - debug_getRawHeader
-		// - debug_getRawReceipts
-		{"debug", ethapi.NewDebugAPI(b)},
+	}
+
+	if vm.config.RPCConfig.EnableDebugNamespace {
+		apis = append(apis, api{
+			// Geth-specific APIs:
+			// - debug_chaindbCompact
+			// - debug_chaindbProperty
+			// - debug_dbGet
+			// - debug_getRawTransaction
+			// - debug_printBlock
+			// - debug_setHead          (no-op, logs info)
+			// - debug_dbAncient        (always errors, SAE has no freezer)
+			// - debug_dbAncients       (always errors, SAE has no freezer)
+			//
+			// TODO: implement once BlockByNumberOrHash and GetReceipts exist:
+			// - debug_getRawBlock
+			// - debug_getRawHeader
+			// - debug_getRawReceipts
+			"debug", ethapi.NewDebugAPI(b),
+		})
 	}
 
 	if vm.config.RPCConfig.EnableProfiling {
