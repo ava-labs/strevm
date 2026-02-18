@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/ava-labs/strevm/gastime"
 	"github.com/ava-labs/strevm/hook/hookstest"
 	"github.com/ava-labs/strevm/saetest"
 )
@@ -70,7 +71,7 @@ func newChain(tb testing.TB, db ethdb.Database, startHeight, total uint64, lastS
 			// The target and excess are irrelevant for the purposes of
 			// [newChain], and non-zero sub-second time for genesis is
 			// unnecessary.
-			h := hookstest.NewStub(1)
+			h := &hookstest.Stub{Target: 1, GasPriceConfig: gastime.DefaultGasPriceConfig()}
 			require.NoError(tb, b.MarkSynchronous(h, db, 0), "MarkSynchronous()")
 		}
 

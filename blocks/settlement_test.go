@@ -18,6 +18,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/ava-labs/strevm/gastime"
 	"github.com/ava-labs/strevm/hook"
 	"github.com/ava-labs/strevm/hook/hookstest"
 	"github.com/ava-labs/strevm/params"
@@ -57,7 +58,7 @@ func TestSettlementInvariants(t *testing.T) {
 
 	db := rawdb.NewMemoryDatabase()
 	for _, b := range []*Block{b, parent, lastSettled} {
-		tm := mustNewGasTime(t, preciseTime(b.Header(), 0), 1, 0, hook.DefaultGasPriceConfig())
+		tm := mustNewGasTime(t, preciseTime(b.Header(), 0), 1, 0, gastime.DefaultGasPriceConfig())
 		b.markExecutedForTests(t, db, tm)
 	}
 
@@ -216,7 +217,7 @@ func TestLastToSettleAt(t *testing.T) {
 		}
 	})
 
-	tm := mustNewGasTime(t, time.Unix(0, 0), 5 /*target*/, 0, hook.DefaultGasPriceConfig())
+	tm := mustNewGasTime(t, time.Unix(0, 0), 5 /*target*/, 0, gastime.DefaultGasPriceConfig())
 	require.Equal(t, gas.Gas(10), tm.Rate())
 
 	requireTime := func(t *testing.T, sec uint64, numerator gas.Gas) {
@@ -355,7 +356,7 @@ func TestLastToSettleAt(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			settleAt := time.Unix(int64(tt.settleAt), 0) //nolint:gosec // Hard-coded, non-overflowing values
-			hooks := hookstest.NewStub(0)
+			hooks := &hookstest.Stub{GasPriceConfig: gastime.DefaultGasPriceConfig()}
 			got, gotOK, err := LastToSettleAt(
 				hooks,
 				settleAt,

@@ -29,27 +29,27 @@ func TestInvalidConfigRejected(t *testing.T) {
 	}{
 		{
 			"zero_scaling",
-			hook.GasPriceConfig{TargetToExcessScaling: 0, MinPrice: hook.DefaultGasPriceConfig().MinPrice},
+			hook.GasPriceConfig{TargetToExcessScaling: 0, MinPrice: DefaultGasPriceConfig().MinPrice},
 			errTargetToExcessScalingZero,
 		},
 		{
 			"zero_min_price",
-			hook.GasPriceConfig{TargetToExcessScaling: hook.DefaultGasPriceConfig().TargetToExcessScaling, MinPrice: 0},
+			hook.GasPriceConfig{TargetToExcessScaling: DefaultGasPriceConfig().TargetToExcessScaling, MinPrice: 0},
 			errMinPriceZero,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tm := mustNew(t, time.Unix(42, 0), target, 0, hook.DefaultGasPriceConfig())
+			tm := mustNew(t, time.Unix(42, 0), target, 0, DefaultGasPriceConfig())
 
 			initialScaling := tm.config.targetToExcessScaling
 			initialMinPrice := tm.config.minPrice
-
-			err := tm.AfterBlock(0, hookstest.NewStub(
-				target,
-				hookstest.WithGasPriceConfig(tt.config),
-			), &types.Header{Time: 42})
+			hooks := &hookstest.Stub{
+				Target:         target,
+				GasPriceConfig: tt.config,
+			}
+			err := tm.AfterBlock(0, hooks, &types.Header{Time: 42})
 			require.ErrorIs(t, err, tt.expected)
 
 			// Config unchanged after rejected update
@@ -67,14 +67,17 @@ func TestTargetUpdateTiming(t *testing.T) {
 		initialTarget gas.Gas = 1_600_000
 		initialExcess         = 1_234_567_890
 	)
-	tm := mustNew(t, time.Unix(initialTime, 0), initialTarget, initialExcess, hook.DefaultGasPriceConfig())
+	tm := mustNew(t, time.Unix(initialTime, 0), initialTarget, initialExcess, DefaultGasPriceConfig())
 	initialRate := tm.Rate()
 
 	const (
 		newTime   uint64 = initialTime + 1
 		newTarget        = initialTarget + 100_000
 	)
-	hook := hookstest.NewStub(newTarget)
+	hook := &hookstest.Stub{
+		Target:         newTarget,
+		GasPriceConfig: DefaultGasPriceConfig(),
+	}
 	header := &types.Header{
 		Time: newTime,
 	}
@@ -116,8 +119,8 @@ func FuzzWorstCasePrice(f *testing.F) {
 		initTarget = max(initTarget, 1)
 
 		initUnix := int64(min(initTimestamp, math.MaxInt64)) //nolint:gosec // I can't believe I have to be explicit about this!
-		worstcase := mustNew(t, time.Unix(initUnix, 0), gas.Gas(initTarget), gas.Gas(initExcess), hook.DefaultGasPriceConfig())
-		actual := mustNew(t, time.Unix(initUnix, 0), gas.Gas(initTarget), gas.Gas(initExcess), hook.DefaultGasPriceConfig())
+		worstcase := mustNew(t, time.Unix(initUnix, 0), gas.Gas(initTarget), gas.Gas(initExcess), DefaultGasPriceConfig())
+		actual := mustNew(t, time.Unix(initUnix, 0), gas.Gas(initTarget), gas.Gas(initExcess), DefaultGasPriceConfig())
 
 		blocks := []struct {
 			time   uint64
@@ -162,15 +165,16 @@ func FuzzWorstCasePrice(f *testing.F) {
 			header := &types.Header{
 				Time: block.time,
 			}
-			hook := hookstest.NewStub(
-				block.target,
-				hookstest.WithNow(func() time.Time {
+			hook := &hookstest.Stub{
+				Target: block.target,
+				Now: func() time.Time {
 					return time.Unix(
 						int64(block.time), //nolint:gosec // Won't overflow for a few millennia
 						int64(block.nanos),
 					)
-				}),
-			)
+				},
+				GasPriceConfig: DefaultGasPriceConfig(),
+			}
 
 			worstcase.BeforeBlock(hook, header)
 			actual.BeforeBlock(hook, header)
@@ -206,10 +210,10 @@ func TestPriceTrajectory(t *testing.T) {
 
 		for _, b := range blocks {
 			header := &types.Header{Time: uint64(b.time.Unix())} //nolint:gosec // Known non-negative
-			hooks := hookstest.NewStub(
-				b.target,
-				hookstest.WithGasPriceConfig(b.gasPriceConfig),
-			)
+			hooks := &hookstest.Stub{
+				Target:         b.target,
+				GasPriceConfig: b.gasPriceConfig,
+			}
 			tm.BeforeBlock(hooks, header)
 			require.NoError(t, tm.AfterBlock(b.gasUsed, hooks, header), "AfterBlock()")
 			prices = append(prices, tm.Price())
@@ -231,8 +235,8 @@ func TestPriceTrajectory(t *testing.T) {
 			highScaling   = gas.Gas(50)
 		)
 
-		tmLow := mustNew(t, startTime, target, initialExcess, hook.GasPriceConfig{TargetToExcessScaling: lowScaling, MinPrice: hook.DefaultMinPrice})
-		tmHigh := mustNew(t, startTime, target, initialExcess, hook.GasPriceConfig{TargetToExcessScaling: highScaling, MinPrice: hook.DefaultMinPrice})
+		tmLow := mustNew(t, startTime, target, initialExcess, hook.GasPriceConfig{TargetToExcessScaling: lowScaling, MinPrice: DefaultMinPrice})
+		tmHigh := mustNew(t, startTime, target, initialExcess, hook.GasPriceConfig{TargetToExcessScaling: highScaling, MinPrice: DefaultMinPrice})
 
 		initialPriceLow := tmLow.Price()
 		initialPriceHigh := tmHigh.Price()
@@ -243,9 +247,9 @@ func TestPriceTrajectory(t *testing.T) {
 		// Process blocks with gas usage above target (to increase excess)
 		// Use large gas values to see meaningful changes
 		blocks := []block{
-			{time: startTime.Add(time.Second), gasUsed: target * 3, target: target, gasPriceConfig: hook.DefaultGasPriceConfig()},
-			{time: startTime.Add(2 * time.Second), gasUsed: target * 3, target: target, gasPriceConfig: hook.DefaultGasPriceConfig()},
-			{time: startTime.Add(3 * time.Second), gasUsed: target * 3, target: target, gasPriceConfig: hook.DefaultGasPriceConfig()},
+			{time: startTime.Add(time.Second), gasUsed: target * 3, target: target, gasPriceConfig: DefaultGasPriceConfig()},
+			{time: startTime.Add(2 * time.Second), gasUsed: target * 3, target: target, gasPriceConfig: DefaultGasPriceConfig()},
+			{time: startTime.Add(3 * time.Second), gasUsed: target * 3, target: target, gasPriceConfig: DefaultGasPriceConfig()},
 		}
 
 		pricesLow := simulateBlocks(t, tmLow, blocks)
@@ -274,7 +278,7 @@ func TestPriceTrajectory(t *testing.T) {
 		)
 
 		staticCfg := hook.GasPriceConfig{
-			TargetToExcessScaling: hook.DefaultTargetToExcessScaling,
+			TargetToExcessScaling: DefaultTargetToExcessScaling,
 			MinPrice:              minPrice,
 			StaticPricing:         true,
 		}
@@ -310,7 +314,7 @@ func TestPriceTrajectory(t *testing.T) {
 		)
 
 		staticCfg := hook.GasPriceConfig{
-			TargetToExcessScaling: hook.DefaultTargetToExcessScaling,
+			TargetToExcessScaling: DefaultTargetToExcessScaling,
 			MinPrice:              minPrice,
 			StaticPricing:         true,
 		}
@@ -577,14 +581,14 @@ func FuzzPriceInvarianceAfterBlock(f *testing.F) {
 		)
 		initPrice := tm.Price()
 
-		hooks := hookstest.NewStub(
-			gas.Gas(newTarget),
-			hookstest.WithGasPriceConfig(hook.GasPriceConfig{
+		hooks := &hookstest.Stub{
+			Target: gas.Gas(newTarget),
+			GasPriceConfig: hook.GasPriceConfig{
 				MinPrice:              gas.Price(newMinPrice),
 				TargetToExcessScaling: gas.Gas(newScaling),
 				StaticPricing:         newStaticPricing,
-			}),
-		)
+			},
+		}
 
 		// Consuming gas increases the excess, which changes the price. We're
 		// only interested in invariance under changes in config.

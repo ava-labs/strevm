@@ -54,7 +54,7 @@ func TestMarkExecuted(t *testing.T) {
 	rawdb.WriteBlock(db, ethB)
 
 	settles := newBlock(t, newEthBlock(0, 0, nil), nil, nil)
-	tm := mustNewGasTime(t, time.Unix(0, 0), 1, 0, hook.DefaultGasPriceConfig())
+	tm := mustNewGasTime(t, time.Unix(0, 0), 1, 0, gastime.DefaultGasPriceConfig())
 	settles.markExecutedForTests(t, db, tm)
 	b := newBlock(t, ethB, nil, settles)
 
@@ -88,7 +88,7 @@ func TestMarkExecuted(t *testing.T) {
 		}
 	})
 
-	gasTime := mustNewGasTime(t, time.Unix(42, 0), 1e6, 42, hook.DefaultGasPriceConfig())
+	gasTime := mustNewGasTime(t, time.Unix(42, 0), 1e6, 42, gastime.DefaultGasPriceConfig())
 	wallTime := time.Unix(42, 100)
 	stateRoot := common.Hash{'s', 't', 'a', 't', 'e'}
 	baseFee := big.NewInt(314159)

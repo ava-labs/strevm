@@ -149,23 +149,6 @@ type GasPriceConfig struct {
 	StaticPricing bool
 }
 
-// DefaultTargetToExcessScaling is the default ratio between gas target and the
-// reciprocal of the excess coefficient used in price calculation (K variable in ACP-176).
-const DefaultTargetToExcessScaling = 87
-
-// DefaultMinPrice is the default minimum gas price (base fee), i.e. the M
-// parameter in ACP-176's price calculation.
-const DefaultMinPrice gas.Price = 1
-
-// DefaultGasPriceConfig returns the default gas config values.
-func DefaultGasPriceConfig() GasPriceConfig {
-	return GasPriceConfig{
-		TargetToExcessScaling: DefaultTargetToExcessScaling,
-		MinPrice:              DefaultMinPrice,
-		StaticPricing:         false,
-	}
-}
-
 // MinimumGasConsumption MUST be used as the implementation for the respective
 // method on [params.RulesHooks]. The concrete type implementing the hooks MUST
 // propagate incoming and return arguments unchanged.

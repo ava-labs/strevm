@@ -13,7 +13,6 @@ import (
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core/state"
 	"github.com/ava-labs/libevm/core/types"
-	"github.com/ava-labs/libevm/libevm/options"
 	"github.com/ava-labs/libevm/params"
 
 	"github.com/ava-labs/strevm/hook"
@@ -30,44 +29,16 @@ type Stub struct {
 
 var _ hook.Points = (*Stub)(nil)
 
-// HookOption applies a configuration to [Stub].
-type HookOption = options.Option[Stub]
-
-// WithGasPriceConfig overrides the default gas config.
-func WithGasPriceConfig(cfg hook.GasPriceConfig) HookOption {
-	return options.Func[Stub](func(s *Stub) {
-		s.GasPriceConfig = cfg
-	})
-}
-
-// WithNow overrides the default time source.
-func WithNow(now func() time.Time) HookOption {
-	return options.Func[Stub](func(s *Stub) {
-		s.Now = now
-	})
-}
-
-// WithOps overrides the default end-of-block ops.
-func WithOps(ops []hook.Op) HookOption {
-	return options.Func[Stub](func(s *Stub) {
-		s.Ops = ops
-	})
-}
-
-// NewStub returns a stub with defaults applied.
-// It uses [hook.DefaultGasPriceConfig] unless overridden by [WithGasPriceConfig].
-func NewStub(target gas.Gas, opts ...HookOption) *Stub {
-	return options.ApplyTo(&Stub{
-		Target:         target,
-		GasPriceConfig: hook.DefaultGasPriceConfig(),
-		Now:            time.Now,
-	}, opts...)
-}
-
 // BuildHeader constructs a header that builds on top of the parent header. The
 // `Extra` field SHOULD NOT be modified as it encodes sub-second block time.
 func (s *Stub) BuildHeader(parent *types.Header) *types.Header {
-	now := s.Now()
+	var now time.Time
+	if s.Now != nil {
+		now = s.Now()
+	} else {
+		now = time.Now()
+	}
+
 	hdr := &types.Header{
 		ParentHash: parent.Hash(),
 		Number:     new(big.Int).Add(parent.Number, common.Big1),
