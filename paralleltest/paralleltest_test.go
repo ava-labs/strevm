@@ -1,4 +1,4 @@
-// Copyright (C) 2025, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2025-2026, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package paralleltest
@@ -27,12 +27,21 @@ func TestMain(m *testing.M) {
 	saetest.NoLeak(m)
 }
 
+var (
+	_ parallel.Handler[
+		struct{},
+		common.Hash,
+		*txHashEchoer,
+		map[int]common.Hash,
+	] = (*handler)(nil)
+
+	_ parallel.PrecompileResult = (*txHashEchoer)(nil)
+)
+
 type handler struct {
 	addr common.Address
 	gas  uint64
 }
-
-var _ parallel.Handler[struct{}, common.Hash, *txHashEchoer, map[int]common.Hash] = (*handler)(nil)
 
 func (*handler) BeforeBlock(libevm.StateReader, *types.Header) struct{} {
 	return struct{}{}
@@ -65,8 +74,6 @@ func (*handler) PostProcess(_ struct{}, res parallel.Results[*txHashEchoer]) map
 
 func (*handler) AfterBlock(parallel.StateDB, map[int]common.Hash, *types.Block, types.Receipts) {}
 
-var _ parallel.PrecompileResult = (*txHashEchoer)(nil)
-
 type txHashEchoer struct {
 	hash common.Hash
 }
@@ -98,7 +105,7 @@ func TestNewExecutor(t *testing.T) {
 	logger := saetest.NewTBLogger(t, logging.Warn)
 	ctx := logger.CancelOnError(t.Context())
 
-	config := params.MergedTestChainConfig
+	config := saetest.ChainConfig()
 	signer := types.LatestSigner(config)
 	wallet := saetest.NewUNSAFEWallet(t, 1, signer)
 
@@ -112,7 +119,7 @@ func TestNewExecutor(t *testing.T) {
 		config,
 		saetest.MaxAllocFor(wallet.Addresses()...),
 		precompileAddr,
-		h, 1, 1,
+		h, 4, 4,
 	)
 
 	var txs []common.Hash
@@ -125,12 +132,12 @@ func TestNewExecutor(t *testing.T) {
 		txs = append(txs, tx.Hash())
 
 		b := chain.NewBlock(t, types.Transactions{tx})
-		require.NoError(t, exec.Enqueue(ctx, b))
+		require.NoErrorf(t, exec.Enqueue(ctx, b), "%T.Enqueue()", exec)
 	}
-	require.NoError(t, chain.Last().WaitUntilExecuted(ctx))
+	require.NoErrorf(t, chain.Last().WaitUntilExecuted(ctx), "%T.Last().WaitUntilExecuted()", chain)
 
 	for i, b := range chain.AllExceptGenesis() {
-		require.Len(t, b.Receipts(), 1)
+		require.Len(t, b.Receipts(), 1, "%T[%d].Receipts()", b, b.NumberU64())
 
 		ignore := cmp.Options{
 			cmpopts.IgnoreFields(
@@ -155,7 +162,7 @@ func TestNewExecutor(t *testing.T) {
 		}
 
 		if diff := cmp.Diff(want, b.Receipts()[0], ignore); diff != "" {
-			t.Errorf("%s", diff)
+			t.Errorf("%T diff (-want +got):\n%s", b.Receipts()[0], diff)
 		}
 	}
 }

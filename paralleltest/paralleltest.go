@@ -1,4 +1,4 @@
-// Copyright (C) 2025, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2025-2026, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 // Package paralleltest provides a test harness for [parallel] precompiles
@@ -6,6 +6,7 @@
 package paralleltest
 
 import (
+	"context"
 	"testing"
 
 	"github.com/ava-labs/avalanchego/utils/logging"
@@ -19,9 +20,11 @@ import (
 	"github.com/ava-labs/libevm/libevm/hookstest"
 	"github.com/ava-labs/libevm/libevm/precompiles/parallel"
 	"github.com/ava-labs/libevm/params"
+	"github.com/ava-labs/libevm/triedb"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/ava-labs/strevm/blocks"
 	"github.com/ava-labs/strevm/blocks/blockstest"
 	"github.com/ava-labs/strevm/hook"
 	saehookstest "github.com/ava-labs/strevm/hook/hookstest"
@@ -29,10 +32,12 @@ import (
 	"github.com/ava-labs/strevm/saexec"
 )
 
+var _ blocks.Block // protect the import for [blocks.Block] comment rendering
+
 // NewExecutor returns a new SAE block-execution queue with a precompile,
-// registered, at the provided address, that sources results from the handler.
-// The executor will have a single, genesis block, derived from the provided
-// alloc.
+// registered at the provided address, that sources results from the
+// [parallel.Handler]. The [saexec.Executor] will have a single, genesis block,
+// derived from the provided alloc.
 func NewExecutor[CommonData, Prefetch any, R parallel.PrecompileResult, Aggregated any](
 	tb testing.TB,
 	logger logging.Logger,
@@ -58,10 +63,12 @@ func NewExecutor[CommonData, Prefetch any, R parallel.PrecompileResult, Aggregat
 	}
 	stub.Register(tb)
 
-	exec, err := saexec.New(gen, chain.GetBlock, config, db, xdb, nil, &hooks{par: par}, logger)
-	require.NoError(tb, err)
+	exec, err := saexec.New(gen, chain.GetBlock, config, db, xdb, &triedb.Config{}, &hooks{par: par}, logger)
+	require.NoError(tb, err, "saexec.New()")
 	tb.Cleanup(func() {
-		assert.NoError(tb, exec.Close())
+		ctx := context.WithoutCancel(tb.Context())
+		assert.NoErrorf(tb, chain.Last().WaitUntilExecuted(ctx), "%T.Last().WaitUntilExecuted()", chain)
+		assert.NoErrorf(tb, exec.Close(), "%T.Close()", exec)
 		par.Close()
 	})
 
