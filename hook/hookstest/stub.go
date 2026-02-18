@@ -99,14 +99,9 @@ func (s *Stub) BlockRebuilderFrom(b *types.Block) hook.BlockBuilder {
 	}
 }
 
-// GasTargetAfter ignores its argument and always returns [Stub.Target].
-func (s *Stub) GasTargetAfter(*types.Header) gas.Gas {
-	return s.Target
-}
-
-// GasPriceConfigAfter ignores its argument and always returns [Stub.GasPriceConfig].
-func (s *Stub) GasPriceConfigAfter(*types.Header) hook.GasPriceConfig {
-	return s.GasPriceConfig
+// GasConfigAfter ignores its argument and always returns [Stub.Target] and [Stub.GasPriceConfig].
+func (s *Stub) GasConfigAfter(*types.Header) (gas.Gas, hook.GasPriceConfig) {
+	return s.Target, s.GasPriceConfig
 }
 
 // SubSecondBlockTime returns the sub-second time encoded and stored by

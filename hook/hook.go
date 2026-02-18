@@ -37,13 +37,9 @@ type Points interface {
 	// inclusion, then the returned builder MUST be able to reconstruct an
 	// identical block.
 	BlockRebuilderFrom(block *types.Block) BlockBuilder
-
-	// GasTargetAfter returns the gas target that should go into effect
-	// immediately after the provided block.
-	GasTargetAfter(*types.Header) gas.Gas
-	// GasPriceConfigAfter returns the gas price configuration that should go into effect
-	// immediately after the provided block.
-	GasPriceConfigAfter(*types.Header) GasPriceConfig
+	// GasConfigAfter returns the gas target and configuration that should go
+	// into effect immediately after the provided block.
+	GasConfigAfter(*types.Header) (target gas.Gas, c GasPriceConfig)
 	// SubSecondBlockTime returns the sub-second portion of the block time,
 	// which MUST be non-negative and strictly shorter than a second; i.e. a
 	// value d such that 0 <= d < [time.Second].

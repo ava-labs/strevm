@@ -355,8 +355,9 @@ func TestLastToSettleAt(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			settleAt := time.Unix(int64(tt.settleAt), 0) //nolint:gosec // Hard-coded, non-overflowing values
+			hooks := hookstest.NewStub(0)
 			got, gotOK, err := LastToSettleAt(
-				hookstest.NewStub(0),
+				hooks,
 				settleAt,
 				tt.parent,
 			)
