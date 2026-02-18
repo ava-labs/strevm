@@ -668,203 +668,172 @@ func TestEthPendingTransactions(t *testing.T) {
 	})
 }
 
-func TestReceiptAPIs(t *testing.T) {
-	opt, vmTime := withVMTime(t, time.Unix(saeparams.TauSeconds, 0))
-	ctx, sut := newSUT(t, 5, opt)
+func TestGetReceipts(t *testing.T) {
+	timeOpt, vmTime := withVMTime(t, time.Unix(saeparams.TauSeconds, 0))
+	ctx, sut := newSUT(t, 1, timeOpt)
 
 	// Blocking precompile creates accepted-but-not-executed blocks
 	blockingPrecompile := common.Address{'b', 'l', 'o', 'c', 'k'}
-	unblockPrecompile := make(chan struct{})
-	t.Cleanup(func() { close(unblockPrecompile) })
+	registerBlockingPrecompile(t, blockingPrecompile)
 
-	libevmHooks := &libevmhookstest.Stub{
-		PrecompileOverrides: map[common.Address]libevm.PrecompiledContract{
-			blockingPrecompile: vm.NewStatefulPrecompile(func(vm.PrecompileEnvironment, []byte) ([]byte, error) {
-				<-unblockPrecompile
-				return nil, nil
-			}),
-		},
-	}
-	libevmHooks.Register(t)
-
-	createTx := func(t *testing.T, account int, to common.Address) *types.Transaction {
-		t.Helper()
-		return sut.wallet.SetNonceAndSign(t, account, &types.DynamicFeeTx{
-			To:        &to,
-			Gas:       params.TxGas,
-			GasFeeCap: big.NewInt(1),
+	var (
+		txs  []*types.Transaction
+		want []*types.Receipt
+	)
+	for range 6 {
+		tx := sut.wallet.SetNonceAndSign(t, 0, &types.LegacyTx{
+			To:       &zeroAddr,
+			Gas:      params.TxGas,
+			GasPrice: big.NewInt(1),
+		})
+		txs = append(txs, tx)
+		want = append(want, &types.Receipt{
+			TxHash:            tx.Hash(),
+			Status:            types.ReceiptStatusSuccessful,
+			GasUsed:           params.TxGas,
+			EffectiveGasPrice: big.NewInt(1),
+			Logs:              []*types.Log{},
 		})
 	}
-	getReceipt := func(t *testing.T, tx *types.Transaction) *types.Receipt {
-		t.Helper()
-		receipt, err := sut.TransactionReceipt(ctx, tx.Hash())
-		require.NoError(t, err, "TransactionReceipt(%s)", tx.Hash())
-		return receipt
+
+	slice := func(t *testing.T, from, to int) (*blocks.Block, []*types.Receipt) {
+		b := sut.createAndAcceptBlock(t, txs[from:to]...)
+		rs := want[from:to]
+
+		var totalGas uint64
+		for i, r := range rs {
+			totalGas += r.GasUsed
+			r.CumulativeGasUsed = totalGas
+			r.BlockHash = b.Hash()
+			r.BlockNumber = b.Number()
+			r.TransactionIndex = uint(i) //nolint:gosec // Known non-negative
+		}
+		return b, rs
 	}
 
 	genesis := sut.lastAcceptedBlock(t)
 
-	// Block 1: Executed; will also be settled when block 2 settles (it's older)
-	txExecutedInMemory := createTx(t, 0, zeroAddr)
-	blockExecutedInMemory := sut.createAndAcceptBlock(t, txExecutedInMemory)
-	require.NoErrorf(t, blockExecutedInMemory.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", blockExecutedInMemory)
+	onDisk, wantOnDisk := slice(t, 0, 2)
+	settled, wantSettled := slice(t, 2, 4)
+	vmTime.advanceToSettle(ctx, t, settled)
+	unsettled, wantUnsettled := slice(t, 4, 6)
+	sut.waitUntilExecuted(t, unsettled)
 
-	// Block 2: Executed; will be settled to DB when block 4 triggers settlement
-	txSettled := createTx(t, 1, zeroAddr)
-	blockSettled := sut.createAndAcceptBlock(t, txSettled)
-	require.NoErrorf(t, blockSettled.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", blockSettled)
-	receiptFromInMemory := getReceipt(t, txSettled)
-	vmTime.set(blockSettled.ExecutedByGasTime().AsTime().Add(saeparams.Tau))
+	// Pending block: accepted but not yet executed (blocking precompile).
+	pendingTx := sut.wallet.SetNonceAndSign(t, 0, &types.LegacyTx{
+		To:       &blockingPrecompile,
+		Gas:      params.TxGas,
+		GasPrice: big.NewInt(1),
+	})
+	pending := sut.createAndAcceptBlock(t, pendingTx)
 
-	// Block 3: Multiple txs, executed and available via the in-memory blocks map
-	txMulti1 := createTx(t, 2, zeroAddr)
-	txMulti2 := createTx(t, 2, zeroAddr)
-	txMulti3 := createTx(t, 2, zeroAddr)
-	blockMultiTxs := sut.createAndAcceptBlock(t, txMulti1, txMulti2, txMulti3)
-	require.NoErrorf(t, blockMultiTxs.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", blockMultiTxs)
-
-	// Block 4: Triggers settlement of blocks 1 and 2
-	triggerSettlement := createTx(t, 3, zeroAddr)
-	b4 := sut.createAndAcceptBlock(t, triggerSettlement)
-	require.NoErrorf(t, b4.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", b4)
-	require.NoErrorf(t, blockSettled.WaitUntilSettled(ctx), "%T.WaitUntilSettled()", blockSettled)
-	sut.rawVM.blocks.Delete(blockSettled.Hash())
-	require.NotNilf(t, rawdb.ReadHeaderNumber(sut.db, blockSettled.Hash()), "db header for block %d", blockSettled.Height())
-	receiptFromDB := getReceipt(t, txSettled)
-
-	// Block 5: Accepted but not executed (must be last to avoid blocking)
-	txPending := createTx(t, 4, blockingPrecompile)
-	blockPending := sut.createAndAcceptBlock(t, txPending)
-
-	if diff := cmp.Diff(receiptFromInMemory, receiptFromDB, cmputils.Receipts()); diff != "" {
-		t.Fatalf("in-memory vs db receipt diff (-in-memory +db):\n%s", diff)
+	var tests []rpcTest
+	for _, tc := range []struct {
+		id   rpc.BlockNumberOrHash
+		want []*types.Receipt
+	}{
+		{
+			id:   rpc.BlockNumberOrHashWithHash(onDisk.Hash(), true),
+			want: wantOnDisk,
+		},
+		{
+			id:   rpc.BlockNumberOrHashWithHash(settled.Hash(), true),
+			want: wantSettled,
+		},
+		{
+			id:   rpc.BlockNumberOrHashWithHash(unsettled.Hash(), true),
+			want: wantUnsettled,
+		},
+		{
+			id:   rpc.BlockNumberOrHashWithNumber(rpc.LatestBlockNumber),
+			want: wantUnsettled,
+		},
+	} {
+		tests = append(tests, rpcTest{
+			method: "eth_getBlockReceipts",
+			args:   []any{tc.id.String()},
+			want:   tc.want,
+		})
 	}
 
-	t.Run("eth_getTransactionReceipt", func(t *testing.T) {
-		for _, tc := range []struct {
-			name string
-			tx   *types.Transaction
-		}{
-			{
-				"executed_in_memory",
-				txExecutedInMemory,
-			},
-			{
-				"settled_in_db",
-				txSettled,
-			},
-		} {
-			t.Run(tc.name, func(t *testing.T) {
-				receipt := getReceipt(t, tc.tx)
-				require.Equal(t, tc.tx.Hash(), receipt.TxHash)
-				require.Equal(t, types.ReceiptStatusSuccessful, receipt.Status)
-			})
-		}
+	for i, tx := range txs {
+		tests = append(tests, rpcTest{
+			method: "eth_getTransactionReceipt",
+			args:   []any{tx.Hash()},
+			want:   want[i],
+		})
+	}
 
-		sut.testRPC(ctx, t, []rpcTest{
-			{
-				method: "eth_getTransactionReceipt",
-				args:   []any{txPending.Hash()},
-				want:   (*types.Receipt)(nil),
-			},
-			{
-				method: "eth_getTransactionReceipt",
-				args:   []any{common.Hash{}},
-				want:   (*types.Receipt)(nil),
-			},
-		}...)
-	})
+	// Acceptance writes blocks to the DB but not receipts, so pending
+	// block receipts error while pending tx receipts return nil.
+	tests = append(tests, []rpcTest{
+		{
+			method: "eth_getTransactionReceipt",
+			args:   []any{pendingTx.Hash()},
+			want:   (*types.Receipt)(nil),
+		},
+		{
+			method: "eth_getTransactionReceipt",
+			args:   []any{common.Hash{}},
+			want:   (*types.Receipt)(nil),
+		},
+		{
+			method: "eth_getBlockReceipts",
+			args:   []any{common.Hash{}},
+			want:   ([]*types.Receipt)(nil),
+		},
+		{
+			method: "eth_getBlockReceipts",
+			args:   []any{genesis.Hash()},
+			want:   []*types.Receipt{},
+		},
+		{
+			method:  "eth_getBlockReceipts",
+			args:    []any{pending.Hash()},
+			wantErr: testerr.Contains("receipts length mismatch"),
+		},
+		{
+			method:  "eth_getBlockReceipts",
+			args:    []any{hexutil.Uint64(pending.Height())},
+			wantErr: testerr.Contains("receipts length mismatch"),
+		},
+	}...)
 
-	t.Run("eth_getBlockReceipts", func(t *testing.T) {
-		multiTxs := []*types.Transaction{txMulti1, txMulti2, txMulti3}
+	sut.testRPC(ctx, t, tests...)
 
-		for _, tc := range []struct {
-			name string
-			id   any
-			txs  []*types.Transaction
-		}{
-			{
-				"executed_in_memory",
-				blockMultiTxs.Hash(),
-				multiTxs,
-			},
-			{
-				"executed_in_memory_by_number",
-				hexutil.Uint64(blockMultiTxs.Height()),
-				multiTxs,
-			},
-			{
-				"settled_in_db",
-				blockSettled.Hash(),
-				[]*types.Transaction{txSettled},
-			},
-		} {
-			t.Run(tc.name, func(t *testing.T) {
-				var want []*types.Receipt
-				for _, tx := range tc.txs {
-					want = append(want, getReceipt(t, tx))
-				}
-				sut.testRPC(ctx, t, rpcTest{
-					method: "eth_getBlockReceipts",
-					args:   []any{tc.id},
-					want:   want,
-				})
-			})
-		}
+	t.Run("requireCanonical_on_in_memory_hit", func(t *testing.T) {
+		height := unsettled.Height()
+		originalCanonical := rawdb.ReadCanonicalHash(sut.db, height)
+		require.Equal(t, unsettled.Hash(), originalCanonical)
 
-		sut.testRPC(ctx, t, []rpcTest{
-			{
-				method: "eth_getBlockReceipts",
-				args:   []any{common.Hash{}},
-				want:   ([]*types.Receipt)(nil),
-			},
-			{
-				method: "eth_getBlockReceipts",
-				args:   []any{genesis.Hash()},
-				want:   []*types.Receipt{},
-			},
-			{
-				method: "eth_getBlockReceipts",
-				args:   []any{blockPending.Hash()},
-				want:   ([]*types.Receipt)(nil),
-			},
-			{
-				method: "eth_getBlockReceipts",
-				args:   []any{hexutil.Uint64(blockPending.Height())},
-				want:   ([]*types.Receipt)(nil),
-			},
-		}...)
+		rawdb.WriteCanonicalHash(sut.db, common.HexToHash("0x6869207374657068656E"), height)
+		t.Cleanup(func() {
+			rawdb.WriteCanonicalHash(sut.db, originalCanonical, height)
+		})
 
-		t.Run("requireCanonical_on_in_memory_hit", func(t *testing.T) {
-			height := blockMultiTxs.Height()
-			originalCanonical := rawdb.ReadCanonicalHash(sut.db, height)
-			require.Equal(t, blockMultiTxs.Hash(), originalCanonical)
-
-			rawdb.WriteCanonicalHash(sut.db, common.HexToHash("0x6869207374657068656E"), height)
-			t.Cleanup(func() {
-				rawdb.WriteCanonicalHash(sut.db, originalCanonical, height)
-			})
-
-			sut.testRPC(ctx, t, rpcTest{
-				method: "eth_getBlockReceipts",
-				args: []any{
-					map[string]any{
-						"blockHash":        blockMultiTxs.Hash(),
-						"requireCanonical": true,
-					},
+		sut.testRPC(ctx, t, rpcTest{
+			method: "eth_getBlockReceipts",
+			args: []any{
+				map[string]any{
+					"blockHash":        unsettled.Hash(),
+					"requireCanonical": true,
 				},
-				want: ([]*types.Receipt)(nil),
-			})
+			},
+			want: ([]*types.Receipt)(nil),
 		})
 	})
 
-	// Malformed execution results must surface as backend failures.
-	xdb := sut.rawVM.xdb
-	require.NoError(t, xdb.Put(blockSettled.Height(), []byte{0x01}))
-	sut.testRPC(ctx, t, rpcTest{
-		method:  "eth_getTransactionReceipt",
-		args:    []any{txSettled.Hash()},
-		wantErr: testerr.Contains("restoring execution artefacts"),
+	t.Run("malformed_xdb", func(t *testing.T) {
+		// onDisk was naturally evicted from the in-memory blocks map
+		// when its descendant settled, so this exercises the DB path.
+		require.NoErrorf(t, onDisk.WaitUntilSettled(ctx), "%T.WaitUntilSettled()", onDisk)
+		require.NoError(t, sut.rawVM.xdb.Put(onDisk.Height(), []byte{0x01}))
+
+		sut.testRPC(ctx, t, rpcTest{
+			method:  "eth_getTransactionReceipt",
+			args:    []any{txs[0].Hash()},
+			wantErr: testerr.Contains("restoring execution artefacts"),
+		})
 	})
 }
 
