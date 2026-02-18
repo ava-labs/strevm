@@ -42,10 +42,7 @@ func (*coinbaseAsAuthor) Author(h *types.Header) (common.Address, error) {
 }
 
 func (b *ethAPIBackend) GetEVM(ctx context.Context, msg *core.Message, sdb *state.StateDB, hdr *types.Header, cfg *vm.Config, bCtx *vm.BlockContext) *vm.EVM {
-	txCtx := vm.TxContext{
-		Origin:   msg.From,
-		GasPrice: big.NewInt(1),
-	}
+	txCtx := core.NewEVMTxContext(msg)
 	return vm.NewEVM(*bCtx, txCtx, sdb, b.ChainConfig(), *cfg)
 }
 
