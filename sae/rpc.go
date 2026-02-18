@@ -19,10 +19,8 @@ import (
 	"github.com/ava-labs/libevm/common/hexutil"
 	"github.com/ava-labs/libevm/core"
 	"github.com/ava-labs/libevm/core/rawdb"
-	"github.com/ava-labs/libevm/core/state"
 	"github.com/ava-labs/libevm/core/txpool"
 	"github.com/ava-labs/libevm/core/types"
-	"github.com/ava-labs/libevm/core/vm"
 	"github.com/ava-labs/libevm/crypto"
 	"github.com/ava-labs/libevm/eth/filters"
 	"github.com/ava-labs/libevm/eth/tracers"
@@ -374,14 +372,6 @@ func (b *ethAPIBackend) SyncProgress() ethereum.SyncProgress {
 	return ethereum.SyncProgress{}
 }
 
-func (b *ethAPIBackend) SuggestGasTipCap(ctx context.Context) (*big.Int, error) {
-	panic(errUnimplemented)
-}
-
-func (b *ethAPIBackend) FeeHistory(ctx context.Context, blockCount uint64, lastBlock rpc.BlockNumber, rewardPercentiles []float64) (*big.Int, [][]*big.Int, []*big.Int, []float64, error) {
-	panic(errUnimplemented)
-}
-
 func (b *ethAPIBackend) ChainDb() ethdb.Database {
 	return b.vm.db
 }
@@ -421,14 +411,6 @@ func (b *ethAPIBackend) BlockByHash(ctx context.Context, hash common.Hash) (*typ
 		return b.EthBlock(), nil
 	}
 	return readByHash(b, hash, rawdb.ReadBlock), nil
-}
-
-func (b *ethAPIBackend) HeaderByNumberOrHash(ctx context.Context, blockNrOrHash rpc.BlockNumberOrHash) (*types.Header, error) {
-	panic(errUnimplemented)
-}
-
-func (b *ethAPIBackend) BlockByNumberOrHash(ctx context.Context, blockNrOrHash rpc.BlockNumberOrHash) (*types.Block, error) {
-	panic(errUnimplemented)
 }
 
 func (b *ethAPIBackend) GetTransaction(ctx context.Context, txHash common.Hash) (exists bool, tx *types.Transaction, blockHash common.Hash, blockNumber uint64, index uint64, err error) {
@@ -616,26 +598,6 @@ func (*ethAPIBackend) SubscribePendingLogsEvent(chan<- []*types.Log) event.Subsc
 	// In SAE, "pending" refers to the execution status. There are no logs known
 	// for transactions pending execution.
 	return newNoopSubscription()
-}
-
-func (b *ethAPIBackend) PendingBlockAndReceipts() (*types.Block, types.Receipts) {
-	panic(errUnimplemented)
-}
-
-func (b *ethAPIBackend) GetReceipts(ctx context.Context, hash common.Hash) (types.Receipts, error) {
-	panic(errUnimplemented)
-}
-
-func (b *ethAPIBackend) GetPoolNonce(ctx context.Context, addr common.Address) (uint64, error) {
-	return b.Pool.Nonce(addr), nil
-}
-
-func (b *ethAPIBackend) StateAtBlock(ctx context.Context, block *types.Block, reexec uint64, base *state.StateDB, readOnly bool, preferDisk bool) (*state.StateDB, tracers.StateReleaseFunc, error) {
-	panic(errUnimplemented)
-}
-
-func (b *ethAPIBackend) StateAtTransaction(ctx context.Context, block *types.Block, txIndex int, reexec uint64) (*core.Message, vm.BlockContext, *state.StateDB, tracers.StateReleaseFunc, error) {
-	panic(errUnimplemented)
 }
 
 type noopSubscription struct {
