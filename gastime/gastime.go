@@ -187,20 +187,15 @@ func (tm *Time) SetConfig(cfg hook.GasPriceConfig) error {
 		return nil
 	}
 
-	currentPrice := tm.Price()
+	p := tm.Price()
 	tm.config = newCfg
-	// Always call findExcessForPrice after updating the config for tm to ensure price continuity.
-	newExcess := tm.findExcessForPrice(currentPrice)
-	tm.excess = newExcess
+	tm.excess = tm.findExcessForPrice(p)
 	return nil
 }
 
-// Price returns the price of a unit of gas, i.e. the "base fee".
-//
-// When [config.StaticPricing] is true, this is "fixed price mode" and
-// always returns minPrice regardless of excess. This prevents the fake
-// exponential approximation from producing e^(x/K) ≈ e^1 when excess is also
-// very large.
+// Price returns the price of a unit of gas, i.e. the "base fee", determined by
+// [gas.CalculatePrice]. However, when [hook.GasPriceConfig.StaticPricing] is
+// true, Price always returns [hook.GasPriceConfig.MinPrice].
 func (tm *Time) Price() gas.Price {
 	if tm.config.staticPricing {
 		return tm.config.minPrice
@@ -211,24 +206,11 @@ func (tm *Time) Price() gas.Price {
 // excessScalingFactor returns the K variable of ACP-103/176, i.e.
 // [config.targetToExcessScaling] * T, capped at [math.MaxUint64].
 func (tm *Time) excessScalingFactor() gas.Gas {
-	return excessScalingFactorOf(tm.config.targetToExcessScaling, tm.target)
+	return intmath.BoundedMultiply(tm.config.targetToExcessScaling, tm.target, math.MaxUint64)
 }
 
-// excessScalingFactorOf returns scaling * target, capped at [math.MaxUint64].
-func excessScalingFactorOf(scaling, target gas.Gas) gas.Gas {
-	return intmath.BoundedMultiply(scaling, target, math.MaxUint64)
-}
-
-// findExcessForPrice uses binary search over uint64 to find an excess value
-// that produces targetPrice with the given config.
-//
-// The price formula is: P = M * e^(x / K), where K = tm.config.targetToExcessScaling * tm.target.
-//   - P is the price (targetPrice)
-//   - M is the minimum price (tm.config.minPrice)
-//   - x is the excess
-//   - K is the excess scaling factor (tm.config.targetToExcessScaling * tm.target)
-//
-// Thus we are solving for: x = K * ln(P / M)
+// findExcessForPrice uses binary search over uint64 to find the smallest excess
+// value that produces targetPrice with the current [config].
 func (tm *Time) findExcessForPrice(targetPrice gas.Price) gas.Gas {
 	// We return 0 in case targetPrice < minPrice because we should at least maintain the minimum price
 	// by setting the excess to 0. ( P = M * e^(0 / K) = M )
@@ -239,7 +221,7 @@ func (tm *Time) findExcessForPrice(targetPrice gas.Price) gas.Gas {
 
 	k := tm.excessScalingFactor()
 
-	// Binary search over [0, maxExcessSearchCap(k)] for smallest excess where price >= targetPrice.
+	// The price function is monotonic non-decreasing so binary search is appropriate.
 	lo, hi := gas.Gas(0), gas.Gas(math.MaxUint64)
 	for lo < hi {
 		mid := lo + (hi-lo)/2

@@ -15,6 +15,7 @@ import (
 
 	"github.com/ava-labs/strevm/hook"
 	"github.com/ava-labs/strevm/hook/hookstest"
+	"github.com/ava-labs/strevm/intmath"
 )
 
 // TestInvalidConfigRejected verifies that zero values for TargetToExcessScaling
@@ -602,7 +603,7 @@ func FuzzPriceInvarianceAfterBlock(f *testing.F) {
 			// When required excess for continuity exceeds the search cap, findExcessForPrice
 			// returns that cap and the resulting price is M * e^(cap/K).
 			// This means price continuity is not possible if required excess exceeds the search cap.
-			newK := excessScalingFactorOf(gas.Gas(newScaling), gas.Gas(newTarget))
+			newK := intmath.BoundedMultiply(gas.Gas(newScaling), gas.Gas(newTarget), math.MaxUint64)
 			requiredApproxExcess := float64(newK) * math.Log(float64(initPrice)/float64(newMinPrice))
 			if requiredApproxExcess > float64(math.MaxUint64) {
 				want = gas.CalculatePrice(gas.Price(newMinPrice), math.MaxUint64, newK)
