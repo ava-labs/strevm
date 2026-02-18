@@ -251,9 +251,9 @@ type ethAPIBackend struct {
 	chainIndexer
 	bloomOverrider
 	*bloomIndexer
-
-	ethapi.Backend // TODO(arr4n) remove once all methods are implemented
 }
+
+var _ APIBackend = (*ethAPIBackend)(nil)
 
 func (b *ethAPIBackend) ChainConfig() *params.ChainConfig {
 	return b.vm.exec.ChainConfig()
