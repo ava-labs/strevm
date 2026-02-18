@@ -25,6 +25,7 @@ import (
 	"github.com/ava-labs/strevm/blocks/blockstest"
 	"github.com/ava-labs/strevm/hook"
 	saehookstest "github.com/ava-labs/strevm/hook/hookstest"
+	"github.com/ava-labs/strevm/saetest"
 	"github.com/ava-labs/strevm/saexec"
 )
 
@@ -44,7 +45,8 @@ func NewExecutor[CommonData, Prefetch any, R parallel.PrecompileResult, Aggregat
 ) (*saexec.Executor, *blockstest.ChainBuilder) {
 	tb.Helper()
 
-	gen := blockstest.NewGenesis(tb, db, config, alloc)
+	xdb := saetest.NewExecutionResultsDB()
+	gen := blockstest.NewGenesis(tb, db, xdb, config, alloc)
 	chain := blockstest.NewChainBuilder(config, gen)
 
 	par := parallel.New(prefetchers, processors)
@@ -56,7 +58,7 @@ func NewExecutor[CommonData, Prefetch any, R parallel.PrecompileResult, Aggregat
 	}
 	stub.Register(tb)
 
-	exec, err := saexec.New(gen, chain.GetBlock, config, db, nil, &hooks{par: par}, logger)
+	exec, err := saexec.New(gen, chain.GetBlock, config, db, xdb, nil, &hooks{par: par}, logger)
 	require.NoError(tb, err)
 	tb.Cleanup(func() {
 		assert.NoError(tb, exec.Close())

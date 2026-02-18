@@ -5,14 +5,14 @@ go 1.24.12
 tool github.com/go-task/task/v3/cmd/task
 
 require (
+	github.com/arr4n/shed v0.0.0-20260217105731-4cd15adfa100
 	github.com/ava-labs/avalanchego v1.14.2-0.20260123184805-18c4dbe2714e
-	github.com/ava-labs/libevm v1.13.15-0.20260205105415-139d4d7b0484
+	github.com/ava-labs/libevm v1.13.15-0.20260218120213-98a792673af1
 	github.com/google/go-cmp v0.7.0
 	github.com/holiman/uint256 v1.2.4
 	github.com/stretchr/testify v1.11.1
 	go.uber.org/goleak v1.3.0
 	golang.org/x/exp v0.0.0-20250620022241-b7579e27df2b
-	golang.org/x/sync v0.18.0
 )
 
 require (
@@ -113,6 +113,7 @@ require (
 	github.com/zeebo/xxh3 v1.0.2 // indirect
 	go.opentelemetry.io/auto/sdk v1.1.0 // indirect
 	go.yaml.in/yaml/v4 v4.0.0-rc.3 // indirect
+	golang.org/x/sync v0.18.0 // indirect
 	golang.org/x/time v0.12.0 // indirect
 	gopkg.in/warnings.v0 v0.1.2 // indirect
 	mvdan.cc/sh/moreinterp v0.0.0-20251109230715-65adef8e2c5b // indirect
