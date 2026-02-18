@@ -24,8 +24,6 @@ import (
 
 var errUnimplemented = errors.New("unimplemented")
 
-// TODO(arr4n) remove these methods once no longer embedding [ethapi.Backend] in
-// [ethAPIBackend] as they're only required for disambiguation.
 
 func (b *ethAPIBackend) SuggestGasTipCap(context.Context) (*big.Int, error) {
 	panic(errUnimplemented)
