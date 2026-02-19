@@ -345,20 +345,20 @@ func (s *SUT) requireInMempool(tb testing.TB, txs ...common.Hash) {
 func (s *SUT) createAndAcceptBlock(tb testing.TB, txs ...*types.Transaction) *blocks.Block {
 	tb.Helper()
 
-	s.createBlockWithTxs(tb, true, txs...)
+	s.addToMempool(tb, txs...)
 	return s.runConsensusLoop(tb, s.lastAcceptedBlock(tb))
 }
 
 func (s *SUT) createAndVerifyBlock(tb testing.TB, txs ...*types.Transaction) *blocks.Block {
 	tb.Helper()
 
-	s.createBlockWithTxs(tb, false, txs...)
+	s.addToMempool(tb, txs...)
 	b := s.buildAndParseBlock(tb, s.lastAcceptedBlock(tb))
 	require.NoErrorf(tb, b.Verify(s.context(tb)), "%T.Verify()", b)
 	return b.(adaptor.Block[*blocks.Block]).Unwrap() //nolint:forcetypeassert // it's a test and guaranteed
 }
 
-func (s *SUT) createBlockWithTxs(tb testing.TB, accept bool, txs ...*types.Transaction) {
+func (s *SUT) addToMempool(tb testing.TB, txs ...*types.Transaction) {
 	tb.Helper()
 
 	txHashes := make([]common.Hash, len(txs))
@@ -901,10 +901,9 @@ func TestGetBlock(t *testing.T) {
 		// Simulate an acceptance by writing a block to the database after the blocks map is checked.
 		// This is in lieu of blocking the database read to verify and accept a block, but relies on
 		// implementation details of the method.
-		// Creating the block through the VM creates a well-formed block, and rejecting it removes it from
-		// the inner block map.
-		b := sut.createAndVerifyBlock(t, createTx(t, zeroAddr))
-		require.NoErrorf(t, sut.rawVM.RejectBlock(ctx, b), "%T.RejectBlock()", sut.rawVM)
+		sut.addToMempool(t, createTx(t, zeroAddr))
+		snowB := sut.buildAndParseBlock(t, sut.lastAcceptedBlock(t))
+		b := snowB.(adaptor.Block[*blocks.Block]).Unwrap() //nolint:forcetypeassert // it's guaranteed
 		rawdb.WriteBlock(sut.db, b.EthBlock())
 		_, err := sut.GetBlock(ctx, b.ID())
 		require.ErrorIsf(t, err, database.ErrNotFound, "%T.GetBlock", sut)
