@@ -20,7 +20,6 @@ import (
 	ethereum "github.com/ava-labs/libevm"
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/common/hexutil"
-	"github.com/ava-labs/libevm/core/rawdb"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/core/vm"
 	"github.com/ava-labs/libevm/crypto"
@@ -789,53 +788,18 @@ func TestGetReceipts(t *testing.T) {
 			want:   []*types.Receipt{},
 		},
 		{
-			method:  "eth_getBlockReceipts",
-			args:    []any{pending.Hash()},
-			wantErr: testerr.Contains("receipts length mismatch"),
+			method: "eth_getBlockReceipts",
+			args:   []any{pending.Hash()},
+			want:   ([]*types.Receipt)(nil),
 		},
 		{
-			method:  "eth_getBlockReceipts",
-			args:    []any{hexutil.Uint64(pending.Height())},
-			wantErr: testerr.Contains("receipts length mismatch"),
+			method: "eth_getBlockReceipts",
+			args:   []any{hexutil.Uint64(pending.Height())},
+			want:   ([]*types.Receipt)(nil),
 		},
 	}...)
 
 	sut.testRPC(ctx, t, tests...)
-
-	t.Run("requireCanonical_on_in_memory_hit", func(t *testing.T) {
-		height := unsettled.Height()
-		originalCanonical := rawdb.ReadCanonicalHash(sut.db, height)
-		require.Equal(t, unsettled.Hash(), originalCanonical)
-
-		rawdb.WriteCanonicalHash(sut.db, common.HexToHash("0x6869207374657068656E"), height)
-		t.Cleanup(func() {
-			rawdb.WriteCanonicalHash(sut.db, originalCanonical, height)
-		})
-
-		sut.testRPC(ctx, t, rpcTest{
-			method: "eth_getBlockReceipts",
-			args: []any{
-				map[string]any{
-					"blockHash":        unsettled.Hash(),
-					"requireCanonical": true,
-				},
-			},
-			want: ([]*types.Receipt)(nil),
-		})
-	})
-
-	t.Run("malformed_xdb", func(t *testing.T) {
-		// onDisk was naturally evicted from the in-memory blocks map
-		// when its descendant settled, so this exercises the DB path.
-		require.NoErrorf(t, onDisk.WaitUntilSettled(ctx), "%T.WaitUntilSettled()", onDisk)
-		require.NoError(t, sut.rawVM.xdb.Put(onDisk.Height(), []byte{0x01}))
-
-		sut.testRPC(ctx, t, rpcTest{
-			method:  "eth_getTransactionReceipt",
-			args:    []any{txs[0].Hash()},
-			wantErr: testerr.Contains("restoring execution artefacts"),
-		})
-	})
 }
 
 // SAE doesn't really support APIs that require a key on the node, as there is

@@ -47,7 +47,7 @@ func (vm *VM) APIBackend() APIBackend {
 }
 
 func (vm *VM) ethRPCServer() (*rpc.Server, error) {
-	b := vm.APIBackend()
+	b := vm.apiBackend
 
 	filterSystem := filters.NewFilterSystem(b, filters.Config{})
 	filterAPI := filters.NewFilterAPI(filterSystem, false /*isLightClient*/)
@@ -96,7 +96,7 @@ func (vm *VM) ethRPCServer() (*rpc.Server, error) {
 		// Geth-specific APIs:
 		// - eth_getHeaderByHash
 		// - eth_getHeaderByNumber
-		{"eth", ethapi.NewBlockChainAPI(b)},
+		{"eth", &blockChainAPI{ethapi.NewBlockChainAPI(b), b}},
 		// Standard Ethereum node APIs:
 		// - eth_getBlockTransactionCountByHash
 		// - eth_getBlockTransactionCountByNumber
@@ -211,6 +211,42 @@ func (s *netAPI) Version() string {
 	return s.chainID
 }
 
+type blockChainAPI struct {
+	*ethapi.BlockChainAPI
+	b *ethAPIBackend
+}
+
+// We override [ethapi.BlockChainAPI.GetBlockReceipts] so that we do not return
+// an error when a user queries a known, but not yet executed, block.
+func (b *blockChainAPI) GetBlockReceipts(ctx context.Context, blockNrOrHash rpc.BlockNumberOrHash) ([]map[string]any, error) {
+	blk, err := b.b.getBlock(blockNrOrHash)
+	if err != nil || !blk.Executed() {
+		// When the block hasn't been executed, the RPC method should return
+		// JSON null as per specification.
+		return nil, nil
+	}
+
+	receipts := blk.Receipts()
+	if err != nil {
+		return nil, err
+	}
+	txs := blk.Transactions()
+	if len(txs) != len(receipts) {
+		return nil, fmt.Errorf("receipts length mismatch: %d vs %d", len(txs), len(receipts))
+	}
+
+	var (
+		hash   = blk.Hash()
+		num    = blk.NumberU64()
+		signer = types.MakeSigner(b.b.ChainConfig(), blk.Number(), blk.BuildTime())
+		result = make([]map[string]any, len(receipts))
+	)
+	for i, receipt := range receipts {
+		result[i] = ethapi.MarshalReceipt(receipt, hash, num, signer, txs[i], i)
+	}
+	return result, nil
+}
+
 // chainIndexer implements the subset of [ethapi.Backend] required to back a
 // [core.ChainIndexer].
 type chainIndexer struct {
@@ -296,11 +332,11 @@ func (b *ethAPIBackend) BlockByNumber(ctx context.Context, n rpc.BlockNumber) (*
 }
 
 func (b *ethAPIBackend) HeaderByHash(ctx context.Context, hash common.Hash) (*types.Header, error) {
-	return readByHash(b, hash, (*blocks.Block).Header, rawdb.ReadHeader)
+	return readByHash(b, hash, (*blocks.Block).Header, rawdb.ReadHeader), nil
 }
 
 func (b *ethAPIBackend) BlockByHash(ctx context.Context, hash common.Hash) (*types.Block, error) {
-	return readByHash(b, hash, (*blocks.Block).EthBlock, rawdb.ReadBlock)
+	return readByHash(b, hash, (*blocks.Block).EthBlock, rawdb.ReadBlock), nil
 }
 
 func (b *ethAPIBackend) HeaderByNumberOrHash(ctx context.Context, blockNrOrHash rpc.BlockNumberOrHash) (*types.Header, error) {
@@ -380,15 +416,15 @@ func readByNumber[T any](b *ethAPIBackend, n rpc.BlockNumber, read canonicalRead
 	return read(b.vm.db, rawdb.ReadCanonicalHash(b.vm.db, num), num), nil
 }
 
-func readByHash[T any](b *ethAPIBackend, hash common.Hash, fromMem blockAccessor[T], fromDB canonicalReader[T]) (*T, error) {
+func readByHash[T any](b *ethAPIBackend, hash common.Hash, fromMem blockAccessor[T], fromDB canonicalReader[T]) *T {
 	if blk, ok := b.vm.blocks.Load(hash); ok {
-		return fromMem(blk), nil
+		return fromMem(blk)
 	}
 	num := rawdb.ReadHeaderNumber(b.vm.db, hash)
 	if num == nil {
-		return nil, nil
+		return nil
 	}
-	return fromDB(b.vm.db, hash, *num), nil
+	return fromDB(b.vm.db, hash, *num)
 }
 
 func readByNumberOrHash[T any](b *ethAPIBackend, blockNrOrHash rpc.BlockNumberOrHash, fromMem blockAccessor[T], fromDB canonicalReader[T]) (*T, error) {
@@ -516,33 +552,38 @@ func (b *ethAPIBackend) SubscribePendingLogsEvent(chan<- []*types.Log) event.Sub
 }
 
 func (b *ethAPIBackend) GetReceipts(ctx context.Context, hash common.Hash) (types.Receipts, error) {
-	if bl, ok := b.vm.blocks.Load(hash); ok {
-		if !bl.Executed() {
-			return nil, nil
-		}
-		return bl.Receipts(), nil
+	blk, err := b.getBlock(rpc.BlockNumberOrHashWithHash(hash, false))
+	if err != nil {
+		return nil, err
 	}
-
-	num := rawdb.ReadHeaderNumber(b.vm.db, hash)
-	if num == nil {
+	if !blk.Executed() {
 		return nil, nil
 	}
-	ethBlock := rawdb.ReadBlock(b.vm.db, hash, *num)
+	return blk.Receipts(), nil
+}
+
+func (b *ethAPIBackend) getBlock(numOrHash rpc.BlockNumberOrHash) (*blocks.Block, error) {
+	n, hash, err := b.resolveBlockNumberOrHash(numOrHash)
+	if err != nil {
+		return nil, err
+	}
+	if blk, ok := b.vm.blocks.Load(hash); ok {
+		return blk, nil
+	}
+
+	ethBlock := rawdb.ReadBlock(b.vm.db, hash, n)
 	if ethBlock == nil {
 		return nil, nil
 	}
 
-	// Restore execution artefacts to access the execution-time base fee.
-	// The header's base fee is from acceptance time, but execution may use a
-	// lower base fee.
-	block, err := b.vm.newBlock(ethBlock, nil, nil)
+	blk, err := b.vm.newBlock(ethBlock, nil, nil)
 	if err != nil {
 		return nil, err
 	}
-	if err := block.RestoreExecutionArtefacts(b.vm.db, b.vm.xdb, b.vm.exec.ChainConfig()); err != nil {
+	if err := blk.RestoreExecutionArtefacts(b.vm.db, b.vm.xdb, b.vm.exec.ChainConfig()); err != nil {
 		return nil, fmt.Errorf("restoring execution artefacts: %w", err)
 	}
-	return block.Receipts(), nil
+	return blk, nil
 }
 
 type noopSubscription struct {
