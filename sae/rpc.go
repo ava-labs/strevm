@@ -226,20 +226,13 @@ func (b *blockChainAPI) GetBlockReceipts(ctx context.Context, blockNrOrHash rpc.
 		return nil, nil
 	}
 
-	receipts := blk.Receipts()
-	if err != nil {
-		return nil, err
-	}
-	txs := blk.Transactions()
-	if len(txs) != len(receipts) {
-		return nil, fmt.Errorf("receipts length mismatch: %d vs %d", len(txs), len(receipts))
-	}
-
 	var (
-		hash   = blk.Hash()
-		num    = blk.NumberU64()
-		signer = types.MakeSigner(b.b.ChainConfig(), blk.Number(), blk.BuildTime())
-		result = make([]map[string]any, len(receipts))
+		receipts = blk.Receipts()
+		hash     = blk.Hash()
+		num      = blk.NumberU64()
+		signer   = types.MakeSigner(b.b.ChainConfig(), blk.Number(), blk.BuildTime())
+		txs      = blk.Transactions()
+		result   = make([]map[string]any, len(receipts))
 	)
 	for i, receipt := range receipts {
 		result[i] = ethapi.MarshalReceipt(receipt, hash, num, signer, txs[i], i)
