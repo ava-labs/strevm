@@ -553,10 +553,7 @@ func (b *ethAPIBackend) SubscribePendingLogsEvent(chan<- []*types.Log) event.Sub
 
 func (b *ethAPIBackend) GetReceipts(ctx context.Context, hash common.Hash) (types.Receipts, error) {
 	blk, err := b.getBlock(rpc.BlockNumberOrHashWithHash(hash, false))
-	if err != nil {
-		return nil, err
-	}
-	if !blk.Executed() {
+	if err != nil || !blk.Executed() {
 		return nil, nil
 	}
 	return blk.Receipts(), nil
