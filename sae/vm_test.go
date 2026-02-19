@@ -847,6 +847,17 @@ func TestGetBlock(t *testing.T) {
 
 	verified := sut.createAndVerifyBlock(t, createTx(t, zeroAddr))
 
+	testGetBlock := func(t *testing.T, want *blocks.Block) {
+		t.Helper()
+		snowB, err := sut.GetBlock(ctx, want.ID())
+		require.NoError(t, err, "GetBlock()")
+		gotB, ok := snowB.(adaptor.Block[*blocks.Block])
+		require.True(t, ok, "GetBlock() return a %T, expected an adaptor.Block[*blocks.Block]", snowB)
+		if diff := cmp.Diff(want, gotB.Unwrap(), blocks.CmpOpt(), cmpopts.IgnoreFields(blocks.Block{}, "synchronous")); diff != "" {
+			t.Errorf("vm.GetBlock(...) mismatch (-want +got):\n%s", diff)
+		}
+	}
+
 	tests := []struct {
 		name string
 		want *blocks.Block
@@ -871,34 +882,31 @@ func TestGetBlock(t *testing.T) {
 			name: "accepted",
 			want: accepted,
 		},
-		{
-			name: "verified",
-			want: verified,
-		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			snowB, err := sut.GetBlock(ctx, tt.want.ID())
-			require.NoError(t, err, "GetBlock()")
-			gotB, ok := snowB.(adaptor.Block[*blocks.Block])
-			require.True(t, ok, "GetBlock() return a %T, expected an adaptor.Block[*blocks.Block]", snowB)
-			if diff := cmp.Diff(tt.want, gotB.Unwrap(), blocks.CmpOpt(), cmpopts.IgnoreFields(blocks.Block{}, "synchronous")); diff != "" {
-				t.Errorf("vm.GetBlock(...) mismatch (-want +got):\n%s", diff)
-			}
+			testGetBlock(t, tt.want)
 
-			id, err := sut.GetBlockIDAtHeight(ctx, snowB.Height())
+			id, err := sut.GetBlockIDAtHeight(ctx, tt.want.Height())
 			require.NoError(t, err, "GetBlockIdAtHeight()")
-			require.Equal(t, snowB.ID(), id)
+			require.Equal(t, tt.want.ID(), id)
 		})
 	}
+
+	t.Run("verified", func(t *testing.T) {
+		testGetBlock(t, verified)
+	})
 
 	t.Run("race with consensus", func(t *testing.T) {
 		// Simulate an acceptance by writing a block to the database after the blocks map is checked.
 		// This is in lieu of blocking the database read to verify and accept a block, but relies on
 		// implementation details of the method.
-		ethB := blockstest.NewEthBlock(sut.lastAcceptedBlock(t).EthBlock(), nil)
-		rawdb.WriteBlock(sut.db, ethB)
-		_, err := sut.GetBlock(ctx, ids.ID(ethB.Hash()))
+		// Creating the block through the VM creates a well-formed block, and rejecting it removes it from
+		// the inner block map.
+		b := sut.createAndVerifyBlock(t, createTx(t, zeroAddr))
+		require.NoErrorf(t, sut.rawVM.RejectBlock(ctx, b), "%T.RejectBlock()", sut.rawVM)
+		rawdb.WriteBlock(sut.db, b.EthBlock())
+		_, err := sut.GetBlock(ctx, b.ID())
 		require.ErrorIsf(t, err, database.ErrNotFound, "%T.GetBlock", sut)
 	})
 }
