@@ -24,6 +24,7 @@ import (
 type Stub struct {
 	Now                  func() time.Time
 	Target               gas.Gas
+	GasPriceConfig       hook.GasPriceConfig
 	Ops                  []hook.Op
 	ExecutionResultsDBFn func(string) (saedb.ExecutionResults, error)
 }
@@ -83,9 +84,9 @@ func (s *Stub) BlockRebuilderFrom(b *types.Block) hook.BlockBuilder {
 	}
 }
 
-// GasTargetAfter ignores its argument and always returns [Stub.Target].
-func (s *Stub) GasTargetAfter(*types.Header) gas.Gas {
-	return s.Target
+// GasConfigAfter ignores its argument and always returns [Stub.Target] and [Stub.GasPriceConfig].
+func (s *Stub) GasConfigAfter(*types.Header) (gas.Gas, hook.GasPriceConfig) {
+	return s.Target, s.GasPriceConfig
 }
 
 // SubSecondBlockTime returns the sub-second time encoded and stored by

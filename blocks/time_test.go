@@ -36,7 +36,8 @@ func TestGasTime(t *testing.T) {
 		Now: func() time.Time {
 			return time.Unix(unix, nanos)
 		},
-		Target: target,
+		Target:         target,
+		GasPriceConfig: gastime.DefaultGasPriceConfig(),
 	}
 	parent := &types.Header{
 		Number: big.NewInt(1),
@@ -73,7 +74,8 @@ func FuzzTimeExtraction(f *testing.F) {
 			Now: func() time.Time {
 				return time.Unix(unix, subSec)
 			},
-			Target: gas.Gas(target),
+			Target:         gas.Gas(target),
+			GasPriceConfig: gastime.DefaultGasPriceConfig(),
 		}
 		parent := &types.Header{
 			Number: big.NewInt(1),

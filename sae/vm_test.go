@@ -48,6 +48,7 @@ import (
 	"github.com/ava-labs/strevm/adaptor"
 	"github.com/ava-labs/strevm/blocks"
 	"github.com/ava-labs/strevm/blocks/blockstest"
+	"github.com/ava-labs/strevm/gastime"
 	"github.com/ava-labs/strevm/hook"
 	"github.com/ava-labs/strevm/hook/hookstest"
 	saeparams "github.com/ava-labs/strevm/params"
@@ -121,6 +122,7 @@ func newSUT(tb testing.TB, numAccounts uint, opts ...sutOption) (context.Context
 				ExecutionResultsDBFn: func(string) (saedb.ExecutionResults, error) {
 					return xdb, nil
 				},
+				GasPriceConfig: gastime.DefaultGasPriceConfig(),
 			},
 		},
 		logLevel: logging.Debug,

@@ -21,13 +21,16 @@ func (tm *Time) BeforeBlock(hooks hook.Points, h *types.Header) {
 	)
 }
 
-// AfterBlock is intended to be called after processing a block, with the target
-// sourced from [hook.Points] and [types.Header].
+// AfterBlock is intended to be called after processing a block, with the
+// target and gas configuration sourced from [hook.Points] and [types.Header].
 func (tm *Time) AfterBlock(used gas.Gas, hooks hook.Points, h *types.Header) error {
 	tm.Tick(used)
-	target := hooks.GasTargetAfter(h)
+	target, cfg := hooks.GasConfigAfter(h)
 	if err := tm.SetTarget(target); err != nil {
 		return fmt.Errorf("%T.SetTarget() after block: %w", tm, err)
+	}
+	if err := tm.SetConfig(cfg); err != nil {
+		return fmt.Errorf("%T.SetConfig() after block: %w", tm, err)
 	}
 	return nil
 }
