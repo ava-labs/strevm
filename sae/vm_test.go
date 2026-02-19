@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ava-labs/avalanchego/database"
 	"github.com/ava-labs/avalanchego/database/memdb"
 	"github.com/ava-labs/avalanchego/ids"
 	"github.com/ava-labs/avalanchego/snow"
@@ -50,6 +51,7 @@ import (
 	"github.com/ava-labs/strevm/hook"
 	"github.com/ava-labs/strevm/hook/hookstest"
 	saeparams "github.com/ava-labs/strevm/params"
+	"github.com/ava-labs/strevm/saedb"
 	"github.com/ava-labs/strevm/saetest"
 )
 
@@ -80,6 +82,7 @@ type SUT struct {
 	rawVM   *VM
 	genesis *blocks.Block
 	wallet  *saetest.Wallet
+	avaDB   database.Database
 	db      ethdb.Database
 	hooks   hook.Points
 	logger  *saetest.TBLogger
@@ -93,6 +96,7 @@ type (
 		vmConfig Config
 		logLevel logging.Level
 		genesis  core.Genesis
+		db       database.Database
 	}
 	sutOption = options.Option[sutConfig]
 )
@@ -108,11 +112,15 @@ func newSUT(tb testing.TB, numAccounts uint, opts ...sutOption) (context.Context
 
 	keys := saetest.NewUNSAFEKeyChain(tb, numAccounts)
 
+	xdb := saetest.NewExecutionResultsDB()
 	conf := options.ApplyTo(&sutConfig{
 		vmConfig: Config{
 			MempoolConfig: mempoolConf,
 			Hooks: &hookstest.Stub{
 				Target: 100e6,
+				ExecutionResultsDBFn: func(string) (saedb.ExecutionResults, error) {
+					return xdb, nil
+				},
 			},
 		},
 		logLevel: logging.Debug,
@@ -122,12 +130,14 @@ func newSUT(tb testing.TB, numAccounts uint, opts ...sutOption) (context.Context
 			Timestamp:  saeparams.TauSeconds,
 			Difficulty: big.NewInt(0), // irrelevant but required
 		},
+		db: memdb.New(),
 	}, opts...)
 
 	vm := NewSinceGenesis(conf.vmConfig)
 	snow := adaptor.Convert(vm)
 	tb.Cleanup(func() {
 		ctx := context.WithoutCancel(tb.Context())
+		require.NoError(tb, vm.last.accepted.Load().WaitUntilExecuted(ctx), "{last-accepted block}.WaitUntilExecuted()")
 		require.NoError(tb, snow.Shutdown(ctx), "Shutdown()")
 	})
 
@@ -142,17 +152,43 @@ func newSUT(tb testing.TB, numAccounts uint, opts ...sutOption) (context.Context
 		},
 	}
 
-	mdb := memdb.New()
 	require.NoError(tb, snow.Initialize(
 		ctx,
 		snowCtx,
-		mdb,
+		conf.db,
 		marshalJSON(tb, conf.genesis),
 		nil, // upgrade bytes
 		nil, // config bytes (not ChainConfig)
 		nil, // Fxs
 		sender,
 	), "Initialize()")
+
+	rpcClient, ethClient := dialRPC(ctx, tb, snow)
+
+	validators, ok := snowCtx.ValidatorState.(*validatorstest.State)
+	require.Truef(tb, ok, "unexpected type %T for snowCtx.ValidatorState", snowCtx.ValidatorState)
+	return ctx, &SUT{
+		ChainVM:   snow,
+		Client:    ethClient,
+		rpcClient: rpcClient,
+		rawVM:     vm.VM,
+		genesis:   vm.last.settled.Load(),
+		wallet: saetest.NewWalletWithKeyChain(
+			keys,
+			types.LatestSigner(conf.genesis.Config),
+		),
+		avaDB:  conf.db,
+		db:     newEthDB(conf.db),
+		hooks:  conf.vmConfig.Hooks,
+		logger: logger,
+
+		validators: validators,
+		sender:     sender,
+	}
+}
+
+func dialRPC(ctx context.Context, tb testing.TB, snow block.ChainVM) (*rpc.Client, *ethclient.Client) {
+	tb.Helper()
 
 	handlers, err := snow.CreateHandlers(ctx)
 	require.NoErrorf(tb, err, "%T.CreateHandlers()", snow)
@@ -163,25 +199,7 @@ func newSUT(tb testing.TB, numAccounts uint, opts ...sutOption) (context.Context
 	client := ethclient.NewClient(rpcClient)
 	tb.Cleanup(client.Close)
 
-	validators, ok := snowCtx.ValidatorState.(*validatorstest.State)
-	require.Truef(tb, ok, "unexpected type %T for snowCtx.ValidatorState", snowCtx.ValidatorState)
-	return ctx, &SUT{
-		ChainVM:   snow,
-		Client:    client,
-		rpcClient: rpcClient,
-		rawVM:     vm.VM,
-		genesis:   vm.last.settled.Load(),
-		wallet: saetest.NewWalletWithKeyChain(
-			keys,
-			types.LatestSigner(conf.genesis.Config),
-		),
-		db:     newEthDB(mdb),
-		hooks:  conf.vmConfig.Hooks,
-		logger: logger,
-
-		validators: validators,
-		sender:     sender,
-	}
+	return rpcClient, client
 }
 
 func marshalJSON(tb testing.TB, v any) []byte {
@@ -244,6 +262,19 @@ func withVMTime(tb testing.TB, startTime time.Time) (sutOption, *vmTime) {
 	})
 
 	return opt, t
+}
+
+// withExecResultsDB returns an option that replaces the default
+// execution-results database with the provided one. If an earlier option
+// replaces the [hook.Points] with a concrete type other that [hookstest.Stub]
+// then this option will panic.
+func withExecResultsDB(hdb database.HeightIndex) sutOption {
+	return options.Func[sutConfig](func(c *sutConfig) {
+		s := c.vmConfig.Hooks.(*hookstest.Stub) //nolint:forcetypeassert // Test-only and panic() scenario documented above
+		s.ExecutionResultsDBFn = func(string) (saedb.ExecutionResults, error) {
+			return saedb.ExecutionResults{HeightIndex: hdb}, nil
+		}
+	})
 }
 
 func withBloomSectionSize(size uint64) sutOption {
@@ -322,12 +353,14 @@ func (s *SUT) createAndAcceptBlock(tb testing.TB, txs ...*types.Transaction) *bl
 	return s.runConsensusLoop(tb, s.lastAcceptedBlock(tb))
 }
 
-// runConsensusLoop sets the preference to the specified block then builds,
-// verifies, accepts, and returns the new block. It does NOT wait for it to be
-// executed; to do this automatically, set the [VM] to [snow.Bootstrapping].
+// runConsensusLoop syncs the mempool, sets the preference to the specified
+// block, then builds, verifies, accepts, and returns the new block. It does NOT
+// wait for it to be executed; to do this automatically, set the [VM] to
+// [snow.Bootstrapping].
 func (s *SUT) runConsensusLoop(tb testing.TB, preference *blocks.Block) *blocks.Block {
 	tb.Helper()
 
+	s.syncMempool(tb)
 	ctx := s.context(tb)
 	require.NoError(tb, s.SetPreference(ctx, preference.ID()), "SetPreference()")
 
@@ -523,6 +556,7 @@ func TestEmptyChainConfig(t *testing.T) {
 	for range 5 {
 		sut.runConsensusLoop(t, sut.lastAcceptedBlock(t))
 	}
+	sut.waitUntilExecuted(t, sut.lastAcceptedBlock(t))
 }
 
 func TestSyntacticBlockChecks(t *testing.T) {

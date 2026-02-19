@@ -123,6 +123,26 @@ func (vm *VM) ethRPCServer() (*rpc.Server, error) {
 		{"eth", filterAPI},
 	}
 
+	if vm.config.RPCConfig.EnableDBInspecting {
+		apis = append(apis, api{
+			// Geth-specific APIs:
+			// - debug_chaindbCompact
+			// - debug_chaindbProperty
+			// - debug_dbAncient
+			// - debug_dbAncients
+			// - debug_dbGet
+			// - debug_getRawTransaction
+			// - debug_printBlock
+			// - debug_setHead          (no-op, logs info)
+			//
+			// TODO: implement once BlockByNumberOrHash and GetReceipts exist:
+			// - debug_getRawBlock
+			// - debug_getRawHeader
+			// - debug_getRawReceipts
+			"debug", ethapi.NewDebugAPI(b),
+		})
+	}
+
 	if vm.config.RPCConfig.EnableProfiling {
 		apis = append(apis, api{
 			// Geth-specific APIs:
@@ -251,8 +271,12 @@ type ethAPIBackend struct {
 	chainIndexer
 	bloomOverrider
 	*bloomIndexer
+}
 
-	ethapi.Backend // TODO(arr4n) remove once all methods are implemented
+var _ APIBackend = (*ethAPIBackend)(nil)
+
+func (b *ethAPIBackend) ChainDb() ethdb.Database {
+	return b.vm.db
 }
 
 func (b *ethAPIBackend) ChainConfig() *params.ChainConfig {
@@ -380,6 +404,54 @@ func readByHash[T any](b *ethAPIBackend, hash common.Hash, read canonicalReader[
 	return read(b.vm.db, hash, *num)
 }
 
+var (
+	errNeitherNumberNorHash = fmt.Errorf("%T carrying neither number nor hash", rpc.BlockNumberOrHash{})
+	errBothNumberAndHash    = fmt.Errorf("%T carrying both number and hash", rpc.BlockNumberOrHash{})
+	errNonCanonicalBlock    = errors.New("non-canonical block")
+)
+
+func (b *ethAPIBackend) resolveBlockNumberOrHash(numOrHash rpc.BlockNumberOrHash) (uint64, common.Hash, error) {
+	rpcNum, isNum := numOrHash.Number()
+	hash, isHash := numOrHash.Hash()
+
+	switch {
+	case isNum && isHash:
+		return 0, common.Hash{}, errBothNumberAndHash
+
+	case isNum:
+		num, err := b.resolveBlockNumber(rpcNum)
+		if err != nil {
+			return 0, common.Hash{}, err
+		}
+
+		hash := rawdb.ReadCanonicalHash(b.db, num)
+		if hash == (common.Hash{}) {
+			return 0, common.Hash{}, fmt.Errorf("block %d not found", num)
+		}
+		return num, hash, nil
+
+	case isHash:
+		if bl, ok := b.vm.blocks.Load(hash); ok {
+			n := bl.NumberU64()
+			if numOrHash.RequireCanonical && hash != rawdb.ReadCanonicalHash(b.db, n) {
+				return 0, common.Hash{}, errNonCanonicalBlock
+			}
+			return n, hash, nil
+		}
+
+		numPtr := rawdb.ReadHeaderNumber(b.db, hash)
+		if numPtr == nil {
+			return 0, common.Hash{}, fmt.Errorf("block %#x not found", hash)
+		}
+		// We only write canonical blocks to the database so there's no need to
+		// perform a check.
+		return *numPtr, hash, nil
+
+	default:
+		return 0, common.Hash{}, errNeitherNumberNorHash
+	}
+}
+
 var errFutureBlockNotResolved = errors.New("not accepted yet")
 
 func (b *ethAPIBackend) ResolveBlockNumber(bn rpc.BlockNumber) (uint64, error) {
@@ -455,6 +527,10 @@ func (b *ethAPIBackend) SubscribePendingLogsEvent(chan<- []*types.Log) event.Sub
 	// In SAE, "pending" refers to the execution status. There are no logs known
 	// for transactions pending execution.
 	return newNoopSubscription()
+}
+
+func (b *ethAPIBackend) SetHead(uint64) {
+	b.vm.log().Info("debug_setHead called but not supported by SAE")
 }
 
 type noopSubscription struct {
