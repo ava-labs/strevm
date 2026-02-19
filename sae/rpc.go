@@ -30,7 +30,6 @@ import (
 	"github.com/ava-labs/libevm/libevm/ethapi"
 	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/rpc"
-	"go.uber.org/zap"
 
 	"github.com/ava-labs/strevm/saexec"
 	"github.com/ava-labs/strevm/txgossip"
@@ -154,19 +153,6 @@ func (vm *VM) ethRPCServer() (*rpc.Server, error) {
 		//  - logs
 		{"eth", filterAPI},
 		// Geth-specific APIs:
-		// - debug_chainDbCompact
-		// - debug_chainDbProperty
-		// - debug_dbAncient
-		// - debug_dbAncients
-		// - debug_dbGet
-		// - debug_getRawBlock
-		// - debug_getRawHeader
-		// - debug_getRawReceipts
-		// - debug_getRawTransaction
-		// - debug_printBlock
-		// - debug_setHead
-		{"debug", ethapi.NewDebugAPI(b)},
-		// Geth-specific APIs:
 		// - debug_intermediateRoots
 		// - debug_standardTraceBadBlockToFile
 		// - debug_standardTraceBlockToFile
@@ -179,6 +165,23 @@ func (vm *VM) ethRPCServer() (*rpc.Server, error) {
 		// - debug_traceChain
 		// - debug_traceTransaction
 		{"debug", tracers.NewAPI(b)},
+	}
+	if vm.config.RPCConfig.EnableDBInspecting {
+		apis = append(apis, api{
+			// Geth-specific APIs:
+			// - debug_chainDbCompact
+			// - debug_chainDbProperty
+			// - debug_dbAncient
+			// - debug_dbAncients
+			// - debug_dbGet
+			// - debug_getRawBlock
+			// - debug_getRawHeader
+			// - debug_getRawReceipts
+			// - debug_getRawTransaction
+			// - debug_printBlock
+			// - debug_setHead
+			"debug", ethapi.NewDebugAPI(b),
+		})
 	}
 	if vm.config.RPCConfig.EnableProfiling {
 		apis = append(apis, api{
@@ -341,6 +344,10 @@ type ethAPIBackend struct {
 
 var _ APIBackend = (*ethAPIBackend)(nil)
 
+func (b *ethAPIBackend) ChainDb() ethdb.Database {
+	return b.vm.db
+}
+
 func (b *ethAPIBackend) ChainConfig() *params.ChainConfig {
 	return b.vm.exec.ChainConfig()
 }
@@ -372,22 +379,10 @@ func (b *ethAPIBackend) SyncProgress() ethereum.SyncProgress {
 	return ethereum.SyncProgress{}
 }
 
-func (b *ethAPIBackend) ChainDb() ethdb.Database {
-	return b.vm.db
-}
-
 func (b *ethAPIBackend) ExtRPCEnabled() bool {
 	// This is only used as an additional security measure for the personal API,
 	// which we do not support in its entirety.
 	return true
-}
-
-func (b *ethAPIBackend) SetHead(number uint64) {
-	// SAE does not support reorgs. We ignore any attempts to override the chain
-	// head.
-	b.vm.log().Warn("ignoring attempt to override the chain head",
-		zap.Uint64("number", number),
-	)
 }
 
 func (b *ethAPIBackend) HeaderByNumber(ctx context.Context, n rpc.BlockNumber) (*types.Header, error) {
@@ -597,6 +592,10 @@ func (*ethAPIBackend) SubscribePendingLogsEvent(chan<- []*types.Log) event.Subsc
 	// In SAE, "pending" refers to the execution status. There are no logs known
 	// for transactions pending execution.
 	return newNoopSubscription()
+}
+
+func (b *ethAPIBackend) SetHead(uint64) {
+	b.vm.log().Info("debug_setHead called but not supported by SAE")
 }
 
 type noopSubscription struct {
