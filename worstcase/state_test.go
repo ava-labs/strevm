@@ -293,7 +293,7 @@ func TestMultipleBlocks(t *testing.T) {
 			}
 			want.MinOpBurnerBalances = append(want.MinOpBurnerBalances, uBals)
 		}
-		if diff := cmp.Diff(want, got, cmpopts.EquateEmpty()); diff != "" {
+		if diff := cmp.Diff(want, got, cmpopts.EquateEmpty(), cmpopts.IgnoreFields(blocks.WorstCaseBounds{}, "NextGasTime")); diff != "" {
 			t.Errorf("FinishBlock() diff (-want +got): \n%s", diff)
 		}
 

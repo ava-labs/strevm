@@ -37,6 +37,9 @@ type Backend interface {
 	ResolveBlockNumber(bn rpc.BlockNumber) (uint64, error)
 	BlockByNumber(ctx context.Context, number rpc.BlockNumber) (*types.Block, error)
 	SubscribeChainAcceptedEvent(ch chan<- *types.Block) event.Subscription
+	// NextBaseFeeUpperBound returns the worst-case (upper-bound) base fee for
+	// the block after the last accepted head. Returns nil when unavailable.
+	NextBaseFeeUpperBound(ctx context.Context) *big.Int
 }
 
 // Estimator provides gas-price suggestions and fee-history data for SAE
@@ -186,7 +189,12 @@ func (e *Estimator) FeeHistory(ctx context.Context, blocks uint64, unresolvedLas
 		blocks = e.cfg.MaxCallBlockHistory
 	}
 
-	last, blocks, err := e.clampBlockRange(ctx, unresolvedLastBlock, blocks)
+	lastAcceptedNumber, err := e.backend.ResolveBlockNumber(rpc.PendingBlockNumber)
+	if err != nil {
+		return common.Big0, nil, nil, nil, err
+	}
+
+	last, blocks, err := e.clampBlockRange(ctx, lastAcceptedNumber, unresolvedLastBlock, blocks)
 	if err != nil || blocks == 0 {
 		return common.Big0, nil, nil, nil, err
 	}
@@ -229,7 +237,41 @@ func (e *Estimator) FeeHistory(ctx context.Context, blocks uint64, unresolvedLas
 	} else {
 		reward = nil
 	}
+
+	// Append the base fee of the block after the newest processed block,
+	// matching the eth_feeHistory convention of blocks+1 baseFee entries.
+	lastNumber := first + filled - 1
+	nextBaseFee, err := e.nextBaseFee(ctx, lastAcceptedNumber, lastNumber)
+	if err != nil {
+		return common.Big0, nil, nil, nil, err
+	}
+	if nextBaseFee == nil {
+		// Prediction unavailable (e.g. initialization with no worst-case bounds).
+		// Repeat the last block's base fee as a conservative fallback to
+		// satisfy the eth_feeHistory contract of blocks+1 baseFee entries.
+		nextBaseFee = baseFee[filled-1]
+	}
+	baseFee = append(baseFee, nextBaseFee)
+
 	return new(big.Int).SetUint64(first), reward, baseFee, gasUsedRatio, nil
+}
+
+// nextBaseFee returns the base fee for the block after [number]. If block
+// number+1 exists on chain, its header base fee is returned. Otherwise (i.e.
+// [number] is the accepted head), the worst-case upper-bound prediction is
+// returned. Returns (nil, nil) when neither source is available.
+func (e *Estimator) nextBaseFee(ctx context.Context, lastAcceptedNumber uint64, number uint64) (*big.Int, error) {
+	if number == lastAcceptedNumber {
+		return e.backend.NextBaseFeeUpperBound(ctx), nil
+	}
+	nextBaseFee, err := e.getFeeHistoryInfo(ctx, number+1)
+	if err != nil {
+		return nil, err
+	}
+	if nextBaseFee == nil {
+		return nil, nil
+	}
+	return nextBaseFee.baseFee, nil
 }
 
 // validatePercentiles checks that every value in percentiles is in 0..100 and
@@ -289,15 +331,11 @@ func (e *Estimator) getFeeHistoryInfo(ctx context.Context, number uint64) (*feeI
 //
 // Returns the resolved last block number and the (possibly reduced) count.
 // A zero count with nil error means no retrievable blocks exist in the range.
-func (e *Estimator) clampBlockRange(ctx context.Context, reqEnd rpc.BlockNumber, count uint64) (uint64, uint64, error) {
+func (e *Estimator) clampBlockRange(ctx context.Context, lastAcceptedNumber uint64, reqEnd rpc.BlockNumber, count uint64) (uint64, uint64, error) {
 	if count == 0 {
 		return 0, 0, nil
 	}
 	endNum, err := e.backend.ResolveBlockNumber(reqEnd)
-	if err != nil {
-		return 0, 0, err
-	}
-	lastAcceptedNumber, err := e.backend.ResolveBlockNumber(rpc.PendingBlockNumber)
 	if err != nil {
 		return 0, 0, err
 	}

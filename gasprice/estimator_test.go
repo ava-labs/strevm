@@ -25,6 +25,8 @@ import (
 
 var testChainConfig = saetest.ChainConfig()
 
+var backendBaseFee = big.NewInt(875_000_000)
+
 // testBlockGen is a simplified block generator for tests, replacing core.BlockGen.
 type testBlockGen struct {
 	baseFee *big.Int
@@ -48,9 +50,10 @@ func (bg *testBlockGen) AddTx(tx *types.Transaction) {
 
 // testBackend is an in-memory implementation of EstimatorBackend for tests.
 type testBackend struct {
-	blocks     []*types.Block // blocks[i] is block with number i
-	acceptedCh chan<- *types.Block
-	pruned     []uint64 // block numbers that return (nil, nil)
+	blocks                []*types.Block // blocks[i] is block with number i
+	acceptedCh            chan<- *types.Block
+	pruned                []uint64 // block numbers that return (nil, nil)
+	nextBaseFeeUpperBound *big.Int // returned by NextBaseFeeUpperBound
 }
 
 func (b *testBackend) lastBlock() *types.Block {
@@ -99,18 +102,20 @@ func (b *testBackend) SubscribeChainAcceptedEvent(ch chan<- *types.Block) event.
 	})
 }
 
+func (b *testBackend) NextBaseFeeUpperBound(context.Context) *big.Int {
+	return b.nextBaseFeeUpperBound
+}
+
 // newTestBackend creates a test backend with [numBlocks] blocks (plus genesis).
 // The [genBlock] function is called for each non-genesis block to populate it
 // with transactions.
 func newTestBackend(t *testing.T, numBlocks int, genBlock func(int, *testBlockGen)) *testBackend {
 	t.Helper()
 
-	baseFee := big.NewInt(875_000_000) // ~0.875 GWei
-
 	// Create genesis block (block 0)
 	genesis := types.NewBlock(&types.Header{
 		Number:   big.NewInt(0),
-		BaseFee:  new(big.Int).Set(baseFee),
+		BaseFee:  new(big.Int).Set(backendBaseFee),
 		Time:     0,
 		GasLimit: 8_000_000,
 	}, nil, nil, nil, saetest.TrieHasher())
@@ -122,7 +127,7 @@ func newTestBackend(t *testing.T, numBlocks int, genBlock func(int, *testBlockGe
 	parent := genesis
 	for i := 0; i < numBlocks; i++ {
 		bg := &testBlockGen{
-			baseFee: new(big.Int).Set(baseFee),
+			baseFee: new(big.Int).Set(backendBaseFee),
 			nonces:  nonces,
 		}
 		if genBlock != nil {
@@ -135,7 +140,7 @@ func newTestBackend(t *testing.T, numBlocks int, genBlock func(int, *testBlockGe
 		}
 
 		block := blockstest.NewEthBlock(parent, bg.txs, blockstest.ModifyHeader(func(h *types.Header) {
-			h.BaseFee = new(big.Int).Set(baseFee)
+			h.BaseFee = new(big.Int).Set(backendBaseFee)
 			h.Time = parent.Time() + 2
 			h.GasLimit = 8_000_000
 			h.GasUsed = gasUsed
@@ -373,16 +378,22 @@ func TestSuggestTipCapMaxBlocksSecondsLookback(t *testing.T) {
 }
 
 func TestFeeHistory(t *testing.T) {
+	upperBound := big.NewInt(999_999_999)
+	lastBlockNumber := 32
+
 	cases := []struct {
-		maxCallBlock uint64
-		maxBlock     uint64
-		count        uint64
-		last         rpc.BlockNumber
-		percent      []float64
-		pruned       []uint64
-		expFirst     uint64
-		expCount     int
-		expErr       error
+		name                  string
+		maxCallBlock          uint64
+		maxBlock              uint64
+		count                 uint64
+		last                  rpc.BlockNumber
+		percent               []float64
+		pruned                []uint64
+		nextBaseFeeUpperBound *big.Int
+		expFirst              uint64
+		expCount              int
+		expErr                error
+		expLastBaseFee        *big.Int // if set, assert last baseFee entry equals this value
 	}{
 		// Standard libevm tests
 		{maxCallBlock: 0, maxBlock: 1000, count: 10, last: 30, percent: nil, expFirst: 21, expCount: 10, expErr: nil},
@@ -411,50 +422,109 @@ func TestFeeHistory(t *testing.T) {
 		{maxCallBlock: 0, maxBlock: 1000, count: 5, last: 7, percent: []float64{50}, pruned: []uint64{5}, expFirst: 3, expCount: 2, expErr: nil}, // pruned in middle truncates
 		{maxCallBlock: 0, maxBlock: 1000, count: 3, last: 5, percent: []float64{50}, pruned: []uint64{3}, expFirst: 0, expCount: 0, expErr: nil}, // first block pruned returns empty
 		{maxCallBlock: 0, maxBlock: 1000, count: 3, last: 7, percent: nil, pruned: []uint64{7}, expFirst: 5, expCount: 2, expErr: nil},           // last block pruned
+
+		// Next base fee tests: verify the +1 baseFee entry value
+		{
+			name:                  "block_range_ends_at_head_uses_upper_bound",
+			maxBlock:              1000,
+			count:                 3,
+			last:                  rpc.BlockNumber(lastBlockNumber),
+			nextBaseFeeUpperBound: upperBound,
+			expFirst:              30,
+			expCount:              3,
+			expLastBaseFee:        upperBound,
+		},
+		{
+			name:                  "pending_resolves_to_head_uses_upper_bound",
+			maxBlock:              1000,
+			count:                 1,
+			last:                  rpc.PendingBlockNumber,
+			nextBaseFeeUpperBound: upperBound,
+			expFirst:              32,
+			expCount:              1,
+			expLastBaseFee:        upperBound,
+		},
+		{
+			name:                  "range_ends_before_head_uses_available_block_header",
+			maxBlock:              1000,
+			count:                 1,
+			last:                  30,
+			nextBaseFeeUpperBound: upperBound,
+			expFirst:              30,
+			expCount:              1,
+			expLastBaseFee:        backendBaseFee,
+		},
+		{
+			name:                  "range_ends_at_head_nil_upper_bound_falls_back",
+			maxBlock:              1000,
+			count:                 1,
+			last:                  32,
+			nextBaseFeeUpperBound: nil,
+			expFirst:              32,
+			expCount:              1,
+			expLastBaseFee:        backendBaseFee,
+		},
 	}
 	for i, c := range cases {
-		kc := saetest.NewUNSAFEKeyChain(t, 1)
-		addr := kc.Addresses()[0]
-		signer := types.LatestSigner(testChainConfig)
-		tip := big.NewInt(1 * params.GWei)
-		backend := newTestBackend(t, 32, func(i int, b *testBlockGen) {
-			baseFee := b.BaseFee()
-			feeCap := new(big.Int).Add(baseFee, tip)
+		name := c.name
+		if name == "" {
+			name = fmt.Sprintf("case_%d", i)
+		}
+		t.Run(name, func(t *testing.T) {
+			kc := saetest.NewUNSAFEKeyChain(t, 1)
+			addr := kc.Addresses()[0]
+			signer := types.LatestSigner(testChainConfig)
+			tip := big.NewInt(1 * params.GWei)
+			backend := newTestBackend(t, lastBlockNumber, func(i int, b *testBlockGen) {
+				baseFee := b.BaseFee()
+				feeCap := new(big.Int).Add(baseFee, tip)
 
-			tx := kc.SignTx(t, signer, 0, &types.DynamicFeeTx{
-				ChainID:   testChainConfig.ChainID,
-				Nonce:     b.TxNonce(addr),
-				To:        &common.Address{},
-				Gas:       params.TxGas,
-				GasFeeCap: feeCap,
-				GasTipCap: tip,
-				Data:      []byte{},
+				tx := kc.SignTx(t, signer, 0, &types.DynamicFeeTx{
+					ChainID:   testChainConfig.ChainID,
+					Nonce:     b.TxNonce(addr),
+					To:        &common.Address{},
+					Gas:       params.TxGas,
+					GasFeeCap: feeCap,
+					GasTipCap: tip,
+					Data:      []byte{},
+				})
+				b.AddTx(tx)
 			})
-			b.AddTx(tx)
+			backend.pruned = c.pruned
+			backend.nextBaseFeeUpperBound = c.nextBaseFeeUpperBound
+			cfg := DefaultConfig()
+			if c.maxCallBlock != 0 {
+				cfg.MaxCallBlockHistory = c.maxCallBlock
+			}
+			if c.maxBlock != 0 {
+				cfg.MaxBlockHistory = c.maxBlock
+			}
+			estimator, err := NewEstimator(backend, cfg)
+			require.NoError(t, err)
+			defer estimator.Close()
+
+			first, reward, baseFee, ratio, err := estimator.FeeHistory(context.Background(), c.count, c.last, c.percent)
+			expReward := c.expCount
+			if len(c.percent) == 0 {
+				expReward = 0
+			}
+			// baseFee always includes a +1 entry for the block after the range,
+			// matching the eth_feeHistory convention.
+			expBaseFee := c.expCount
+			if c.expCount > 0 {
+				expBaseFee++
+			}
+
+			assert.Equal(t, c.expFirst, first.Uint64(), "first block")
+			assert.Len(t, reward, expReward, "reward length")
+			assert.Len(t, baseFee, expBaseFee, "baseFee length")
+			assert.Len(t, ratio, c.expCount, "gasUsedRatio length")
+			assert.ErrorIs(t, err, c.expErr, "error")
+
+			if c.expLastBaseFee != nil {
+				lastFee := baseFee[len(baseFee)-1]
+				assert.Equal(t, c.expLastBaseFee, lastFee, "last baseFee")
+			}
 		})
-		backend.pruned = c.pruned
-		cfg := DefaultConfig()
-		if c.maxCallBlock != 0 {
-			cfg.MaxCallBlockHistory = c.maxCallBlock
-		}
-		if c.maxBlock != 0 {
-			cfg.MaxBlockHistory = c.maxBlock
-		}
-		estimator, err := NewEstimator(backend, cfg)
-		require.NoError(t, err)
-		defer estimator.Close()
-
-		first, reward, baseFee, ratio, err := estimator.FeeHistory(context.Background(), c.count, c.last, c.percent)
-		expReward := c.expCount
-		if len(c.percent) == 0 {
-			expReward = 0
-		}
-		expBaseFee := c.expCount
-
-		assert.Equal(t, c.expFirst, first.Uint64(), "case %d: first block", i)
-		assert.Len(t, reward, expReward, "case %d: reward length", i)
-		assert.Len(t, baseFee, expBaseFee, "case %d: baseFee length", i)
-		assert.Len(t, ratio, c.expCount, "case %d: gasUsedRatio length", i)
-		assert.ErrorIs(t, err, c.expErr, "case %d: error", i)
 	}
 }

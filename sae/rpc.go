@@ -430,6 +430,14 @@ func (b *ethAPIBackend) SubscribeChainAcceptedEvent(ch chan<- *types.Block) even
 	return b.vm.exec.SubscribeBlockEnqueueEvent(ch)
 }
 
+func (b *ethAPIBackend) NextBaseFeeUpperBound(context.Context) *big.Int {
+	bounds := b.vm.last.accepted.Load().WorstCaseBounds()
+	if bounds == nil || bounds.NextGasTime == nil {
+		return nil
+	}
+	return bounds.NextGasTime.BaseFee().ToBig()
+}
+
 func (b *ethAPIBackend) SubscribeNewTxsEvent(ch chan<- core.NewTxsEvent) event.Subscription {
 	return b.Set.Pool.SubscribeTransactions(ch, true)
 }
