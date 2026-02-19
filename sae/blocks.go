@@ -359,7 +359,7 @@ func (vm *VM) VerifyBlock(ctx context.Context, bCtx *block.Context, b *blocks.Bl
 func canonicalBlock(db ethdb.Database, num uint64) (*types.Block, error) {
 	b := rawdb.ReadBlock(db, rawdb.ReadCanonicalHash(db, num), num)
 	if b == nil {
-		return nil, fmt.Errorf("%w: no canonical block at height %d", database.ErrNotFound, num)
+		return nil, fmt.Errorf("no canonical block at height %d", num)
 	}
 	return b, nil
 }
@@ -372,12 +372,14 @@ func canonicalBlock(db ethdb.Database, num uint64) (*types.Block, error) {
 // required for blocks that have been rejected by the consensus engine to be
 // able to be fetched.
 //
-// Consensus guarantees that [snowman.Block.Reject] and [snowman.Block.Accept] will
-// each only be called once per block, so any already-accepted block will not have
-// [VM.AcceptBlock] called again.
+// It is the user's responsibility to guarantee no concurrent calls to
+// [snowman.Block.Verify] and [snowman.Block.Accept], since if both of these
+// occur, there is no way to guarantee that the block will be reported correctly.
+// In this case, if a race occurs, [database.ErrNotFound] will be returned.
 func (vm *VM) GetBlock(_ context.Context, id ids.ID) (*blocks.Block, error) {
 	var _ snowman.Block // protect the input to allow comment linking
 	hash := common.Hash(id)
+	lastAccepted := vm.last.accepted.Load().NumberU64()
 
 	// Will find all verified/accepted blocks not settled.
 	b, ok := vm.blocks.Load(hash)
@@ -388,14 +390,21 @@ func (vm *VM) GetBlock(_ context.Context, id ids.ID) (*blocks.Block, error) {
 	// If not in memory, then it must be settled and on disk.
 	ethB := readByHash(vm, hash, (*blocks.Block).EthBlock, rawdb.ReadBlock)
 	if ethB == nil {
-		return nil, fmt.Errorf("%w: block %s not found on disk", database.ErrNotFound, id)
+		return nil, database.ErrNotFound
+	}
+
+	if ethB.NumberU64() > lastAccepted {
+		// RACY BEHAVIOR: ChainVM.GetBlock was called concurrently with [snowman.Block.Verify] and [snowman.Block.Accept]
+		// SAE cannot handle this behavior any more gracefully then simply returning an error - it is the user's responsibility
+		// to prevent this from occurring.
+		return nil, database.ErrNotFound
 	}
 
 	b, err := vm.newBlock(ethB, nil, nil)
 	if err != nil {
 		return nil, err
 	}
-	if err := vm.exec.ExecutionResults(b); err != nil {
+	if err := b.RestoreExecutionArtefacts(vm.db, vm.xdb, vm.exec.ChainConfig()); err != nil {
 		return nil, err
 	}
 	// TODO: should we distinguish between sync and async blocks?

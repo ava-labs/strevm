@@ -137,8 +137,3 @@ func (e *Executor) StateCache() state.Database {
 func (e *Executor) LastExecuted() *blocks.Block {
 	return e.lastExecuted.Load()
 }
-
-// ExecutionResults fills a block with any associated execution results.
-func (e *Executor) ExecutionResults(b *blocks.Block) error {
-	return b.RestoreExecutionArtefacts(e.db, e.xdb, e.chainConfig)
-}

@@ -166,7 +166,7 @@ func TestSubscriptions(t *testing.T) {
 	runConsensusLoop := func(wantLogs ...types.Log) {
 		t.Helper()
 
-		b := sut.runConsensusLoop(t, sut.lastAcceptedBlock(t), true)
+		b := sut.runConsensusLoop(t, sut.lastAcceptedBlock(t))
 		require.Equal(t, b.Hash(), (<-newHeads).Hash(), "header hash from newHeads subscription")
 
 		for _, want := range wantLogs {
@@ -1179,17 +1179,17 @@ func TestResolveBlockNumberOrHash(t *testing.T) {
 	opt, vmTime := withVMTime(t, time.Unix(saeparams.TauSeconds, 0))
 	ctx, sut := newSUT(t, 0, opt)
 
-	settled := sut.runConsensusLoop(t, sut.lastAcceptedBlock(t), true)
+	settled := sut.runConsensusLoop(t, sut.lastAcceptedBlock(t))
 	vmTime.advanceToSettle(ctx, t, settled)
 
 	for range 2 {
-		b := sut.runConsensusLoop(t, sut.lastAcceptedBlock(t), true)
+		b := sut.runConsensusLoop(t, sut.lastAcceptedBlock(t))
 		vmTime.advanceToSettle(ctx, t, b)
 	}
 	_, ok := sut.rawVM.blocks.Load(settled.Hash())
 	require.False(t, ok, "settled block still in VM memory")
 
-	accepted := sut.runConsensusLoop(t, sut.lastAcceptedBlock(t), true)
+	accepted := sut.runConsensusLoop(t, sut.lastAcceptedBlock(t))
 	require.NoError(t, sut.SetPreference(ctx, accepted.ID()), "SetPreference()")
 
 	b, err := sut.BuildBlock(ctx)

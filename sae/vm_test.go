@@ -345,16 +345,20 @@ func (s *SUT) requireInMempool(tb testing.TB, txs ...common.Hash) {
 func (s *SUT) createAndAcceptBlock(tb testing.TB, txs ...*types.Transaction) *blocks.Block {
 	tb.Helper()
 
-	return s.createBlockWithTxs(tb, true, txs...)
+	s.createBlockWithTxs(tb, true, txs...)
+	return s.runConsensusLoop(tb, s.lastAcceptedBlock(tb))
 }
 
 func (s *SUT) createAndVerifyBlock(tb testing.TB, txs ...*types.Transaction) *blocks.Block {
 	tb.Helper()
 
-	return s.createBlockWithTxs(tb, false, txs...)
+	s.createBlockWithTxs(tb, false, txs...)
+	b := s.buildAndParseBlock(tb, s.lastAcceptedBlock(tb))
+	require.NoErrorf(tb, b.Verify(s.context(tb)), "%T.Verify()", b)
+	return b.(adaptor.Block[*blocks.Block]).Unwrap() //nolint:forcetypeassert // it's a test and guaranteed
 }
 
-func (s *SUT) createBlockWithTxs(tb testing.TB, accept bool, txs ...*types.Transaction) *blocks.Block {
+func (s *SUT) createBlockWithTxs(tb testing.TB, accept bool, txs ...*types.Transaction) {
 	tb.Helper()
 
 	txHashes := make([]common.Hash, len(txs))
@@ -363,14 +367,9 @@ func (s *SUT) createBlockWithTxs(tb testing.TB, accept bool, txs ...*types.Trans
 		txHashes[i] = tx.Hash()
 	}
 	s.requireInMempool(tb, txHashes...)
-	return s.runConsensusLoop(tb, s.lastAcceptedBlock(tb), true)
 }
 
-// runConsensusLoop syncs the mempool, sets the preference to the specified
-// block, then builds, verifies, accepts, and returns the new block. It does NOT
-// wait for it to be executed; to do this automatically, set the [VM] to
-// [snow.Bootstrapping].
-func (s *SUT) runConsensusLoop(tb testing.TB, preference *blocks.Block, accept bool) *blocks.Block {
+func (s *SUT) buildAndParseBlock(tb testing.TB, preference *blocks.Block) snowman.Block {
 	tb.Helper()
 
 	s.syncMempool(tb)
@@ -383,13 +382,20 @@ func (s *SUT) runConsensusLoop(tb testing.TB, preference *blocks.Block, accept b
 	// the block.
 	b, err := s.ParseBlock(ctx, proposed.Bytes())
 	require.NoError(tb, err, "ParseBlock(BuildBlock().Bytes())")
+	return b
+}
 
+// runConsensusLoop syncs the mempool, sets the preference to the specified
+// block, then builds, verifies, accepts, and returns the new block. It does NOT
+// wait for it to be executed; to do this automatically, set the [VM] to
+// [snow.Bootstrapping].
+func (s *SUT) runConsensusLoop(tb testing.TB, preference *blocks.Block) *blocks.Block {
+	tb.Helper()
+
+	b := s.buildAndParseBlock(tb, preference)
+
+	ctx := s.context(tb)
 	require.NoErrorf(tb, b.Verify(ctx), "%T.Verify()", b)
-
-	if !accept {
-		return b.(adaptor.Block[*blocks.Block]).Unwrap() //nolint:forcetypeassert // it's a test and guaranteed
-	}
-
 	require.NoErrorf(tb, b.Accept(ctx), "%T.Accept()", b)
 
 	return s.lastAcceptedBlock(tb)
@@ -537,7 +543,7 @@ func TestIntegration(t *testing.T) {
 	sut.syncMempool(t) // technically we've only proven 1 tx added, as unlikely as a race is
 	require.Equal(t, numTxs, sut.rawVM.numPendingTxs(), "number of pending txs")
 
-	b := sut.runConsensusLoop(t, sut.genesis, true)
+	b := sut.runConsensusLoop(t, sut.genesis)
 	assert.Equal(t, sut.genesis.ID(), b.Parent(), "BuildBlock() builds on preference")
 	require.Lenf(t, b.Transactions(), numTxs, "%T.Transactions()", b)
 
@@ -551,7 +557,7 @@ func TestIntegration(t *testing.T) {
 		// If the tx-inclusion logic were broken then this would include the
 		// transactions again, resulting in a FATAL in the execution loop due to
 		// non-increasing nonce.
-		b := sut.runConsensusLoop(t, b, true)
+		b := sut.runConsensusLoop(t, b)
 		assert.Emptyf(t, b.Transactions(), "%T.Transactions()", b)
 		require.NoErrorf(t, b.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", b)
 	})
@@ -572,7 +578,7 @@ func TestEmptyChainConfig(t *testing.T) {
 		}
 	}))
 	for range 5 {
-		sut.runConsensusLoop(t, sut.lastAcceptedBlock(t), true)
+		sut.runConsensusLoop(t, sut.lastAcceptedBlock(t))
 	}
 	sut.waitUntilExecuted(t, sut.lastAcceptedBlock(t))
 }
@@ -641,7 +647,7 @@ func TestAcceptBlock(t *testing.T) {
 		ffMillis := 100 + rng.IntN(1000*(1+saeparams.TauSeconds))
 		vmTime.advance(time.Millisecond * time.Duration(ffMillis))
 
-		b := sut.runConsensusLoop(t, last(), true)
+		b := sut.runConsensusLoop(t, last())
 		unsettled = append(unsettled, b)
 		sut.assertBlockHashInvariants(ctx, t)
 
@@ -872,7 +878,7 @@ func TestGetBlock(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			snowB, err := sut.GetBlock(t.Context(), tt.want.ID())
+			snowB, err := sut.GetBlock(ctx, tt.want.ID())
 			require.NoError(t, err, "GetBlock()")
 			gotB, ok := snowB.(adaptor.Block[*blocks.Block])
 			require.True(t, ok, "GetBlock() return a %T, expected an adaptor.Block[*blocks.Block]", snowB)
@@ -880,9 +886,19 @@ func TestGetBlock(t *testing.T) {
 				t.Errorf("vm.GetBlock(...) mismatch (-want +got):\n%s", diff)
 			}
 
-			id, err := sut.GetBlockIDAtHeight(t.Context(), snowB.Height())
+			id, err := sut.GetBlockIDAtHeight(ctx, snowB.Height())
 			require.NoError(t, err, "GetBlockIdAtHeight()")
 			require.Equal(t, snowB.ID(), id)
 		})
 	}
+
+	t.Run("race with consensus", func(t *testing.T) {
+		// Simulate an acceptance by writing a block to the database after the blocks map is checked.
+		// This is in lieu of blocking the database read to verify and accept a block, but relies on
+		// implementation details of the method.
+		ethB := blockstest.NewEthBlock(sut.lastAcceptedBlock(t).EthBlock(), nil)
+		rawdb.WriteBlock(sut.db, ethB)
+		_, err := sut.GetBlock(ctx, ids.ID(ethB.Hash()))
+		require.ErrorIsf(t, err, database.ErrNotFound, "%T.GetBlock", sut)
+	})
 }
