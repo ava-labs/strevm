@@ -378,25 +378,25 @@ func canonicalBlock(db ethdb.Database, num uint64) (*types.Block, error) {
 // In this case, if a race occurs, [database.ErrNotFound] will be returned.
 func (vm *VM) GetBlock(_ context.Context, id ids.ID) (*blocks.Block, error) {
 	var _ snowman.Block // protect the input to allow comment linking
-	hash := common.Hash(id)
-	lastAccepted := vm.last.accepted.Load().NumberU64()
 
-	// Will find all verified/accepted blocks not settled.
+	// Check for any blocks that have been verified, but not yet released after
+	// settling.
+	hash := common.Hash(id)
 	b, ok := vm.blocks.Load(hash)
 	if ok {
 		return b, nil
 	}
 
-	// If not in memory, then it must be settled and on disk.
+	// At this point, the block we are looking for is either in the history, or
+	// was verified during this function's execution.
 	ethB := readByHash(vm, hash, (*blocks.Block).EthBlock, rawdb.ReadBlock)
 	if ethB == nil {
 		return nil, database.ErrNotFound
 	}
 
-	if ethB.NumberU64() > lastAccepted {
-		// RACY BEHAVIOR: ChainVM.GetBlock was called concurrently with [snowman.Block.Verify] and [snowman.Block.Accept]
-		// SAE cannot handle this behavior any more gracefully then simply returning an error - it is the user's responsibility
-		// to prevent this from occurring.
+	if vm.last.settled.Load().NumberU64() < ethB.NumberU64() {
+		// RACY: [VM.GetBlock] was called concurrently with [VM.VerifyBlock].
+		// We behave as if [VM.GetBlock] occurred BEFORE [VM.VerifyBlock].
 		return nil, database.ErrNotFound
 	}
 
