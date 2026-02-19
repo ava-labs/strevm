@@ -88,6 +88,7 @@ type Config struct {
 // RPCConfig provides options for initialization of RPCs for the node.
 type RPCConfig struct {
 	BlocksPerBloomSection uint64
+	EnableDBInspecting    bool
 	EnableProfiling       bool
 	EVMTimeout            time.Duration
 	GasCap                uint64

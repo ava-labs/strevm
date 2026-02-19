@@ -13,7 +13,6 @@ import (
 
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core/types"
-	"github.com/ava-labs/libevm/ethdb"
 	"github.com/ava-labs/libevm/rpc"
 )
 
@@ -27,15 +26,7 @@ func (b *ethAPIBackend) FeeHistory(context.Context, uint64, rpc.BlockNumber, []f
 	panic(errUnimplemented)
 }
 
-func (b *ethAPIBackend) ChainDb() ethdb.Database {
-	panic(errUnimplemented)
-}
-
 func (b *ethAPIBackend) ExtRPCEnabled() bool {
-	panic(errUnimplemented)
-}
-
-func (b *ethAPIBackend) SetHead(uint64) {
 	panic(errUnimplemented)
 }
 
