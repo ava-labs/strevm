@@ -176,8 +176,11 @@ func (e *Estimator) SuggestTipCap(ctx context.Context) (*big.Int, error) {
 //   - baseFee: base fee per gas in the given block
 //   - gasUsedRatio: gasUsed/gasLimit in the given block
 //
-// Note: baseFee includes the next block after the newest of the returned range, because this
-// value can be derived from the newest block.
+// Note: baseFee includes an extra entry for the block after the newest of the returned range.
+// For historical ranges the next block's actual base fee is used; when the range ends at the
+// accepted head, the worst-case upper-bound prediction from [Backend.NextBaseFeeUpperBound]
+// is used instead. If neither is available, the last block's base fee is repeated as a
+// conservative fallback.
 func (e *Estimator) FeeHistory(ctx context.Context, blocks uint64, unresolvedLastBlock rpc.BlockNumber, rewardPercentiles []float64) (*big.Int, [][]*big.Int, []*big.Int, []float64, error) {
 	if blocks < 1 {
 		return common.Big0, nil, nil, nil, nil
