@@ -11,6 +11,7 @@ import (
 	"math/big"
 	"reflect"
 	"runtime/debug"
+	"sync"
 	"testing"
 	"time"
 
@@ -19,12 +20,13 @@ import (
 	ethereum "github.com/ava-labs/libevm"
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/common/hexutil"
+	"github.com/ava-labs/libevm/core/rawdb"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/core/vm"
 	"github.com/ava-labs/libevm/crypto"
 	"github.com/ava-labs/libevm/libevm"
 	"github.com/ava-labs/libevm/libevm/ethapi"
-	libevmhookstest "github.com/ava-labs/libevm/libevm/hookstest"
+	"github.com/ava-labs/libevm/libevm/hookstest"
 	"github.com/ava-labs/libevm/libevm/options"
 	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/rpc"
@@ -525,6 +527,28 @@ func TestChainID(t *testing.T) {
 	}
 }
 
+// registerBlockingPrecompile registers `addr` as a libevm precompile such that
+// any transactions sent to the precompile will block until the returned
+// function is called. It is safe to call the unblocker multiple times, which
+// will also be done during cleanup.
+func registerBlockingPrecompile(tb testing.TB, addr common.Address) func() {
+	tb.Helper()
+	unblock := make(chan struct{})
+	libevmHooks := &hookstest.Stub{
+		PrecompileOverrides: map[common.Address]libevm.PrecompiledContract{
+			addr: vm.NewStatefulPrecompile(func(vm.PrecompileEnvironment, []byte) ([]byte, error) {
+				<-unblock
+				return nil, nil
+			}),
+		},
+	}
+	libevmHooks.Register(tb)
+
+	fn := sync.OnceFunc(func() { close(unblock) })
+	tb.Cleanup(fn)
+	return fn
+}
+
 func TestEthGetters(t *testing.T) {
 	opt, vmTime := withVMTime(t, time.Unix(saeparams.TauSeconds, 0))
 
@@ -541,18 +565,7 @@ func TestEthGetters(t *testing.T) {
 	// executed. Although unlikely to be useful in practice, it still needs to
 	// be tested.
 	blockingPrecompile := common.Address{'b', 'l', 'o', 'c', 'k'}
-	unblockPrecompile := make(chan struct{})
-	t.Cleanup(func() { close(unblockPrecompile) })
-
-	libevmHooks := &libevmhookstest.Stub{
-		PrecompileOverrides: map[common.Address]libevm.PrecompiledContract{
-			blockingPrecompile: vm.NewStatefulPrecompile(func(vm.PrecompileEnvironment, []byte) ([]byte, error) {
-				<-unblockPrecompile
-				return nil, nil
-			}),
-		},
-	}
-	libevmHooks.Register(t)
+	registerBlockingPrecompile(t, blockingPrecompile)
 
 	createTx := func(t *testing.T, to common.Address) *types.Transaction {
 		t.Helper()
@@ -626,7 +639,7 @@ func TestGetLogs(t *testing.T) {
 
 	emitter := common.Address{'l', 'o', 'g'}
 	rng := crypto.NewKeccakState()
-	stub := &libevmhookstest.Stub{
+	stub := &hookstest.Stub{
 		PrecompileOverrides: map[common.Address]libevm.PrecompiledContract{
 			emitter: vm.NewStatefulPrecompile(func(env vm.PrecompileEnvironment, _ []byte) ([]byte, error) {
 				data := make([]byte, 8)
@@ -835,6 +848,117 @@ func TestEthSigningAPIs(t *testing.T) {
 				txFields,
 			},
 			wantErr: wantErr,
+		},
+	}...)
+}
+
+func TestDebugRPCs(t *testing.T) {
+	ctx, sut := newSUT(t, 0, withDebugAPI())
+
+	sut.testRPC(ctx, t, []rpcTest{
+		{
+			// SAE does not support rewinding - setHead is a no-op.
+			method: "debug_setHead",
+			args:   []any{hexutil.Uint64(0)},
+			want:   json.RawMessage("null"),
+		},
+		{
+			method: "debug_chaindbCompact",
+			want:   json.RawMessage("null"),
+		},
+		{
+			method:  "debug_chaindbProperty",
+			args:    []any{"leveldb.stats"},
+			wantErr: testerr.Contains("not supported"),
+		},
+		{
+			method: "debug_dbGet",
+			args:   []any{hexutil.Encode([]byte("LastBlock"))},
+			want:   hexutil.Bytes(rawdb.ReadHeadBlockHash(sut.db).Bytes()),
+		},
+		{
+			method:  "debug_dbAncient",
+			args:    []any{"headers", uint64(0)},
+			wantErr: testerr.Contains("not supported"),
+		},
+		{
+			method:  "debug_dbAncients",
+			wantErr: testerr.Contains("not supported"),
+		},
+	}...)
+
+	// The profiling debug namespace is handled entirely by upstream code
+	// that doesn't depend in any way on SAE. We therefore only need an
+	// integration test, not to exercise every method because such unit
+	// testing is the responsibility of the source.
+	//
+	// Reference: https://geth.ethereum.org/docs/interacting-with-geth/rpc/ns-debug
+	t.Run("debug_setGCPercent", func(t *testing.T) {
+		const firstArg = 100
+		beforeTest := debug.SetGCPercent(firstArg)
+		defer debug.SetGCPercent(beforeTest)
+
+		const m = "debug_setGCPercent"
+		sut.testRPC(ctx, t, []rpcTest{
+			// Invariant: each call returns the input argument of the last.
+			{
+				method: m,
+				args:   []any{42},
+				want:   firstArg,
+			},
+			{
+				method: m,
+				args:   []any{0},
+				want:   42,
+			},
+		}...)
+	})
+}
+
+func TestDebugGetRawTransaction(t *testing.T) {
+	ctx, sut := newSUT(t, 1, withDebugAPI())
+
+	tx := sut.wallet.SetNonceAndSign(t, 0, &types.DynamicFeeTx{
+		To:        &common.Address{},
+		Gas:       params.TxGas,
+		GasFeeCap: big.NewInt(1),
+	})
+	b := sut.createAndAcceptBlock(t, tx)
+	require.NoErrorf(t, b.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", b)
+
+	marshaled, err := tx.MarshalBinary()
+	require.NoErrorf(t, err, "%T.MarshalBinary()", tx)
+
+	// Mempool tx: send without building a block, then query.
+	mempoolTx := sut.wallet.SetNonceAndSign(t, 0, &types.DynamicFeeTx{
+		To:        &common.Address{},
+		Gas:       params.TxGas,
+		GasFeeCap: big.NewInt(1),
+	})
+	sut.mustSendTx(t, mempoolTx)
+	sut.syncMempool(t)
+
+	mempoolMarshaled, err := mempoolTx.MarshalBinary()
+	require.NoErrorf(t, err, "%T.MarshalBinary()", mempoolTx)
+
+	t.Logf("Tx in block: %#x", tx.Hash())
+	t.Logf("Tx in mempool: %#x", mempoolTx.Hash())
+
+	sut.testRPC(ctx, t, []rpcTest{
+		{
+			method: "debug_getRawTransaction",
+			args:   []any{tx.Hash()},
+			want:   hexutil.Bytes(marshaled),
+		},
+		{
+			method: "debug_getRawTransaction",
+			args:   []any{common.Hash{}},
+			want:   hexutil.Bytes(nil),
+		},
+		{
+			method: "debug_getRawTransaction",
+			args:   []any{mempoolTx.Hash()},
+			want:   hexutil.Bytes(mempoolMarshaled),
 		},
 	}...)
 }
@@ -1052,36 +1176,106 @@ func (sut *SUT) testGetByUnknownNumber(ctx context.Context, t *testing.T) {
 // withDebugAPI returns a sutOption that enables the debug API.
 func withDebugAPI() sutOption {
 	return options.Func[sutConfig](func(c *sutConfig) {
+		c.vmConfig.RPCConfig.EnableDBInspecting = true
 		c.vmConfig.RPCConfig.EnableProfiling = true
 	})
 }
 
-func TestDebugNamespace(t *testing.T) {
-	ctx, sut := newSUT(t, 0, withDebugAPI())
+func ptrTo[T any](v T) *T {
+	return &v
+}
 
-	// The debug namespace is handled entirely by upstream code that doesn't
-	// depend in any way on SAE. We therefore only need an integration test, not
-	// to exercise every method because such unit testing is the responsibility
-	// of the source.
-	//
-	// Reference: https://geth.ethereum.org/docs/interacting-with-geth/rpc/ns-debug
+func TestResolveBlockNumberOrHash(t *testing.T) {
+	opt, vmTime := withVMTime(t, time.Unix(saeparams.TauSeconds, 0))
+	ctx, sut := newSUT(t, 0, opt)
 
-	const firstArg = 100
-	beforeTest := debug.SetGCPercent(firstArg)
-	defer debug.SetGCPercent(beforeTest)
+	settled := sut.runConsensusLoop(t, sut.lastAcceptedBlock(t))
+	vmTime.advanceToSettle(ctx, t, settled)
 
-	const m = "debug_setGCPercent"
-	sut.testRPC(ctx, t, []rpcTest{
-		// Invariant: each call returns the input argument of the last.
+	for range 2 {
+		b := sut.runConsensusLoop(t, sut.lastAcceptedBlock(t))
+		vmTime.advanceToSettle(ctx, t, b)
+	}
+	_, ok := sut.rawVM.blocks.Load(settled.Hash())
+	require.False(t, ok, "settled block still in VM memory")
+
+	accepted := sut.runConsensusLoop(t, sut.lastAcceptedBlock(t))
+	require.NoError(t, sut.SetPreference(ctx, accepted.ID()), "SetPreference()")
+
+	b, err := sut.BuildBlock(ctx)
+	require.NoError(t, err, "BuildBlock()")
+	// Blocks are added to the VM memory with [VM.VerifyBlock] but only become
+	// canonical (and on disk) with [VM.AcceptBlock].
+	require.NoErrorf(t, b.Verify(ctx), "%T.Verify()", b)
+	nonCanonical := unwrap(t, b)
+
+	tests := []struct {
+		name     string
+		nOrH     rpc.BlockNumberOrHash
+		wantNum  uint64
+		wantHash common.Hash
+		wantErr  error
+	}{
 		{
-			method: m,
-			args:   []any{42},
-			want:   firstArg,
+			name:    "neither_num_nor_hash",
+			wantErr: errNeitherNumberNorHash,
 		},
 		{
-			method: m,
-			args:   []any{0},
-			want:   42,
+			name: "both_num_and_hash",
+			nOrH: rpc.BlockNumberOrHash{
+				BlockNumber: ptrTo(rpc.LatestBlockNumber),
+				BlockHash:   &common.Hash{},
+			},
+			wantErr: errBothNumberAndHash,
 		},
-	}...)
+		{
+			name:     "named_block",
+			nOrH:     rpc.BlockNumberOrHashWithNumber(rpc.PendingBlockNumber),
+			wantNum:  accepted.NumberU64(),
+			wantHash: accepted.Hash(),
+		},
+		{
+			name: "canonical_hash_in_memory",
+			nOrH: rpc.BlockNumberOrHash{
+				BlockHash: ptrTo(accepted.Hash()),
+			},
+			wantNum:  accepted.NumberU64(),
+			wantHash: accepted.Hash(),
+		},
+		{
+			name: "canonical_hash_on_disk",
+			nOrH: rpc.BlockNumberOrHash{
+				BlockHash: ptrTo(settled.Hash()),
+			},
+			wantNum:  settled.NumberU64(),
+			wantHash: settled.Hash(),
+		},
+		{
+			name: "non_canonical_when_canonical_not_required",
+			nOrH: rpc.BlockNumberOrHash{
+				BlockHash: ptrTo(nonCanonical.Hash()),
+			},
+			wantNum:  nonCanonical.NumberU64(),
+			wantHash: nonCanonical.Hash(),
+		},
+		{
+			name: "non_canonical_when_canonical_required",
+			nOrH: rpc.BlockNumberOrHash{
+				BlockHash:        ptrTo(nonCanonical.Hash()),
+				RequireCanonical: true,
+			},
+			wantErr: errNonCanonicalBlock,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			be := sut.rawVM.apiBackend
+			gotNum, gotHash, err := be.resolveBlockNumberOrHash(tt.nOrH)
+			t.Logf("%T.resolveBlockNumberOrhash(%+v)", be, tt.nOrH) // avoids having to repeat in failure messages
+			require.ErrorIs(t, err, tt.wantErr)
+			assert.Equal(t, tt.wantNum, gotNum)
+			assert.Equal(t, tt.wantHash, gotHash)
+		})
+	}
 }

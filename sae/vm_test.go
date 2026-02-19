@@ -137,6 +137,7 @@ func newSUT(tb testing.TB, numAccounts uint, opts ...sutOption) (context.Context
 	snow := adaptor.Convert(vm)
 	tb.Cleanup(func() {
 		ctx := context.WithoutCancel(tb.Context())
+		require.NoError(tb, vm.last.accepted.Load().WaitUntilExecuted(ctx), "{last-accepted block}.WaitUntilExecuted()")
 		require.NoError(tb, snow.Shutdown(ctx), "Shutdown()")
 	})
 
@@ -352,12 +353,14 @@ func (s *SUT) createAndAcceptBlock(tb testing.TB, txs ...*types.Transaction) *bl
 	return s.runConsensusLoop(tb, s.lastAcceptedBlock(tb))
 }
 
-// runConsensusLoop sets the preference to the specified block then builds,
-// verifies, accepts, and returns the new block. It does NOT wait for it to be
-// executed; to do this automatically, set the [VM] to [snow.Bootstrapping].
+// runConsensusLoop syncs the mempool, sets the preference to the specified
+// block, then builds, verifies, accepts, and returns the new block. It does NOT
+// wait for it to be executed; to do this automatically, set the [VM] to
+// [snow.Bootstrapping].
 func (s *SUT) runConsensusLoop(tb testing.TB, preference *blocks.Block) *blocks.Block {
 	tb.Helper()
 
+	s.syncMempool(tb)
 	ctx := s.context(tb)
 	require.NoError(tb, s.SetPreference(ctx, preference.ID()), "SetPreference()")
 
