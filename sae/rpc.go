@@ -126,6 +126,26 @@ func (vm *VM) ethRPCServer() (*rpc.Server, error) {
 		{"eth", filterAPI},
 	}
 
+	if vm.config.RPCConfig.EnableDBInspecting {
+		apis = append(apis, api{
+			// Geth-specific APIs:
+			// - debug_chaindbCompact
+			// - debug_chaindbProperty
+			// - debug_dbAncient
+			// - debug_dbAncients
+			// - debug_dbGet
+			// - debug_getRawTransaction
+			// - debug_printBlock
+			// - debug_setHead          (no-op, logs info)
+			//
+			// TODO: implement once BlockByNumberOrHash and GetReceipts exist:
+			// - debug_getRawBlock
+			// - debug_getRawHeader
+			// - debug_getRawReceipts
+			"debug", ethapi.NewDebugAPI(b),
+		})
+	}
+
 	if vm.config.RPCConfig.EnableProfiling {
 		apis = append(apis, api{
 			// Geth-specific APIs:
@@ -284,6 +304,10 @@ type ethAPIBackend struct {
 }
 
 var _ APIBackend = (*ethAPIBackend)(nil)
+
+func (b *ethAPIBackend) ChainDb() ethdb.Database {
+	return b.vm.db
+}
 
 func (b *ethAPIBackend) ChainConfig() *params.ChainConfig {
 	return b.vm.exec.ChainConfig()
@@ -540,6 +564,10 @@ func (b *ethAPIBackend) SubscribePendingLogsEvent(chan<- []*types.Log) event.Sub
 	// In SAE, "pending" refers to the execution status. There are no logs known
 	// for transactions pending execution.
 	return newNoopSubscription()
+}
+
+func (b *ethAPIBackend) SetHead(uint64) {
+	b.vm.log().Info("debug_setHead called but not supported by SAE")
 }
 
 func (b *ethAPIBackend) GetReceipts(ctx context.Context, hash common.Hash) (types.Receipts, error) {

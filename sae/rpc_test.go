@@ -20,6 +20,7 @@ import (
 	ethereum "github.com/ava-labs/libevm"
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/common/hexutil"
+	"github.com/ava-labs/libevm/core/rawdb"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/core/vm"
 	"github.com/ava-labs/libevm/crypto"
@@ -842,6 +843,117 @@ func TestEthSigningAPIs(t *testing.T) {
 	}...)
 }
 
+func TestDebugRPCs(t *testing.T) {
+	ctx, sut := newSUT(t, 0, withDebugAPI())
+
+	sut.testRPC(ctx, t, []rpcTest{
+		{
+			// SAE does not support rewinding - setHead is a no-op.
+			method: "debug_setHead",
+			args:   []any{hexutil.Uint64(0)},
+			want:   json.RawMessage("null"),
+		},
+		{
+			method: "debug_chaindbCompact",
+			want:   json.RawMessage("null"),
+		},
+		{
+			method:  "debug_chaindbProperty",
+			args:    []any{"leveldb.stats"},
+			wantErr: testerr.Contains("not supported"),
+		},
+		{
+			method: "debug_dbGet",
+			args:   []any{hexutil.Encode([]byte("LastBlock"))},
+			want:   hexutil.Bytes(rawdb.ReadHeadBlockHash(sut.db).Bytes()),
+		},
+		{
+			method:  "debug_dbAncient",
+			args:    []any{"headers", uint64(0)},
+			wantErr: testerr.Contains("not supported"),
+		},
+		{
+			method:  "debug_dbAncients",
+			wantErr: testerr.Contains("not supported"),
+		},
+	}...)
+
+	// The profiling debug namespace is handled entirely by upstream code
+	// that doesn't depend in any way on SAE. We therefore only need an
+	// integration test, not to exercise every method because such unit
+	// testing is the responsibility of the source.
+	//
+	// Reference: https://geth.ethereum.org/docs/interacting-with-geth/rpc/ns-debug
+	t.Run("debug_setGCPercent", func(t *testing.T) {
+		const firstArg = 100
+		beforeTest := debug.SetGCPercent(firstArg)
+		defer debug.SetGCPercent(beforeTest)
+
+		const m = "debug_setGCPercent"
+		sut.testRPC(ctx, t, []rpcTest{
+			// Invariant: each call returns the input argument of the last.
+			{
+				method: m,
+				args:   []any{42},
+				want:   firstArg,
+			},
+			{
+				method: m,
+				args:   []any{0},
+				want:   42,
+			},
+		}...)
+	})
+}
+
+func TestDebugGetRawTransaction(t *testing.T) {
+	ctx, sut := newSUT(t, 1, withDebugAPI())
+
+	tx := sut.wallet.SetNonceAndSign(t, 0, &types.DynamicFeeTx{
+		To:        &common.Address{},
+		Gas:       params.TxGas,
+		GasFeeCap: big.NewInt(1),
+	})
+	b := sut.createAndAcceptBlock(t, tx)
+	require.NoErrorf(t, b.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", b)
+
+	marshaled, err := tx.MarshalBinary()
+	require.NoErrorf(t, err, "%T.MarshalBinary()", tx)
+
+	// Mempool tx: send without building a block, then query.
+	mempoolTx := sut.wallet.SetNonceAndSign(t, 0, &types.DynamicFeeTx{
+		To:        &common.Address{},
+		Gas:       params.TxGas,
+		GasFeeCap: big.NewInt(1),
+	})
+	sut.mustSendTx(t, mempoolTx)
+	sut.syncMempool(t)
+
+	mempoolMarshaled, err := mempoolTx.MarshalBinary()
+	require.NoErrorf(t, err, "%T.MarshalBinary()", mempoolTx)
+
+	t.Logf("Tx in block: %#x", tx.Hash())
+	t.Logf("Tx in mempool: %#x", mempoolTx.Hash())
+
+	sut.testRPC(ctx, t, []rpcTest{
+		{
+			method: "debug_getRawTransaction",
+			args:   []any{tx.Hash()},
+			want:   hexutil.Bytes(marshaled),
+		},
+		{
+			method: "debug_getRawTransaction",
+			args:   []any{common.Hash{}},
+			want:   hexutil.Bytes(nil),
+		},
+		{
+			method: "debug_getRawTransaction",
+			args:   []any{mempoolTx.Hash()},
+			want:   hexutil.Bytes(mempoolMarshaled),
+		},
+	}...)
+}
+
 func (sut *SUT) testGetByHash(ctx context.Context, t *testing.T, want *types.Block) {
 	t.Helper()
 
@@ -1055,38 +1167,9 @@ func (sut *SUT) testGetByUnknownNumber(ctx context.Context, t *testing.T) {
 // withDebugAPI returns a sutOption that enables the debug API.
 func withDebugAPI() sutOption {
 	return options.Func[sutConfig](func(c *sutConfig) {
+		c.vmConfig.RPCConfig.EnableDBInspecting = true
 		c.vmConfig.RPCConfig.EnableProfiling = true
 	})
-}
-
-func TestDebugNamespace(t *testing.T) {
-	ctx, sut := newSUT(t, 0, withDebugAPI())
-
-	// The debug namespace is handled entirely by upstream code that doesn't
-	// depend in any way on SAE. We therefore only need an integration test, not
-	// to exercise every method because such unit testing is the responsibility
-	// of the source.
-	//
-	// Reference: https://geth.ethereum.org/docs/interacting-with-geth/rpc/ns-debug
-
-	const firstArg = 100
-	beforeTest := debug.SetGCPercent(firstArg)
-	defer debug.SetGCPercent(beforeTest)
-
-	const m = "debug_setGCPercent"
-	sut.testRPC(ctx, t, []rpcTest{
-		// Invariant: each call returns the input argument of the last.
-		{
-			method: m,
-			args:   []any{42},
-			want:   firstArg,
-		},
-		{
-			method: m,
-			args:   []any{0},
-			want:   42,
-		},
-	}...)
 }
 
 func ptrTo[T any](v T) *T {
