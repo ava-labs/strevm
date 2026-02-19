@@ -221,9 +221,7 @@ type blockChainAPI struct {
 func (b *blockChainAPI) GetBlockReceipts(ctx context.Context, blockNrOrHash rpc.BlockNumberOrHash) ([]map[string]any, error) {
 	blk, err := b.b.getBlock(blockNrOrHash)
 	if err != nil || !blk.Executed() {
-		// When the block hasn't been executed, the RPC method should return
-		// JSON null as per specification.
-		return nil, nil
+		return nil, nil //nolint:nilerr // This follows Geth behavior for [ethapi.BlockChainAPI.GetBlockReceipts]
 	}
 
 	var (
@@ -547,7 +545,7 @@ func (b *ethAPIBackend) SubscribePendingLogsEvent(chan<- []*types.Log) event.Sub
 func (b *ethAPIBackend) GetReceipts(ctx context.Context, hash common.Hash) (types.Receipts, error) {
 	blk, err := b.getBlock(rpc.BlockNumberOrHashWithHash(hash, false))
 	if err != nil || !blk.Executed() {
-		return nil, nil
+		return nil, nil //nolint:nilerr // This follows Geth behavior for [ethapi.Backend.GetReceipts]
 	}
 	return blk.Receipts(), nil
 }
