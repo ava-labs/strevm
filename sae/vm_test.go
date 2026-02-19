@@ -46,6 +46,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/ava-labs/strevm/adaptor"
 	"github.com/ava-labs/strevm/blocks"
@@ -820,7 +821,7 @@ func TestGetBlock(t *testing.T) {
 	// executed. Although unlikely to be useful in practice, it still needs to
 	// be tested.
 	blockingPrecompile := common.Address{'b', 'l', 'o', 'c', 'k'}
-	registerBlockingPrecompile(t, blockingPrecompile)
+	release := registerBlockingPrecompile(t, blockingPrecompile)
 
 	createTx := func(t *testing.T, to common.Address) *types.Transaction {
 		t.Helper()
@@ -897,15 +898,29 @@ func TestGetBlock(t *testing.T) {
 		testGetBlock(t, verified)
 	})
 
-	t.Run("race with consensus", func(t *testing.T) {
-		// Simulate an acceptance by writing a block to the database after the blocks map is checked.
-		// This is in lieu of blocking the database read to verify and accept a block, but relies on
-		// implementation details of the method.
+	// Need to be able to execute more blocks
+	release()
+
+	// This subtest verifies a block, and then settles a block after it to force it to disk.
+	// Even though the code path this may take is not deterministic, since the block could be
+	// in any state, it should always be returned.
+	t.Run("verified always available", func(t *testing.T) {
 		sut.addToMempool(t, createTx(t, zeroAddr))
-		snowB := sut.buildAndParseBlock(t, sut.lastAcceptedBlock(t))
-		b := snowB.(adaptor.Block[*blocks.Block]).Unwrap() //nolint:forcetypeassert // it's guaranteed
-		rawdb.WriteBlock(sut.db, b.EthBlock())
-		_, err := sut.GetBlock(ctx, b.ID())
-		require.ErrorIsf(t, err, database.ErrNotFound, "%T.GetBlock", sut)
+		toBeSettled := sut.buildAndParseBlock(t, accepted)
+		require.NoErrorf(t, toBeSettled.Verify(ctx), "%T.Verify()", toBeSettled)
+
+		eg, egCtx := errgroup.WithContext(ctx)
+		eg.Go(func() error {
+			_, err := sut.GetBlock(egCtx, toBeSettled.ID())
+			return err
+		})
+		require.NoErrorf(t, toBeSettled.Accept(ctx), "%T.Accept()", toBeSettled)
+		prev := toBeSettled.(adaptor.Block[*blocks.Block]).Unwrap() //nolint:forcetypeassert // it's guaranteed
+		for range 2 {
+			vmTime.advanceToSettle(ctx, t, prev)
+			prev = sut.createAndAcceptBlock(t, createTx(t, zeroAddr))
+		}
+
+		require.NoErrorf(t, eg.Wait(), "%T.GetBlock in errgroup", sut)
 	})
 }

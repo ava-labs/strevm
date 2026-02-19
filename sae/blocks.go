@@ -381,6 +381,8 @@ func (vm *VM) GetBlock(_ context.Context, id ids.ID) (*blocks.Block, error) {
 
 	// Check for any blocks that have been verified, but not yet released after
 	// settling.
+	// readByHash does also load from `vm.blocks`, but it will not contain the full
+	// exeuction data necessary for returning, so it must be called separately.
 	hash := common.Hash(id)
 	b, ok := vm.blocks.Load(hash)
 	if ok {
@@ -394,6 +396,8 @@ func (vm *VM) GetBlock(_ context.Context, id ids.ID) (*blocks.Block, error) {
 		return nil, database.ErrNotFound
 	}
 
+	// If a block is settled (even if it wasn't at the beginning of this call),
+	// we can accurately regenerate its full state.
 	if vm.last.settled.Load().NumberU64() < ethB.NumberU64() {
 		// RACY: [VM.GetBlock] was called concurrently with [VM.VerifyBlock].
 		// We behave as if [VM.GetBlock] occurred BEFORE [VM.VerifyBlock].
