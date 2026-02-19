@@ -155,9 +155,8 @@ func (e *Executor) execute(b *blocks.Block, logger logging.Logger) error {
 		// consensus. This changes the hash, which is what is copied to receipts
 		// and logs.
 		//
-		// [core.ApplyTransaction] also doesn't set [types.Receipt.EffectiveGasPrice]
-		// for some reason. Fix both here so cached receipts are correct without a
-		// [types.Receipt.DeriveFields] pass.
+		// [core.ApplyTransaction] also doesn't set [types.Receipt.EffectiveGasPrice].
+		// Fixing both here avoids needing to call [types.Receipt.DeriveFields].
 		receipt.BlockHash = b.Hash()
 		for _, l := range receipt.Logs {
 			l.BlockHash = b.Hash()
