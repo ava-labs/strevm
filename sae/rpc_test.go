@@ -373,7 +373,7 @@ func TestTxPoolNamespace(t *testing.T) {
 func TestFilterAPIs(t *testing.T) {
 	ctx, sut := newSUT(t, 1)
 	precompile := common.Address{'f', 'i', 'l', 't'}
-	stub := &libevmhookstest.Stub{
+	stub := &hookstest.Stub{
 		PrecompileOverrides: map[common.Address]libevm.PrecompiledContract{
 			precompile: vm.NewStatefulPrecompile(func(env vm.PrecompileEnvironment, _ []byte) ([]byte, error) {
 				env.StateDB().AddLog(&types.Log{
