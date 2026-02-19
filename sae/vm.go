@@ -144,7 +144,8 @@ func NewVM(
 	}
 
 	{ // ==========  Sync -> Async  ==========
-		// TODO(arr4n) refactor to avoid DB writes on every startup.
+		// TODO(JonathanOppenheimer): canonicaliseLastSynchronous still rewrites identical
+		// data if the node restarts before any async blocks are accepted.
 		if err := lastSync.MarkSynchronous(cfg.Hooks, db, xdb, cfg.ExcessAfterLastSynchronous); err != nil {
 			return nil, fmt.Errorf("%T{genesis}.MarkSynchronous(): %v", lastSync, err)
 		}
