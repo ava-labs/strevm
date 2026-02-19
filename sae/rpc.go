@@ -169,8 +169,8 @@ func (vm *VM) ethRPCServer() (*rpc.Server, error) {
 	if vm.config.RPCConfig.EnableDBInspecting {
 		apis = append(apis, api{
 			// Geth-specific APIs:
-			// - debug_chainDbCompact
-			// - debug_chainDbProperty
+			// - debug_chaindbCompact
+			// - debug_chaindbProperty
 			// - debug_dbAncient
 			// - debug_dbAncients
 			// - debug_dbGet
