@@ -405,12 +405,12 @@ func (vm *VM) GetBlock(ctx context.Context, id ids.ID) (*blocks.Block, error) {
 
 // GetBlockIDAtHeight returns the accepted block at the given height, or
 // [database.ErrNotFound].
-func (vm *VM) GetBlockIDAtHeight(_ context.Context, height uint64) (ids.ID, error) {
-	hash := rawdb.ReadCanonicalHash(vm.db, height)
-	if hash == (common.Hash{}) {
-		return ids.Empty, database.ErrNotFound
+func (vm *VM) GetBlockIDAtHeight(ctx context.Context, height uint64) (ids.ID, error) {
+	id := ids.ID(rawdb.ReadCanonicalHash(vm.db, height))
+	if id == ids.Empty {
+		return id, database.ErrNotFound
 	}
-	return ids.ID(hash), nil
+	return id, nil
 }
 
 var _ blocks.Source = (*VM)(nil).blockSource
