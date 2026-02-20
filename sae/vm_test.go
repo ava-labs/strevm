@@ -304,11 +304,16 @@ func (s *SUT) mustSendTx(tb testing.TB, tx *types.Transaction) {
 	require.NoErrorf(tb, s.Client.SendTransaction(s.context(tb), tx), "%T.SendTransaction([%#x])", s.Client, tx.Hash())
 }
 
-func (s *SUT) stateAt(tb testing.TB, root common.Hash) *state.StateDB {
+// addToMempool is a convenience wrapper around [SUT.mustSendTx] (per tx) and
+// [SUT.requireInMempool].
+func (s *SUT) addToMempool(tb testing.TB, txs ...*types.Transaction) {
 	tb.Helper()
-	sdb, err := state.New(root, s.rawVM.exec.StateCache(), nil)
-	require.NoErrorf(tb, err, "state.New(%#x, %T.StateCache())", root, s.rawVM.exec)
-	return sdb
+	txHashes := make([]common.Hash, len(txs))
+	for i, tx := range txs {
+		s.mustSendTx(tb, tx)
+		txHashes[i] = tx.Hash()
+	}
+	s.requireInMempool(tb, txHashes...)
 }
 
 // syncMempool is a convenience wrapper for calling [txpool.TxPool.Sync], which
@@ -337,6 +342,13 @@ func (s *SUT) requireInMempool(tb testing.TB, txs ...common.Hash) {
 	)
 }
 
+func (s *SUT) stateAt(tb testing.TB, root common.Hash) *state.StateDB {
+	tb.Helper()
+	sdb, err := state.New(root, s.rawVM.exec.StateCache(), nil)
+	require.NoErrorf(tb, err, "state.New(%#x, %T.StateCache())", root, s.rawVM.exec)
+	return sdb
+}
+
 // createAndAcceptBlock sends all of the transactions to the mempool, asserts
 // that they are present in the mempool, then returns the result of [SUT.runConsensusLoop] with
 // [SUT.lastAcceptedBlock] as its argument.
@@ -357,17 +369,6 @@ func (s *SUT) createAndVerifyBlock(tb testing.TB, txs ...*types.Transaction) *bl
 	b := s.buildAndParseBlock(tb, s.lastAcceptedBlock(tb))
 	require.NoErrorf(tb, b.Verify(s.context(tb)), "%T.Verify()", b)
 	return b.(adaptor.Block[*blocks.Block]).Unwrap() //nolint:forcetypeassert // it's a test and guaranteed
-}
-
-func (s *SUT) addToMempool(tb testing.TB, txs ...*types.Transaction) {
-	tb.Helper()
-
-	txHashes := make([]common.Hash, len(txs))
-	for i, tx := range txs {
-		s.mustSendTx(tb, tx)
-		txHashes[i] = tx.Hash()
-	}
-	s.requireInMempool(tb, txHashes...)
 }
 
 func (s *SUT) buildAndParseBlock(tb testing.TB, preference *blocks.Block) snowman.Block {
