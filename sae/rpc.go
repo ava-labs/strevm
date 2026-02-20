@@ -30,6 +30,8 @@ import (
 	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/rpc"
 
+	"github.com/ava-labs/strevm/blocks"
+	"github.com/ava-labs/strevm/gasprice"
 	"github.com/ava-labs/strevm/saexec"
 	"github.com/ava-labs/strevm/txgossip"
 )
@@ -37,6 +39,7 @@ import (
 // APIBackend is the union of all interfaces required to implement the SAE APIs.
 type APIBackend interface {
 	ethapi.Backend
+	gasprice.Backend
 	filters.BloomOverrider
 }
 
@@ -419,7 +422,7 @@ func (b *ethAPIBackend) resolveBlockNumberOrHash(numOrHash rpc.BlockNumberOrHash
 		return 0, common.Hash{}, errBothNumberAndHash
 
 	case isNum:
-		num, err := b.resolveBlockNumber(rpcNum)
+		num, err := b.ResolveBlockNumber(rpcNum)
 		if err != nil {
 			return 0, common.Hash{}, err
 		}
@@ -498,16 +501,8 @@ func (b *ethAPIBackend) SubscribeChainSideEvent(chan<- core.ChainSideEvent) even
 	return newNoopSubscription()
 }
 
-func (b *ethAPIBackend) SubscribeChainAcceptedEvent(ch chan<- *types.Block) event.Subscription {
-	return b.vm.exec.SubscribeBlockEnqueueEvent(ch)
-}
-
-func (b *ethAPIBackend) NextBaseFeeUpperBound(context.Context) *big.Int {
-	bounds := b.vm.last.accepted.Load().WorstCaseBounds()
-	if bounds == nil || bounds.NextGasTime == nil {
-		return nil
-	}
-	return bounds.NextGasTime.BaseFee().ToBig()
+func (b *ethAPIBackend) LastAcceptedBlock() *blocks.Block {
+	return b.vm.last.accepted.Load()
 }
 
 func (b *ethAPIBackend) SubscribeNewTxsEvent(ch chan<- core.NewTxsEvent) event.Subscription {
