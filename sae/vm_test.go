@@ -385,7 +385,7 @@ func (s *SUT) createAndVerifyBlock(tb testing.TB, preference *blocks.Block, txs 
 func (s *SUT) runConsensusLoop(tb testing.TB, preference *blocks.Block, txs ...*types.Transaction) *blocks.Block {
 	tb.Helper()
 	b := s.createAndVerifyBlock(tb, preference, txs...)
-	require.NoErrorf(tb, b.Accept(s.context(tb)), "%T.Accept()")
+	require.NoErrorf(tb, b.Accept(s.context(tb)), "%T.Accept()", b)
 	return unwrap(tb, b)
 }
 
