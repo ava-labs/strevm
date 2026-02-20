@@ -126,10 +126,10 @@ func NewEstimator(backend Backend, c Config) *Estimator {
 	cache := newBlockCache(
 		c.Log,
 		backend,
-		int(max(
+		int(max( //nolint:gosec // Overflow would require misconfiguration
 			c.SuggestedTipMaxBlocks,
 			c.HistoryMaxBlocksFromTip+c.HistoryMaxBlocks,
-		)), //nolint:gosec // Overflow would require misconfiguration
+		)),
 	)
 	go func() {
 		defer sub.Unsubscribe()
