@@ -1,6 +1,8 @@
 // Copyright (C) 2025-2026, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
+// Package gasprice provides gas price statistics and suggestions for timely
+// transaction inclusion.
 package gasprice
 
 import (
@@ -20,6 +22,7 @@ import (
 	"github.com/ava-labs/libevm/event"
 	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/rpc"
+
 	"github.com/ava-labs/strevm/blocks"
 	"github.com/ava-labs/strevm/intmath"
 )
@@ -32,6 +35,7 @@ type Backend interface {
 	LastAcceptedBlock() *blocks.Block
 }
 
+// Config allows parameterizing an [Estimator].
 type Config struct {
 	// Log defaults to [logging.NoLog] if nil.
 	Log logging.Logger
@@ -125,7 +129,7 @@ func NewEstimator(backend Backend, c Config) *Estimator {
 		int(max(
 			c.SuggestedTipMaxBlocks,
 			c.HistoryMaxBlocksFromTip+c.HistoryMaxBlocks,
-		)),
+		)), //nolint:gosec // Overflow would require misconfiguration
 	)
 	go func() {
 		defer sub.Unsubscribe()
@@ -179,7 +183,7 @@ func (e *Estimator) SuggestTipCap(ctx context.Context) (tip *big.Int, _ error) {
 	var (
 		newest     = headNumber
 		tooOld     = intmath.BoundedSubtract(newest, e.c.SuggestedTipMaxBlocks, 0)
-		recentUnix = uint64(e.c.Now().Add(-e.c.SuggestedTipMaxDuration).Unix())
+		recentUnix = uint64(e.c.Now().Add(-e.c.SuggestedTipMaxDuration).Unix()) //nolint:gosec // Won't overflow for a long time
 		tips       []transaction
 	)
 	for n := newest; n > tooOld; n-- {
@@ -300,6 +304,7 @@ func (e *Estimator) FeeHistory(
 	return new(big.Int).SetUint64(first), reward, baseFee, gasUsedRatio, nil
 }
 
+// Close releases allocated resources.
 func (e *Estimator) Close() {
 	e.sub.Unsubscribe()
 }
