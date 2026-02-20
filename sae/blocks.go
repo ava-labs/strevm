@@ -412,6 +412,9 @@ func (vm *VM) GetBlockIDAtHeight(ctx context.Context, height uint64) (ids.ID, er
 var _ blocks.Source = (*VM)(nil).blockSource
 
 func (vm *VM) blockSource(hash common.Hash, num uint64) (*blocks.Block, bool) {
+	// TODO(arr4n) this MUST be updated to support all blocks (256) necessary to
+	// back a [core.ChainContext] in [saexec.Executor] otherwise op codes like
+	// BLOCKHASH will panic.
 	b, ok := vm.blocks.Load(hash)
 	if !ok || b.NumberU64() != num {
 		return nil, false
