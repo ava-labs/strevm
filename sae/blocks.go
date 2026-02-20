@@ -381,11 +381,19 @@ func (vm *VM) GetBlock(ctx context.Context, id ids.ID) (*blocks.Block, error) {
 			return b
 		},
 		func(db ethdb.Reader, hash common.Hash, num uint64) (*blocks.Block, error) {
-			// As the block wasn't in memory it's either been rejected, not yet
-			// verified, or settled. Only the latter will be in the database and
-			// [readByHash] guarantees that we'll only be here if a block is in
-			// the database.
+			// A block that's not in memory has either been rejected, not yet
+			// verified, or settled. Of these, only the latter would be in the
+			// database.
 			//
+			// There is, however, a negligible (read: near impossible) but
+			// non-zero chance that [VM.VerifyBlock] and [VM.AcceptBlock] were
+			// *both* called between [readByHash] checking the in-memory block
+			// store and loading the canonical number from the database. That
+			// could result in an unexecuted block, which would cause an error
+			// when restoring it.
+			if vm.last.settled.Load().Height() < num {
+				return nil, database.ErrNotFound
+			}
 			// TODO: should we distinguish between sync and async blocks?
 			return blocks.RestoreSettledBlock(
 				rawdb.ReadBlock(db, hash, num),
