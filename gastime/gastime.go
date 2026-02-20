@@ -170,7 +170,7 @@ func (tm *Time) SetTarget(t gas.Gas) error {
 	return tm.TimeMarshaler.SetRate(rateOf(clampTarget(t))) // also updates [Time.Target] as it was passed to [proxytime.Time.SetRateInvariants]
 }
 
-// SetConfig sets the full config with excess scaling to maintain price continuity.
+// setConfig sets the full config with excess scaling to maintain price continuity.
 //
 // When config changes, excess is scaled to maintain price continuity:
 //   - K changes (via TargetToExcessScaling): Scale excess to maintain current price
@@ -178,7 +178,7 @@ func (tm *Time) SetTarget(t gas.Gas) error {
 //   - M decreases: Scale excess to maintain current price
 //   - M increases AND current price >= new M: Scale excess to maintain current price
 //   - M increases AND current price < new M: Price bumps to new M (excess becomes 0)
-func (tm *Time) SetConfig(cfg hook.GasPriceConfig) error {
+func (tm *Time) setConfig(cfg hook.GasPriceConfig, reinstateIfConfigChanges gas.Price) error {
 	newCfg, err := newConfig(cfg)
 	if err != nil {
 		return err
@@ -186,9 +186,8 @@ func (tm *Time) SetConfig(cfg hook.GasPriceConfig) error {
 	if newCfg.equals(tm.config) {
 		return nil
 	}
-	p := tm.Price()
 	tm.config = newCfg
-	tm.excess = tm.findExcessForPrice(p)
+	tm.excess = tm.findExcessForPrice(reinstateIfConfigChanges)
 	return nil
 }
 

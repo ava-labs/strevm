@@ -26,10 +26,16 @@ func (tm *Time) BeforeBlock(hooks hook.Points, h *types.Header) {
 func (tm *Time) AfterBlock(used gas.Gas, hooks hook.Points, h *types.Header) error {
 	tm.Tick(used)
 	target, cfg := hooks.GasConfigAfter(h)
+	// Although [Time.SetTarget] scales the excess by the same factor as the
+	// change in target, it rounds when necessary, which might alter the price
+	// by a negligible amount. We therefore take a price snapshot beforehand
+	// otherwise we'd call [Time.findExcessForPrice] with a different value,
+	// which makes it extremely hard to test.
+	p := tm.Price()
 	if err := tm.SetTarget(target); err != nil {
 		return fmt.Errorf("%T.SetTarget() after block: %w", tm, err)
 	}
-	if err := tm.SetConfig(cfg); err != nil {
+	if err := tm.setConfig(cfg, p); err != nil {
 		return fmt.Errorf("%T.SetConfig() after block: %w", tm, err)
 	}
 	return nil
