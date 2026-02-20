@@ -31,11 +31,7 @@ func (b *ethAPIBackend) FeeHistory(context.Context, uint64, rpc.BlockNumber, []f
 }
 
 func (b *ethAPIBackend) PendingBlockAndReceipts() (*types.Block, types.Receipts) {
-	panic(errUnimplemented)
-}
-
-func (b *ethAPIBackend) GetReceipts(ctx context.Context, hash common.Hash) (types.Receipts, error) {
-	panic(errUnimplemented)
+	return nil, nil
 }
 
 func (b *ethAPIBackend) GetPoolNonce(ctx context.Context, addr common.Address) (uint64, error) {
@@ -47,13 +43,5 @@ func (b *ethAPIBackend) StateAtBlock(ctx context.Context, block *types.Block, re
 }
 
 func (b *ethAPIBackend) StateAtTransaction(ctx context.Context, block *types.Block, txIndex int, reexec uint64) (*core.Message, vm.BlockContext, *state.StateDB, tracers.StateReleaseFunc, error) {
-	panic(errUnimplemented)
-}
-
-func (b *ethAPIBackend) HeaderByNumberOrHash(ctx context.Context, blockNrOrHash rpc.BlockNumberOrHash) (*types.Header, error) {
-	panic(errUnimplemented)
-}
-
-func (b *ethAPIBackend) BlockByNumberOrHash(ctx context.Context, blockNrOrHash rpc.BlockNumberOrHash) (*types.Block, error) {
 	panic(errUnimplemented)
 }

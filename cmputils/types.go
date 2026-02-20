@@ -50,6 +50,13 @@ func TransactionsByHash() cmp.Option {
 	})
 }
 
+// Receipts returns a set of [cmp.Options] for comparing [types.Receipt] values.
+func Receipts() cmp.Option {
+	return cmp.Options{
+		IfIn[types.Receipt](BigInts()),
+	}
+}
+
 // ReceiptsByTxHash returns a [cmp.Comparer] for [types.Receipt] pointers,
 // equating them by transaction hash alone.
 func ReceiptsByTxHash() cmp.Option {

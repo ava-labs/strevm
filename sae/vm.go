@@ -153,7 +153,7 @@ func NewVM(
 		}
 	}
 
-	rec := &recovery{db, xdb, snowCtx.Log, cfg, lastSync}
+	rec := &recovery{db, xdb, chainConfig, snowCtx.Log, cfg, lastSync}
 	{ // ==========  Executor  ==========
 		lastExecuted, unexecuted, err := rec.recoverFromDB()
 		if err != nil {

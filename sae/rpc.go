@@ -31,6 +31,7 @@ import (
 	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/rpc"
 
+	"github.com/ava-labs/strevm/blocks"
 	"github.com/ava-labs/strevm/saexec"
 	"github.com/ava-labs/strevm/txgossip"
 )
@@ -49,7 +50,7 @@ func (vm *VM) APIBackend() APIBackend {
 }
 
 func (vm *VM) ethRPCServer() (*rpc.Server, error) {
-	b := vm.APIBackend()
+	b := vm.apiBackend
 
 	filterSystem := filters.NewFilterSystem(b, filters.Config{})
 	filterAPI := filters.NewFilterAPI(filterSystem, false /*isLightClient*/)
@@ -115,7 +116,7 @@ func (vm *VM) ethRPCServer() (*rpc.Server, error) {
 		// Undocumented APIs:
 		// - eth_getBlockReceipts
 		// - eth_getProof
-		{"eth", ethapi.NewBlockChainAPI(b)},
+		{"eth", &blockChainAPI{ethapi.NewBlockChainAPI(b), b}},
 		// Standard Ethereum node APIs:
 		// - eth_getBlockTransactionCountByHash
 		// - eth_getBlockTransactionCountByNumber
@@ -296,6 +297,31 @@ func (s *netAPI) Version() string {
 	return s.chainID
 }
 
+type blockChainAPI struct {
+	*ethapi.BlockChainAPI
+	b *ethAPIBackend
+}
+
+// We override [ethapi.BlockChainAPI.GetBlockReceipts] so that we do not return
+// an error when a user queries a known, but not yet executed, block.
+func (b *blockChainAPI) GetBlockReceipts(ctx context.Context, blockNrOrHash rpc.BlockNumberOrHash) ([]map[string]any, error) {
+	blk, err := b.b.getBlock(blockNrOrHash)
+	if err != nil || !blk.Executed() {
+		return nil, nil //nolint:nilerr // This follows Geth behavior for [ethapi.BlockChainAPI.GetBlockReceipts]
+	}
+
+	signer := b.b.vm.signerForBlock(blk.EthBlock())
+	hash := blk.Hash()
+	num := blk.NumberU64()
+	txs := blk.Transactions()
+
+	result := make([]map[string]any, len(txs))
+	for i, receipt := range blk.Receipts() {
+		result[i] = ethapi.MarshalReceipt(receipt, hash, num, signer, txs[i], i)
+	}
+	return result, nil
+}
+
 // chainIndexer implements the subset of [ethapi.Backend] required to back a
 // [core.ChainIndexer].
 type chainIndexer struct {
@@ -394,17 +420,19 @@ func (b *ethAPIBackend) BlockByNumber(ctx context.Context, n rpc.BlockNumber) (*
 }
 
 func (b *ethAPIBackend) HeaderByHash(ctx context.Context, hash common.Hash) (*types.Header, error) {
-	if b, ok := b.vm.blocks.Load(hash); ok {
-		return b.Header(), nil
-	}
-	return readByHash(b, hash, rawdb.ReadHeader), nil
+	return readByHash(b, hash, (*blocks.Block).Header, rawdb.ReadHeader), nil
 }
 
 func (b *ethAPIBackend) BlockByHash(ctx context.Context, hash common.Hash) (*types.Block, error) {
-	if b, ok := b.vm.blocks.Load(hash); ok {
-		return b.EthBlock(), nil
-	}
-	return readByHash(b, hash, rawdb.ReadBlock), nil
+	return readByHash(b, hash, (*blocks.Block).EthBlock, rawdb.ReadBlock), nil
+}
+
+func (b *ethAPIBackend) HeaderByNumberOrHash(ctx context.Context, blockNrOrHash rpc.BlockNumberOrHash) (*types.Header, error) {
+	return readByNumberOrHash(b, blockNrOrHash, (*blocks.Block).Header, rawdb.ReadHeader)
+}
+
+func (b *ethAPIBackend) BlockByNumberOrHash(ctx context.Context, blockNrOrHash rpc.BlockNumberOrHash) (*types.Block, error) {
+	return readByNumberOrHash(b, blockNrOrHash, (*blocks.Block).EthBlock, rawdb.ReadBlock)
 }
 
 func (b *ethAPIBackend) GetTransaction(ctx context.Context, txHash common.Hash) (exists bool, tx *types.Transaction, blockHash common.Hash, blockNumber uint64, index uint64, err error) {
@@ -461,7 +489,10 @@ func (b *ethAPIBackend) GetPoolTransactions() (types.Transactions, error) {
 	return txs, nil
 }
 
-type canonicalReader[T any] func(ethdb.Reader, common.Hash, uint64) *T
+type (
+	canonicalReader[T any] func(ethdb.Reader, common.Hash, uint64) *T
+	blockAccessor[T any]   func(*blocks.Block) *T
+)
 
 func readByNumber[T any](b *ethAPIBackend, n rpc.BlockNumber, read canonicalReader[T]) (*T, error) {
 	num, err := b.resolveBlockNumber(n)
@@ -473,12 +504,28 @@ func readByNumber[T any](b *ethAPIBackend, n rpc.BlockNumber, read canonicalRead
 	return read(b.vm.db, rawdb.ReadCanonicalHash(b.vm.db, num), num), nil
 }
 
-func readByHash[T any](b *ethAPIBackend, hash common.Hash, read canonicalReader[T]) *T {
+func readByHash[T any](b *ethAPIBackend, hash common.Hash, fromMem blockAccessor[T], fromDB canonicalReader[T]) *T {
+	if blk, ok := b.vm.blocks.Load(hash); ok {
+		return fromMem(blk)
+	}
 	num := rawdb.ReadHeaderNumber(b.vm.db, hash)
 	if num == nil {
 		return nil
 	}
-	return read(b.vm.db, hash, *num)
+	return fromDB(b.vm.db, hash, *num)
+}
+
+// TODO(arr4n) DRY [readByHash] and [readByNumberOrHash]
+
+func readByNumberOrHash[T any](b *ethAPIBackend, blockNrOrHash rpc.BlockNumberOrHash, fromMem blockAccessor[T], fromDB canonicalReader[T]) (*T, error) {
+	n, hash, err := b.resolveBlockNumberOrHash(blockNrOrHash)
+	if err != nil {
+		return nil, err
+	}
+	if blk, ok := b.vm.blocks.Load(hash); ok {
+		return fromMem(blk), nil
+	}
+	return fromDB(b.vm.db, hash, n), nil
 }
 
 var (
@@ -596,6 +643,40 @@ func (*ethAPIBackend) SubscribePendingLogsEvent(chan<- []*types.Log) event.Subsc
 
 func (b *ethAPIBackend) SetHead(uint64) {
 	b.vm.log().Info("debug_setHead called but not supported by SAE")
+}
+
+func (b *ethAPIBackend) GetReceipts(ctx context.Context, hash common.Hash) (types.Receipts, error) {
+	blk, err := b.getBlock(rpc.BlockNumberOrHashWithHash(hash, false))
+	if err != nil || !blk.Executed() {
+		return nil, nil //nolint:nilerr // This follows Geth behavior for [ethapi.Backend.GetReceipts]
+	}
+	return blk.Receipts(), nil
+}
+
+// TODO(arr4n) this returns settled blocks in an invalid state. Use
+// [VM.GetBlock] in or after PR 183.
+func (b *ethAPIBackend) getBlock(numOrHash rpc.BlockNumberOrHash) (*blocks.Block, error) {
+	n, hash, err := b.resolveBlockNumberOrHash(numOrHash)
+	if err != nil {
+		return nil, err
+	}
+	if blk, ok := b.vm.blocks.Load(hash); ok {
+		return blk, nil
+	}
+
+	ethBlock := rawdb.ReadBlock(b.vm.db, hash, n)
+	if ethBlock == nil {
+		return nil, nil
+	}
+
+	blk, err := b.vm.newBlock(ethBlock, nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	if err := blk.RestoreExecutionArtefacts(b.vm.db, b.vm.xdb, b.vm.exec.ChainConfig()); err != nil {
+		return nil, fmt.Errorf("restoring execution artefacts: %w", err)
+	}
+	return blk, nil
 }
 
 type noopSubscription struct {
