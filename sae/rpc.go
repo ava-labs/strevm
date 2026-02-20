@@ -31,6 +31,7 @@ import (
 	"github.com/ava-labs/libevm/rpc"
 
 	"github.com/ava-labs/strevm/blocks"
+	"github.com/ava-labs/strevm/gasprice"
 	"github.com/ava-labs/strevm/saexec"
 	"github.com/ava-labs/strevm/txgossip"
 )
@@ -38,6 +39,8 @@ import (
 // APIBackend is the union of all interfaces required to implement the SAE APIs.
 type APIBackend interface {
 	ethapi.Backend
+	gasprice.Backend
+	filters.Backend
 	filters.BloomOverrider
 }
 
@@ -83,19 +86,36 @@ func (vm *VM) ethRPCServer() (*rpc.Server, error) {
 		// - eth_syncing
 		{"eth", ethapi.NewEthereumAPI(b)},
 		// Standard Ethereum node APIs:
+		// - eth_gasPrice
+		// - eth_syncing
+		//
+		// Undocumented APIs:
+		// - eth_feeHistory
+		// - eth_maxPriorityFeePerGas
+		{"eth", ethapi.NewEthereumAPI(b)},
+		// Standard Ethereum node APIs:
 		// - eth_blockNumber
+		// - eth_call
 		// - eth_chainId
+		// - eth_estimateGas
+		// - eth_getBalance
 		// - eth_getBlockByHash
 		// - eth_getBlockByNumber
-		// - eth_getBlockReceipts
+		// - eth_getCode
+		// - eth_getStorageAt
 		// - eth_getUncleByBlockHashAndIndex
 		// - eth_getUncleByBlockNumberAndIndex
 		// - eth_getUncleCountByBlockHash
 		// - eth_getUncleCountByBlockNumber
 		//
 		// Geth-specific APIs:
+		// - eth_createAccessList
 		// - eth_getHeaderByHash
 		// - eth_getHeaderByNumber
+		//
+		// Undocumented APIs:
+		// - eth_getBlockReceipts
+		// - eth_getProof
 		{"eth", &blockChainAPI{ethapi.NewBlockChainAPI(b), b}},
 		// Standard Ethereum node APIs:
 		// - eth_getBlockTransactionCountByHash
@@ -103,6 +123,7 @@ func (vm *VM) ethRPCServer() (*rpc.Server, error) {
 		// - eth_getTransactionByBlockHashAndIndex
 		// - eth_getTransactionByBlockNumberAndIndex
 		// - eth_getTransactionByHash
+		// - eth_getTransactionCount
 		// - eth_getTransactionReceipt
 		// - eth_sendRawTransaction
 		// - eth_sendTransaction
@@ -110,13 +131,21 @@ func (vm *VM) ethRPCServer() (*rpc.Server, error) {
 		// - eth_signTransaction
 		//
 		// Undocumented APIs:
+		// - eth_fillTransaction
 		// - eth_getRawTransactionByBlockHashAndIndex
 		// - eth_getRawTransactionByBlockNumberAndIndex
 		// - eth_getRawTransactionByHash
 		// - eth_pendingTransactions
+		// - eth_resend
 		{"eth", ethapi.NewTransactionAPI(b, new(ethapi.AddrLocker))},
-		// Standard Ethereum node APIS:
+		// Standard Ethereum node APIs:
+		// - eth_getFilterChanges
+		// - eth_getFilterLogs
 		// - eth_getLogs
+		// - eth_newBlockFilter
+		// - eth_newFilter
+		// - eth_newPendingTransactionFilter
+		// - eth_uninstallFilter
 		//
 		// Geth-specific APIs:
 		// - eth_subscribe
@@ -125,7 +154,6 @@ func (vm *VM) ethRPCServer() (*rpc.Server, error) {
 		//  - logs
 		{"eth", filterAPI},
 	}
-
 	if vm.config.RPCConfig.EnableDBInspecting {
 		apis = append(apis, api{
 			// Geth-specific APIs:
@@ -134,18 +162,15 @@ func (vm *VM) ethRPCServer() (*rpc.Server, error) {
 			// - debug_dbAncient
 			// - debug_dbAncients
 			// - debug_dbGet
-			// - debug_getRawTransaction
-			// - debug_printBlock
-			// - debug_setHead          (no-op, logs info)
-			//
-			// TODO: implement once BlockByNumberOrHash and GetReceipts exist:
 			// - debug_getRawBlock
 			// - debug_getRawHeader
 			// - debug_getRawReceipts
+			// - debug_getRawTransaction
+			// - debug_printBlock
+			// - debug_setHead
 			"debug", ethapi.NewDebugAPI(b),
 		})
 	}
-
 	if vm.config.RPCConfig.EnableProfiling {
 		apis = append(apis, api{
 			// Geth-specific APIs:
@@ -173,6 +198,34 @@ func (vm *VM) ethRPCServer() (*rpc.Server, error) {
 		})
 	}
 
+	// Unsupported APIs:
+	//
+	// Standard Ethereum node APIs:
+	// - eth_protocolVersion
+	// - eth_coinbase
+	// - eth_mining
+	// - eth_hashrate
+	// - eth_accounts
+	//
+	// Block and state inspection APIs:
+	// - debug_accountRange
+	// - debug_dumpBlock
+	// - debug_getAccessibleState
+	// - debug_getBadBlocks
+	// - debug_getModifiedAccountsByHash
+	// - debug_getModifiedAccountsByNumber
+	// - debug_getTrieFlushInterval
+	// - debug_preimage
+	// - debug_setTrieFlushInterval
+	// - debug_storageRangeAt
+	//
+	// The admin namespace.
+	// The clique namespace.
+	// The les namespace.
+	// The miner namespace.
+	// The personal namespace.
+	//
+	// The graphql service.
 	s := rpc.NewServer()
 	for _, api := range apis {
 		if err := s.RegisterName(api.namespace, api.api); err != nil {
@@ -291,6 +344,7 @@ func (b bloomOverrider) OverrideHeaderBloom(header *types.Header) types.Bloom {
 	))
 }
 
+// TODO: Rename to apiBackend
 type ethAPIBackend struct {
 	vm             *VM
 	accountManager *accounts.Manager
@@ -299,6 +353,7 @@ type ethAPIBackend struct {
 	chainIndexer
 	bloomOverrider
 	*bloomIndexer
+	*gasprice.Estimator
 }
 
 var _ APIBackend = (*ethAPIBackend)(nil)
@@ -312,11 +367,13 @@ func (b *ethAPIBackend) ChainConfig() *params.ChainConfig {
 }
 
 func (b *ethAPIBackend) RPCTxFeeCap() float64 {
-	return 0 // TODO(arr4n)
+	// TODO(StephenButtolph) Expose this as a config.
+	return 1 // 1 AVAX
 }
 
 func (b *ethAPIBackend) UnprotectedAllowed() bool {
-	return false
+	// TODO(StephenButtolph) Expose this as a config and default to false.
+	return true
 }
 
 func (b *ethAPIBackend) AccountManager() *accounts.Manager {
@@ -376,7 +433,7 @@ func (b *ethAPIBackend) GetBody(ctx context.Context, hash common.Hash, number rp
 	if hash == (common.Hash{}) {
 		return nil, errors.New("empty block hash")
 	}
-	n, err := b.resolveBlockNumber(number)
+	n, err := b.ResolveBlockNumber(number)
 	if err != nil {
 		return nil, err
 	}
@@ -426,7 +483,7 @@ func neverErrs[T any](fn func(ethdb.Reader, common.Hash, uint64) *T) canonicalRe
 }
 
 func readByNumber[T any](b *ethAPIBackend, n rpc.BlockNumber, read canonicalReader[T]) (*T, error) {
-	num, err := b.resolveBlockNumber(n)
+	num, err := b.ResolveBlockNumber(n)
 	if errors.Is(err, errFutureBlockNotResolved) {
 		return nil, nil
 	} else if err != nil {
@@ -482,7 +539,7 @@ func (b *ethAPIBackend) resolveBlockNumberOrHash(numOrHash rpc.BlockNumberOrHash
 		return 0, common.Hash{}, errBothNumberAndHash
 
 	case isNum:
-		num, err := b.resolveBlockNumber(rpcNum)
+		num, err := b.ResolveBlockNumber(rpcNum)
 		if err != nil {
 			return 0, common.Hash{}, err
 		}
@@ -517,7 +574,7 @@ func (b *ethAPIBackend) resolveBlockNumberOrHash(numOrHash rpc.BlockNumberOrHash
 
 var errFutureBlockNotResolved = errors.New("not accepted yet")
 
-func (b *ethAPIBackend) resolveBlockNumber(bn rpc.BlockNumber) (uint64, error) {
+func (b *ethAPIBackend) ResolveBlockNumber(bn rpc.BlockNumber) (uint64, error) {
 	head := b.vm.last.accepted.Load().Height()
 
 	switch bn {
@@ -556,16 +613,20 @@ func (b *ethAPIBackend) SubscribeChainEvent(ch chan<- core.ChainEvent) event.Sub
 	return b.vm.exec.SubscribeChainEvent(ch)
 }
 
-func (b *ethAPIBackend) SubscribeChainSideEvent(chan<- core.ChainSideEvent) event.Subscription {
+func (*ethAPIBackend) SubscribeChainSideEvent(chan<- core.ChainSideEvent) event.Subscription {
 	// SAE never reorgs, so there are no side events.
 	return newNoopSubscription()
+}
+
+func (b *ethAPIBackend) LastAcceptedBlock() *blocks.Block {
+	return b.vm.last.accepted.Load()
 }
 
 func (b *ethAPIBackend) SubscribeNewTxsEvent(ch chan<- core.NewTxsEvent) event.Subscription {
 	return b.Set.Pool.SubscribeTransactions(ch, true)
 }
 
-func (b *ethAPIBackend) SubscribeRemovedLogsEvent(chan<- core.RemovedLogsEvent) event.Subscription {
+func (*ethAPIBackend) SubscribeRemovedLogsEvent(chan<- core.RemovedLogsEvent) event.Subscription {
 	// SAE never reorgs, so no logs are ever removed.
 	return newNoopSubscription()
 }
@@ -574,7 +635,7 @@ func (b *ethAPIBackend) SubscribeLogsEvent(ch chan<- []*types.Log) event.Subscri
 	return b.vm.exec.SubscribeLogsEvent(ch)
 }
 
-func (b *ethAPIBackend) SubscribePendingLogsEvent(chan<- []*types.Log) event.Subscription {
+func (*ethAPIBackend) SubscribePendingLogsEvent(chan<- []*types.Log) event.Subscription {
 	// In SAE, "pending" refers to the execution status. There are no logs known
 	// for transactions pending execution.
 	return newNoopSubscription()
@@ -590,6 +651,20 @@ func (b *ethAPIBackend) GetReceipts(ctx context.Context, hash common.Hash) (type
 		return nil, nil //nolint:nilerr // This follows Geth behavior for [ethapi.Backend.GetReceipts]
 	}
 	return blk.Receipts(), nil
+}
+
+func (*ethAPIBackend) ExtRPCEnabled() bool {
+	// This is only used as an additional security measure for the personal API,
+	// which we do not support in its entirety.
+	return true
+}
+
+func (*ethAPIBackend) PendingBlockAndReceipts() (*types.Block, types.Receipts) {
+	return nil, nil
+}
+
+func (b *ethAPIBackend) GetPoolNonce(ctx context.Context, addr common.Address) (uint64, error) {
+	return b.Pool.Nonce(addr), nil
 }
 
 // TODO(arr4n) this returns settled blocks in an invalid state. Use

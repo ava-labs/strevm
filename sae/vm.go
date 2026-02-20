@@ -35,6 +35,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/ava-labs/strevm/blocks"
+	"github.com/ava-labs/strevm/gasprice"
 	"github.com/ava-labs/strevm/hook"
 	"github.com/ava-labs/strevm/saedb"
 	"github.com/ava-labs/strevm/saexec"
@@ -291,6 +292,7 @@ func NewVM(
 
 		chainIdx := chainIndexer{vm.exec}
 		override := bloomOverrider{vm.db}
+
 		// TODO(alarso16): if we are state syncing, we need to provide the first
 		// block available to the indexer via [core.ChainIndexer.AddCheckpoint].
 		bloomIdx := newBloomIndexer(vm.db, chainIdx, override, cfg.RPCConfig.BlocksPerBloomSection)
@@ -304,6 +306,14 @@ func NewVM(
 			bloomIndexer:   bloomIdx,
 			bloomOverrider: override,
 		}
+		vm.apiBackend.Estimator = gasprice.NewEstimator(vm.apiBackend, gasprice.Config{
+			Log: snowCtx.Log,
+			Now: cfg.Now,
+		})
+		vm.toClose = append(vm.toClose, func() error {
+			vm.apiBackend.Estimator.Close()
+			return nil
+		})
 	}
 
 	return vm, nil
