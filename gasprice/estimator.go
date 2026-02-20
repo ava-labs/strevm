@@ -150,7 +150,15 @@ func NewEstimator(backend Backend, c Config) *Estimator {
 
 // SuggestTipCap recommends a priority-fee (tip) for new transactions based on
 // tips from recently accepted transactions.
-func (e *Estimator) SuggestTipCap(ctx context.Context) (*big.Int, error) {
+func (e *Estimator) SuggestTipCap(ctx context.Context) (tip *big.Int, _ error) {
+	defer func() {
+		// Tip is modified by callers of this function, so we must ensure that
+		// it is copied.
+		if tip != nil {
+			tip = new(big.Int).Set(tip)
+		}
+	}()
+
 	headNumber := e.backend.LastAcceptedBlock().NumberU64()
 
 	e.lastLock.RLock()
