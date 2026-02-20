@@ -368,7 +368,7 @@ func (s *SUT) createAndVerifyBlock(tb testing.TB, txs ...*types.Transaction) *bl
 	s.addToMempool(tb, txs...)
 	b := s.buildAndParseBlock(tb, s.lastAcceptedBlock(tb))
 	require.NoErrorf(tb, b.Verify(s.context(tb)), "%T.Verify()", b)
-	return b.(adaptor.Block[*blocks.Block]).Unwrap() //nolint:forcetypeassert // it's a test and guaranteed
+	return unwrap(tb, b)
 }
 
 func (s *SUT) buildAndParseBlock(tb testing.TB, preference *blocks.Block) snowman.Block {
