@@ -720,7 +720,6 @@ func TestGetReceipts(t *testing.T) {
 	unsettled, wantUnsettled := slice(t, 4, 6)
 	sut.waitUntilExecuted(t, unsettled)
 
-	// Pending block: accepted but not yet executed (blocking precompile).
 	pendingTx := sut.wallet.SetNonceAndSign(t, 0, &types.LegacyTx{
 		To:       &blockingPrecompile,
 		Gas:      params.TxGas,
