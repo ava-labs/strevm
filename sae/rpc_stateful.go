@@ -83,18 +83,11 @@ func (b *ethAPIBackend) StateAndHeaderByNumberOrHash(ctx context.Context, numOrH
 	} else {
 		hdr = rawdb.ReadHeader(b.db, hash, num)
 
-		// TODO(arr4n) export [blocks.executionResults] to avoid multiple
-		// database reads and canoto unmarshallings here.
-		var err error
-		hdr.Root, err = blocks.PostExecutionStateRoot(b.vm.xdb, num)
+		root, bf, err := blocks.StateRootAndBaseFee(b.vm.xdb, num)
 		if err != nil {
 			return nil, nil, err
 		}
-
-		bf, err := blocks.ExecutionBaseFee(b.vm.xdb, num)
-		if err != nil {
-			return nil, nil, err
-		}
+		hdr.Root = root
 		hdr.BaseFee = bf.ToBig()
 	}
 
