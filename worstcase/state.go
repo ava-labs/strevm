@@ -68,13 +68,13 @@ func NewState(
 	config *params.ChainConfig,
 	stateCache state.Database,
 	settled *blocks.Block,
+	snaps state.SnapshotTree,
 ) (*State, error) {
 	if !settled.Executed() {
 		return nil, errSettledBlockNotExecuted
 	}
 
-	// TODO: Should we be providing snapshots here?
-	db, err := state.New(settled.PostExecutionStateRoot(), stateCache, nil)
+	db, err := state.New(settled.PostExecutionStateRoot(), stateCache, snaps)
 	if err != nil {
 		return nil, err
 	}

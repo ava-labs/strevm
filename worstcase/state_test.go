@@ -59,7 +59,7 @@ func newSUT(tb testing.TB, alloc types.GenesisAlloc) SUT {
 	hooks := &hookstest.Stub{
 		Target: initialGasTarget,
 	}
-	s, err := NewState(hooks, config, cache, genesis)
+	s, err := NewState(hooks, config, cache, genesis, nil)
 	require.NoError(tb, err, "NewState()")
 
 	return SUT{

@@ -26,6 +26,8 @@ import (
 	"github.com/ava-labs/strevm/saedb"
 )
 
+const SnapshotCacheSizeMB = 128
+
 // An Executor accepts and executes a [blocks.Block] FIFO queue.
 type Executor struct {
 	quit, done chan struct{}
@@ -44,8 +46,9 @@ type Executor struct {
 	db           ethdb.Database
 	xdb          saedb.ExecutionResults
 	stateCache   state.Database
-	// snaps MUST NOT be accessed by any methods other than [Executor.execute]
-	// and [Executor.Close].
+	// snaps is owned by [Executor]. It may be mutated during
+	// [Executor.execute] and [Executor.Close]. callers MUST treat
+	// values returned from [Executor.SnapTree] as read-only.
 	snaps *snapshot.Tree
 }
 
@@ -67,7 +70,7 @@ func New(
 ) (*Executor, error) {
 	cache := state.NewDatabaseWithConfig(db, triedbConfig)
 	snapConf := snapshot.Config{
-		CacheSize:  128, // MB
+		CacheSize:  SnapshotCacheSizeMB,
 		AsyncBuild: true,
 	}
 	snaps, err := snapshot.New(snapConf, db, cache.TrieDB(), lastExecuted.PostExecutionStateRoot())
@@ -131,6 +134,11 @@ func (e *Executor) ChainContext() core.ChainContext {
 // StateCache returns caching database underpinning execution.
 func (e *Executor) StateCache() state.Database {
 	return e.stateCache
+}
+
+// SnapTree returns the snapshot tree for read-only state lookups.
+func (e *Executor) SnapTree() *snapshot.Tree {
+	return e.snaps
 }
 
 // LastExecuted returns the last-executed block in a threadsafe manner.
