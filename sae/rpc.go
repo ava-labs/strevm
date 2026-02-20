@@ -440,6 +440,8 @@ func readByHash[T any](b *ethAPIBackend, hash common.Hash, fromMem blockAccessor
 	return fromDB(b.vm.db, hash, *num)
 }
 
+// TODO(arr4n) DRY [readByHash] and [readByNumberOrHash]
+
 func readByNumberOrHash[T any](b *ethAPIBackend, blockNrOrHash rpc.BlockNumberOrHash, fromMem blockAccessor[T], fromDB canonicalReader[T]) (*T, error) {
 	n, hash, err := b.resolveBlockNumberOrHash(blockNrOrHash)
 	if err != nil {
@@ -576,6 +578,8 @@ func (b *ethAPIBackend) GetReceipts(ctx context.Context, hash common.Hash) (type
 	return blk.Receipts(), nil
 }
 
+// TODO(arr4n) this returns settled blocks in an invalid state. Use
+// [VM.GetBlock] in or after PR 183.
 func (b *ethAPIBackend) getBlock(numOrHash rpc.BlockNumberOrHash) (*blocks.Block, error) {
 	n, hash, err := b.resolveBlockNumberOrHash(numOrHash)
 	if err != nil {
