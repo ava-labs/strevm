@@ -7,7 +7,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sync/atomic"
 	"time"
 
 	"github.com/ava-labs/avalanchego/database"
@@ -383,22 +382,18 @@ func (vm *VM) GetBlock(ctx context.Context, id ids.ID) (*blocks.Block, error) {
 		},
 		func(db ethdb.Reader, hash common.Hash, num uint64) (*blocks.Block, error) {
 			// As the block wasn't in memory it's either been rejected, not yet
-			// verified, or settled. Only the latter will be in the database.
-
-			// Ancestry is unnecessary as we'll mark the block as settled, which
-			// clears them.
-			b, err := vm.newBlock(rawdb.ReadBlock(db, hash, num), nil, nil)
-			if err != nil {
-				return nil, err
-			}
-			if err := b.RestoreExecutionArtefacts(vm.db, vm.xdb, vm.exec.ChainConfig()); err != nil {
-				return nil, err
-			}
+			// verified, or settled. Only the latter will be in the database and
+			// [readByHash] guarantees that we'll only be here if a block is in
+			// the database.
+			//
 			// TODO: should we distinguish between sync and async blocks?
-			if err := b.MarkSettled(new(atomic.Pointer[blocks.Block])); err != nil {
-				return nil, err
-			}
-			return b, nil
+			return blocks.RestoreSettledBlock(
+				rawdb.ReadBlock(db, hash, num),
+				vm.log(),
+				vm.db,
+				vm.xdb,
+				vm.exec.ChainConfig(),
+			)
 		},
 		database.ErrNotFound,
 	)
