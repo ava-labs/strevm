@@ -84,7 +84,7 @@ func (b *Block) markSettled(lastSettled *atomic.Pointer[Block]) error {
 // [Block.SetAsHeadBlock], which MUST be done by the caller, i.f.f. the chain
 // has not yet commenced asynchronous execution.
 //
-// TODO(arr4n) refactor to avoid DB writes on every startup.
+// TODO(arr4n) refactor to avoid requiring DB writes.
 func (b *Block) MarkSynchronous(hooks hook.Points, db ethdb.Database, xdb saedb.ExecutionResults, excessAfter gas.Gas) error {
 	ethB := b.EthBlock()
 	// Receipts of a synchronous block have already been "settled" by the block
