@@ -115,6 +115,8 @@ func NewEstimator(backend Backend, c Config) *Estimator {
 	// New blocks are cached in the background to avoid slow responses after
 	// long periods of no requests to the estimator. This allows us to avoid
 	// parallelizing reads inside individual API calls.
+	//
+	// TODO: Consider caching upon acceptance rather than execution.
 	events := make(chan core.ChainHeadEvent, 1)
 	sub := backend.SubscribeChainHeadEvent(events)
 	cache := newBlockCache(
