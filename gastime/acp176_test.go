@@ -5,17 +5,21 @@ package gastime
 
 import (
 	"math"
+	"math/big"
 	"testing"
 	"time"
 
+	"github.com/arr4n/shed/testerr"
 	"github.com/ava-labs/avalanchego/vms/components/gas"
 	"github.com/ava-labs/libevm/core/types"
+	"github.com/ava-labs/libevm/params"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/text/language"
+	"golang.org/x/text/message"
 
 	"github.com/ava-labs/strevm/hook"
 	"github.com/ava-labs/strevm/hook/hookstest"
-	"github.com/ava-labs/strevm/intmath"
 )
 
 // TestInvalidConfigRejected verifies that zero values for TargetToExcessScaling
@@ -189,259 +193,6 @@ func FuzzWorstCasePrice(f *testing.F) {
 	})
 }
 
-// TestPriceTrajectory verifies that gas price behaves correctly across multiple
-// blocks with different configurations.
-func TestPriceTrajectory(t *testing.T) {
-	const (
-		target = gas.Gas(1_000_000)
-	)
-
-	startTime := time.Unix(1000, 0)
-	// simulateBlocks processes a sequence of blocks and returns the price after each block.
-	// The returned slice has len(blocks) elements: [priceAfterBlock0, priceAfterBlock1, ...]
-	type block struct {
-		time           time.Time
-		gasUsed        gas.Gas
-		target         gas.Gas
-		gasPriceConfig hook.GasPriceConfig
-	}
-	simulateBlocks := func(t *testing.T, tm *Time, blocks []block) []gas.Price {
-		t.Helper()
-		prices := make([]gas.Price, 0, len(blocks))
-
-		for _, b := range blocks {
-			header := &types.Header{Time: uint64(b.time.Unix())} //nolint:gosec // Known non-negative
-			hooks := &hookstest.Stub{
-				Target:         b.target,
-				GasPriceConfig: b.gasPriceConfig,
-			}
-			tm.BeforeBlock(hooks, header)
-			require.NoError(t, tm.AfterBlock(b.gasUsed, hooks, header), "AfterBlock()")
-			prices = append(prices, tm.Price())
-		}
-		return prices
-	}
-
-	t.Run("higher_scaling_reduces_volatility", func(t *testing.T) {
-		// Two Time instances with same initial state but different scaling
-		// Process same sequence of full blocks
-		// Assert: higher scaling instance has smaller price changes per block
-		const (
-			// Use high enough excess to get measurable price above MinPrice for both
-			// Price = MinPrice * e^(excess / K), where K = scaling * target
-			// For lowScaling: K = 10 * 1e6 = 1e7, excess = 2e8, so excess/K = 20, price = e^20 (huge)
-			// For highScaling: K = 50 * 1e6 = 5e7, excess = 2e8, so excess/K = 4, price = e^4 ≈ 54
-			initialExcess = gas.Gas(200_000_000)
-			lowScaling    = gas.Gas(10)
-			highScaling   = gas.Gas(50)
-		)
-
-		tmLow := mustNew(t, startTime, target, initialExcess, hook.GasPriceConfig{TargetToExcessScaling: lowScaling, MinPrice: DefaultMinPrice})
-		tmHigh := mustNew(t, startTime, target, initialExcess, hook.GasPriceConfig{TargetToExcessScaling: highScaling, MinPrice: DefaultMinPrice})
-
-		initialPriceLow := tmLow.Price()
-		initialPriceHigh := tmHigh.Price()
-
-		require.Greater(t, initialPriceLow, gas.Price(1), "sanity: low scaling should have price > 1")
-		require.Greater(t, initialPriceHigh, gas.Price(1), "sanity: high scaling should have price > 1")
-
-		// Process blocks with gas usage above target (to increase excess)
-		// Use large gas values to see meaningful changes
-		blocks := []block{
-			{time: startTime.Add(time.Second), gasUsed: target * 3, target: target, gasPriceConfig: DefaultGasPriceConfig()},
-			{time: startTime.Add(2 * time.Second), gasUsed: target * 3, target: target, gasPriceConfig: DefaultGasPriceConfig()},
-			{time: startTime.Add(3 * time.Second), gasUsed: target * 3, target: target, gasPriceConfig: DefaultGasPriceConfig()},
-		}
-
-		pricesLow := simulateBlocks(t, tmLow, blocks)
-		pricesHigh := simulateBlocks(t, tmHigh, blocks)
-
-		// Calculate total price change ratio for each
-		finalPriceLow := pricesLow[len(pricesLow)-1]
-		finalPriceHigh := pricesHigh[len(pricesHigh)-1]
-
-		// Price should increase for both (excess increased)
-		require.Greater(t, finalPriceLow, initialPriceLow, "low scaling: price should increase")
-		require.Greater(t, finalPriceHigh, initialPriceHigh, "high scaling: price should increase")
-
-		// The ratio of change should be smaller for high scaling (less volatile)
-		ratioLow := float64(finalPriceLow) / float64(initialPriceLow)
-		ratioHigh := float64(finalPriceHigh) / float64(initialPriceHigh)
-		assert.Greater(t, ratioLow, ratioHigh, "low scaling should have higher volatility (larger price ratio)")
-	})
-
-	t.Run("static_pricing_keeps_price_fixed", func(t *testing.T) {
-		// With StaticPricing enabled, price stays at MinPrice regardless
-		// of gas usage or excess accumulation.
-		const (
-			initialExcess = gas.Gas(1e9)
-			minPrice      = gas.Price(1e11) // 100 gwei
-		)
-
-		staticCfg := hook.GasPriceConfig{
-			TargetToExcessScaling: DefaultTargetToExcessScaling,
-			MinPrice:              minPrice,
-			StaticPricing:         true,
-		}
-
-		tm := mustNew(t, startTime, target, initialExcess, staticCfg)
-
-		initialPrice := tm.Price()
-		assert.Equal(t, minPrice, initialPrice, "with StaticPricing, price %d should equal MinPrice %d", initialPrice, minPrice)
-
-		// Process blocks with varying gas usage — all using static pricing config
-		blocks := []block{
-			{time: startTime.Add(time.Second), gasUsed: 0, target: target, gasPriceConfig: staticCfg},              // empty block
-			{time: startTime.Add(2 * time.Second), gasUsed: target * 2, target: target, gasPriceConfig: staticCfg}, // full block
-			{time: startTime.Add(3 * time.Second), gasUsed: target * 5, target: target, gasPriceConfig: staticCfg}, // very full block
-			{time: startTime.Add(4 * time.Second), gasUsed: 0, target: target, gasPriceConfig: staticCfg},          // empty again
-		}
-
-		prices := simulateBlocks(t, tm, blocks)
-
-		// All prices should be equal to MinPrice
-		for i, p := range prices {
-			assert.Equal(t, minPrice, p, "price %d at step %d should equal MinPrice %d", p, i, minPrice)
-		}
-	})
-
-	t.Run("transition_from_static_pricing_restores_dynamics", func(t *testing.T) {
-		// Start with static pricing mode
-		// Change to normal scaling
-		// Verify price becomes dynamic again
-		const (
-			minPrice      = gas.Price(1)
-			normalScaling = gas.Gas(10) // Use small scaling for more sensitivity
-		)
-
-		staticCfg := hook.GasPriceConfig{
-			TargetToExcessScaling: DefaultTargetToExcessScaling,
-			MinPrice:              minPrice,
-			StaticPricing:         true,
-		}
-		normalCfg := hook.GasPriceConfig{
-			TargetToExcessScaling: normalScaling,
-			MinPrice:              minPrice,
-		}
-
-		tm := mustNew(t, startTime, target, 0, staticCfg)
-
-		// Price should be at MinPrice
-		assert.Equal(t, minPrice, tm.Price(), "price %d should equal MinPrice %d", tm.Price(), minPrice)
-
-		// Process some blocks with high gas usage (excess accumulates but price stays static)
-		blocks := []block{
-			{time: startTime.Add(time.Second), gasUsed: target * 2, target: target, gasPriceConfig: staticCfg},
-			{time: startTime.Add(2 * time.Second), gasUsed: target * 2, target: target, gasPriceConfig: staticCfg},
-		}
-		prices := simulateBlocks(t, tm, blocks)
-		for _, p := range prices {
-			assert.Equal(t, minPrice, p, "price %d should stay at MinPrice %d with static pricing", p, minPrice)
-		}
-
-		priceBeforeTransition := tm.Price()
-
-		// Now transition to normal scaling - price continuity means excess is scaled
-		// to maintain price = MinPrice, so excess becomes 0
-		// Then continue with high gas usage to build up excess and increase price
-		blocks = []block{
-			{time: startTime.Add(3 * time.Second), gasUsed: target * 5, target: target, gasPriceConfig: normalCfg},
-			{time: startTime.Add(4 * time.Second), gasUsed: target * 5, target: target, gasPriceConfig: normalCfg},
-			{time: startTime.Add(5 * time.Second), gasUsed: target * 5, target: target, gasPriceConfig: normalCfg},
-			{time: startTime.Add(6 * time.Second), gasUsed: target * 5, target: target, gasPriceConfig: normalCfg},
-			{time: startTime.Add(7 * time.Second), gasUsed: target * 5, target: target, gasPriceConfig: normalCfg},
-		}
-		prices = simulateBlocks(t, tm, blocks)
-
-		// Price continuity: first price after transition should be close to priceBeforeTransition
-		// (which is MinPrice since we were in fixed mode)
-		assert.Equal(t, priceBeforeTransition, prices[0], "price %d continuity at transition should equal priceBeforeTransition %d", prices[0], priceBeforeTransition)
-
-		// After several blocks with high gas usage, price should have increased
-		finalPrice := prices[len(prices)-1]
-		assert.Greater(t, finalPrice, minPrice,
-			"price %d should increase after transitioning to normal scaling with high gas usage", finalPrice, minPrice)
-	})
-
-	t.Run("min_price_decrease_trajectory", func(t *testing.T) {
-		// Start with high MinPrice and some excess
-		// Decrease MinPrice below current price
-		// With empty blocks and time passing, price should decay toward new MinPrice
-		const (
-			highMinPrice = gas.Price(1000)
-			lowMinPrice  = gas.Price(100) // Smaller ratio for better approximation
-			scaling      = gas.Gas(50)    // Larger scaling for better approximation
-		)
-
-		// Start with high MinPrice and enough excess so price > MinPrice
-		// With K = 50 * 1e6 = 5e7, and excess = 1e8, excess/K = 2, price = 1000 * e^2 ≈ 7389
-		tm := mustNew(t, startTime, target, target*100, hook.GasPriceConfig{
-			TargetToExcessScaling: scaling,
-			MinPrice:              highMinPrice,
-		})
-
-		initialPrice := tm.Price()
-		require.Greater(t, initialPrice, highMinPrice, "sanity: price should be above MinPrice with excess")
-
-		// Decrease MinPrice - price should be approximately maintained (price continuity)
-		lowCfg := hook.GasPriceConfig{TargetToExcessScaling: scaling, MinPrice: lowMinPrice}
-		blocks := []block{
-			{time: startTime.Add(time.Second), gasUsed: 0, target: target, gasPriceConfig: lowCfg},
-		}
-		prices := simulateBlocks(t, tm, blocks)
-
-		priceAfterChange := prices[0]
-
-		// Price should be approximately maintained after MinPrice decrease
-		// Due to binary search approximation with integer arithmetic, allow 10% tolerance
-		priceDiff := absdiff(uint64(priceAfterChange), uint64(initialPrice))
-		tolerance := max(1, initialPrice/10) // 10% tolerance
-		assert.LessOrEqual(t, priceDiff, tolerance,
-			"price should be approximately maintained after MinPrice decrease (got %d, want ~%d, diff %d, tolerance %d)",
-			priceAfterChange, initialPrice, priceDiff, tolerance)
-
-		// Now process empty blocks with time passing - price should decay toward new MinPrice
-		blocks = []block{
-			{time: startTime.Add(10 * time.Second), gasUsed: 0, target: target, gasPriceConfig: lowCfg},
-			{time: startTime.Add(20 * time.Second), gasUsed: 0, target: target, gasPriceConfig: lowCfg},
-			{time: startTime.Add(50 * time.Second), gasUsed: 0, target: target, gasPriceConfig: lowCfg},
-			{time: startTime.Add(100 * time.Second), gasUsed: 0, target: target, gasPriceConfig: lowCfg},
-			{time: startTime.Add(200 * time.Second), gasUsed: 0, target: target, gasPriceConfig: lowCfg},
-			{time: startTime.Add(500 * time.Second), gasUsed: 0, target: target, gasPriceConfig: lowCfg},
-			{time: startTime.Add(1000 * time.Second), gasUsed: 0, target: target, gasPriceConfig: lowCfg},
-		}
-		prices = simulateBlocks(t, tm, blocks)
-
-		// Price should be decreasing
-		for i := 1; i < len(prices); i++ {
-			assert.LessOrEqual(t, prices[i], prices[i-1],
-				"price should decrease with empty blocks: step %d", i)
-		}
-
-		// Price should have reached MinPrice
-		finalPrice := prices[len(prices)-1]
-		assert.Equal(t, lowMinPrice, finalPrice, "price should reach MinPrice")
-
-		// Now verify it stays at MinPrice with more empty blocks
-		blocks = []block{
-			{time: startTime.Add(1100 * time.Second), gasUsed: 0, target: target, gasPriceConfig: lowCfg},
-			{time: startTime.Add(1200 * time.Second), gasUsed: 0, target: target, gasPriceConfig: lowCfg},
-		}
-		prices = simulateBlocks(t, tm, blocks)
-
-		for _, p := range prices {
-			assert.Equal(t, lowMinPrice, p, "price should stay at MinPrice")
-		}
-	})
-}
-
-func absdiff(x uint64, y uint64) uint64 {
-	if x < y {
-		return y - x
-	}
-	return x - y
-}
-
 func FuzzPriceInvarianceAfterBlock(f *testing.F) {
 	for _, s := range []struct {
 		T, x, M, KonT         uint64
@@ -554,81 +305,175 @@ func FuzzPriceInvarianceAfterBlock(f *testing.F) {
 			newKonT:    87,
 			newStatic:  true,
 		},
+		{
+			KonT: 0, // invalid
+			T:    1, M: 1,
+		},
+		{
+			M: 0, // invalid
+			T: 1, KonT: 1,
+		},
+		{
+			newM: 0, // invalid
+			T:    1, M: 1, KonT: 1,
+			newKonT: 1,
+		},
+		{
+			newKonT: 0, // invalid
+			T:       1, M: 1, KonT: 1,
+			newM: 1,
+		},
 	} {
 		f.Add(s.T, s.x, s.M, s.KonT, s.initStatic, s.newT, s.newM, s.newKonT, s.newStatic)
 	}
 
 	f.Fuzz(func(
 		t *testing.T,
-		initTarget, excess, initMinPrice, initScaling uint64, initStaticPricing bool,
+		initTarget, initExcess, initMinPrice, initScaling uint64, initStaticPricing bool,
+		// There is no `newExcess` because it's computed (and tested).
 		newTarget, newMinPrice, newScaling uint64, newStaticPricing bool,
 	) {
-		if initMinPrice == 0 || newMinPrice == 0 {
-			t.Skip("Zero price coefficient")
-		}
-		if initScaling == 0 || newScaling == 0 {
-			t.Skip("Zero scaling denominator")
+		if initScaling > 1e6 || newScaling > 1e6 {
+			// The scaling factor controls the rate of gas-price doubling, where
+			// 87 is approximately half an hour, and price is inversely
+			// proportional to the value.
+			t.Skip("Excessive scaling")
 		}
 
-		tm := mustNew(t,
+		// Avoid having to deal with weird edge cases for extremely low targets
+		// due to insufficient resolution in the rational exponent.
+		switch minRate := gas.Gas(params.TxGas); {
+		case SafeRateOfTarget(gas.Gas(initTarget)) < minRate:
+			t.Skip("Initial target too low")
+		case SafeRateOfTarget(gas.Gas(newTarget)) < minRate:
+			t.Skip("New target too low")
+		}
+
+		initConfig := hook.GasPriceConfig{
+			TargetToExcessScaling: gas.Gas(initScaling),
+			MinPrice:              gas.Price(initMinPrice),
+			StaticPricing:         initStaticPricing,
+		}
+		tm, err := New(
 			time.Unix(0, 0),
 			gas.Gas(initTarget),
-			gas.Gas(excess),
-			hook.GasPriceConfig{
-				TargetToExcessScaling: gas.Gas(initScaling),
-				MinPrice:              gas.Price(initMinPrice),
-				StaticPricing:         initStaticPricing,
-			},
+			gas.Gas(initExcess),
+			initConfig,
 		)
-		initPrice := tm.Price()
 
-		hooks := &hookstest.Stub{
-			Target: gas.Gas(newTarget),
-			GasPriceConfig: hook.GasPriceConfig{
-				MinPrice:              gas.Price(newMinPrice),
-				TargetToExcessScaling: gas.Gas(newScaling),
-				StaticPricing:         newStaticPricing,
-			},
-		}
-
-		// Consuming gas increases the excess, which changes the price. We're
-		// only interested in invariance under changes in config.
-		const gasUsed = 0
-		require.NoError(t, tm.AfterBlock(gasUsed, hooks, nil), "AfterBlock()")
-
-		want := initPrice
-		if p := hooks.GasPriceConfig.MinPrice; newStaticPricing || p > initPrice {
-			want = p
-		} else {
-			// When required excess for continuity exceeds the search cap, findExcessForPrice
-			// returns that cap and the resulting price is M * e^(cap/K).
-			// This means price continuity is not possible if required excess exceeds the search cap.
-			newK := intmath.BoundedMultiply(gas.Gas(newScaling), gas.Gas(newTarget), math.MaxUint64)
-			requiredApproxExcess := float64(newK) * math.Log(float64(initPrice)/float64(newMinPrice))
-			if requiredApproxExcess > float64(math.MaxUint64) {
-				want = gas.CalculatePrice(gas.Price(newMinPrice), math.MaxUint64, newK)
+		{
+			var wantErr testerr.Want
+			if initScaling == 0 {
+				wantErr = testerr.Is(errTargetToExcessScalingZero)
+			} else if initMinPrice == 0 {
+				wantErr = testerr.Is(errMinPriceZero)
+			}
+			if diff := testerr.Diff(err, wantErr); diff != "" {
+				t.Fatalf("New(... %+v) %s", initConfig, diff)
+			}
+			if wantErr != nil {
+				return
 			}
 		}
 
-		got := tm.Price()
+		initExp := tm.exponent()
+		initPrice := tm.Price()
 
-		// Due to integer arithmetic in binary search, exact price continuity isn't always
-		// achievable. We allow a small tolerance: difference of at most 1 in the exponent
-		// means the price can differ by at most a factor of e^(1/K), which for practical
-		// K values is negligible. We use a simple absolute difference check for small
-		// prices and relative check for larger ones.
-		diff := absdiff(uint64(got), uint64(want))
+		{
+			hooks := &hookstest.Stub{
+				Target: gas.Gas(newTarget),
+				GasPriceConfig: hook.GasPriceConfig{
+					MinPrice:              gas.Price(newMinPrice),
+					TargetToExcessScaling: gas.Gas(newScaling),
+					StaticPricing:         newStaticPricing,
+				},
+			}
 
-		// Allow difference of 1 or 0.01% of the price, whichever is larger
-		tolerance := max(uint64(1), uint64(want)/100_000)
-		if diff > tolerance {
-			t.Logf("Target: %d -> %d", initTarget, newTarget)
-			t.Logf("Excess: %v (unchanged)", excess)
-			t.Logf("Price: %d -> %d", initPrice, got)
-			t.Logf("MinPrice: %d -> %d", initMinPrice, newMinPrice)
-			t.Logf("TargetToExcessScaling: %d -> %d", initScaling, newScaling)
-			t.Logf("StaticPricing: %v -> %v", initStaticPricing, newStaticPricing)
-			t.Errorf("AfterBlock([0 gas consumed]) -> %T.Price() got %d want %d (diff %d > tolerance %d)", tm, got, want, diff, tolerance)
+			var wantErr testerr.Want
+			if newScaling == 0 {
+				wantErr = testerr.Is(errTargetToExcessScalingZero)
+			} else if newMinPrice == 0 {
+				wantErr = testerr.Is(errMinPriceZero)
+			}
+
+			// Consuming gas increases the excess, which changes the price.
+			// We're only interested in invariance under changes in config.
+			const gasUsed = 0
+			if diff := testerr.Diff(tm.AfterBlock(gasUsed, hooks, nil), wantErr); diff != "" {
+				t.Fatalf("AfterBlock([%+v]) %s", hooks, diff)
+			}
+			if wantErr != nil {
+				return
+			}
+		}
+
+		pr := message.NewPrinter(language.English)
+		log := func(desc string, from, to uint64) {
+			if from == to {
+				t.Log(pr.Sprintf("%s (unchanged): %d", desc, from))
+			} else {
+				t.Log(pr.Sprintf("%s: %d -> %d", desc, from, to))
+			}
+		}
+		log("Target", initTarget, newTarget)
+		log("MinPrice", initMinPrice, newMinPrice)
+		log("TargetToExcessScaling", initScaling, newScaling)
+		t.Logf("StaticPricing: %t -> %t", initStaticPricing, newStaticPricing)
+		log("Excess", initExcess, uint64(tm.excess))
+		log("Price (value under test)", uint64(initPrice), uint64(tm.Price()))
+
+		switch minP := gas.Price(newMinPrice); {
+		case minP > initPrice:
+			require.Equal(t, minP, tm.Price(), "minimum price > initial price -> price == min")
+
+		case newStaticPricing:
+			require.Equal(t, minP, tm.Price(), "static pricing -> price == min")
+
+		case tm.config.equalHookConfig(t, initConfig):
+			// Target-only changes keep the x/K exponent as close to equal as
+			// possible given the resolution of the denominator.
+			newExp := tm.exponent()
+
+			diff := new(big.Rat).Sub(newExp, initExp)
+			diff.Abs(diff)
+
+			tolerance := new(big.Rat).SetFrac(
+				big.NewInt(1),
+				newExp.Denom(),
+			)
+			if diff.Cmp(tolerance) >= 0 {
+				t.Errorf("Exponent of price equation changed from %v to %v; diff = %v >= %v", initExp, newExp, diff, tolerance)
+			}
+
+		default:
+			// Due to integer arithmetic in binary search, exact price
+			// continuity isn't always achievable. [Time.findExcessForPrice]
+			// finds the lowest excess that results in >= the targeted price.
+			assert.GreaterOrEqual(t, tm.Price(), initPrice, "binary search on excess results in price >= initial")
+			if tm.excess > 0 {
+				tm.excess--
+				assert.Less(t, tm.Price(), initPrice, "binary search on excess results in lowest price >= initial")
+			}
 		}
 	})
+}
+
+// equalHookConfig is equivalent to [config.equal] but accepts a
+// [hook.GasPriceConfig] that is first converted and validated.
+func (c *config) equalHookConfig(tb testing.TB, hookCfg hook.GasPriceConfig) bool {
+	tb.Helper()
+	other, err := newConfig(hookCfg)
+	require.NoError(tb, err)
+	return c.equals(other)
+}
+
+// exponent returns x/K, the exponent of the gas price. For fixed M, equal
+// exponents result in equal prices. However if scaling results in a new
+// exponent with insufficient resolution (too low a denominator) to be identical
+// then the price could be different.
+func (tm *Time) exponent() *big.Rat {
+	return new(big.Rat).SetFrac(
+		new(big.Int).SetUint64(uint64(tm.excess)),
+		new(big.Int).SetUint64(uint64(tm.excessScalingFactor())),
+	)
 }

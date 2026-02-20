@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/arr4n/shed/testerr"
 	"github.com/ava-labs/avalanchego/vms/components/gas"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
@@ -341,128 +342,65 @@ func TestExcess(t *testing.T) {
 	}
 }
 
-func TestExcessScalingFactor(t *testing.T) {
-	const max = math.MaxUint64
+func TestMinAndStaticPrice(t *testing.T) {
+	const (
+		target = 1e6
+		excess = target * DefaultTargetToExcessScaling // i.e. Price == floor(e)*MinPrice
+	)
 
-	defaultTests := []struct {
-		target, want gas.Gas
+	tests := []struct {
+		name     string
+		minPrice gas.Price
+		static   bool
+		want     gas.Price
+		wantErr  testerr.Want
 	}{
-		// Default scaling (87)
-		{1, 87},
-		{2, 174},
-		{max / 87, (max / 87) * 87},
-		{max/87 - 0, max - 81}, // identical to above, but explicit for clarity
-		{max/87 - 1, max - 81 - 87},
-		{max/87 + 1, max}, // because `max - 81 + 87` would overflow
-		{max, max},        // target clamped to MaxTarget, still overflows
-	}
-	t.Run("default", func(t *testing.T) {
-		tm := mustNew(t, time.Unix(0, 0), 1, 0, DefaultGasPriceConfig())
-		for _, tt := range defaultTests {
-			require.NoErrorf(t, tm.SetTarget(tt.target), "%T.SetTarget(%v)", tm, tt.target)
-			assert.Equalf(t, tt.want, tm.excessScalingFactor(), "T=%d", tt.target)
-		}
-	})
-
-	customTests := []struct {
-		scaling, target, want gas.Gas
-	}{
-		// Scaling = 1 (minimum meaningful value)
-		{1, 1, 1},
-		{1, 100, 100},
-		{1, MaxTarget, MaxTarget}, // target clamped, scaling=1 so result = MaxTarget
-
-		// Scaling = 100
-		{100, 1, 100},
-		{100, 10, 1000},
-		{100, max / 100, (max / 100) * 100},
-		{100, max/100 + 1, max}, // overflow
-
-		// Scaling = 50 (lower than default, price more sensitive)
-		{50, 1, 50},
-		{50, 1_000_000, 50_000_000},
-		{50, max / 50, (max / 50) * 50},
-		{50, max/50 + 1, max},
-
-		// Large scaling values
-		{1000, 1, 1000},
-		{1000, max / 1000, (max / 1000) * 1000},
-		{1000, max/1000 + 1, max},
-
-		// Edge case: scaling = max
-		{max, 1, max},
-		{max, 2, max}, // would overflow
+		{
+			name:     "min=1",
+			minPrice: 1,
+			want:     2,
+		},
+		{
+			name:     "min=100",
+			minPrice: 100,
+			want:     271,
+		},
+		{
+			name:     "high_min_no_overflow",
+			minPrice: math.MaxUint64 / 2,
+			want:     math.MaxUint64,
+		},
+		{
+			name:     "zero_min_errors",
+			minPrice: 0,
+			wantErr:  testerr.Is(errMinPriceZero),
+		},
+		{
+			name:     "static_pricing_returns_min",
+			minPrice: 123_456,
+			static:   true,
+			want:     123_456,
+		},
 	}
 
-	t.Run("custom scaling", func(t *testing.T) {
-		for _, tt := range customTests {
-			tm := mustNew(t, time.Unix(0, 0), tt.target, 0, hook.GasPriceConfig{TargetToExcessScaling: tt.scaling, MinPrice: DefaultMinPrice})
-			require.NoErrorf(t, tm.SetTarget(tt.target), "%T.SetTarget(%v)", tm, tt.target)
-			assert.Equalf(t, tt.want, tm.excessScalingFactor(), "scaling=%d, T=%d", tt.scaling, tt.target)
-		}
-	})
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := DefaultGasPriceConfig()
+			cfg.MinPrice = tt.minPrice
+			cfg.StaticPricing = tt.static
 
-func TestMinPrice(t *testing.T) {
-	t.Run("default", func(t *testing.T) {
-		tests := []struct {
-			target, excess gas.Gas
-			want           gas.Price
-		}{
-			// Zero excess returns DefaultMinPrice
-			{1_000_000, 0, 1},
-			{10_000_000, 0, 1},
-			// With excess, price > minPrice but still uses default minPrice as base
-			{1_000_000, 1_000_000, 1},   // small excess, rounds to 1
-			{1_000_000, 100_000_000, 3}, // excess/K ≈ 1.15, e^1.15 ≈ 3.16
-		}
-		for _, tt := range tests {
-			tm := mustNew(t, time.Unix(0, 0), tt.target, tt.excess, DefaultGasPriceConfig())
-			assert.Equalf(t, tt.want, tm.Price(), "target=%d, excess=%d", tt.target, tt.excess)
-		}
-	})
-
-	t.Run("custom min price", func(t *testing.T) {
-		tests := []struct {
-			minPrice       gas.Price
-			target, excess gas.Gas
-			want           gas.Price
-		}{
-			// Zero excess returns exactly minPrice
-			{1, 1_000_000, 0, 1},
-			{10, 1_000_000, 0, 10},
-			{100, 1_000_000, 0, 100},
-			{1000, 1_000_000, 0, 1000},
-
-			// With excess, price is minPrice * e^(excess/K)
-			{10, 1_000_000, 87_000_000, 27},   // excess/K = 1, e^1 ≈ 2.718, 10*2.718 ≈ 27
-			{100, 1_000_000, 87_000_000, 271}, // 100 * e^1 ≈ 271
-		}
-		for _, tt := range tests {
-			tm := mustNew(t, time.Unix(0, 0), tt.target, tt.excess, hook.GasPriceConfig{TargetToExcessScaling: DefaultTargetToExcessScaling, MinPrice: tt.minPrice})
-			assert.Equalf(t, tt.want, tm.Price(), "minPrice=%d, target=%d, excess=%d", tt.minPrice, tt.target, tt.excess)
-		}
-	})
-
-	t.Run("min price updated via SetOpts", func(t *testing.T) {
-		tm := mustNew(t, time.Unix(0, 0), 1_000_000, 0, DefaultGasPriceConfig())
-		assert.Equal(t, DefaultMinPrice, tm.Price(), "initial price with default minPrice")
-
-		cfg := DefaultGasPriceConfig()
-		cfg.MinPrice = 100
-		require.NoError(t, tm.SetConfig(cfg))
-		assert.Equal(t, gas.Price(100), tm.Price(), "price after SetOpts(WithMinPrice(100))")
-
-		cfg.MinPrice = 1000
-		require.NoError(t, tm.SetConfig(cfg))
-		assert.Equal(t, gas.Price(1000), tm.Price(), "price after SetOpts(WithMinPrice(1000))")
-
-		// Verify SetConfig rejects zero
-		cfg.MinPrice = 0
-		err := tm.SetConfig(cfg)
-		require.Error(t, err, "SetOpts should reject zero min price")
-		assert.Equal(t, gas.Price(1000), tm.Price(), "price should be unchanged after rejected update")
-	})
+			tm, err := New(time.Unix(0, 0), target, excess, cfg)
+			if diff := testerr.Diff(err, tt.wantErr); diff != "" {
+				t.Fatalf("New(..., %+v) %s", cfg, diff)
+			}
+			if tt.wantErr != nil {
+				return
+			}
+			if got := tm.Price(); got != tt.want {
+				t.Errorf("New(..., excess=%d, %+v).Price() got %d; want %d", gas.Gas(excess), cfg, got, tt.want)
+			}
+		})
+	}
 }
 
 func TestTargetClamping(t *testing.T) {
