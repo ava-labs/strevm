@@ -342,65 +342,59 @@ func (s *SUT) requireInMempool(tb testing.TB, txs ...common.Hash) {
 	)
 }
 
-func (s *SUT) stateAt(tb testing.TB, root common.Hash) *state.StateDB {
+// buildAndParseBlock calls [SUT.addToMempool] with the provided transactions,
+// builds a new block and passes its bytes to [VM.ParseBlock], the result of
+// which is returned. This is equivalent to a validator having received valid
+// bytes from a peer, but with no element of consensus performed.
+//
+// A block at this stage is rarely useful and does not meet invariants required
+// of a [blocks.Block], hence its return as a [snowman.Block].
+func (s *SUT) buildAndParseBlock(tb testing.TB, preference *blocks.Block, txs ...*types.Transaction) snowman.Block {
 	tb.Helper()
-	sdb, err := state.New(root, s.rawVM.exec.StateCache(), nil)
-	require.NoErrorf(tb, err, "state.New(%#x, %T.StateCache())", root, s.rawVM.exec)
-	return sdb
-}
-
-// createAndAcceptBlock sends all of the transactions to the mempool, asserts
-// that they are present in the mempool, then returns the result of [SUT.runConsensusLoop] with
-// [SUT.lastAcceptedBlock] as its argument.
-// Because the mempool may already include other transactions, or the transactions
-// provided may fail validation, there is no guarantee that the returned block
-// includes all of the provided transactions.
-func (s *SUT) createAndAcceptBlock(tb testing.TB, txs ...*types.Transaction) *blocks.Block {
-	tb.Helper()
-
 	s.addToMempool(tb, txs...)
-	return s.runConsensusLoop(tb, s.lastAcceptedBlock(tb))
-}
 
-func (s *SUT) createAndVerifyBlock(tb testing.TB, txs ...*types.Transaction) *blocks.Block {
-	tb.Helper()
-
-	s.addToMempool(tb, txs...)
-	b := s.buildAndParseBlock(tb, s.lastAcceptedBlock(tb))
-	require.NoErrorf(tb, b.Verify(s.context(tb)), "%T.Verify()", b)
-	return unwrap(tb, b)
-}
-
-func (s *SUT) buildAndParseBlock(tb testing.TB, preference *blocks.Block) snowman.Block {
-	tb.Helper()
-
-	s.syncMempool(tb)
 	ctx := s.context(tb)
 	require.NoError(tb, s.SetPreference(ctx, preference.ID()), "SetPreference()")
 
 	proposed, err := s.BuildBlock(ctx)
 	require.NoError(tb, err, "BuildBlock()")
-	// Ensure that a peer would be able to perform the consensus loop by parsing
-	// the block.
 	b, err := s.ParseBlock(ctx, proposed.Bytes())
 	require.NoError(tb, err, "ParseBlock(BuildBlock().Bytes())")
 	return b
 }
 
-// runConsensusLoop syncs the mempool, sets the preference to the specified
-// block, then builds, verifies, accepts, and returns the new block. It does NOT
-// wait for it to be executed; to do this automatically, set the [VM] to
-// [snow.Bootstrapping].
-func (s *SUT) runConsensusLoop(tb testing.TB, preference *blocks.Block) *blocks.Block {
+// createAndVerifyBlock calls [SUT.buildAndParseBlock] with the provided
+// transactions. It verifies the block with [VM.VerifyBlock] (via the [adaptor])
+// before returning it.
+//
+// Although the block is now in a functional state, it is still returned as a
+// [snowman.Block] to expose its `Accept()` method, ensuring that we test via
+// the public API as exposed to the consensus engine.
+func (s *SUT) createAndVerifyBlock(tb testing.TB, preference *blocks.Block, txs ...*types.Transaction) snowman.Block {
 	tb.Helper()
+	b := s.buildAndParseBlock(tb, preference, txs...)
+	require.NoErrorf(tb, b.Verify(s.context(tb)), "%T.Verify()", b)
+	return b
+}
 
-	b := s.buildAndParseBlock(tb, preference)
+// createAndAcceptBlock is equivalent to [SUT.createAndVerifyBlock] except that
+// it also accepts the block with [VM.AcceptBlock]. It does NOT wait for it to
+// be executed; to do this automatically, set the [VM] to [snow.Bootstrapping].
+//
+// There is no longer any need to wrap the block as an [adaptor.Block] so it is
+// returned in its raw form, unlike earlier steps in the consenus loop.
+func (s *SUT) runConsensusLoop(tb testing.TB, preference *blocks.Block, txs ...*types.Transaction) *blocks.Block {
+	tb.Helper()
+	b := s.createAndVerifyBlock(tb, preference, txs...)
+	require.NoErrorf(tb, b.Accept(s.context(tb)), "%T.Accept()")
+	return unwrap(tb, b)
+}
 
-	ctx := s.context(tb)
-	require.NoErrorf(tb, b.Verify(ctx), "%T.Verify()", b)
-	require.NoErrorf(tb, b.Accept(ctx), "%T.Accept()", b)
-
-	return s.lastAcceptedBlock(tb)
+// runConsensusLoopFromLastAccepted is a convenience wrapper for
+// [SUT.runConsensusLoop], using [SUT.lastAcceptedBlock] as the preference.
+func (s *SUT) runConsensusLoopFromLastAccepted(tb testing.TB, txs ...*types.Transaction) *blocks.Block {
+	tb.Helper()
+	return s.runConsensusLoop(tb, s.lastAcceptedBlock(tb), txs...)
 }
 
 // waitUntilExecuted blocks until an external indicator shows that `b` has been
@@ -438,6 +432,13 @@ func (s *SUT) waitUntilExecuted(tb testing.TB, b *blocks.Block) {
 			}
 		}
 	}
+}
+
+func (s *SUT) stateAt(tb testing.TB, root common.Hash) *state.StateDB {
+	tb.Helper()
+	sdb, err := state.New(root, s.rawVM.exec.StateCache(), nil)
+	require.NoErrorf(tb, err, "state.New(%#x, %T.StateCache())", root, s.rawVM.exec)
+	return sdb
 }
 
 // lastAcceptedBlock is a convenience wrapper for calling [VM.GetBlock] with
@@ -837,17 +838,17 @@ func TestGetBlock(t *testing.T) {
 
 	// Once a block is settled, its ancestors are only accessible from the
 	// database.
-	onDisk := sut.createAndAcceptBlock(t, createTx(t, zeroAddr))
+	onDisk := sut.runConsensusLoopFromLastAccepted(t, createTx(t, zeroAddr))
 
-	settled := sut.createAndAcceptBlock(t, createTx(t, zeroAddr))
+	settled := sut.runConsensusLoopFromLastAccepted(t, createTx(t, zeroAddr))
 	vmTime.advanceToSettle(ctx, t, settled)
 
-	executed := sut.createAndAcceptBlock(t, createTx(t, zeroAddr))
+	executed := sut.runConsensusLoopFromLastAccepted(t, createTx(t, zeroAddr))
 	require.NoErrorf(t, executed.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", executed)
 
-	accepted := sut.createAndAcceptBlock(t, createTx(t, blockingPrecompile))
+	accepted := sut.runConsensusLoopFromLastAccepted(t, createTx(t, blockingPrecompile))
 
-	verified := sut.createAndVerifyBlock(t, createTx(t, zeroAddr))
+	verified := sut.createAndVerifyBlock(t, sut.lastAcceptedBlock(t), createTx(t, zeroAddr))
 
 	testGetBlock := func(t *testing.T, want *blocks.Block) {
 		t.Helper()
@@ -896,7 +897,7 @@ func TestGetBlock(t *testing.T) {
 	}
 
 	t.Run("verified", func(t *testing.T) {
-		testGetBlock(t, verified)
+		testGetBlock(t, unwrap(t, verified))
 	})
 
 	// Need to be able to execute more blocks
@@ -919,7 +920,7 @@ func TestGetBlock(t *testing.T) {
 		prev := toBeSettled.(adaptor.Block[*blocks.Block]).Unwrap() //nolint:forcetypeassert // it's guaranteed
 		for range 2 {
 			vmTime.advanceToSettle(ctx, t, prev)
-			prev = sut.createAndAcceptBlock(t, createTx(t, zeroAddr))
+			prev = sut.runConsensusLoopFromLastAccepted(t, createTx(t, zeroAddr))
 		}
 
 		require.NoErrorf(t, eg.Wait(), "%T.GetBlock in errgroup", sut)

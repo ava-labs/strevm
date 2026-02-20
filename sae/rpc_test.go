@@ -436,15 +436,15 @@ func TestEthGetters(t *testing.T) {
 
 	// Once a block is settled, its ancestors are only accessible from the
 	// database.
-	onDisk := sut.createAndAcceptBlock(t, createTx(t, zeroAddr))
+	onDisk := sut.runConsensusLoopFromLastAccepted(t, createTx(t, zeroAddr))
 
-	settled := sut.createAndAcceptBlock(t, createTx(t, zeroAddr))
+	settled := sut.runConsensusLoopFromLastAccepted(t, createTx(t, zeroAddr))
 	vmTime.advanceToSettle(ctx, t, settled)
 
-	executed := sut.createAndAcceptBlock(t, createTx(t, zeroAddr))
+	executed := sut.runConsensusLoopFromLastAccepted(t, createTx(t, zeroAddr))
 	require.NoErrorf(t, executed.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", executed)
 
-	pending := sut.createAndAcceptBlock(t, createTx(t, blockingPrecompile))
+	pending := sut.runConsensusLoopFromLastAccepted(t, createTx(t, blockingPrecompile))
 
 	for _, b := range []*blocks.Block{genesis, onDisk, settled, executed, pending} {
 		t.Run(fmt.Sprintf("block_num_%d", b.Height()), func(t *testing.T) {
@@ -532,15 +532,15 @@ func TestGetLogs(t *testing.T) {
 	// and therefore moved to disk.
 	indexed := make([]*blocks.Block, bloomSectionSize)
 	for i := range indexed {
-		indexed[i] = sut.createAndAcceptBlock(t, txWithLog(t))
+		indexed[i] = sut.runConsensusLoopFromLastAccepted(t, txWithLog(t))
 	}
 
-	settled := sut.createAndAcceptBlock(t, txWithLog(t))
+	settled := sut.runConsensusLoopFromLastAccepted(t, txWithLog(t))
 	vmTime.advanceToSettle(ctx, t, settled)
 
-	noLogs := sut.createAndAcceptBlock(t, txWithoutLog(t))
+	noLogs := sut.runConsensusLoopFromLastAccepted(t, txWithoutLog(t))
 
-	executed := sut.createAndAcceptBlock(t, txWithLog(t))
+	executed := sut.runConsensusLoopFromLastAccepted(t, txWithLog(t))
 	require.NoErrorf(t, executed.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", executed)
 
 	// Although the FiltersAPI will work without any blocks indexed, such a
@@ -698,7 +698,7 @@ func TestGetReceipts(t *testing.T) {
 
 	slice := func(t *testing.T, from, to int) (*blocks.Block, []*types.Receipt) {
 		t.Helper()
-		b := sut.createAndAcceptBlock(t, txs[from:to]...)
+		b := sut.runConsensusLoopFromLastAccepted(t, txs[from:to]...)
 		rs := want[from:to]
 
 		var totalGas uint64
@@ -725,7 +725,7 @@ func TestGetReceipts(t *testing.T) {
 		Gas:      params.TxGas,
 		GasPrice: big.NewInt(1),
 	})
-	pending := sut.createAndAcceptBlock(t, pendingTx)
+	pending := sut.runConsensusLoopFromLastAccepted(t, pendingTx)
 
 	var tests []rpcTest
 	for _, tc := range []struct {
@@ -913,7 +913,7 @@ func TestDebugGetRawTransaction(t *testing.T) {
 		Gas:       params.TxGas,
 		GasFeeCap: big.NewInt(1),
 	})
-	b := sut.createAndAcceptBlock(t, tx)
+	b := sut.runConsensusLoopFromLastAccepted(t, tx)
 	require.NoErrorf(t, b.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", b)
 
 	marshaled, err := tx.MarshalBinary()

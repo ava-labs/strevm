@@ -43,7 +43,7 @@ func TestEthCall(t *testing.T) {
 	}
 
 	sign := sut.wallet.SetNonceAndSign
-	b := sut.createAndAcceptBlock(t, sign(t, 0, deploy), sign(t, 0, deposit))
+	b := sut.runConsensusLoopFromLastAccepted(t, sign(t, 0, deploy), sign(t, 0, deposit))
 	require.Len(t, b.Transactions(), 2, "tx count")
 	require.NoErrorf(t, b.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", b)
 	for _, r := range b.Receipts() {
