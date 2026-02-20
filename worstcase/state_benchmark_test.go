@@ -104,15 +104,9 @@ func BenchmarkApplyTxWithSnapshot(b *testing.B) {
 					b.ResetTimer()
 					for range b.N {
 						s, err := NewState(sut.hooks, sut.config, sut.stateCache, sut.genesis, tt.snaps)
-						if err != nil {
-							b.Fatal(err)
-						}
-						if err := s.StartBlock(sut.header); err != nil {
-							b.Fatal(err)
-						}
-						if err := s.ApplyTx(tx); err != nil {
-							b.Fatal(err)
-						}
+						require.NoError(b, err)
+						require.NoError(b, s.StartBlock(sut.header))
+						require.NoError(b, s.ApplyTx(tx))
 					}
 				})
 			}
