@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync/atomic"
 	"time"
 
 	"github.com/ava-labs/avalanchego/database"
@@ -394,7 +395,7 @@ func (vm *VM) GetBlock(ctx context.Context, id ids.ID) (*blocks.Block, error) {
 				return nil, err
 			}
 			// TODO: should we distinguish between sync and async blocks?
-			if err := b.MarkSettled(nil); err != nil {
+			if err := b.MarkSettled(new(atomic.Pointer[blocks.Block])); err != nil {
 				return nil, err
 			}
 			return b, nil
