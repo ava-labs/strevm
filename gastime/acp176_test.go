@@ -461,6 +461,7 @@ func FuzzPriceInvarianceAfterBlock(f *testing.F) {
 // equalHookConfig is equivalent to [config.equal] but accepts a
 // [hook.GasPriceConfig] that is first converted and validated.
 func (c *config) equalHookConfig(tb testing.TB, hookCfg hook.GasPriceConfig) bool {
+	tb.Helper()
 	other, err := newConfig(hookCfg)
 	require.NoError(tb, err)
 	return c.equals(other)
