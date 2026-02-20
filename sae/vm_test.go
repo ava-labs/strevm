@@ -835,7 +835,7 @@ func TestGetBlock(t *testing.T) {
 		{"settled_in_memory", settled, nil},
 		{"unsettled", unsettled, nil},
 		{"verified", unwrap(t, verified), nil},
-		{"unverified", unwrap(t, unverified), testerr.Is(database.ErrNotFound)},
+		{"unverified", unwrap(t, unverified), testerr.Equals(database.ErrNotFound)},
 	}
 
 	for _, tt := range tests {
