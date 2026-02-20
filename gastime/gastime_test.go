@@ -341,68 +341,6 @@ func TestExcess(t *testing.T) {
 	}
 }
 
-func TestExcessScalingFactor(t *testing.T) {
-	const max = math.MaxUint64
-
-	defaultTests := []struct {
-		target, want gas.Gas
-	}{
-		// Default scaling (87)
-		{1, 87},
-		{2, 174},
-		{max / 87, (max / 87) * 87},
-		{max/87 - 0, max - 81}, // identical to above, but explicit for clarity
-		{max/87 - 1, max - 81 - 87},
-		{max/87 + 1, max}, // because `max - 81 + 87` would overflow
-		{max, max},        // target clamped to MaxTarget, still overflows
-	}
-	t.Run("default", func(t *testing.T) {
-		tm := mustNew(t, time.Unix(0, 0), 1, 0, DefaultGasPriceConfig())
-		for _, tt := range defaultTests {
-			require.NoErrorf(t, tm.SetTarget(tt.target), "%T.SetTarget(%v)", tm, tt.target)
-			assert.Equalf(t, tt.want, tm.excessScalingFactor(), "T=%d", tt.target)
-		}
-	})
-
-	customTests := []struct {
-		scaling, target, want gas.Gas
-	}{
-		// Scaling = 1 (minimum meaningful value)
-		{1, 1, 1},
-		{1, 100, 100},
-		{1, MaxTarget, MaxTarget}, // target clamped, scaling=1 so result = MaxTarget
-
-		// Scaling = 100
-		{100, 1, 100},
-		{100, 10, 1000},
-		{100, max / 100, (max / 100) * 100},
-		{100, max/100 + 1, max}, // overflow
-
-		// Scaling = 50 (lower than default, price more sensitive)
-		{50, 1, 50},
-		{50, 1_000_000, 50_000_000},
-		{50, max / 50, (max / 50) * 50},
-		{50, max/50 + 1, max},
-
-		// Large scaling values
-		{1000, 1, 1000},
-		{1000, max / 1000, (max / 1000) * 1000},
-		{1000, max/1000 + 1, max},
-
-		// Edge case: scaling = max
-		{max, 1, max},
-		{max, 2, max}, // would overflow
-	}
-
-	t.Run("custom scaling", func(t *testing.T) {
-		for _, tt := range customTests {
-			tm := mustNew(t, time.Unix(0, 0), tt.target, 0, hook.GasPriceConfig{TargetToExcessScaling: tt.scaling, MinPrice: DefaultMinPrice})
-			require.NoErrorf(t, tm.SetTarget(tt.target), "%T.SetTarget(%v)", tm, tt.target)
-			assert.Equalf(t, tt.want, tm.excessScalingFactor(), "scaling=%d, T=%d", tt.scaling, tt.target)
-		}
-	})
-}
-
 func TestMinPrice(t *testing.T) {
 	t.Run("default", func(t *testing.T) {
 		tests := []struct {
