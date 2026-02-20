@@ -60,7 +60,7 @@ type VM struct {
 	preference     atomic.Pointer[blocks.Block]
 	last           struct {
 		accepted, settled atomic.Pointer[blocks.Block]
-		synchronous       *blocks.Block
+		synchronous       uint64
 	}
 
 	exec       *saexec.Executor
@@ -143,7 +143,7 @@ func NewVM(
 	if err != nil {
 		return nil, fmt.Errorf("blocks.New([last synchronous], ...): %v", err)
 	}
-	vm.last.synchronous = lastSync
+	vm.last.synchronous = lastSync.Height()
 
 	{ // ==========  Sync -> Async  ==========
 		// TODO(arr4n) refactor to avoid DB writes on every startup.

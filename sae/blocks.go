@@ -391,12 +391,15 @@ func (vm *VM) GetBlock(ctx context.Context, id ids.ID) (*blocks.Block, error) {
 			// store and loading the canonical number from the database. That
 			// could result in an unexecuted block, which would cause an error
 			// when restoring it.
+			//
+			// TODO(arr4n) I think [readHash] should be providing this guarantee
+			// as it has access to the [syncMap] and its lock.
 			if vm.last.settled.Load().Height() < num {
 				return nil, database.ErrNotFound
 			}
 
 			ethB := rawdb.ReadBlock(db, hash, num)
-			if num > vm.last.synchronous.Height() {
+			if num > vm.last.synchronous {
 				return blocks.RestoreSettledBlock(
 					ethB,
 					vm.log(),
