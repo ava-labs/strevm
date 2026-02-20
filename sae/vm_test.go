@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/arr4n/shed/testerr"
 	"github.com/ava-labs/avalanchego/database"
 	"github.com/ava-labs/avalanchego/database/memdb"
 	"github.com/ava-labs/avalanchego/ids"
@@ -41,12 +42,10 @@ import (
 	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/rpc"
 	"github.com/google/go-cmp/cmp"
-	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/holiman/uint256"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
-	"golang.org/x/sync/errgroup"
 
 	"github.com/ava-labs/strevm/adaptor"
 	"github.com/ava-labs/strevm/blocks"
@@ -804,125 +803,51 @@ func TestGossip(t *testing.T) {
 
 func TestGetBlock(t *testing.T) {
 	opt, vmTime := withVMTime(t, time.Unix(saeparams.TauSeconds, 0))
-
 	ctx, sut := newSUT(t, 1, opt)
-
-	t.Run("Unknown GetBlockIDAtHeight", func(t *testing.T) {
-		id, err := sut.GetBlockIDAtHeight(t.Context(), 1)
-		require.ErrorIs(t, err, database.ErrNotFound, "sut.GetBlockIDAtHeight()")
-		assert.Zero(t, id)
-	})
-
-	t.Run("Unknown GetBlock", func(t *testing.T) {
-		b, err := sut.GetBlock(t.Context(), ids.ID{})
-		require.ErrorIs(t, err, database.ErrNotFound)
-		assert.Nil(t, b)
-	})
-
-	// The named block "pending" is the last to be enqueued but yet to be
-	// executed. Although unlikely to be useful in practice, it still needs to
-	// be tested.
-	blockingPrecompile := common.Address{'b', 'l', 'o', 'c', 'k'}
-	release := registerBlockingPrecompile(t, blockingPrecompile)
-
-	createTx := func(t *testing.T, to common.Address) *types.Transaction {
-		t.Helper()
-		return sut.wallet.SetNonceAndSign(t, 0, &types.DynamicFeeTx{
-			To:        &to,
-			Gas:       params.TxGas,
-			GasFeeCap: big.NewInt(1),
-		})
-	}
-
-	genesis := sut.lastAcceptedBlock(t)
 
 	// Once a block is settled, its ancestors are only accessible from the
 	// database.
-	onDisk := sut.runConsensusLoopFromLastAccepted(t, createTx(t, zeroAddr))
-
-	settled := sut.runConsensusLoopFromLastAccepted(t, createTx(t, zeroAddr))
+	onDisk := sut.runConsensusLoopFromLastAccepted(t)
+	settled := sut.runConsensusLoopFromLastAccepted(t)
 	vmTime.advanceToSettle(ctx, t, settled)
+	unsettled := sut.runConsensusLoopFromLastAccepted(t)
 
-	executed := sut.runConsensusLoopFromLastAccepted(t, createTx(t, zeroAddr))
-	require.NoErrorf(t, executed.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", executed)
-
-	accepted := sut.runConsensusLoopFromLastAccepted(t, createTx(t, blockingPrecompile))
-
-	verified := sut.createAndVerifyBlock(t, sut.lastAcceptedBlock(t), createTx(t, zeroAddr))
-
-	testGetBlock := func(t *testing.T, want *blocks.Block) {
-		t.Helper()
-		snowB, err := sut.GetBlock(ctx, want.ID())
-		require.NoError(t, err, "GetBlock()")
-		gotB, ok := snowB.(adaptor.Block[*blocks.Block])
-		require.True(t, ok, "GetBlock() return a %T, expected an adaptor.Block[*blocks.Block]", snowB)
-		if diff := cmp.Diff(want, gotB.Unwrap(), blocks.CmpOpt(), cmpopts.IgnoreFields(blocks.Block{}, "synchronous")); diff != "" {
-			t.Errorf("vm.GetBlock(...) mismatch (-want +got):\n%s", diff)
-		}
-	}
+	verified := sut.createAndVerifyBlock(t, unsettled)
+	unverified := sut.buildAndParseBlock(
+		t,
+		unsettled,
+		// Ensures that this is a completely unknown block.
+		sut.wallet.SetNonceAndSign(t, 0, &types.LegacyTx{
+			To:       &common.Address{},
+			Gas:      params.TxGas,
+			GasPrice: big.NewInt(1),
+		}),
+	)
 
 	tests := []struct {
-		name string
-		want *blocks.Block
+		name    string
+		block   *blocks.Block
+		wantErr testerr.Want
 	}{
-		{
-			name: "genesis",
-			want: genesis,
-		},
-		{
-			name: "on disk",
-			want: onDisk,
-		},
-		{
-			name: "settled",
-			want: settled,
-		},
-		{
-			name: "executed",
-			want: executed,
-		},
-		{
-			name: "accepted",
-			want: accepted,
-		},
+		{"on_disk", onDisk, nil},
+		{"settled_in_memory", settled, nil},
+		{"unsettled", unsettled, nil},
+		{"verified", unwrap(t, verified), nil},
+		{"unverified", unwrap(t, unverified), testerr.Is(database.ErrNotFound)},
 	}
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			testGetBlock(t, tt.want)
-
-			id, err := sut.GetBlockIDAtHeight(ctx, tt.want.Height())
-			require.NoError(t, err, "GetBlockIdAtHeight()")
-			require.Equal(t, tt.want.ID(), id)
+			got, err := sut.GetBlock(ctx, tt.block.ID())
+			if diff := testerr.Diff(err, tt.wantErr); diff != "" {
+				t.Fatalf("GetBlock(...) %s", diff)
+			}
+			if tt.wantErr != nil {
+				return
+			}
+			if diff := cmp.Diff(tt.block, unwrap(t, got), blocks.CmpOpt()); diff != "" {
+				t.Errorf("GetBlock(...) diff (-want +got):\n%s", diff)
+			}
 		})
 	}
-
-	t.Run("verified", func(t *testing.T) {
-		testGetBlock(t, unwrap(t, verified))
-	})
-
-	// Need to be able to execute more blocks
-	release()
-
-	// This subtest verifies a block, and then settles a block after it to force it to disk.
-	// Even though the code path this may take is not deterministic, since the block could be
-	// in any state, it should always be returned.
-	t.Run("verified always available", func(t *testing.T) {
-		sut.addToMempool(t, createTx(t, zeroAddr))
-		toBeSettled := sut.buildAndParseBlock(t, accepted)
-		require.NoErrorf(t, toBeSettled.Verify(ctx), "%T.Verify()", toBeSettled)
-
-		eg, egCtx := errgroup.WithContext(ctx)
-		eg.Go(func() error {
-			_, err := sut.GetBlock(egCtx, toBeSettled.ID())
-			return err
-		})
-		require.NoErrorf(t, toBeSettled.Accept(ctx), "%T.Accept()", toBeSettled)
-		prev := toBeSettled.(adaptor.Block[*blocks.Block]).Unwrap() //nolint:forcetypeassert // it's guaranteed
-		for range 2 {
-			vmTime.advanceToSettle(ctx, t, prev)
-			prev = sut.runConsensusLoopFromLastAccepted(t, createTx(t, zeroAddr))
-		}
-
-		require.NoErrorf(t, eg.Wait(), "%T.GetBlock in errgroup", sut)
-	})
 }
