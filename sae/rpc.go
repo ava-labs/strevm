@@ -244,15 +244,13 @@ func (b *blockChainAPI) GetBlockReceipts(ctx context.Context, blockNrOrHash rpc.
 		return nil, nil //nolint:nilerr // This follows Geth behavior for [ethapi.BlockChainAPI.GetBlockReceipts]
 	}
 
-	var (
-		receipts = blk.Receipts()
-		hash     = blk.Hash()
-		num      = blk.NumberU64()
-		signer   = types.MakeSigner(b.b.ChainConfig(), blk.Number(), blk.BuildTime())
-		txs      = blk.Transactions()
-		result   = make([]map[string]any, len(receipts))
-	)
-	for i, receipt := range receipts {
+	signer := b.b.vm.signerForBlock(blk.EthBlock())
+	hash := blk.Hash()
+	num := blk.NumberU64()
+	txs := blk.Transactions()
+
+	result := make([]map[string]any, len(txs))
+	for i, receipt := range blk.Receipts() {
 		result[i] = ethapi.MarshalReceipt(receipt, hash, num, signer, txs[i], i)
 	}
 	return result, nil
