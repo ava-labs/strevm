@@ -11,6 +11,7 @@ import (
 
 	"github.com/ava-labs/avalanchego/database"
 	"github.com/ava-labs/avalanchego/ids"
+	"github.com/ava-labs/avalanchego/snow/consensus/snowman"
 	"github.com/ava-labs/avalanchego/snow/engine/snowman/block"
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core"
@@ -364,23 +365,82 @@ func canonicalBlock(db ethdb.Database, num uint64) (*types.Block, error) {
 }
 
 // GetBlock returns the block with the given ID, or [database.ErrNotFound].
+//
+// It is expected that blocks that have been successfully verified should be
+// returned correctly. It is also expected that blocks that have been
+// accepted by the consensus engine should be able to be fetched. It is not
+// required for blocks that have been rejected by the consensus engine to be
+// able to be fetched.
 func (vm *VM) GetBlock(ctx context.Context, id ids.ID) (*blocks.Block, error) {
-	b, ok := vm.blocks.Load(common.Hash(id))
-	if !ok {
-		return nil, database.ErrNotFound
-	}
-	return b, nil
+	var _ snowman.Block // protect the input to allow comment linking
+
+	return readByHash(
+		vm,
+		common.Hash(id),
+		func(b *blocks.Block) *blocks.Block {
+			return b
+		},
+		func(db ethdb.Reader, hash common.Hash, num uint64) (*blocks.Block, error) {
+			// A block that's not in memory has either been rejected, not yet
+			// verified, or settled. Of these, only the latter would be in the
+			// database.
+			//
+			// There is, however, a negligible (read: near impossible) but
+			// non-zero chance that [VM.VerifyBlock] and [VM.AcceptBlock] were
+			// *both* called between [readByHash] checking the in-memory block
+			// store and loading the canonical number from the database. That
+			// could result in an unexecuted block, which would cause an error
+			// when restoring it.
+			//
+			// TODO(arr4n) I think [readHash] should be providing this guarantee
+			// as it has access to the [syncMap] and its lock.
+			if vm.last.settled.Load().Height() < num {
+				return nil, database.ErrNotFound
+			}
+
+			ethB := rawdb.ReadBlock(db, hash, num)
+			if num > vm.last.synchronous {
+				return blocks.RestoreSettledBlock(
+					ethB,
+					vm.log(),
+					vm.db,
+					vm.xdb,
+					vm.exec.ChainConfig(),
+				)
+			}
+
+			b, err := vm.newBlock(ethB, nil, nil)
+			if err != nil {
+				return nil, err
+			}
+			// Excess is only used for executing the next block, which can never
+			// be the case if `b` isn't actually the last synchronous block, so
+			// passing the same value for all is OK.
+			if err := b.MarkSynchronous(vm.hooks(), vm.db, vm.xdb, vm.config.ExcessAfterLastSynchronous); err != nil {
+				return nil, err
+			}
+			return b, nil
+		},
+		database.ErrNotFound,
+	)
 }
 
 // GetBlockIDAtHeight returns the accepted block at the given height, or
 // [database.ErrNotFound].
-func (vm *VM) GetBlockIDAtHeight(context.Context, uint64) (ids.ID, error) {
-	return ids.Empty, errUnimplemented
+func (vm *VM) GetBlockIDAtHeight(ctx context.Context, height uint64) (ids.ID, error) {
+	id := ids.ID(rawdb.ReadCanonicalHash(vm.db, height))
+	if id == ids.Empty {
+		return id, database.ErrNotFound
+	}
+	return id, nil
 }
 
 var _ blocks.Source = (*VM)(nil).blockSource
 
 func (vm *VM) blockSource(hash common.Hash, num uint64) (*blocks.Block, bool) {
+	// TODO(arr4n) this MUST be updated to support all blocks (256) necessary to
+	// back a [core.ChainContext] in [saexec.Executor] otherwise op codes like
+	// BLOCKHASH will panic.
 	b, ok := vm.blocks.Load(hash)
 	if !ok || b.NumberU64() != num {
 		return nil, false

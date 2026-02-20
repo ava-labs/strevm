@@ -337,27 +337,27 @@ func (b *ethAPIBackend) SyncProgress() ethereum.SyncProgress {
 }
 
 func (b *ethAPIBackend) HeaderByNumber(ctx context.Context, n rpc.BlockNumber) (*types.Header, error) {
-	return readByNumber(b, n, rawdb.ReadHeader)
+	return readByNumber(b, n, neverErrs(rawdb.ReadHeader))
 }
 
 func (b *ethAPIBackend) BlockByNumber(ctx context.Context, n rpc.BlockNumber) (*types.Block, error) {
-	return readByNumber(b, n, rawdb.ReadBlock)
+	return readByNumber(b, n, neverErrs(rawdb.ReadBlock))
 }
 
 func (b *ethAPIBackend) HeaderByHash(ctx context.Context, hash common.Hash) (*types.Header, error) {
-	return readByHash(b, hash, (*blocks.Block).Header, rawdb.ReadHeader), nil
+	return readByHash(b.vm, hash, (*blocks.Block).Header, neverErrs(rawdb.ReadHeader), nil /* errWhenNotFound */)
 }
 
 func (b *ethAPIBackend) BlockByHash(ctx context.Context, hash common.Hash) (*types.Block, error) {
-	return readByHash(b, hash, (*blocks.Block).EthBlock, rawdb.ReadBlock), nil
+	return readByHash(b.vm, hash, (*blocks.Block).EthBlock, neverErrs(rawdb.ReadBlock), nil /* errWhenNotFound */)
 }
 
 func (b *ethAPIBackend) HeaderByNumberOrHash(ctx context.Context, blockNrOrHash rpc.BlockNumberOrHash) (*types.Header, error) {
-	return readByNumberOrHash(b, blockNrOrHash, (*blocks.Block).Header, rawdb.ReadHeader)
+	return readByNumberOrHash(b, blockNrOrHash, (*blocks.Block).Header, neverErrs(rawdb.ReadHeader))
 }
 
 func (b *ethAPIBackend) BlockByNumberOrHash(ctx context.Context, blockNrOrHash rpc.BlockNumberOrHash) (*types.Block, error) {
-	return readByNumberOrHash(b, blockNrOrHash, (*blocks.Block).EthBlock, rawdb.ReadBlock)
+	return readByNumberOrHash(b, blockNrOrHash, (*blocks.Block).EthBlock, neverErrs(rawdb.ReadBlock))
 }
 
 func (b *ethAPIBackend) GetTransaction(ctx context.Context, txHash common.Hash) (exists bool, tx *types.Transaction, blockHash common.Hash, blockNumber uint64, index uint64, err error) {
@@ -415,9 +415,15 @@ func (b *ethAPIBackend) GetPoolTransactions() (types.Transactions, error) {
 }
 
 type (
-	canonicalReader[T any] func(ethdb.Reader, common.Hash, uint64) *T
+	canonicalReader[T any] func(ethdb.Reader, common.Hash, uint64) (*T, error)
 	blockAccessor[T any]   func(*blocks.Block) *T
 )
+
+func neverErrs[T any](fn func(ethdb.Reader, common.Hash, uint64) *T) canonicalReader[T] {
+	return func(r ethdb.Reader, h common.Hash, n uint64) (*T, error) {
+		return fn(r, h, n), nil
+	}
+}
 
 func readByNumber[T any](b *ethAPIBackend, n rpc.BlockNumber, read canonicalReader[T]) (*T, error) {
 	num, err := b.resolveBlockNumber(n)
@@ -426,18 +432,26 @@ func readByNumber[T any](b *ethAPIBackend, n rpc.BlockNumber, read canonicalRead
 	} else if err != nil {
 		return nil, err
 	}
-	return read(b.vm.db, rawdb.ReadCanonicalHash(b.vm.db, num), num), nil
+	return read(b.vm.db, rawdb.ReadCanonicalHash(b.vm.db, num), num)
 }
 
-func readByHash[T any](b *ethAPIBackend, hash common.Hash, fromMem blockAccessor[T], fromDB canonicalReader[T]) *T {
-	if blk, ok := b.vm.blocks.Load(hash); ok {
-		return fromMem(blk)
+// readByHash returns `fromMem(b)` if a block with the specified hash is in the
+// VM's memory, otherwise it returns `fromDB()` i.f.f. the block was previously
+// accepted. If `fromDB()` is called then the block is guaranteed to exist if
+// read with [rawdb] functions.
+//
+// A hash that is in neither of the VM's memory nor the database will result in
+// a return of `(nil, errWhenNotFound)` to allow for usage with the [rawdb]
+// pattern of returning `(nil, nil)`.
+func readByHash[T any](vm *VM, hash common.Hash, fromMem blockAccessor[T], fromDB canonicalReader[T], errWhenNotFound error) (*T, error) {
+	if blk, ok := vm.blocks.Load(hash); ok {
+		return fromMem(blk), nil
 	}
-	num := rawdb.ReadHeaderNumber(b.vm.db, hash)
+	num := rawdb.ReadHeaderNumber(vm.db, hash)
 	if num == nil {
-		return nil
+		return nil, errWhenNotFound
 	}
-	return fromDB(b.vm.db, hash, *num)
+	return fromDB(vm.db, hash, *num)
 }
 
 // TODO(arr4n) DRY [readByHash] and [readByNumberOrHash]
@@ -450,7 +464,7 @@ func readByNumberOrHash[T any](b *ethAPIBackend, blockNrOrHash rpc.BlockNumberOr
 	if blk, ok := b.vm.blocks.Load(hash); ok {
 		return fromMem(blk), nil
 	}
-	return fromDB(b.vm.db, hash, n), nil
+	return fromDB(b.vm.db, hash, n)
 }
 
 var (

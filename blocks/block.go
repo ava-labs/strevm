@@ -17,9 +17,12 @@ import (
 	"github.com/ava-labs/avalanchego/vms/components/gas"
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core/types"
+	"github.com/ava-labs/libevm/ethdb"
+	"github.com/ava-labs/libevm/params"
 	"go.uber.org/zap"
 
 	"github.com/ava-labs/strevm/proxytime"
+	"github.com/ava-labs/strevm/saedb"
 )
 
 // A Block extends a [types.Block] to track SAE-defined concepts of async
@@ -93,6 +96,26 @@ func New(eth *types.Block, parent, lastSettled *Block, log logging.Logger) (*Blo
 		zap.Uint64("block_height", b.Height()),
 		zap.Stringer("block_hash", b.Hash()),
 	)
+	return b, nil
+}
+
+// RestoreSettledBlock constructs a new block with [New] and restores it to an
+// settled state before returning it. By definition of being settled, the
+// returned block also includes post-execution artefacts.
+func RestoreSettledBlock(eth *types.Block, log logging.Logger, db ethdb.Database, xdb saedb.ExecutionResults, config *params.ChainConfig) (*Block, error) {
+	b, err := New(eth, nil, nil, log)
+	if err != nil {
+		return nil, err
+	}
+	if err := b.RestoreExecutionArtefacts(db, xdb, config); err != nil {
+		return nil, fmt.Errorf("restoring to executed state: %v", err)
+	}
+	if err := b.markSettled(nil); err != nil {
+		return nil, fmt.Errorf("restoring to settled state: %v", err)
+	}
+	if err := b.CheckInvariants(Settled); err != nil {
+		return nil, err
+	}
 	return b, nil
 }
 
