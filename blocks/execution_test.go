@@ -18,7 +18,6 @@ import (
 	"github.com/ava-labs/libevm/ethdb"
 	"github.com/ava-labs/libevm/params"
 	"github.com/google/go-cmp/cmp"
-	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/holiman/uint256"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -37,12 +36,12 @@ func (b *Block) markExecutedForTests(tb testing.TB, db ethdb.Database, xdb saedb
 }
 
 func TestMarkExecuted(t *testing.T) {
-	gasPrice := big.NewInt(100)
+	const gasPrice = 100
 	txs := make(types.Transactions, 10)
 	for i := range txs {
 		txs[i] = types.NewTx(&types.LegacyTx{
 			Nonce:    uint64(i), //nolint:gosec // Won't overflow
-			GasPrice: gasPrice,
+			GasPrice: big.NewInt(gasPrice),
 			Gas:      params.TxGas,
 			To:       &common.Address{},
 		})
@@ -99,8 +98,10 @@ func TestMarkExecuted(t *testing.T) {
 	wallTime := time.Unix(42, 100)
 	stateRoot := common.Hash{'s', 't', 'a', 't', 'e'}
 	baseFee := uint256.NewInt(314159)
-	var receipts types.Receipts
-	var cumulativeGas uint64
+	var (
+		receipts      types.Receipts
+		cumulativeGas uint64
+	)
 	for i, tx := range txs {
 		cumulativeGas += params.TxGas
 		receipts = append(receipts, &types.Receipt{
@@ -109,7 +110,7 @@ func TestMarkExecuted(t *testing.T) {
 			TxHash:            tx.Hash(),
 			GasUsed:           params.TxGas,
 			CumulativeGasUsed: cumulativeGas,
-			EffectiveGasPrice: new(big.Int).Set(gasPrice),
+			EffectiveGasPrice: big.NewInt(gasPrice),
 			BlockHash:         ethB.Hash(),
 			BlockNumber:       new(big.Int).Set(ethB.Number()),
 			TransactionIndex:  uint(i), //nolint:gosec // Won't overflow
@@ -146,7 +147,7 @@ func TestMarkExecuted(t *testing.T) {
 
 			assert.Zero(t, b.ExecutedByGasTime().Compare(gasTime.Time), "ExecutedByGasTime().Compare([original input])")
 			assert.Zero(t, b.BaseFee().Cmp(baseFee), "BaseFee().Cmp([original input])")
-			assert.Empty(t, cmp.Diff(receipts, b.Receipts(), cmputils.Receipts(), cmpopts.EquateEmpty()), "Receipts()")
+			assert.Empty(t, cmp.Diff(receipts, b.Receipts(), cmputils.Receipts(), cmputils.NilSlicesAreEmpty[[]*types.Log]()), "Receipts()")
 
 			assert.Equal(t, stateRoot, b.PostExecutionStateRoot(), "PostExecutionStateRoot()") // i.e. this block
 			// Although not directly relevant to MarkExecuted, demonstrate that the
