@@ -405,12 +405,6 @@ func (b *ethAPIBackend) SyncProgress() ethereum.SyncProgress {
 	return ethereum.SyncProgress{}
 }
 
-func (b *ethAPIBackend) ExtRPCEnabled() bool {
-	// This is only used as an additional security measure for the personal API,
-	// which we do not support in its entirety.
-	return true
-}
-
 func (b *ethAPIBackend) HeaderByNumber(ctx context.Context, n rpc.BlockNumber) (*types.Header, error) {
 	return readByNumber(b, n, rawdb.ReadHeader)
 }

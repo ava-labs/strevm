@@ -30,7 +30,13 @@ func (b *ethAPIBackend) FeeHistory(context.Context, uint64, rpc.BlockNumber, []f
 	panic(errUnimplemented)
 }
 
-func (b *ethAPIBackend) PendingBlockAndReceipts() (*types.Block, types.Receipts) {
+func (*ethAPIBackend) ExtRPCEnabled() bool {
+	// This is only used as an additional security measure for the personal API,
+	// which we do not support in its entirety.
+	return true
+}
+
+func (*ethAPIBackend) PendingBlockAndReceipts() (*types.Block, types.Receipts) {
 	return nil, nil
 }
 
