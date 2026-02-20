@@ -26,6 +26,7 @@ import (
 	"github.com/ava-labs/strevm/saedb"
 )
 
+// SnapshotCacheSizeMB is the snapshot cache size used by the executor.
 const SnapshotCacheSizeMB = 128
 
 // An Executor accepts and executes a [blocks.Block] FIFO queue.
