@@ -371,51 +371,36 @@ func canonicalBlock(db ethdb.Database, num uint64) (*types.Block, error) {
 // accepted by the consensus engine should be able to be fetched. It is not
 // required for blocks that have been rejected by the consensus engine to be
 // able to be fetched.
-//
-// It is the user's responsibility to guarantee no concurrent calls to
-// [snowman.Block.Verify] and [snowman.Block.Accept], since if both of these
-// occur, there is no way to guarantee that the block will be reported correctly.
-// In this case, if a race occurs, [database.ErrNotFound] will be returned.
-func (vm *VM) GetBlock(_ context.Context, id ids.ID) (*blocks.Block, error) {
+func (vm *VM) GetBlock(ctx context.Context, id ids.ID) (*blocks.Block, error) {
 	var _ snowman.Block // protect the input to allow comment linking
 
-	// Check for any blocks that have been verified, but not yet released after
-	// settling.
-	// readByHash does also load from `vm.blocks`, but it will not contain the full
-	// exeuction data necessary for returning, so it must be called separately.
-	hash := common.Hash(id)
-	b, ok := vm.blocks.Load(hash)
-	if ok {
-		return b, nil
-	}
+	return readByHash(
+		vm,
+		common.Hash(id),
+		func(b *blocks.Block) *blocks.Block {
+			return b
+		},
+		func(db ethdb.Reader, hash common.Hash, num uint64) (*blocks.Block, error) {
+			// As the block wasn't in memory it's either been rejected, not yet
+			// verified, or settled. Only the latter will be in the database.
 
-	// At this point, the block we are looking for is either in the history, or
-	// was verified during this function's execution.
-	ethB := readByHash(vm, hash, (*blocks.Block).EthBlock, rawdb.ReadBlock)
-	if ethB == nil {
-		return nil, database.ErrNotFound
-	}
-
-	// If a block is settled (even if it wasn't at the beginning of this call),
-	// we can accurately regenerate its full state.
-	if vm.last.settled.Load().NumberU64() < ethB.NumberU64() {
-		// RACY: [VM.GetBlock] was called concurrently with [VM.VerifyBlock].
-		// We behave as if [VM.GetBlock] occurred BEFORE [VM.VerifyBlock].
-		return nil, database.ErrNotFound
-	}
-
-	b, err := vm.newBlock(ethB, nil, nil)
-	if err != nil {
-		return nil, err
-	}
-	if err := b.RestoreExecutionArtefacts(vm.db, vm.xdb, vm.exec.ChainConfig()); err != nil {
-		return nil, err
-	}
-	// TODO: should we distinguish between sync and async blocks?
-	if err := b.MarkSettled(nil); err != nil {
-		return nil, err
-	}
-	return b, nil
+			// Ancestry is unnecessary as we'll mark the block as settled, which
+			// clears them.
+			b, err := vm.newBlock(rawdb.ReadBlock(db, hash, num), nil, nil)
+			if err != nil {
+				return nil, err
+			}
+			if err := b.RestoreExecutionArtefacts(vm.db, vm.xdb, vm.exec.ChainConfig()); err != nil {
+				return nil, err
+			}
+			// TODO: should we distinguish between sync and async blocks?
+			if err := b.MarkSettled(nil); err != nil {
+				return nil, err
+			}
+			return b, nil
+		},
+		database.ErrNotFound,
+	)
 }
 
 // GetBlockIDAtHeight returns the accepted block at the given height, or
