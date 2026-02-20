@@ -394,14 +394,29 @@ func (vm *VM) GetBlock(ctx context.Context, id ids.ID) (*blocks.Block, error) {
 			if vm.last.settled.Load().Height() < num {
 				return nil, database.ErrNotFound
 			}
-			// TODO: should we distinguish between sync and async blocks?
-			return blocks.RestoreSettledBlock(
-				rawdb.ReadBlock(db, hash, num),
-				vm.log(),
-				vm.db,
-				vm.xdb,
-				vm.exec.ChainConfig(),
-			)
+
+			ethB := rawdb.ReadBlock(db, hash, num)
+			if num > vm.last.synchronous.Height() {
+				return blocks.RestoreSettledBlock(
+					ethB,
+					vm.log(),
+					vm.db,
+					vm.xdb,
+					vm.exec.ChainConfig(),
+				)
+			}
+
+			b, err := vm.newBlock(ethB, nil, nil)
+			if err != nil {
+				return nil, err
+			}
+			// Excess is only used for executing the next block, which can never
+			// be the case if `b` isn't actually the last synchronous block, so
+			// passing the same value for all is OK.
+			if err := b.MarkSynchronous(vm.hooks(), vm.db, vm.xdb, vm.config.ExcessAfterLastSynchronous); err != nil {
+				return nil, err
+			}
+			return b, nil
 		},
 		database.ErrNotFound,
 	)

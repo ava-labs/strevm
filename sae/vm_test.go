@@ -805,6 +805,7 @@ func TestGetBlock(t *testing.T) {
 	opt, vmTime := withVMTime(t, time.Unix(saeparams.TauSeconds, 0))
 	ctx, sut := newSUT(t, 1, opt)
 
+	genesis := sut.lastAcceptedBlock(t)
 	// Once a block is settled, its ancestors are only accessible from the
 	// database.
 	onDisk := sut.runConsensusLoopFromLastAccepted(t)
@@ -829,6 +830,7 @@ func TestGetBlock(t *testing.T) {
 		block   *blocks.Block
 		wantErr testerr.Want
 	}{
+		{"genesis", genesis, nil},
 		{"on_disk", onDisk, nil},
 		{"settled_in_memory", settled, nil},
 		{"unsettled", unsettled, nil},
