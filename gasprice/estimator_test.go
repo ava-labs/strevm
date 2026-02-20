@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/ava-labs/libevm/common"
+	"github.com/ava-labs/libevm/core"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/event"
 	"github.com/ava-labs/libevm/params"
@@ -51,7 +52,7 @@ func (bg *testBlockGen) AddTx(tx *types.Transaction) {
 // testBackend is an in-memory implementation of EstimatorBackend for tests.
 type testBackend struct {
 	blocks                []*types.Block // blocks[i] is block with number i
-	acceptedCh            chan<- *types.Block
+	acceptedCh            chan<- core.ChainHeadEvent
 	pruned                []uint64 // block numbers that return (nil, nil)
 	nextBaseFeeUpperBound *big.Int // returned by NextBaseFeeUpperBound
 }
@@ -94,7 +95,7 @@ func (b *testBackend) BlockByNumber(ctx context.Context, number rpc.BlockNumber)
 	return b.blocks[n], nil
 }
 
-func (b *testBackend) SubscribeChainAcceptedEvent(ch chan<- *types.Block) event.Subscription {
+func (b *testBackend) SubscribeChainHeadEvent(ch chan<- core.ChainHeadEvent) event.Subscription {
 	b.acceptedCh = ch
 	return event.NewSubscription(func(quit <-chan struct{}) error {
 		<-quit

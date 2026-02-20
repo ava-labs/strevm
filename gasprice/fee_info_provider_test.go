@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ava-labs/libevm/core"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/stretchr/testify/require"
 )
@@ -28,7 +29,7 @@ func TestFeeInfoProvider(t *testing.T) {
 	// send a block through the subscription and verify it gets cached
 	header := &types.Header{Number: big.NewInt(3), ParentHash: backend.lastBlock().Hash()}
 	block := types.NewBlockWithHeader(header)
-	backend.acceptedCh <- block
+	backend.acceptedCh <- core.ChainHeadEvent{Block: block}
 
 	require.Eventually(t, func() bool {
 		_, ok := f.cache.Get(3)

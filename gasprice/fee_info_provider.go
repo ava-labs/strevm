@@ -9,6 +9,7 @@ import (
 	"slices"
 
 	"github.com/ava-labs/avalanchego/cache/lru"
+	"github.com/ava-labs/libevm/core"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/log"
 	"github.com/ava-labs/libevm/rpc"
@@ -114,14 +115,14 @@ func newFeeInfoProvider(backend Backend, size uint64, closeCh <-chan struct{}) (
 
 	fc.cache = lru.NewCache[uint64, *feeInfo](int(size + feeCacheExtraSlots)) //nolint:gosec // size is bounded by config
 	// subscribe to the chain accepted event
-	acceptedEvent := make(chan *types.Block, 1)
-	sub := backend.SubscribeChainAcceptedEvent(acceptedEvent)
+	acceptedEvent := make(chan core.ChainHeadEvent, 1)
+	sub := backend.SubscribeChainHeadEvent(acceptedEvent)
 	go func() {
 		defer sub.Unsubscribe()
 		for {
 			select {
 			case acceptedBlock := <-acceptedEvent:
-				fc.addBlock(acceptedBlock)
+				fc.addBlock(acceptedBlock.Block)
 			case <-closeCh:
 				return
 			case <-sub.Err():

@@ -15,6 +15,7 @@ import (
 	"github.com/ava-labs/avalanchego/utils/timer/mockable"
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/common/math"
+	"github.com/ava-labs/libevm/core"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/event"
 	"github.com/ava-labs/libevm/rpc"
@@ -36,7 +37,7 @@ const (
 type Backend interface {
 	ResolveBlockNumber(bn rpc.BlockNumber) (uint64, error)
 	BlockByNumber(ctx context.Context, number rpc.BlockNumber) (*types.Block, error)
-	SubscribeChainAcceptedEvent(ch chan<- *types.Block) event.Subscription
+	SubscribeChainHeadEvent(ch chan<- core.ChainHeadEvent) event.Subscription
 	// NextBaseFeeUpperBound returns the worst-case (upper-bound) base fee for
 	// the block after the last accepted head. Returns nil when unavailable.
 	NextBaseFeeUpperBound(ctx context.Context) *big.Int

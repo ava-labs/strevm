@@ -419,7 +419,7 @@ func (b *ethAPIBackend) resolveBlockNumberOrHash(numOrHash rpc.BlockNumberOrHash
 		return 0, common.Hash{}, errBothNumberAndHash
 
 	case isNum:
-		num, err := b.resolveBlockNumber(rpcNum)
+		num, err := b.ResolveBlockNumber(rpcNum)
 		if err != nil {
 			return 0, common.Hash{}, err
 		}
@@ -498,8 +498,8 @@ func (b *ethAPIBackend) SubscribeChainSideEvent(chan<- core.ChainSideEvent) even
 	return newNoopSubscription()
 }
 
-func (b *ethAPIBackend) SubscribeChainAcceptedEvent(ch chan<- *types.Block) event.Subscription {
-	return b.vm.exec.SubscribeBlockEnqueueEvent(ch)
+func (b *ethAPIBackend) SubscribeChainHeadEvent(ch chan<- core.ChainHeadEvent) event.Subscription {
+	return b.vm.exec.SubscribeChainHeadEvent(ch)
 }
 
 func (b *ethAPIBackend) NextBaseFeeUpperBound(context.Context) *big.Int {
