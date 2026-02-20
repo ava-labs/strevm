@@ -46,10 +46,11 @@ import (
 var zeroAddr common.Address
 
 type rpcTest struct {
-	method  string
-	args    []any
-	want    any // untyped nil means no return value.
-	wantErr testerr.Want
+	method     string
+	args       []any
+	want       any // untyped nil means no return value.
+	wantErr    testerr.Want
+	eventually bool
 }
 
 func (s *SUT) testRPC(ctx context.Context, t *testing.T, tcs ...rpcTest) {
@@ -63,20 +64,31 @@ func (s *SUT) testRPC(ctx context.Context, t *testing.T, tcs ...rpcTest) {
 	}
 
 	for _, tc := range tcs {
-		t.Run(tc.method, func(t *testing.T) {
+		test := func(t require.TestingT) {
 			if tc.want == nil { // Reminder: only applies to untyped nil
 				tc.want = struct{ json.RawMessage }{} // struct avoids nil vs empty
 			}
 
 			got := reflect.New(reflect.TypeOf(tc.want))
-			t.Logf("%T.CallContext(ctx, %T, %q, %v...)", s.rpcClient, &tc.want, tc.method, tc.args)
 			err := s.CallContext(ctx, got.Interface(), tc.method, tc.args...)
 			if diff := testerr.Diff(err, tc.wantErr); diff != "" {
-				t.Fatalf("CallContext(...) %s", diff)
+				t.Errorf("CallContext(...) %s", diff)
+				t.FailNow()
 			}
 			if diff := cmp.Diff(tc.want, got.Elem().Interface(), opts...); diff != "" {
 				t.Errorf("Unmarshalled %T diff (-want +got):\n%s", got.Elem().Interface(), diff)
 			}
+		}
+
+		t.Run(tc.method, func(t *testing.T) {
+			t.Logf("%T.CallContext(ctx, %T, %q, %v...)", s.rpcClient, &tc.want, tc.method, tc.args)
+			if !tc.eventually {
+				test(t)
+				return
+			}
+			require.EventuallyWithT(t, func(c *assert.CollectT) {
+				test(c)
+			}, time.Second, 10*time.Millisecond)
 		})
 	}
 }
@@ -355,6 +367,139 @@ func TestTxPoolNamespace(t *testing.T) {
 				"pending": 1,
 				"queued":  1,
 			},
+		},
+	}...)
+}
+
+func TestFilterAPIs(t *testing.T) {
+	ctx, sut := newSUT(t, 1)
+	precompile := common.Address{'f', 'i', 'l', 't'}
+	stub := &hookstest.Stub{
+		PrecompileOverrides: map[common.Address]libevm.PrecompiledContract{
+			precompile: vm.NewStatefulPrecompile(func(env vm.PrecompileEnvironment, _ []byte) ([]byte, error) {
+				env.StateDB().AddLog(&types.Log{
+					Address: precompile,
+					Topics:  []common.Hash{},
+				})
+				return nil, nil
+			}),
+		},
+	}
+	stub.Register(t)
+
+	createFilter := func(t *testing.T, method string, args ...any) string {
+		t.Helper()
+		var filterID string
+		require.NoError(t, sut.CallContext(ctx, &filterID, method, args...))
+		require.NotEmpty(t, filterID)
+		return filterID
+	}
+
+	uninstallFilter := func(t *testing.T, filterID string) {
+		t.Helper()
+		sut.testRPC(ctx, t, []rpcTest{
+			{
+				method: "eth_uninstallFilter",
+				args:   []any{filterID},
+				want:   true,
+			},
+			{
+				method:  "eth_getFilterChanges",
+				args:    []any{filterID},
+				wantErr: testerr.Contains("filter not found"),
+			},
+		}...)
+	}
+
+	var (
+		txFilterID    = createFilter(t, "eth_newPendingTransactionFilter")
+		blockFilterID = createFilter(t, "eth_newBlockFilter")
+		logFilterID   = createFilter(t, "eth_newFilter", map[string]any{
+			"address": precompile,
+		})
+	)
+	defer func() {
+		uninstallFilter(t, txFilterID)
+		uninstallFilter(t, blockFilterID)
+		uninstallFilter(t, logFilterID)
+	}()
+
+	sut.testRPC(ctx, t, []rpcTest{
+		{
+			method: "eth_getFilterChanges",
+			args:   []any{txFilterID},
+			want:   []common.Hash{},
+		},
+		{
+			method: "eth_getFilterChanges",
+			args:   []any{blockFilterID},
+			want:   []common.Hash{},
+		},
+		{
+			method: "eth_getFilterChanges",
+			args:   []any{logFilterID},
+			want:   []types.Log{},
+		},
+		{
+			method: "eth_getFilterLogs",
+			args:   []any{logFilterID},
+			want:   []types.Log{},
+		},
+	}...)
+
+	tx := sut.wallet.SetNonceAndSign(t, 0, &types.LegacyTx{
+		To:       &precompile,
+		GasPrice: big.NewInt(1),
+		Gas:      1e6,
+	})
+	sut.mustSendTx(t, tx)
+	sut.testRPC(ctx, t, rpcTest{
+		method:     "eth_getFilterChanges",
+		args:       []any{txFilterID},
+		want:       []common.Hash{tx.Hash()},
+		eventually: true,
+	})
+
+	b := sut.runConsensusLoop(t, sut.lastAcceptedBlock(t))
+	wantLog := types.Log{
+		Address:     precompile,
+		Topics:      []common.Hash{},
+		BlockNumber: b.NumberU64(),
+		BlockHash:   b.Hash(),
+		TxHash:      tx.Hash(),
+	}
+	sut.testRPC(ctx, t, []rpcTest{
+		{
+			method:     "eth_getFilterChanges",
+			args:       []any{blockFilterID},
+			want:       []common.Hash{b.Hash()},
+			eventually: true,
+		},
+		{
+			method:     "eth_getFilterChanges",
+			args:       []any{logFilterID},
+			want:       []types.Log{wantLog},
+			eventually: true,
+		},
+		{
+			method: "eth_getFilterChanges",
+			args:   []any{txFilterID},
+			want:   []common.Hash{},
+		},
+		{
+			method: "eth_getFilterChanges",
+			args:   []any{blockFilterID},
+			want:   []common.Hash{},
+		},
+		{
+			method: "eth_getFilterChanges",
+			args:   []any{logFilterID},
+			want:   []types.Log{},
+		},
+		{
+			method: "eth_getFilterLogs",
+			args:   []any{logFilterID},
+			want:   []types.Log{wantLog},
 		},
 	}...)
 }
