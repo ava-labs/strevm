@@ -23,6 +23,7 @@ import (
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/crypto"
 	"github.com/ava-labs/libevm/eth/filters"
+	"github.com/ava-labs/libevm/eth/tracers"
 	"github.com/ava-labs/libevm/ethdb"
 	"github.com/ava-labs/libevm/event"
 	"github.com/ava-labs/libevm/libevm/debug"
@@ -38,7 +39,9 @@ import (
 // APIBackend is the union of all interfaces required to implement the SAE APIs.
 type APIBackend interface {
 	ethapi.Backend
+	filters.Backend
 	filters.BloomOverrider
+	tracers.Backend
 }
 
 // APIBackend returns an API backend backed by the [VM].
@@ -83,19 +86,36 @@ func (vm *VM) ethRPCServer() (*rpc.Server, error) {
 		// - eth_syncing
 		{"eth", ethapi.NewEthereumAPI(b)},
 		// Standard Ethereum node APIs:
+		// - eth_gasPrice
+		// - eth_syncing
+		//
+		// Undocumented APIs:
+		// - eth_feeHistory
+		// - eth_maxPriorityFeePerGas
+		{"eth", ethapi.NewEthereumAPI(b)},
+		// Standard Ethereum node APIs:
 		// - eth_blockNumber
+		// - eth_call
 		// - eth_chainId
+		// - eth_estimateGas
+		// - eth_getBalance
 		// - eth_getBlockByHash
 		// - eth_getBlockByNumber
-		// - eth_getBlockReceipts
+		// - eth_getCode
+		// - eth_getStorageAt
 		// - eth_getUncleByBlockHashAndIndex
 		// - eth_getUncleByBlockNumberAndIndex
 		// - eth_getUncleCountByBlockHash
 		// - eth_getUncleCountByBlockNumber
 		//
 		// Geth-specific APIs:
+		// - eth_createAccessList
 		// - eth_getHeaderByHash
 		// - eth_getHeaderByNumber
+		//
+		// Undocumented APIs:
+		// - eth_getBlockReceipts
+		// - eth_getProof
 		{"eth", &blockChainAPI{ethapi.NewBlockChainAPI(b), b}},
 		// Standard Ethereum node APIs:
 		// - eth_getBlockTransactionCountByHash
@@ -103,6 +123,7 @@ func (vm *VM) ethRPCServer() (*rpc.Server, error) {
 		// - eth_getTransactionByBlockHashAndIndex
 		// - eth_getTransactionByBlockNumberAndIndex
 		// - eth_getTransactionByHash
+		// - eth_getTransactionCount
 		// - eth_getTransactionReceipt
 		// - eth_sendRawTransaction
 		// - eth_sendTransaction
@@ -110,13 +131,21 @@ func (vm *VM) ethRPCServer() (*rpc.Server, error) {
 		// - eth_signTransaction
 		//
 		// Undocumented APIs:
+		// - eth_fillTransaction
 		// - eth_getRawTransactionByBlockHashAndIndex
 		// - eth_getRawTransactionByBlockNumberAndIndex
 		// - eth_getRawTransactionByHash
 		// - eth_pendingTransactions
+		// - eth_resend
 		{"eth", ethapi.NewTransactionAPI(b, new(ethapi.AddrLocker))},
-		// Standard Ethereum node APIS:
+		// Standard Ethereum node APIs:
+		// - eth_getFilterChanges
+		// - eth_getFilterLogs
 		// - eth_getLogs
+		// - eth_newBlockFilter
+		// - eth_newFilter
+		// - eth_newPendingTransactionFilter
+		// - eth_uninstallFilter
 		//
 		// Geth-specific APIs:
 		// - eth_subscribe
@@ -124,8 +153,20 @@ func (vm *VM) ethRPCServer() (*rpc.Server, error) {
 		//  - newPendingTransactions
 		//  - logs
 		{"eth", filterAPI},
+		// Geth-specific APIs:
+		// - debug_intermediateRoots
+		// - debug_standardTraceBadBlockToFile
+		// - debug_standardTraceBlockToFile
+		// - debug_traceBadBlock
+		// - debug_traceBlock
+		// - debug_traceBlockByHash
+		// - debug_traceBlockByNumber
+		// - debug_traceBlockFromFile
+		// - debug_traceCall
+		// - debug_traceChain
+		// - debug_traceTransaction
+		{"debug", tracers.NewAPI(b)},
 	}
-
 	if vm.config.RPCConfig.EnableDBInspecting {
 		apis = append(apis, api{
 			// Geth-specific APIs:
@@ -134,18 +175,15 @@ func (vm *VM) ethRPCServer() (*rpc.Server, error) {
 			// - debug_dbAncient
 			// - debug_dbAncients
 			// - debug_dbGet
-			// - debug_getRawTransaction
-			// - debug_printBlock
-			// - debug_setHead          (no-op, logs info)
-			//
-			// TODO: implement once BlockByNumberOrHash and GetReceipts exist:
 			// - debug_getRawBlock
 			// - debug_getRawHeader
 			// - debug_getRawReceipts
+			// - debug_getRawTransaction
+			// - debug_printBlock
+			// - debug_setHead
 			"debug", ethapi.NewDebugAPI(b),
 		})
 	}
-
 	if vm.config.RPCConfig.EnableProfiling {
 		apis = append(apis, api{
 			// Geth-specific APIs:
@@ -173,6 +211,34 @@ func (vm *VM) ethRPCServer() (*rpc.Server, error) {
 		})
 	}
 
+	// Unsupported APIs:
+	//
+	// Standard Ethereum node APIs:
+	// - eth_protocolVersion
+	// - eth_coinbase
+	// - eth_mining
+	// - eth_hashrate
+	// - eth_accounts
+	//
+	// Block and state inspection APIs:
+	// - debug_accountRange
+	// - debug_dumpBlock
+	// - debug_getAccessibleState
+	// - debug_getBadBlocks
+	// - debug_getModifiedAccountsByHash
+	// - debug_getModifiedAccountsByNumber
+	// - debug_getTrieFlushInterval
+	// - debug_preimage
+	// - debug_setTrieFlushInterval
+	// - debug_storageRangeAt
+	//
+	// The admin namespace.
+	// The clique namespace.
+	// The les namespace.
+	// The miner namespace.
+	// The personal namespace.
+	//
+	// The graphql service.
 	s := rpc.NewServer()
 	for _, api := range apis {
 		if err := s.RegisterName(api.namespace, api.api); err != nil {
@@ -291,6 +357,7 @@ func (b bloomOverrider) OverrideHeaderBloom(header *types.Header) types.Bloom {
 	))
 }
 
+// TODO: Rename to apiBackend
 type ethAPIBackend struct {
 	vm             *VM
 	accountManager *accounts.Manager
@@ -312,11 +379,13 @@ func (b *ethAPIBackend) ChainConfig() *params.ChainConfig {
 }
 
 func (b *ethAPIBackend) RPCTxFeeCap() float64 {
-	return 0 // TODO(arr4n)
+	// TODO(StephenButtolph) Expose this as a config.
+	return 1 // 1 AVAX
 }
 
 func (b *ethAPIBackend) UnprotectedAllowed() bool {
-	return false
+	// TODO(StephenButtolph) Expose this as a config and default to false.
+	return true
 }
 
 func (b *ethAPIBackend) AccountManager() *accounts.Manager {
@@ -542,7 +611,7 @@ func (b *ethAPIBackend) SubscribeChainEvent(ch chan<- core.ChainEvent) event.Sub
 	return b.vm.exec.SubscribeChainEvent(ch)
 }
 
-func (b *ethAPIBackend) SubscribeChainSideEvent(chan<- core.ChainSideEvent) event.Subscription {
+func (*ethAPIBackend) SubscribeChainSideEvent(chan<- core.ChainSideEvent) event.Subscription {
 	// SAE never reorgs, so there are no side events.
 	return newNoopSubscription()
 }
@@ -551,7 +620,7 @@ func (b *ethAPIBackend) SubscribeNewTxsEvent(ch chan<- core.NewTxsEvent) event.S
 	return b.Set.Pool.SubscribeTransactions(ch, true)
 }
 
-func (b *ethAPIBackend) SubscribeRemovedLogsEvent(chan<- core.RemovedLogsEvent) event.Subscription {
+func (*ethAPIBackend) SubscribeRemovedLogsEvent(chan<- core.RemovedLogsEvent) event.Subscription {
 	// SAE never reorgs, so no logs are ever removed.
 	return newNoopSubscription()
 }
@@ -560,7 +629,7 @@ func (b *ethAPIBackend) SubscribeLogsEvent(ch chan<- []*types.Log) event.Subscri
 	return b.vm.exec.SubscribeLogsEvent(ch)
 }
 
-func (b *ethAPIBackend) SubscribePendingLogsEvent(chan<- []*types.Log) event.Subscription {
+func (*ethAPIBackend) SubscribePendingLogsEvent(chan<- []*types.Log) event.Subscription {
 	// In SAE, "pending" refers to the execution status. There are no logs known
 	// for transactions pending execution.
 	return newNoopSubscription()
