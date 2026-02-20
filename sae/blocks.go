@@ -371,66 +371,76 @@ func canonicalBlock(db ethdb.Database, num uint64) (*types.Block, error) {
 // accepted by the consensus engine should be able to be fetched. It is not
 // required for blocks that have been rejected by the consensus engine to be
 // able to be fetched.
-//
-// It is the user's responsibility to guarantee no concurrent calls to
-// [snowman.Block.Verify] and [snowman.Block.Accept], since if both of these
-// occur, there is no way to guarantee that the block will be reported correctly.
-// In this case, if a race occurs, [database.ErrNotFound] will be returned.
-func (vm *VM) GetBlock(_ context.Context, id ids.ID) (*blocks.Block, error) {
+func (vm *VM) GetBlock(ctx context.Context, id ids.ID) (*blocks.Block, error) {
 	var _ snowman.Block // protect the input to allow comment linking
 
-	// Check for any blocks that have been verified, but not yet released after
-	// settling.
-	// readByHash does also load from `vm.blocks`, but it will not contain the full
-	// exeuction data necessary for returning, so it must be called separately.
-	hash := common.Hash(id)
-	b, ok := vm.blocks.Load(hash)
-	if ok {
-		return b, nil
-	}
+	return readByHash(
+		vm,
+		common.Hash(id),
+		func(b *blocks.Block) *blocks.Block {
+			return b
+		},
+		func(db ethdb.Reader, hash common.Hash, num uint64) (*blocks.Block, error) {
+			// A block that's not in memory has either been rejected, not yet
+			// verified, or settled. Of these, only the latter would be in the
+			// database.
+			//
+			// There is, however, a negligible (read: near impossible) but
+			// non-zero chance that [VM.VerifyBlock] and [VM.AcceptBlock] were
+			// *both* called between [readByHash] checking the in-memory block
+			// store and loading the canonical number from the database. That
+			// could result in an unexecuted block, which would cause an error
+			// when restoring it.
+			//
+			// TODO(arr4n) I think [readHash] should be providing this guarantee
+			// as it has access to the [syncMap] and its lock.
+			if vm.last.settled.Load().Height() < num {
+				return nil, database.ErrNotFound
+			}
 
-	// At this point, the block we are looking for is either in the history, or
-	// was verified during this function's execution.
-	ethB := readByHash(vm, hash, (*blocks.Block).EthBlock, rawdb.ReadBlock)
-	if ethB == nil {
-		return nil, database.ErrNotFound
-	}
+			ethB := rawdb.ReadBlock(db, hash, num)
+			if num > vm.last.synchronous {
+				return blocks.RestoreSettledBlock(
+					ethB,
+					vm.log(),
+					vm.db,
+					vm.xdb,
+					vm.exec.ChainConfig(),
+				)
+			}
 
-	// If a block is settled (even if it wasn't at the beginning of this call),
-	// we can accurately regenerate its full state.
-	if vm.last.settled.Load().NumberU64() < ethB.NumberU64() {
-		// RACY: [VM.GetBlock] was called concurrently with [VM.VerifyBlock].
-		// We behave as if [VM.GetBlock] occurred BEFORE [VM.VerifyBlock].
-		return nil, database.ErrNotFound
-	}
-
-	b, err := vm.newBlock(ethB, nil, nil)
-	if err != nil {
-		return nil, err
-	}
-	if err := b.RestoreExecutionArtefacts(vm.db, vm.xdb, vm.exec.ChainConfig()); err != nil {
-		return nil, err
-	}
-	// TODO: should we distinguish between sync and async blocks?
-	if err := b.MarkSettled(nil); err != nil {
-		return nil, err
-	}
-	return b, nil
+			b, err := vm.newBlock(ethB, nil, nil)
+			if err != nil {
+				return nil, err
+			}
+			// Excess is only used for executing the next block, which can never
+			// be the case if `b` isn't actually the last synchronous block, so
+			// passing the same value for all is OK.
+			if err := b.MarkSynchronous(vm.hooks(), vm.db, vm.xdb, vm.config.ExcessAfterLastSynchronous); err != nil {
+				return nil, err
+			}
+			return b, nil
+		},
+		database.ErrNotFound,
+	)
 }
 
 // GetBlockIDAtHeight returns the accepted block at the given height, or
 // [database.ErrNotFound].
-func (vm *VM) GetBlockIDAtHeight(_ context.Context, height uint64) (ids.ID, error) {
-	hash := rawdb.ReadCanonicalHash(vm.db, height)
-	if hash == (common.Hash{}) {
-		return ids.Empty, database.ErrNotFound
+func (vm *VM) GetBlockIDAtHeight(ctx context.Context, height uint64) (ids.ID, error) {
+	id := ids.ID(rawdb.ReadCanonicalHash(vm.db, height))
+	if id == ids.Empty {
+		return id, database.ErrNotFound
 	}
-	return ids.ID(hash), nil
+	return id, nil
 }
 
 var _ blocks.Source = (*VM)(nil).blockSource
 
 func (vm *VM) blockSource(hash common.Hash, num uint64) (*blocks.Block, bool) {
+	// TODO(arr4n) this MUST be updated to support all blocks (256) necessary to
+	// back a [core.ChainContext] in [saexec.Executor] otherwise op codes like
+	// BLOCKHASH will panic.
 	b, ok := vm.blocks.Load(hash)
 	if !ok || b.NumberU64() != num {
 		return nil, false

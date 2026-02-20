@@ -34,12 +34,16 @@ var (
 // called more than once. The atomic pointer to the last-settled block is
 // updated before [Block.WaitUntilSettled] returns.
 //
-// `lastSettled` must NOT be nil if the block is being settled, but it is appropriate
-// if the block is synchronous or if loading an already-settled block from disk.
-//
 // After a call to MarkSettled, future calls to [Block.ParentBlock] and
 // [Block.LastSettled] will return nil.
 func (b *Block) MarkSettled(lastSettled *atomic.Pointer[Block]) error {
+	if lastSettled == nil {
+		return errors.New("atomic pointer to last-settled block MUST NOT be nil")
+	}
+	return b.markSettled(lastSettled)
+}
+
+func (b *Block) markSettled(lastSettled *atomic.Pointer[Block]) error {
 	a := b.ancestry.Load()
 	if a == nil {
 		b.log.Error(errBlockResettled.Error())
@@ -101,7 +105,7 @@ func (b *Block) MarkSynchronous(hooks hook.Points, db ethdb.Database, xdb saedb.
 		return err
 	}
 	b.synchronous = true
-	return b.MarkSettled(nil)
+	return b.markSettled(nil)
 }
 
 // WaitUntilSettled blocks until either [Block.MarkSettled] is called or the
