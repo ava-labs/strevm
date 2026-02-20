@@ -59,6 +59,7 @@ func (s *SUT) testRPC(ctx context.Context, t *testing.T, tcs ...rpcTest) {
 		cmputils.Headers(),
 		cmputils.HexutilBigs(),
 		cmputils.TransactionsByHash(),
+		cmputils.Receipts(),
 	}
 
 	for _, tc := range tcs {
@@ -665,6 +666,140 @@ func TestEthPendingTransactions(t *testing.T) {
 		method: "eth_pendingTransactions",
 		want:   []*ethapi.RPCTransaction{},
 	})
+}
+
+func TestGetReceipts(t *testing.T) {
+	timeOpt, vmTime := withVMTime(t, time.Unix(saeparams.TauSeconds, 0))
+	ctx, sut := newSUT(t, 1, timeOpt)
+
+	// Blocking precompile creates accepted-but-not-executed blocks
+	blockingPrecompile := common.Address{'b', 'l', 'o', 'c', 'k'}
+	registerBlockingPrecompile(t, blockingPrecompile)
+
+	var (
+		txs  []*types.Transaction
+		want []*types.Receipt
+	)
+	for range 6 {
+		tx := sut.wallet.SetNonceAndSign(t, 0, &types.LegacyTx{
+			To:       &zeroAddr,
+			Gas:      params.TxGas,
+			GasPrice: big.NewInt(1),
+		})
+		txs = append(txs, tx)
+		want = append(want, &types.Receipt{
+			TxHash:            tx.Hash(),
+			Status:            types.ReceiptStatusSuccessful,
+			GasUsed:           params.TxGas,
+			EffectiveGasPrice: big.NewInt(1),
+			Logs:              []*types.Log{},
+		})
+	}
+
+	slice := func(t *testing.T, from, to int) (*blocks.Block, []*types.Receipt) {
+		t.Helper()
+		b := sut.createAndAcceptBlock(t, txs[from:to]...)
+		rs := want[from:to]
+
+		var totalGas uint64
+		for i, r := range rs {
+			totalGas += r.GasUsed
+			r.CumulativeGasUsed = totalGas
+			r.BlockHash = b.Hash()
+			r.BlockNumber = b.Number()
+			r.TransactionIndex = uint(i) //nolint:gosec // Known non-negative
+		}
+		return b, rs
+	}
+
+	genesis := sut.lastAcceptedBlock(t)
+
+	onDisk, wantOnDisk := slice(t, 0, 2)
+	settled, wantSettled := slice(t, 2, 4)
+	vmTime.advanceToSettle(ctx, t, settled)
+	unsettled, wantUnsettled := slice(t, 4, 6)
+	sut.waitUntilExecuted(t, unsettled)
+
+	pendingTx := sut.wallet.SetNonceAndSign(t, 0, &types.LegacyTx{
+		To:       &blockingPrecompile,
+		Gas:      params.TxGas,
+		GasPrice: big.NewInt(1),
+	})
+	pending := sut.createAndAcceptBlock(t, pendingTx)
+
+	var tests []rpcTest
+	for _, tc := range []struct {
+		id   rpc.BlockNumberOrHash
+		want []*types.Receipt
+	}{
+		{
+			id:   rpc.BlockNumberOrHashWithHash(onDisk.Hash(), true),
+			want: wantOnDisk,
+		},
+		{
+			id:   rpc.BlockNumberOrHashWithHash(settled.Hash(), true),
+			want: wantSettled,
+		},
+		{
+			id:   rpc.BlockNumberOrHashWithHash(unsettled.Hash(), true),
+			want: wantUnsettled,
+		},
+		{
+			id:   rpc.BlockNumberOrHashWithNumber(rpc.LatestBlockNumber),
+			want: wantUnsettled,
+		},
+	} {
+		tests = append(tests, rpcTest{
+			method: "eth_getBlockReceipts",
+			args:   []any{tc.id.String()},
+			want:   tc.want,
+		})
+	}
+
+	for i, tx := range txs {
+		tests = append(tests, rpcTest{
+			method: "eth_getTransactionReceipt",
+			args:   []any{tx.Hash()},
+			want:   want[i],
+		})
+	}
+
+	// Acceptance writes blocks to the DB but not receipts, so pending
+	// block receipts error while pending tx receipts return nil.
+	tests = append(tests, []rpcTest{
+		{
+			method: "eth_getTransactionReceipt",
+			args:   []any{pendingTx.Hash()},
+			want:   (*types.Receipt)(nil),
+		},
+		{
+			method: "eth_getTransactionReceipt",
+			args:   []any{common.Hash{}},
+			want:   (*types.Receipt)(nil),
+		},
+		{
+			method: "eth_getBlockReceipts",
+			args:   []any{common.Hash{}},
+			want:   ([]*types.Receipt)(nil),
+		},
+		{
+			method: "eth_getBlockReceipts",
+			args:   []any{genesis.Hash()},
+			want:   []*types.Receipt{},
+		},
+		{
+			method: "eth_getBlockReceipts",
+			args:   []any{pending.Hash()},
+			want:   ([]*types.Receipt)(nil),
+		},
+		{
+			method: "eth_getBlockReceipts",
+			args:   []any{hexutil.Uint64(pending.Height())},
+			want:   ([]*types.Receipt)(nil),
+		},
+	}...)
+
+	sut.testRPC(ctx, t, tests...)
 }
 
 // SAE doesn't really support APIs that require a key on the node, as there is

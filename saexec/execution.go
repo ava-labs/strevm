@@ -154,10 +154,15 @@ func (e *Executor) execute(b *blocks.Block, logger logging.Logger) error {
 		// modified to reduce gas price from the worst-case value agreed by
 		// consensus. This changes the hash, which is what is copied to receipts
 		// and logs.
+		//
+		// [core.ApplyTransaction] also doesn't set [types.Receipt.EffectiveGasPrice].
+		// Fixing both here avoids needing to call [types.Receipt.DeriveFields].
 		receipt.BlockHash = b.Hash()
 		for _, l := range receipt.Logs {
 			l.BlockHash = b.Hash()
 		}
+		tip := tx.EffectiveGasTipValue(header.BaseFee)
+		receipt.EffectiveGasPrice = tip.Add(header.BaseFee, tip)
 
 		// TODO(arr4n) add a receipt cache to the [executor] to allow API calls
 		// to access them before the end of the block.

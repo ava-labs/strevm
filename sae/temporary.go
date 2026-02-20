@@ -30,19 +30,7 @@ func (b *ethAPIBackend) ExtRPCEnabled() bool {
 	panic(errUnimplemented)
 }
 
-func (b *ethAPIBackend) HeaderByNumberOrHash(context.Context, rpc.BlockNumberOrHash) (*types.Header, error) {
-	panic(errUnimplemented)
-}
-
-func (b *ethAPIBackend) BlockByNumberOrHash(context.Context, rpc.BlockNumberOrHash) (*types.Block, error) {
-	panic(errUnimplemented)
-}
-
 func (b *ethAPIBackend) PendingBlockAndReceipts() (*types.Block, types.Receipts) {
-	panic(errUnimplemented)
-}
-
-func (b *ethAPIBackend) GetReceipts(context.Context, common.Hash) (types.Receipts, error) {
 	panic(errUnimplemented)
 }
 
