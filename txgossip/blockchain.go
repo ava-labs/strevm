@@ -34,7 +34,7 @@ type BlockChain interface {
 // acts only to inform the mempool of some new state, but not which specific
 // root as the event contains a [types.Header] carrying the (ignored)
 // last-settled state root.
-func NewBlockChain(exec *saexec.Executor, blocks blocks.Source) BlockChain {
+func NewBlockChain(exec *saexec.Executor, blocks blocks.EthBlockSource) BlockChain {
 	return &blockchain{
 		Executor: exec,
 		blocks:   blocks,
@@ -43,7 +43,7 @@ func NewBlockChain(exec *saexec.Executor, blocks blocks.Source) BlockChain {
 
 type blockchain struct {
 	*saexec.Executor // exposes SubscribeChainHeadEvent()
-	blocks           blocks.Source
+	blocks           blocks.EthBlockSource
 }
 
 func (bc *blockchain) Config() *params.ChainConfig {
@@ -55,7 +55,11 @@ func (bc *blockchain) CurrentBlock() *types.Header {
 }
 
 func (bc *blockchain) GetBlock(hash common.Hash, number uint64) *types.Block {
-	return bc.blocks.EthBlock(hash, number)
+	b, ok := bc.blocks(hash, number)
+	if !ok {
+		return nil
+	}
+	return b
 }
 
 func (bc *blockchain) StateAt(common.Hash) (*state.StateDB, error) {

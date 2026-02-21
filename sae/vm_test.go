@@ -42,6 +42,7 @@ import (
 	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/rpc"
 	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/holiman/uint256"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -50,6 +51,7 @@ import (
 	"github.com/ava-labs/strevm/adaptor"
 	"github.com/ava-labs/strevm/blocks"
 	"github.com/ava-labs/strevm/blocks/blockstest"
+	"github.com/ava-labs/strevm/cmputils"
 	"github.com/ava-labs/strevm/hook"
 	"github.com/ava-labs/strevm/hook/hookstest"
 	saeparams "github.com/ava-labs/strevm/params"
@@ -801,7 +803,7 @@ func TestGossip(t *testing.T) {
 	requireNotReceiveTx(t, nonValidators[1:], tx.Hash())
 }
 
-func TestGetBlock(t *testing.T) {
+func TestBlockSources(t *testing.T) {
 	opt, vmTime := withVMTime(t, time.Unix(saeparams.TauSeconds, 0))
 	ctx, sut := newSUT(t, 1, opt)
 
@@ -814,21 +816,12 @@ func TestGetBlock(t *testing.T) {
 	unsettled := sut.runConsensusLoopFromLastAccepted(t)
 
 	verified := sut.createAndVerifyBlock(t, unsettled)
-	unverified := sut.buildAndParseBlock(
-		t,
-		unsettled,
-		// Ensures that this is a completely unknown block.
-		sut.wallet.SetNonceAndSign(t, 0, &types.LegacyTx{
-			To:       &common.Address{},
-			Gas:      params.TxGas,
-			GasPrice: big.NewInt(1),
-		}),
-	)
+	unverified := sut.buildAndParseBlock(t, unwrap(t, verified))
 
 	tests := []struct {
-		name    string
-		block   *blocks.Block
-		wantErr testerr.Want
+		name            string
+		block           *blocks.Block
+		wantGetBlockErr testerr.Want
 	}{
 		{"genesis", genesis, nil},
 		{"on_disk", onDisk, nil},
@@ -840,16 +833,45 @@ func TestGetBlock(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := sut.GetBlock(ctx, tt.block.ID())
-			if diff := testerr.Diff(err, tt.wantErr); diff != "" {
-				t.Fatalf("GetBlock(...) %s", diff)
+			t.Run("GetBlock", func(t *testing.T) {
+				got, err := sut.GetBlock(ctx, tt.block.ID())
+				if diff := testerr.Diff(err, tt.wantGetBlockErr); diff != "" {
+					t.Fatalf("GetBlock(...) %s", diff)
+				}
+				if tt.wantGetBlockErr != nil {
+					return
+				}
+				if diff := cmp.Diff(tt.block, unwrap(t, got), blocks.CmpOpt()); diff != "" {
+					t.Errorf("GetBlock(...) diff (-want +got):\n%s", diff)
+				}
+			})
+
+			wantOK := tt.wantGetBlockErr == nil
+			opts := cmp.Options{
+				cmputils.Blocks(),
+				cmputils.Headers(),
+				cmpopts.EquateEmpty(),
 			}
-			if tt.wantErr != nil {
-				return
-			}
-			if diff := cmp.Diff(tt.block, unwrap(t, got), blocks.CmpOpt()); diff != "" {
-				t.Errorf("GetBlock(...) diff (-want +got):\n%s", diff)
-			}
+			t.Run("EthBlockSource", func(t *testing.T) {
+				got, gotOK := sut.rawVM.ethBlockSource(tt.block.Hash(), tt.block.NumberU64())
+				require.Equalf(t, wantOK, gotOK, "%T.ethBlockSource(...)", sut.rawVM)
+				if !wantOK {
+					return
+				}
+				if diff := cmp.Diff(tt.block.EthBlock(), got, opts); diff != "" {
+					t.Errorf("%T.ethBlockSource(...) diff (-want +got)\n%s", sut.rawVM, diff)
+				}
+			})
+			t.Run("HeaderSource", func(t *testing.T) {
+				got, gotOK := sut.rawVM.headerSource(tt.block.Hash(), tt.block.NumberU64())
+				require.Equalf(t, wantOK, gotOK, "%T.headerSource(...)", sut.rawVM)
+				if !wantOK {
+					return
+				}
+				if diff := cmp.Diff(tt.block.Header(), got, opts); diff != "" {
+					t.Errorf("%T.headerSource(...) diff (-want +got)\n%s", sut.rawVM, diff)
+				}
+			})
 		})
 	}
 }
