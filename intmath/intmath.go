@@ -22,6 +22,15 @@ func BoundedSubtract[T constraints.Unsigned](a, b, floor T) T {
 	return a - b
 }
 
+// BoundedAdd returns `min(a+b,ceil)` without overflow.
+func BoundedAdd[T constraints.Unsigned](a, b, ceil T) T {
+	maxA := ceil - b
+	if overflow := a > maxA; overflow || b > ceil {
+		return ceil
+	}
+	return a + b
+}
+
 // BoundedMultiply returns `min(a*b,ceil)` without overflow.
 func BoundedMultiply[T constraints.Unsigned](a, b, ceil T) T {
 	if b != 0 && a > ceil/b {
