@@ -23,6 +23,7 @@ import (
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/crypto"
 	"github.com/ava-labs/libevm/eth/filters"
+	"github.com/ava-labs/libevm/eth/tracers"
 	"github.com/ava-labs/libevm/ethdb"
 	"github.com/ava-labs/libevm/event"
 	"github.com/ava-labs/libevm/libevm/debug"
@@ -38,6 +39,7 @@ import (
 // APIBackend is the union of all interfaces required to implement the SAE APIs.
 type APIBackend interface {
 	ethapi.Backend
+	tracers.Backend
 	filters.BloomOverrider
 }
 
@@ -176,6 +178,13 @@ func (vm *VM) ethRPCServer() (*rpc.Server, error) {
 			// - debug_writeMemProfile
 			// - debug_writeMutexProfile
 			"debug", debug.Handler,
+		})
+	}
+
+	if !vm.config.RPCConfig.DisableTracing {
+		apis = append(apis, api{
+			// Geth-specific APIs:
+			"debug", tracers.NewAPI(b),
 		})
 	}
 
