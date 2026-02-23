@@ -9,7 +9,6 @@ package sae
 import (
 	"context"
 	"errors"
-	"math/big"
 
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core/types"
@@ -17,14 +16,6 @@ import (
 )
 
 var errUnimplemented = errors.New("unimplemented")
-
-func (b *ethAPIBackend) SuggestGasTipCap(context.Context) (*big.Int, error) {
-	panic(errUnimplemented)
-}
-
-func (b *ethAPIBackend) FeeHistory(context.Context, uint64, rpc.BlockNumber, []float64) (*big.Int, [][]*big.Int, []*big.Int, []float64, error) {
-	panic(errUnimplemented)
-}
 
 func (b *ethAPIBackend) ExtRPCEnabled() bool {
 	panic(errUnimplemented)

@@ -268,6 +268,7 @@ func (b bloomOverrider) OverrideHeaderBloom(header *types.Header) types.Bloom {
 
 type ethAPIBackend struct {
 	vm             *VM
+	estimator      *gasprice.Estimator
 	accountManager *accounts.Manager
 
 	*txgossip.Set
@@ -309,6 +310,14 @@ func (b *ethAPIBackend) GetTd(context.Context, common.Hash) *big.Int {
 func (b *ethAPIBackend) SyncProgress() ethereum.SyncProgress {
 	// Avalanchego does not expose APIs until after the node has fully synced.
 	return ethereum.SyncProgress{}
+}
+
+func (b *ethAPIBackend) SuggestGasTipCap(ctx context.Context) (*big.Int, error) {
+	return b.estimator.SuggestTipCap(ctx)
+}
+
+func (b *ethAPIBackend) FeeHistory(ctx context.Context, blockCount uint64, lastBlock rpc.BlockNumber, rewardPercentiles []float64) (firstBlock *big.Int, reward [][]*big.Int, baseFee []*big.Int, gasUsedRatio []float64, err error) {
+	return b.estimator.FeeHistory(ctx, blockCount, lastBlock, rewardPercentiles)
 }
 
 func (b *ethAPIBackend) HeaderByNumber(ctx context.Context, n rpc.BlockNumber) (*types.Header, error) {

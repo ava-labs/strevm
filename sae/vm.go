@@ -35,6 +35,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/ava-labs/strevm/blocks"
+	"github.com/ava-labs/strevm/gasprice"
 	"github.com/ava-labs/strevm/hook"
 	"github.com/ava-labs/strevm/saedb"
 	"github.com/ava-labs/strevm/saexec"
@@ -303,6 +304,12 @@ func NewVM(
 			bloomIndexer:   bloomIdx,
 			bloomOverrider: override,
 		}
+
+		estimator := gasprice.NewEstimator(vm.apiBackend, gasprice.Config{
+			Log: snowCtx.Log,
+		})
+		vm.toClose = append(vm.toClose, estimator.Close)
+		vm.apiBackend.estimator = estimator
 	}
 
 	return vm, nil

@@ -124,7 +124,9 @@ func newSUT(tb testing.TB, c Config) *SUT {
 		return backend.LastAcceptedBlock().Timestamp()
 	}
 	e := NewEstimator(backend, c)
-	tb.Cleanup(e.Close)
+	tb.Cleanup(func() {
+		require.NoError(tb, e.Close())
+	})
 
 	return &SUT{
 		Estimator: e,

@@ -305,8 +305,9 @@ func (e *Estimator) FeeHistory(
 }
 
 // Close releases allocated resources.
-func (e *Estimator) Close() {
+func (e *Estimator) Close() error {
 	e.sub.Unsubscribe()
+	return nil
 }
 
 const maxPercentiles = 100

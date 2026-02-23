@@ -1134,3 +1134,162 @@ func TestResolveBlockNumberOrHash(t *testing.T) {
 		})
 	}
 }
+
+func TestSuggestGasTipCap(t *testing.T) {
+	generateTx := func(tipCap int64) types.TxData {
+		return &types.DynamicFeeTx{
+			To:        &zeroAddr,
+			Gas:       params.TxGas,
+			GasTipCap: big.NewInt(tipCap),
+			GasFeeCap: new(big.Int).SetUint64(math.MaxUint64),
+		}
+	}
+	steps := []struct {
+		name string
+		txs  []types.TxData // each tx is a separate block
+		want *hexutil.Big
+	}{
+		{
+			name: "genesis",
+			want: (*hexutil.Big)(big.NewInt(params.Wei)),
+		},
+		{
+			name: "after_block_with_tip",
+			txs:  []types.TxData{generateTx(100)},
+			want: (*hexutil.Big)(big.NewInt(100)),
+		},
+		{
+			name: "multiple_blocks",
+			txs: []types.TxData{
+				generateTx(100),
+				generateTx(200),
+				generateTx(300),
+			},
+			want: (*hexutil.Big)(big.NewInt(100)),
+		},
+	}
+	for _, s := range steps {
+		ctx, sut := newSUT(t, 1)
+		for _, tx := range s.txs {
+			b := sut.createAndAcceptBlock(t, sut.wallet.SetNonceAndSign(t, 0, tx))
+			require.NoErrorf(t, b.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", b)
+		}
+
+		t.Run(s.name, func(t *testing.T) {
+			sut.testRPC(ctx, t, rpcTest{
+				method: "eth_maxPriorityFeePerGas",
+				want:   s.want,
+			})
+		})
+	}
+}
+
+func TestFeeHistory(t *testing.T) {
+	generateTx := func(tipCap int64) types.TxData {
+		return &types.DynamicFeeTx{
+			To:        &zeroAddr,
+			Gas:       params.TxGas,
+			GasTipCap: big.NewInt(tipCap),
+			GasFeeCap: new(big.Int).SetUint64(math.MaxUint64),
+		}
+	}
+
+	const (
+		baseFee  int64 = 1             // zero excess => e^0 = 1
+		gasLimit int64 = 2_000_000_000 // Target(100e6) * TargetToRate(2) * TauSeconds(5) * Lambda(2)
+	)
+	txGasUsedRatio := float64(params.TxGas) / float64(gasLimit)
+
+	// feeHistoryResult mirrors the JSON response of eth_feeHistory for use with
+	// [SUT.testRPC].
+	type feeHistoryResult struct {
+		OldestBlock  *hexutil.Big     `json:"oldestBlock"`
+		Reward       [][]*hexutil.Big `json:"reward,omitempty"`
+		BaseFee      []*hexutil.Big   `json:"baseFeePerGas,omitempty"`
+		GasUsedRatio []float64        `json:"gasUsedRatio"`
+	}
+
+	tests := []struct {
+		name              string
+		txs               []types.TxData
+		blockCount        hexutil.Uint
+		lastBlock         rpc.BlockNumber
+		rewardPercentiles []float64
+		want              feeHistoryResult
+	}{
+		{
+			name:       "genesis",
+			txs:        []types.TxData{},
+			blockCount: 0,
+			lastBlock:  rpc.LatestBlockNumber,
+			want: feeHistoryResult{
+				OldestBlock: (*hexutil.Big)(big.NewInt(0)),
+			},
+		},
+		{
+			name:       "latest_block",
+			txs:        []types.TxData{generateTx(100)},
+			blockCount: 1,
+			lastBlock:  rpc.LatestBlockNumber,
+			want: feeHistoryResult{
+				OldestBlock:  (*hexutil.Big)(big.NewInt(1)),
+				BaseFee:      []*hexutil.Big{(*hexutil.Big)(big.NewInt(baseFee)), (*hexutil.Big)(big.NewInt(baseFee))},
+				GasUsedRatio: []float64{txGasUsedRatio},
+			},
+		},
+		{
+			name:              "with_reward_percentiles",
+			txs:               []types.TxData{generateTx(100)},
+			blockCount:        1,
+			lastBlock:         rpc.LatestBlockNumber,
+			rewardPercentiles: []float64{50},
+			want: feeHistoryResult{
+				OldestBlock:  (*hexutil.Big)(big.NewInt(1)),
+				Reward:       [][]*hexutil.Big{{(*hexutil.Big)(big.NewInt(100))}},
+				BaseFee:      []*hexutil.Big{(*hexutil.Big)(big.NewInt(baseFee)), (*hexutil.Big)(big.NewInt(baseFee))},
+				GasUsedRatio: []float64{txGasUsedRatio},
+			},
+		},
+		{
+			name:       "multiple_blocks",
+			txs:        []types.TxData{generateTx(100), generateTx(200)},
+			blockCount: 2,
+			lastBlock:  rpc.LatestBlockNumber,
+			want: feeHistoryResult{
+				OldestBlock:  (*hexutil.Big)(big.NewInt(1)),
+				BaseFee:      []*hexutil.Big{(*hexutil.Big)(big.NewInt(baseFee)), (*hexutil.Big)(big.NewInt(baseFee)), (*hexutil.Big)(big.NewInt(baseFee))},
+				GasUsedRatio: []float64{txGasUsedRatio, txGasUsedRatio},
+			},
+		},
+		{
+			name:              "specific_block_number",
+			txs:               []types.TxData{generateTx(100), generateTx(200), generateTx(300)},
+			blockCount:        2,
+			lastBlock:         rpc.BlockNumber(3),
+			rewardPercentiles: []float64{50},
+			want: feeHistoryResult{
+				OldestBlock: (*hexutil.Big)(big.NewInt(2)),
+				Reward: [][]*hexutil.Big{
+					{(*hexutil.Big)(big.NewInt(200))},
+					{(*hexutil.Big)(big.NewInt(300))},
+				},
+				BaseFee:      []*hexutil.Big{(*hexutil.Big)(big.NewInt(baseFee)), (*hexutil.Big)(big.NewInt(baseFee)), (*hexutil.Big)(big.NewInt(baseFee))},
+				GasUsedRatio: []float64{txGasUsedRatio, txGasUsedRatio},
+			},
+		},
+	}
+	for _, tt := range tests {
+		ctx, sut := newSUT(t, 1)
+		for _, txData := range tt.txs {
+			b := sut.createAndAcceptBlock(t, sut.wallet.SetNonceAndSign(t, 0, txData))
+			require.NoErrorf(t, b.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", b)
+		}
+		t.Run(tt.name, func(t *testing.T) {
+			sut.testRPC(ctx, t, rpcTest{
+				method: "eth_feeHistory",
+				args:   []any{tt.blockCount, tt.lastBlock, tt.rewardPercentiles},
+				want:   tt.want,
+			})
+		})
+	}
+}
