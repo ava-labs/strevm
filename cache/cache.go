@@ -1,3 +1,7 @@
+// Copyright (C) 2026, Ava Labs, Inc. All rights reserved.
+// See the file LICENSE for licensing terms.
+
+// Package cache provides a thread-safe key-value store.
 package cache
 
 import (
@@ -6,6 +10,8 @@ import (
 	"sync"
 )
 
+// A UniformlyKeyed cache holds values keyed by uniformly distributed keys,
+// allowing for reduced lock contention.
 type UniformlyKeyed[K ~[32]byte, V any] struct {
 	buckets [256]bucket[K, V]
 }
@@ -15,6 +21,7 @@ type bucket[K comparable, V any] struct {
 	data map[K]V
 }
 
+// NewUniformlyKeyed constructs a new [UniformlyKeyed] cache.
 func NewUniformlyKeyed[K ~[32]byte, V any]() *UniformlyKeyed[K, V] {
 	c := new(UniformlyKeyed[K, V])
 	for i := range 256 {
@@ -23,6 +30,7 @@ func NewUniformlyKeyed[K ~[32]byte, V any]() *UniformlyKeyed[K, V] {
 	return c
 }
 
+// Store stores the key and value.
 func (c *UniformlyKeyed[K, V]) Store(k K, v V) {
 	b := &c.buckets[k[0]]
 	b.Lock()
@@ -30,6 +38,8 @@ func (c *UniformlyKeyed[K, V]) Store(k K, v V) {
 	b.Unlock()
 }
 
+// Load returns a previously stored value and a boolean indicating if it was
+// found in the cache.
 func (c *UniformlyKeyed[K, V]) Load(k K) (V, bool) {
 	b := &c.buckets[k[0]]
 	b.RLock()
@@ -38,6 +48,7 @@ func (c *UniformlyKeyed[K, V]) Load(k K) (V, bool) {
 	return v, ok
 }
 
+// Delete removes all provided keys from the cache.
 func (c *UniformlyKeyed[K, V]) Delete(ks ...K) {
 	if len(ks) == 0 {
 		return
@@ -64,6 +75,7 @@ func (c *UniformlyKeyed[K, V]) Delete(ks ...K) {
 	locked.Unlock()
 }
 
+// Clear removes all keys from the cache.
 func (c *UniformlyKeyed[K, V]) Clear() {
 	for i := range len(c.buckets) {
 		b := &c.buckets[i]

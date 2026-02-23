@@ -116,7 +116,7 @@ func (vm *VM) AcceptBlock(ctx context.Context, b *blocks.Block) error {
 			settledTxs = append(settledTxs, tx.Hash())
 		}
 	}
-	go vm.receipts.Delete(settledTxs...)
+	go vm.recentReceipts.Delete(settledTxs...)
 	if h := parentLastSettled.Hash(); h != keep { // i.e. `parentLastSettled` was the last block's `keep`
 		vm.blocks.Delete(h)
 	}
