@@ -19,7 +19,7 @@ func TestImmediateReceipts(t *testing.T) {
 	ctx, sut := newSUT(t, 1)
 
 	blocking := common.Address{'b', 'l', 'o', 'c', 'k'}
-	unblock := registerBlockingPrecompile(t, blocking)
+	registerBlockingPrecompile(t, blocking)
 
 	var txs []*types.Transaction
 	for _, to := range []*common.Address{&zeroAddr, &blocking} {
@@ -30,19 +30,20 @@ func TestImmediateReceipts(t *testing.T) {
 		}))
 	}
 	notBlocked := txs[0]
-	blocked := txs[1]
 
-	b := sut.createAndAcceptBlock(t, txs[:]...)
+	b := sut.runConsensusLoop(t, txs[:]...)
 
-	// DO NOT MERGE: use Eventually() once the regular receipt method has been
-	// implemented so a non-existent receipt doesn't panic.
-	time.Sleep(time.Second)
+	require.EventuallyWithT(t, func(c *assert.CollectT) {
+		_, err := sut.TransactionReceipt(ctx, notBlocked.Hash())
+		require.NoError(c, err, "%T.TransactionReceipt([non-blocked tx])", sut.Client)
+	}, time.Second, 10*time.Millisecond)
 
 	sut.testRPC(ctx, t, rpcTest{
 		method: "eth_getTransactionReceipt",
 		args:   []any{notBlocked.Hash()},
 		want: &types.Receipt{
 			Status:            types.ReceiptStatusSuccessful,
+			EffectiveGasPrice: big.NewInt(1),
 			GasUsed:           params.TxGas,
 			CumulativeGasUsed: params.TxGas,
 			TxHash:            notBlocked.Hash(),
@@ -50,14 +51,5 @@ func TestImmediateReceipts(t *testing.T) {
 			BlockNumber:       b.Number(),
 		},
 	})
-
-	// DO NOT MERGE: see above
-	time.Sleep(time.Second)
-	_ = blocked
-	assert.False(t, b.Executed())
-
-	// Although this isn't strictly necessary, it demonstrates that the blocking
-	// was for the expected reason.
-	unblock()
-	require.NoError(t, b.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()")
+	assert.Falsef(t, b.Executed(), "%T.Executed()", b)
 }
