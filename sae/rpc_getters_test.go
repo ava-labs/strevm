@@ -16,9 +16,10 @@ import (
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/rpc"
+	"github.com/stretchr/testify/require"
+
 	"github.com/ava-labs/strevm/blocks"
 	saeparams "github.com/ava-labs/strevm/params"
-	"github.com/stretchr/testify/require"
 )
 
 func TestEthGetters(t *testing.T) {
@@ -34,6 +35,7 @@ func TestEthGetters(t *testing.T) {
 	genesis := sut.lastAcceptedBlock(t)
 
 	createTx := func(t *testing.T, to common.Address) *types.Transaction {
+		t.Helper()
 		return sut.wallet.SetNonceAndSign(t, 0, &types.DynamicFeeTx{
 			To:        &to,
 			Gas:       params.TxGas,
