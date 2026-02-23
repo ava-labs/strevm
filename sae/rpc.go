@@ -312,7 +312,7 @@ func (b *ethAPIBackend) ChainConfig() *params.ChainConfig {
 }
 
 func (b *ethAPIBackend) RPCTxFeeCap() float64 {
-	return 0 // TODO(arr4n)
+	return b.vm.config.RPCConfig.TxFeeCap
 }
 
 func (b *ethAPIBackend) UnprotectedAllowed() bool {
@@ -328,7 +328,8 @@ func (b *ethAPIBackend) CurrentBlock() *types.Header {
 }
 
 func (b *ethAPIBackend) GetTd(context.Context, common.Hash) *big.Int {
-	return big.NewInt(0) // TODO(arr4n)
+	// Total difficulty is a PoW concept which is not applicable to SAE.
+	return big.NewInt(0)
 }
 
 func (b *ethAPIBackend) SyncProgress() ethereum.SyncProgress {

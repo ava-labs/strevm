@@ -93,6 +93,7 @@ type RPCConfig struct {
 	EnableProfiling       bool
 	EVMTimeout            time.Duration
 	GasCap                uint64
+	TxFeeCap              float64 // in AVAX; 0 = no cap
 }
 
 // NewVM returns a new [VM] that is ready for use immediately upon return.
