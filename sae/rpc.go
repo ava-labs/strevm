@@ -328,15 +328,17 @@ func (b *ethAPIBackend) UnprotectedAllowed() bool {
 	return false
 }
 
+// ExtRPCEnabled reports whether external RPC access is enabled. This is only
+// used as an additional security measure for the personal API, which we do not
+// support in its entirety.
 func (*ethAPIBackend) ExtRPCEnabled() bool {
-	// This is only used as an additional security measure for the personal API,
-	// which we do not support in its entirety.
 	return true
 }
 
+// PendingBlockAndReceipts returns the pending block and its receipts. SAE has
+// no "pending" block in the traditional sense because blocks are first
+// accepted, then executed, and finally settled.
 func (*ethAPIBackend) PendingBlockAndReceipts() (*types.Block, types.Receipts) {
-	// SAE has no "pending" block in the traditional sense. Blocks are first
-	// accepted, then executed, and finally settled.
 	return nil, nil
 }
 
