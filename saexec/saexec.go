@@ -48,8 +48,14 @@ type Executor struct {
 	xdb          saedb.ExecutionResults
 	stateCache   state.Database
 	// snaps is owned by [Executor]. It may be mutated during
-	// [Executor.execute] and [Executor.Close]. callers MUST treat
-	// values returned from [Executor.SnapTree] as read-only.
+	// [Executor.execute] and [Executor.Close]. Callers MUST treat
+	// values returned from [Executor.SnapshotTree] as read-only.
+	//
+	// [snapshot.Tree] is safe for concurrent read access.
+	// - blockchain.go accesses snaps while holding only a read-lock:
+	//   https://github.com/ava-labs/libevm/blob/main/core/blockchain.go#L1739-L1753
+	// - blockchain_reader.go calls snaps.Snapshot() without any lock:
+	//   https://github.com/ava-labs/libevm/blob/main/core/blockchain_reader.go#L356-L367
 	snaps *snapshot.Tree
 }
 
