@@ -328,6 +328,18 @@ func (b *ethAPIBackend) UnprotectedAllowed() bool {
 	return false
 }
 
+func (*ethAPIBackend) ExtRPCEnabled() bool {
+	// This is only used as an additional security measure for the personal API,
+	// which we do not support in its entirety.
+	return true
+}
+
+func (*ethAPIBackend) PendingBlockAndReceipts() (*types.Block, types.Receipts) {
+	// SAE has no "pending" block in the traditional sense. Blocks are first
+	// accepted, then executed, and finally settled.
+	return nil, nil
+}
+
 func (b *ethAPIBackend) AccountManager() *accounts.Manager {
 	return b.accountManager
 }
