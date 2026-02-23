@@ -1135,15 +1135,16 @@ func TestResolveBlockNumberOrHash(t *testing.T) {
 	}
 }
 
-func TestSuggestGasTipCap(t *testing.T) {
-	generateTx := func(tipCap int64) types.TxData {
-		return &types.DynamicFeeTx{
-			To:        &zeroAddr,
-			Gas:       params.TxGas,
-			GasTipCap: big.NewInt(tipCap),
-			GasFeeCap: new(big.Int).SetUint64(math.MaxUint64),
-		}
+func generateTx(tipCap int64) types.TxData {
+	return &types.DynamicFeeTx{
+		To:        &zeroAddr,
+		Gas:       params.TxGas,
+		GasTipCap: big.NewInt(tipCap),
+		GasFeeCap: new(big.Int).SetUint64(math.MaxUint64),
 	}
+}
+
+func TestSuggestGasTipCap(t *testing.T) {
 	steps := []struct {
 		name string
 		txs  []types.TxData // each tx is a separate block
@@ -1185,15 +1186,6 @@ func TestSuggestGasTipCap(t *testing.T) {
 }
 
 func TestFeeHistory(t *testing.T) {
-	generateTx := func(tipCap int64) types.TxData {
-		return &types.DynamicFeeTx{
-			To:        &zeroAddr,
-			Gas:       params.TxGas,
-			GasTipCap: big.NewInt(tipCap),
-			GasFeeCap: new(big.Int).SetUint64(math.MaxUint64),
-		}
-	}
-
 	const (
 		baseFee  int64 = 1             // zero excess => e^0 = 1
 		gasLimit int64 = 2_000_000_000 // Target(100e6) * TargetToRate(2) * TauSeconds(5) * Lambda(2)
