@@ -460,7 +460,7 @@ func TestFilterAPIs(t *testing.T) {
 		eventually: true,
 	})
 
-	b := sut.runConsensusLoop(t, sut.lastAcceptedBlock(t))
+	b := sut.runConsensusLoop(t)
 	wantLog := types.Log{
 		Address:     precompile,
 		Topics:      []common.Hash{},
