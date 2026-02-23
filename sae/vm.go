@@ -91,6 +91,7 @@ type RPCConfig struct {
 	BlocksPerBloomSection uint64
 	EnableDBInspecting    bool
 	EnableProfiling       bool
+	EnableTracing         bool
 	EVMTimeout            time.Duration
 	GasCap                uint64
 }
