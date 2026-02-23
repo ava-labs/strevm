@@ -19,10 +19,10 @@ import (
 )
 
 func BenchmarkApplyTxWithSnapshot(b *testing.B) {
-	for _, numAccounts := range []int{100, 1_000, 10_000} {
+	for _, numAccounts := range []uint{100, 1_000, 10_000} {
 		b.Run(fmt.Sprintf("accounts=%d", numAccounts), func(b *testing.B) {
 			signer := types.LatestSigner(saetest.ChainConfig())
-			wallet := saetest.NewUNSAFEWallet(b, uint(numAccounts), signer)
+			wallet := saetest.NewUNSAFEWallet(b, numAccounts, signer)
 			sut := newSUT(b, saetest.MaxAllocFor(wallet.Addresses()...))
 
 			tx := wallet.SetNonceAndSign(b, 0, &types.LegacyTx{
