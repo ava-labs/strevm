@@ -837,6 +837,40 @@ func TestEthSigningAPIs(t *testing.T) {
 	}...)
 }
 
+func TestRPCTxFeeCap(t *testing.T) {
+	const cap = 0.001
+	_, sut := newSUT(t, 1, withTxFeeCap(cap))
+
+	tests := []struct {
+		name     string
+		gasPrice *big.Int
+		wantErr  testerr.Want
+	}{
+		{
+			name:     "under_cap",
+			gasPrice: big.NewInt(1), // fee = 1 * 21000 / 1e18 ~= 0 ETH
+		},
+		{
+			name:     "over_cap",
+			gasPrice: big.NewInt(1e18), // fee = 1e18 * 21000 / 1e18 = 21000 ETH
+			wantErr:  testerr.Contains("exceeds the configured cap"),
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tx := sut.wallet.SetNonceAndSign(t, 0, &types.LegacyTx{
+				To:       &zeroAddr,
+				Gas:      params.TxGas,
+				GasPrice: tt.gasPrice,
+			})
+			err := sut.Client.SendTransaction(sut.context(t), tx)
+			if diff := testerr.Diff(err, tt.wantErr); diff != "" {
+				t.Fatalf("SendTransaction() %s", diff)
+			}
+		})
+	}
+}
+
 func TestDebugRPCs(t *testing.T) {
 	ctx, sut := newSUT(t, 0, withDebugAPI())
 
@@ -1156,6 +1190,12 @@ func (sut *SUT) testGetByUnknownNumber(ctx context.Context, t *testing.T) {
 			want:   hexutil.Bytes(nil),
 		},
 	}...)
+}
+
+func withTxFeeCap(cap float64) sutOption {
+	return options.Func[sutConfig](func(c *sutConfig) {
+		c.vmConfig.RPCConfig.TxFeeCap = cap
+	})
 }
 
 // withDebugAPI returns a sutOption that enables the debug API.
