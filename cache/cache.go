@@ -11,7 +11,8 @@ import (
 )
 
 // A UniformlyKeyed cache holds values keyed by uniformly distributed keys,
-// allowing for reduced lock contention.
+// allowing for reduced lock contention. The distribution of keys is a required
+// property, not one provided by the cache.
 type UniformlyKeyed[K ~[32]byte, V any] struct {
 	buckets [256]bucket[K, V]
 }
