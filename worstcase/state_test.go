@@ -281,9 +281,7 @@ func TestMultipleBlocks(t *testing.T) {
 			require.NoErrorf(t, state.ApplyTx(tx), "ApplyTx()")
 		}
 
-		got, err := state.FinishBlock()
-		require.NoError(t, err, "FinishBlock()")
-
+		got := state.FinishBlock()
 		want := &blocks.WorstCaseBounds{
 			MaxBaseFee: block.wantBaseFee,
 		}
@@ -567,8 +565,7 @@ func TestStartBlockQueueFull(t *testing.T) {
 		})
 		require.NoError(t, err, "Apply()")
 
-		_, err = state.FinishBlock()
-		require.NoError(t, err, "FinishBlock()")
+		state.FinishBlock()
 
 		lastHash = h.Hash()
 	}
@@ -598,8 +595,7 @@ func TestStartBlockQueueFullDueToTargetChanges(t *testing.T) {
 	})
 	require.NoError(t, err, "Apply()")
 
-	_, err = state.FinishBlock()
-	require.NoError(t, err, "FinishBlock()")
+	state.FinishBlock()
 
 	err = state.StartBlock(&types.Header{
 		ParentHash: h.Hash(),

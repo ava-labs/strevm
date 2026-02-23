@@ -181,12 +181,7 @@ func (vm *VM) buildBlock(
 				return nil, fmt.Errorf("applying op at end of block %d to worst-case state: %v", b.Height(), err)
 			}
 		}
-		if _, err := state.FinishBlock(); err != nil {
-			log.Warn("Could not finish historical worst-case calculation",
-				zap.Error(err),
-			)
-			return nil, fmt.Errorf("finishing worst-case state for block %d: %v", b.Height(), err)
-		}
+		state.FinishBlock()
 	}
 
 	hdr.Root = lastSettled.PostExecutionStateRoot()
@@ -245,13 +240,7 @@ func (vm *VM) buildBlock(
 	// that [hook.Op.Gas] can be included?
 	hdr.GasUsed = state.GasUsed()
 
-	bounds, err := state.FinishBlock()
-	if err != nil {
-		log.Warn("Could not finish worst-case block calculation",
-			zap.Error(err),
-		)
-		return nil, fmt.Errorf("finishing worst-case state for new block: %v", err)
-	}
+	bounds := state.FinishBlock()
 
 	var receipts types.Receipts
 	settling := blocks.Range(parent.LastSettled(), lastSettled)
