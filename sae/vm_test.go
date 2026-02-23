@@ -376,24 +376,26 @@ func (s *SUT) createAndVerifyBlock(tb testing.TB, preference *blocks.Block, txs 
 	return b
 }
 
-// createAndAcceptBlock is equivalent to [SUT.createAndVerifyBlock] except that
-// it also accepts the block with [VM.AcceptBlock]. It does NOT wait for it to
-// be executed; to do this automatically, set the [VM] to [snow.Bootstrapping].
+// runConsensusLoopOnPreference is equivalent to [SUT.createAndVerifyBlock]
+// except that it also accepts the block with [VM.AcceptBlock]. It does NOT wait
+// for it to be executed; to do this automatically, set the [VM] to
+// [snow.Bootstrapping].
 //
 // There is no longer any need to wrap the block as an [adaptor.Block] so it is
 // returned in its raw form, unlike earlier steps in the consenus loop.
-func (s *SUT) runConsensusLoop(tb testing.TB, preference *blocks.Block, txs ...*types.Transaction) *blocks.Block {
+func (s *SUT) runConsensusLoopOnPreference(tb testing.TB, preference *blocks.Block, txs ...*types.Transaction) *blocks.Block {
 	tb.Helper()
 	b := s.createAndVerifyBlock(tb, preference, txs...)
 	require.NoErrorf(tb, b.Accept(s.context(tb)), "%T.Accept()", b)
 	return unwrap(tb, b)
 }
 
-// runConsensusLoopFromLastAccepted is a convenience wrapper for
-// [SUT.runConsensusLoop], using [SUT.lastAcceptedBlock] as the preference.
-func (s *SUT) runConsensusLoopFromLastAccepted(tb testing.TB, txs ...*types.Transaction) *blocks.Block {
+// runConsensusLoop is a convenience wrapper for
+// [SUT.runConsensusLoopOnPreference], using [SUT.lastAcceptedBlock] as the
+// preference.
+func (s *SUT) runConsensusLoop(tb testing.TB, txs ...*types.Transaction) *blocks.Block {
 	tb.Helper()
-	return s.runConsensusLoop(tb, s.lastAcceptedBlock(tb), txs...)
+	return s.runConsensusLoopOnPreference(tb, s.lastAcceptedBlock(tb), txs...)
 }
 
 // waitUntilExecuted blocks until an external indicator shows that `b` has been
@@ -545,7 +547,7 @@ func TestIntegration(t *testing.T) {
 	sut.syncMempool(t) // technically we've only proven 1 tx added, as unlikely as a race is
 	require.Equal(t, numTxs, sut.rawVM.numPendingTxs(), "number of pending txs")
 
-	b := sut.runConsensusLoop(t, sut.genesis)
+	b := sut.runConsensusLoopOnPreference(t, sut.genesis)
 	assert.Equal(t, sut.genesis.ID(), b.Parent(), "BuildBlock() builds on preference")
 	require.Lenf(t, b.Transactions(), numTxs, "%T.Transactions()", b)
 
@@ -559,7 +561,7 @@ func TestIntegration(t *testing.T) {
 		// If the tx-inclusion logic were broken then this would include the
 		// transactions again, resulting in a FATAL in the execution loop due to
 		// non-increasing nonce.
-		b := sut.runConsensusLoop(t, b)
+		b := sut.runConsensusLoopOnPreference(t, b)
 		assert.Emptyf(t, b.Transactions(), "%T.Transactions()", b)
 		require.NoErrorf(t, b.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", b)
 	})
@@ -580,9 +582,8 @@ func TestEmptyChainConfig(t *testing.T) {
 		}
 	}))
 	for range 5 {
-		sut.runConsensusLoop(t, sut.lastAcceptedBlock(t))
+		sut.runConsensusLoop(t)
 	}
-	sut.waitUntilExecuted(t, sut.lastAcceptedBlock(t))
 }
 
 func TestSyntacticBlockChecks(t *testing.T) {
@@ -639,9 +640,6 @@ func TestAcceptBlock(t *testing.T) {
 	require.NoError(t, sut.SetState(ctx, snow.Bootstrapping), "SetState(Bootstrapping)")
 
 	unsettled := []*blocks.Block{sut.genesis}
-	last := func() *blocks.Block {
-		return unsettled[len(unsettled)-1]
-	}
 	sut.genesis = nil // allow it to be GCd when appropriate
 
 	rng := rand.New(rand.NewPCG(0, 0)) //nolint:gosec // Reproducibility is useful for tests
@@ -649,7 +647,7 @@ func TestAcceptBlock(t *testing.T) {
 		ffMillis := 100 + rng.IntN(1000*(1+saeparams.TauSeconds))
 		vmTime.advance(time.Millisecond * time.Duration(ffMillis))
 
-		b := sut.runConsensusLoop(t, last())
+		b := sut.runConsensusLoop(t)
 		unsettled = append(unsettled, b)
 		sut.assertBlockHashInvariants(ctx, t)
 
@@ -808,10 +806,10 @@ func TestGetBlock(t *testing.T) {
 	genesis := sut.lastAcceptedBlock(t)
 	// Once a block is settled, its ancestors are only accessible from the
 	// database.
-	onDisk := sut.runConsensusLoopFromLastAccepted(t)
-	settled := sut.runConsensusLoopFromLastAccepted(t)
+	onDisk := sut.runConsensusLoop(t)
+	settled := sut.runConsensusLoop(t)
 	vmTime.advanceToSettle(ctx, t, settled)
-	unsettled := sut.runConsensusLoopFromLastAccepted(t)
+	unsettled := sut.runConsensusLoop(t)
 
 	verified := sut.createAndVerifyBlock(t, unsettled)
 	unverified := sut.buildAndParseBlock(
