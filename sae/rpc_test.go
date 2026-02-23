@@ -166,7 +166,7 @@ func TestSubscriptions(t *testing.T) {
 	runConsensusLoop := func(wantLogs ...types.Log) {
 		t.Helper()
 
-		b := sut.runConsensusLoop(t, sut.lastAcceptedBlock(t))
+		b := sut.runConsensusLoop(t)
 		require.Equal(t, b.Hash(), (<-newHeads).Hash(), "header hash from newHeads subscription")
 
 		for _, want := range wantLogs {
@@ -423,28 +423,23 @@ func TestEthGetters(t *testing.T) {
 	blockingPrecompile := common.Address{'b', 'l', 'o', 'c', 'k'}
 	registerBlockingPrecompile(t, blockingPrecompile)
 
-	createTx := func(t *testing.T, to common.Address) *types.Transaction {
-		t.Helper()
-		return sut.wallet.SetNonceAndSign(t, 0, &types.DynamicFeeTx{
-			To:        &to,
-			Gas:       params.TxGas,
-			GasFeeCap: big.NewInt(1),
-		})
-	}
-
 	genesis := sut.lastAcceptedBlock(t)
 
 	// Once a block is settled, its ancestors are only accessible from the
 	// database.
-	onDisk := sut.createAndAcceptBlock(t, createTx(t, zeroAddr))
+	onDisk := sut.runConsensusLoop(t)
 
-	settled := sut.createAndAcceptBlock(t, createTx(t, zeroAddr))
+	settled := sut.runConsensusLoop(t)
 	vmTime.advanceToSettle(ctx, t, settled)
 
-	executed := sut.createAndAcceptBlock(t, createTx(t, zeroAddr))
+	executed := sut.runConsensusLoop(t)
 	require.NoErrorf(t, executed.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", executed)
 
-	pending := sut.createAndAcceptBlock(t, createTx(t, blockingPrecompile))
+	pending := sut.runConsensusLoop(t, sut.wallet.SetNonceAndSign(t, 0, &types.DynamicFeeTx{
+		To:        &blockingPrecompile,
+		Gas:       params.TxGas,
+		GasFeeCap: big.NewInt(1),
+	}))
 
 	for _, b := range []*blocks.Block{genesis, onDisk, settled, executed, pending} {
 		t.Run(fmt.Sprintf("block_num_%d", b.Height()), func(t *testing.T) {
@@ -532,15 +527,15 @@ func TestGetLogs(t *testing.T) {
 	// and therefore moved to disk.
 	indexed := make([]*blocks.Block, bloomSectionSize)
 	for i := range indexed {
-		indexed[i] = sut.createAndAcceptBlock(t, txWithLog(t))
+		indexed[i] = sut.runConsensusLoop(t, txWithLog(t))
 	}
 
-	settled := sut.createAndAcceptBlock(t, txWithLog(t))
+	settled := sut.runConsensusLoop(t, txWithLog(t))
 	vmTime.advanceToSettle(ctx, t, settled)
 
-	noLogs := sut.createAndAcceptBlock(t, txWithoutLog(t))
+	noLogs := sut.runConsensusLoop(t, txWithoutLog(t))
 
-	executed := sut.createAndAcceptBlock(t, txWithLog(t))
+	executed := sut.runConsensusLoop(t, txWithLog(t))
 	require.NoErrorf(t, executed.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", executed)
 
 	// Although the FiltersAPI will work without any blocks indexed, such a
@@ -698,7 +693,7 @@ func TestGetReceipts(t *testing.T) {
 
 	slice := func(t *testing.T, from, to int) (*blocks.Block, []*types.Receipt) {
 		t.Helper()
-		b := sut.createAndAcceptBlock(t, txs[from:to]...)
+		b := sut.runConsensusLoop(t, txs[from:to]...)
 		rs := want[from:to]
 
 		var totalGas uint64
@@ -725,7 +720,7 @@ func TestGetReceipts(t *testing.T) {
 		Gas:      params.TxGas,
 		GasPrice: big.NewInt(1),
 	})
-	pending := sut.createAndAcceptBlock(t, pendingTx)
+	pending := sut.runConsensusLoop(t, pendingTx)
 
 	var tests []rpcTest
 	for _, tc := range []struct {
@@ -913,7 +908,7 @@ func TestDebugGetRawTransaction(t *testing.T) {
 		Gas:       params.TxGas,
 		GasFeeCap: big.NewInt(1),
 	})
-	b := sut.createAndAcceptBlock(t, tx)
+	b := sut.runConsensusLoop(t, tx)
 	require.NoErrorf(t, b.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", b)
 
 	marshaled, err := tx.MarshalBinary()
@@ -1179,17 +1174,17 @@ func TestResolveBlockNumberOrHash(t *testing.T) {
 	opt, vmTime := withVMTime(t, time.Unix(saeparams.TauSeconds, 0))
 	ctx, sut := newSUT(t, 0, opt)
 
-	settled := sut.runConsensusLoop(t, sut.lastAcceptedBlock(t))
+	settled := sut.runConsensusLoop(t)
 	vmTime.advanceToSettle(ctx, t, settled)
 
 	for range 2 {
-		b := sut.runConsensusLoop(t, sut.lastAcceptedBlock(t))
+		b := sut.runConsensusLoop(t)
 		vmTime.advanceToSettle(ctx, t, b)
 	}
 	_, ok := sut.rawVM.blocks.Load(settled.Hash())
 	require.False(t, ok, "settled block still in VM memory")
 
-	accepted := sut.runConsensusLoop(t, sut.lastAcceptedBlock(t))
+	accepted := sut.runConsensusLoop(t)
 	require.NoError(t, sut.SetPreference(ctx, accepted.ID()), "SetPreference()")
 
 	b, err := sut.BuildBlock(ctx)
