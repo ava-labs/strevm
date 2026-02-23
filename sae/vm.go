@@ -91,6 +91,7 @@ type RPCConfig struct {
 	BlocksPerBloomSection uint64
 	EnableDBInspecting    bool
 	EnableProfiling       bool
+	DisableTracing        bool
 	EVMTimeout            time.Duration
 	GasCap                uint64
 	TxFeeCap              float64 // in AVAX; 0 = no cap
