@@ -327,9 +327,17 @@ func (b *ethAPIBackend) CurrentBlock() *types.Header {
 	return b.CurrentHeader()
 }
 
-func (b *ethAPIBackend) GetTd(context.Context, common.Hash) *big.Int {
-	// Total difficulty is a PoW concept which is not applicable to SAE.
-	return big.NewInt(0)
+func (b *ethAPIBackend) GetTd(_ context.Context, hash common.Hash) *big.Int {
+	// Coreth sets difficulty to 1 for every block, making totalDifficulty
+	// equal to the block height. We maintain that behavior here.
+	if blk, ok := b.vm.blocks.Load(hash); ok {
+		return blk.Header().Number
+	}
+	num := rawdb.ReadHeaderNumber(b.vm.db, hash)
+	if num == nil {
+		return nil
+	}
+	return new(big.Int).SetUint64(*num)
 }
 
 func (b *ethAPIBackend) SyncProgress() ethereum.SyncProgress {
