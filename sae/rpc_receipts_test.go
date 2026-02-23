@@ -46,6 +46,7 @@ func TestImmediateReceipts(t *testing.T) {
 			EffectiveGasPrice: big.NewInt(1),
 			GasUsed:           params.TxGas,
 			CumulativeGasUsed: params.TxGas,
+			Logs:              []*types.Log{},
 			TxHash:            notBlocked.Hash(),
 			BlockHash:         b.Hash(),
 			BlockNumber:       b.Number(),

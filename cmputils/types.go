@@ -54,7 +54,6 @@ func TransactionsByHash() cmp.Option {
 func Receipts() cmp.Option {
 	return cmp.Options{
 		IfIn[types.Receipt](BigInts()),
-		IfIn[types.Receipt](NilSlicesAreEmpty[[]*types.Log]()),
 	}
 }
 
