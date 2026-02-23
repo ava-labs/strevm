@@ -261,8 +261,9 @@ func TestExecution(t *testing.T) {
 	contract := crypto.CreateAddress(eoa, deploy.Nonce())
 	txs = append(txs, deploy)
 	want = append(want, &types.Receipt{
-		TxHash:          deploy.Hash(),
-		ContractAddress: contract,
+		TxHash:            deploy.Hash(),
+		ContractAddress:   contract,
+		EffectiveGasPrice: big.NewInt(1),
 	})
 
 	rng := rand.New(rand.NewPCG(0, 0)) //nolint:gosec // Reproducibility is useful for tests
@@ -284,8 +285,9 @@ func TestExecution(t *testing.T) {
 		ev.Address = contract
 		ev.TxHash = tx.Hash()
 		want = append(want, &types.Receipt{
-			TxHash: tx.Hash(),
-			Logs:   []*types.Log{ev},
+			TxHash:            tx.Hash(),
+			EffectiveGasPrice: big.NewInt(1),
+			Logs:              []*types.Log{ev},
 		})
 	}
 
@@ -418,6 +420,7 @@ func TestGasAccounting(t *testing.T) {
 	steps := []struct {
 		blockTime      uint64
 		numTxs         int
+		gasTipCap      uint64
 		targetAfter    gas.Gas
 		wantExecutedBy *proxytime.Time[gas.Gas]
 		// Because of the 2:1 ratio between Rate and Target, gas consumption
@@ -496,6 +499,7 @@ func TestGasAccounting(t *testing.T) {
 		{
 			blockTime:       22, // no fast-forward
 			numTxs:          10 * gastime.TargetToExcessScaling,
+			gasTipCap:       1, // anything non-zero, to exercise [types.Receipt.EffectiveGasPrice]
 			targetAfter:     5 * gasPerTx,
 			wantExecutedBy:  at(21, 40*gastime.TargetToExcessScaling, 10*gasPerTx),
 			wantExcessAfter: 4 * ((5 * gasPerTx /*T*/) * gastime.TargetToExcessScaling /* == K */),
@@ -505,6 +509,13 @@ func TestGasAccounting(t *testing.T) {
 
 	e, chain, wallet := sut.Executor, sut.chain, sut.wallet
 
+	var maxGasFeeCap uint64
+	price := gas.Price(1)
+	for _, s := range steps {
+		maxGasFeeCap = max(maxGasFeeCap, uint64(price)+s.gasTipCap)
+		price = s.wantPriceAfter
+	}
+
 	for i, step := range steps {
 		hooks.Target = step.targetAfter
 
@@ -513,8 +524,8 @@ func TestGasAccounting(t *testing.T) {
 			txs[i] = wallet.SetNonceAndSign(t, 0, &types.DynamicFeeTx{
 				To:        &common.Address{},
 				Gas:       params.TxGas,
-				GasTipCap: big.NewInt(0),
-				GasFeeCap: big.NewInt(100),
+				GasTipCap: uint256.NewInt(step.gasTipCap).ToBig(),
+				GasFeeCap: uint256.NewInt(maxGasFeeCap).ToBig(),
 			})
 		}
 
@@ -555,6 +566,15 @@ func TestGasAccounting(t *testing.T) {
 			}
 			require.Truef(t, b.BaseFee().IsUint64(), "%T.BaseFee().IsUint64()", b)
 			assert.Equalf(t, wantBaseFee, gas.Price(b.BaseFee().Uint64()), "%T.BaseFee().Uint64()", b)
+
+			t.Run("EffectiveGasPrice", func(t *testing.T) {
+				want := uint256.NewInt(uint64(wantBaseFee) + step.gasTipCap)
+				for i, r := range b.Receipts() {
+					if got := r.EffectiveGasPrice; got.Cmp(want.ToBig()) != 0 {
+						t.Errorf("%T.Receipts()[%d].EffectiveGasPrice = %v; want %v", b, i, got, want)
+					}
+				}
+			})
 		})
 	}
 	if t.Failed() {
@@ -783,10 +803,11 @@ func TestContextualOpCodes(t *testing.T) {
 				wantTopic = tt.wantTopicFn()
 			}
 			want := &types.Receipt{
-				Status:      types.ReceiptStatusSuccessful,
-				BlockHash:   b.Hash(),
-				BlockNumber: b.Number(),
-				TxHash:      tx.Hash(),
+				Status:            types.ReceiptStatusSuccessful,
+				BlockHash:         b.Hash(),
+				BlockNumber:       b.Number(),
+				TxHash:            tx.Hash(),
+				EffectiveGasPrice: big.NewInt(1),
 				Logs: []*types.Log{{
 					Topics:      []common.Hash{wantTopic},
 					BlockHash:   b.Hash(),

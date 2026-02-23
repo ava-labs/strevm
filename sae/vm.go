@@ -37,6 +37,7 @@ import (
 	"github.com/ava-labs/strevm/blocks"
 	"github.com/ava-labs/strevm/cache"
 	"github.com/ava-labs/strevm/hook"
+	"github.com/ava-labs/strevm/saedb"
 	"github.com/ava-labs/strevm/saexec"
 	"github.com/ava-labs/strevm/txgossip"
 )
@@ -53,17 +54,19 @@ type VM struct {
 	metrics *prometheus.Registry
 
 	db     ethdb.Database
+	xdb    saedb.ExecutionResults
 	blocks *syncMap[common.Hash, *blocks.Block]
 
 	consensusState utils.Atomic[snow.State]
 	preference     atomic.Pointer[blocks.Block]
 	last           struct {
 		accepted, settled atomic.Pointer[blocks.Block]
+		synchronous       uint64
 	}
 
 	exec       *saexec.Executor
 	mempool    *txgossip.Set
-	apiBackend APIBackend
+	apiBackend *ethAPIBackend
 	newTxs     chan struct{}
 	receipts   *cache.UniformlyKeyed[common.Hash, *saexec.ReceiptForRPC]
 
@@ -88,7 +91,10 @@ type Config struct {
 // RPCConfig provides options for initialization of RPCs for the node.
 type RPCConfig struct {
 	BlocksPerBloomSection uint64
+	EnableDBInspecting    bool
 	EnableProfiling       bool
+	EVMTimeout            time.Duration
+	GasCap                uint64
 }
 
 // NewVM returns a new [VM] that is ready for use immediately upon return.
@@ -133,15 +139,16 @@ func NewVM(
 	if err != nil {
 		return nil, fmt.Errorf("%T.ExecutionResultsDB(%q): %v", cfg.Hooks, snowCtx.ChainDataDir, err)
 	}
+	vm.xdb = xdb
 	vm.toClose = append(vm.toClose, xdb.Close)
 
 	lastSync, err := blocks.New(lastSynchronous, nil, nil, snowCtx.Log)
 	if err != nil {
 		return nil, fmt.Errorf("blocks.New([last synchronous], ...): %v", err)
 	}
+	vm.last.synchronous = lastSync.Height()
 
 	{ // ==========  Sync -> Async  ==========
-		// TODO(arr4n) refactor to avoid DB writes on every startup.
 		if err := lastSync.MarkSynchronous(cfg.Hooks, db, xdb, cfg.ExcessAfterLastSynchronous); err != nil {
 			return nil, fmt.Errorf("%T{genesis}.MarkSynchronous(): %v", lastSync, err)
 		}
@@ -150,7 +157,7 @@ func NewVM(
 		}
 	}
 
-	rec := &recovery{db, xdb, snowCtx.Log, cfg, lastSync}
+	rec := &recovery{db, xdb, chainConfig, snowCtx.Log, cfg, lastSync}
 	{ // ==========  Executor  ==========
 		lastExecuted, unexecuted, err := rec.recoverFromDB()
 		if err != nil {

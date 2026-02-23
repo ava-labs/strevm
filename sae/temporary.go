@@ -9,34 +9,31 @@ package sae
 import (
 	"context"
 	"errors"
+	"math/big"
 
-	"github.com/ava-labs/libevm/core"
-	"github.com/ava-labs/libevm/core/bloombits"
+	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core/types"
-	"github.com/ava-labs/libevm/event"
+	"github.com/ava-labs/libevm/rpc"
 )
 
 var errUnimplemented = errors.New("unimplemented")
 
-// TODO(arr4n) remove these methods once no longer embedding [ethapi.Backend] in
-// [ethAPIBackend] as they're only required for disambiguation.
-
-func (b *ethAPIBackend) SendTx(ctx context.Context, tx *types.Transaction) error {
-	return b.Set.SendTx(ctx, tx)
+func (b *ethAPIBackend) SuggestGasTipCap(context.Context) (*big.Int, error) {
+	panic(errUnimplemented)
 }
 
-func (b *ethAPIBackend) CurrentHeader() *types.Header {
-	return b.chainIndexer.CurrentHeader()
+func (b *ethAPIBackend) FeeHistory(context.Context, uint64, rpc.BlockNumber, []float64) (*big.Int, [][]*big.Int, []*big.Int, []float64, error) {
+	panic(errUnimplemented)
 }
 
-func (b *ethAPIBackend) SubscribeChainHeadEvent(ch chan<- core.ChainHeadEvent) event.Subscription {
-	return b.chainIndexer.SubscribeChainHeadEvent(ch)
+func (b *ethAPIBackend) ExtRPCEnabled() bool {
+	panic(errUnimplemented)
 }
 
-func (b *ethAPIBackend) BloomStatus() (uint64, uint64) {
-	return b.bloomIndexer.BloomStatus()
+func (b *ethAPIBackend) PendingBlockAndReceipts() (*types.Block, types.Receipts) {
+	panic(errUnimplemented)
 }
 
-func (b *ethAPIBackend) ServiceFilter(ctx context.Context, session *bloombits.MatcherSession) {
-	b.bloomIndexer.ServiceFilter(ctx, session)
+func (b *ethAPIBackend) GetPoolNonce(context.Context, common.Address) (uint64, error) {
+	panic(errUnimplemented)
 }
