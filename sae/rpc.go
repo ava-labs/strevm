@@ -175,7 +175,7 @@ func (vm *VM) ethRPCServer() (*rpc.Server, error) {
 		})
 	}
 
-	if vm.config.RPCConfig.EnableTracing {
+	if !vm.config.RPCConfig.DisableTracing {
 		apis = append(apis, api{
 			// Geth-specific APIs:
 			"debug", tracers.NewAPI(b),
