@@ -101,7 +101,6 @@ func BenchmarkApplyTxWithSnapshot(b *testing.B) {
 				{name: "with_snapshot", snaps: sut.snaps},
 			} {
 				b.Run(tt.name, func(b *testing.B) {
-					b.ResetTimer()
 					for range b.N {
 						s, err := NewState(sut.hooks, sut.config, sut.stateCache, sut.genesis, tt.snaps)
 						require.NoError(b, err)
