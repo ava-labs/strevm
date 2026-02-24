@@ -13,6 +13,7 @@ import (
 
 	"github.com/ava-labs/avalanchego/cache/lru"
 	"github.com/ava-labs/avalanchego/utils/logging"
+	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core"
 	"github.com/ava-labs/libevm/core/state"
 	"github.com/ava-labs/libevm/core/state/snapshot"
@@ -42,6 +43,7 @@ type Executor struct {
 	headEvents  event.FeedOf[core.ChainHeadEvent]
 	chainEvents event.FeedOf[core.ChainEvent]
 	logEvents   event.FeedOf[[]*types.Log]
+	receipts    *syncMap[common.Hash, chan *Receipt]
 
 	chainContext *chainContext
 	chainConfig  *params.ChainConfig
@@ -103,6 +105,7 @@ func New(
 		stateCache:  cache,
 		snaps:       snaps,
 		xdb:         xdb,
+		receipts:    newSyncMap[common.Hash, chan *Receipt](),
 	}
 	e.lastExecuted.Store(lastExecuted)
 
