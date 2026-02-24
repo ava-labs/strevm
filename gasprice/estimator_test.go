@@ -7,525 +7,555 @@ import (
 	"context"
 	"fmt"
 	"math/big"
-	"slices"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/ava-labs/avalanchego/utils/logging"
 	"github.com/ava-labs/libevm/common"
+	"github.com/ava-labs/libevm/common/math"
 	"github.com/ava-labs/libevm/core"
+	"github.com/ava-labs/libevm/core/rawdb"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/event"
 	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/rpc"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/goleak"
 
+	"github.com/ava-labs/strevm/blocks"
 	"github.com/ava-labs/strevm/blocks/blockstest"
+	"github.com/ava-labs/strevm/gastime"
 	"github.com/ava-labs/strevm/saetest"
 )
 
-var testChainConfig = saetest.ChainConfig()
-
-var backendBaseFee = big.NewInt(875_000_000)
-
-// testBlockGen is a simplified block generator for tests, replacing core.BlockGen.
-type testBlockGen struct {
-	baseFee *big.Int
-	txs     types.Transactions
-	nonces  map[common.Address]uint64
+func TestMain(m *testing.M) {
+	goleak.VerifyTestMain(m, goleak.IgnoreCurrent())
 }
 
-func (bg *testBlockGen) BaseFee() *big.Int {
-	return new(big.Int).Set(bg.baseFee)
-}
-
-func (bg *testBlockGen) TxNonce(addr common.Address) uint64 {
-	n := bg.nonces[addr]
-	bg.nonces[addr] = n + 1
-	return n
-}
-
-func (bg *testBlockGen) AddTx(tx *types.Transaction) {
-	bg.txs = append(bg.txs, tx)
-}
-
-// testBackend is an in-memory implementation of EstimatorBackend for tests.
-type testBackend struct {
-	blocks                []*types.Block // blocks[i] is block with number i
-	acceptedCh            chan<- core.ChainHeadEvent
-	pruned                []uint64 // block numbers that return (nil, nil)
-	nextBaseFeeUpperBound *big.Int // returned by NextBaseFeeUpperBound
-}
-
-func (b *testBackend) lastBlock() *types.Block {
-	return b.blocks[len(b.blocks)-1]
-}
-
-func (b *testBackend) ResolveBlockNumber(bn rpc.BlockNumber) (uint64, error) {
-	head := b.lastBlock().Number().Uint64()
-	if bn == rpc.PendingBlockNumber {
-		return head, nil
+func TestConfigValidate(t *testing.T) {
+	modifyDefaultConfig := func(modify func(*Config)) Config {
+		cfg := DefaultConfig()
+		modify(&cfg)
+		return cfg
 	}
-	if bn < 0 {
-		return 0, fmt.Errorf("%s block unsupported", bn.String())
-	}
-	n := uint64(bn) //nolint:gosec // Non-negative checked above
-	if n > head {
-		return 0, fmt.Errorf("%w: block %d", errFutureBlock, n)
-	}
-	return n, nil
-}
-
-func (b *testBackend) HeaderByNumber(ctx context.Context, number rpc.BlockNumber) (*types.Header, error) {
-	block, err := b.BlockByNumber(ctx, number)
-	if err != nil || block == nil {
-		return nil, err
-	}
-	return block.Header(), nil
-}
-
-func (b *testBackend) BlockByNumber(ctx context.Context, number rpc.BlockNumber) (*types.Block, error) {
-	if number == rpc.PendingBlockNumber {
-		return b.lastBlock(), nil
-	}
-	n := uint64(number) //nolint:gosec // Test code
-	if n >= uint64(len(b.blocks)) || slices.Contains(b.pruned, n) {
-		return nil, nil
-	}
-	return b.blocks[n], nil
-}
-
-func (b *testBackend) SubscribeChainHeadEvent(ch chan<- core.ChainHeadEvent) event.Subscription {
-	b.acceptedCh = ch
-	return event.NewSubscription(func(quit <-chan struct{}) error {
-		<-quit
-		return nil
-	})
-}
-
-func (b *testBackend) NextBaseFeeUpperBound(context.Context) *big.Int {
-	return b.nextBaseFeeUpperBound
-}
-
-// newTestBackend creates a test backend with [numBlocks] blocks (plus genesis).
-// The [genBlock] function is called for each non-genesis block to populate it
-// with transactions.
-func newTestBackend(t *testing.T, numBlocks int, genBlock func(int, *testBlockGen)) *testBackend {
-	t.Helper()
-
-	// Create genesis block (block 0)
-	genesis := types.NewBlock(&types.Header{
-		Number:   big.NewInt(0),
-		BaseFee:  new(big.Int).Set(backendBaseFee),
-		Time:     0,
-		GasLimit: 8_000_000,
-	}, nil, nil, nil, saetest.TrieHasher())
-
-	blocks := make([]*types.Block, 0, numBlocks+1)
-	blocks = append(blocks, genesis)
-
-	nonces := make(map[common.Address]uint64)
-	parent := genesis
-	for i := 0; i < numBlocks; i++ {
-		bg := &testBlockGen{
-			baseFee: new(big.Int).Set(backendBaseFee),
-			nonces:  nonces,
-		}
-		if genBlock != nil {
-			genBlock(i, bg)
-		}
-
-		var gasUsed uint64
-		for _, tx := range bg.txs {
-			gasUsed += tx.Gas()
-		}
-
-		block := blockstest.NewEthBlock(parent, bg.txs, blockstest.ModifyHeader(func(h *types.Header) {
-			h.BaseFee = new(big.Int).Set(backendBaseFee)
-			h.Time = parent.Time() + 2
-			h.GasLimit = 8_000_000
-			h.GasUsed = gasUsed
-		}))
-		blocks = append(blocks, block)
-		parent = block
-	}
-
-	return &testBackend{blocks: blocks}
-}
-
-type suggestTipCapTest struct {
-	numBlocks   int
-	genBlock    func(int, *testBlockGen)
-	pruned      []uint64
-	expectedTip *big.Int
-}
-
-// timeCrunchConfig returns a [DefaultConfig] with [Config.MaxLookbackSeconds] set to 5
-// to ensure that during gas price estimation, we will hit the time based look back limit
-func timeCrunchConfig() Config {
-	cfg := DefaultConfig()
-	cfg.MaxLookbackSeconds = 5
-	return cfg
-}
-
-func applyGasPriceTest(t *testing.T, test suggestTipCapTest, cfg Config) {
-	t.Helper()
-	if test.genBlock == nil {
-		test.genBlock = func(i int, b *testBlockGen) {}
-	}
-	backend := newTestBackend(t, test.numBlocks, test.genBlock)
-	backend.pruned = test.pruned
-	estimator, err := NewEstimator(backend, cfg)
-	require.NoError(t, err)
-	defer estimator.Close()
-
-	// mock time to be consistent across different CI runs
-	// sets currentTime to be 20 seconds
-	estimator.clock.Set(time.Unix(20, 0))
-
-	got, err := estimator.SuggestTipCap(context.Background())
-	require.NoError(t, err)
-
-	if got.Cmp(test.expectedTip) != 0 {
-		t.Fatalf("Expected tip (%d), got tip (%d)", test.expectedTip, got)
-	}
-}
-
-func testGenBlock(t *testing.T, tip int64, numTx int) func(int, *testBlockGen) {
-	t.Helper()
-	kc := saetest.NewUNSAFEKeyChain(t, 1)
-	addr := kc.Addresses()[0]
-	signer := types.LatestSigner(testChainConfig)
-
-	return func(i int, b *testBlockGen) {
-		txTip := big.NewInt(tip * params.GWei)
-		baseFee := b.BaseFee()
-		feeCap := new(big.Int).Add(baseFee, txTip)
-		for j := 0; j < numTx; j++ {
-			tx := kc.SignTx(t, signer, 0, &types.DynamicFeeTx{
-				ChainID:   testChainConfig.ChainID,
-				Nonce:     b.TxNonce(addr),
-				To:        &common.Address{},
-				Gas:       params.TxGas,
-				GasFeeCap: feeCap,
-				GasTipCap: txTip,
-				Data:      []byte{},
-			})
-			b.AddTx(tx)
-		}
-	}
-}
-
-func testGenBlockWithTips(t *testing.T, tips []int64) func(int, *testBlockGen) {
-	t.Helper()
-	kc := saetest.NewUNSAFEKeyChain(t, 1)
-	addr := kc.Addresses()[0]
-	signer := types.LatestSigner(testChainConfig)
-
-	return func(i int, b *testBlockGen) {
-		baseFee := b.BaseFee()
-		for _, tip := range tips {
-			txTip := big.NewInt(tip * params.GWei)
-			feeCap := new(big.Int).Add(baseFee, txTip)
-			tx := kc.SignTx(t, signer, 0, &types.DynamicFeeTx{
-				ChainID:   testChainConfig.ChainID,
-				Nonce:     b.TxNonce(addr),
-				To:        &common.Address{},
-				Gas:       params.TxGas,
-				GasFeeCap: feeCap,
-				GasTipCap: txTip,
-				Data:      []byte{},
-			})
-			b.AddTx(tx)
-		}
-	}
-}
-
-func TestSuggestTipCap(t *testing.T) {
-	cases := []struct {
-		name        string
-		numBlocks   int
-		genBlock    func(int, *testBlockGen)
-		pruned      []uint64
-		expectedTip *big.Int
+	tests := []struct {
+		name    string
+		config  Config
+		wantErr error
 	}{
 		{
-			name:        "simple_latest_no_tip",
-			numBlocks:   3,
-			genBlock:    testGenBlock(t, 0, 80),
-			expectedTip: DefaultConfig().MinPrice,
+			name:    "default_config_valid",
+			config:  DefaultConfig(),
+			wantErr: nil,
 		},
 		{
-			name:        "simple_latest_1_gwei_tip",
-			numBlocks:   3,
-			genBlock:    testGenBlock(t, 1, 80),
-			expectedTip: big.NewInt(1 * params.GWei),
+			name:    "nil_Now",
+			config:  modifyDefaultConfig(func(c *Config) { c.Now = nil }),
+			wantErr: errNilNow,
 		},
 		{
-			name:        "simple_latest_100_gwei_tip",
-			numBlocks:   3,
-			genBlock:    testGenBlock(t, 100, 80),
-			expectedTip: big.NewInt(100 * params.GWei),
+			name:    "nil_MinSuggestedTip",
+			config:  modifyDefaultConfig(func(c *Config) { c.MinSuggestedTip = nil }),
+			wantErr: errNilMinSuggestedTip,
 		},
 		{
-			name:        "simple_floor_latest_1_gwei_tip",
-			numBlocks:   3,
-			genBlock:    testGenBlock(t, 1, 80),
-			expectedTip: big.NewInt(1 * params.GWei),
+			name:    "nil_MaxSuggestedTip",
+			config:  modifyDefaultConfig(func(c *Config) { c.MaxSuggestedTip = nil }),
+			wantErr: errNilMaxSuggestedTip,
 		},
 		{
-			name:        "simple_floor_latest_100_gwei_tip",
-			numBlocks:   3,
-			genBlock:    testGenBlock(t, 100, 80),
-			expectedTip: big.NewInt(100 * params.GWei),
+			name:    "SuggestedTipPercentile_zero",
+			config:  modifyDefaultConfig(func(c *Config) { c.SuggestedTipPercentile = 0 }),
+			wantErr: errBadTipPercentile,
 		},
 		{
-			name:        "max_tip_cap",
-			numBlocks:   200,
-			genBlock:    testGenBlock(t, 550, 80),
-			expectedTip: DefaultConfig().MaxPrice,
+			name:    "SuggestedTipPercentile_above_one",
+			config:  modifyDefaultConfig(func(c *Config) { c.SuggestedTipPercentile = 1.1 }),
+			wantErr: errBadTipPercentile,
 		},
 		{
-			name:        "single_transaction_with_tip",
-			numBlocks:   3,
-			genBlock:    testGenBlockWithTips(t, []int64{100}),
-			expectedTip: big.NewInt(100 * params.GWei),
-		},
-		{
-			name:        "three_transactions_with_odd_count_tips",
-			numBlocks:   3,
-			genBlock:    testGenBlockWithTips(t, []int64{10, 20, 30}),
-			expectedTip: big.NewInt(20 * params.GWei),
-		},
-		{
-			name:        "four_transactions_with_even_count_tips",
-			numBlocks:   3,
-			genBlock:    testGenBlockWithTips(t, []int64{10, 20, 30, 40}),
-			expectedTip: big.NewInt(30 * params.GWei),
-		},
-		{
-			name:        "unsorted_transactions_with_tips",
-			numBlocks:   3,
-			genBlock:    testGenBlockWithTips(t, []int64{50, 10, 40, 30, 20}),
-			expectedTip: big.NewInt(30 * params.GWei),
-		},
-		{
-			name:        "zero_tips",
-			numBlocks:   3,
-			genBlock:    testGenBlockWithTips(t, []int64{0, 0, 0}),
-			expectedTip: DefaultConfig().MinPrice,
-		},
-		{
-			name:        "duplicate_tips",
-			numBlocks:   3,
-			genBlock:    testGenBlockWithTips(t, []int64{20, 20, 20}),
-			expectedTip: big.NewInt(20 * params.GWei),
-		},
-		{
-			name:      "no_transactions",
-			numBlocks: 3,
-			genBlock: func(i int, b *testBlockGen) {
-				// No transactions added
-			},
-			expectedTip: DefaultConfig().MinPrice,
-		},
-		{
-			// 5 blocks, each with 1 tx. Tips by block number:
-			// 1: 10 GWei, 2: 20 GWei, 3: 30 GWei, 4: 40 GWei, 5: 50 GWei.
-			// Without pruning: sorted [10,20,30,40,50], 60th pct → index 2 → 30 GWei.
-			// Prune block 5 (50 GWei): sorted [10,20,30,40], 60th pct → index 1 → 20 GWei.
-			name:      "pruned_blocks_skipped",
-			numBlocks: 5,
-			genBlock: func(i int, b *testBlockGen) {
-				kc := saetest.NewUNSAFEKeyChain(t, 1)
-				addr := kc.Addresses()[0]
-				signer := types.LatestSigner(testChainConfig)
-				txTip := big.NewInt(int64(i+1) * 10 * params.GWei)
-				baseFee := b.BaseFee()
-				feeCap := new(big.Int).Add(baseFee, txTip)
-				tx := kc.SignTx(t, signer, 0, &types.DynamicFeeTx{
-					ChainID:   testChainConfig.ChainID,
-					Nonce:     b.TxNonce(addr),
-					To:        &common.Address{},
-					Gas:       params.TxGas,
-					GasFeeCap: feeCap,
-					GasTipCap: txTip,
-					Data:      []byte{},
-				})
-				b.AddTx(tx)
-			},
-			pruned:      []uint64{5},
-			expectedTip: big.NewInt(20 * params.GWei),
+			name: "MinSuggestedTip_exceeds_MaxSuggestedTip",
+			config: modifyDefaultConfig(func(c *Config) {
+				c.MinSuggestedTip = big.NewInt(200 * params.Wei)
+				c.MaxSuggestedTip = big.NewInt(100 * params.Wei)
+			}),
+			wantErr: errMinTipExceedsMax,
 		},
 	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			applyGasPriceTest(t, suggestTipCapTest{
-				numBlocks:   c.numBlocks,
-				genBlock:    c.genBlock,
-				pruned:      c.pruned,
-				expectedTip: c.expectedTip,
-			}, DefaultConfig())
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.ErrorIs(t, tt.config.validate(), tt.wantErr)
 		})
 	}
 }
 
-func TestSuggestTipCapMaxBlocksSecondsLookback(t *testing.T) {
-	applyGasPriceTest(t, suggestTipCapTest{
-		numBlocks:   20,
-		genBlock:    testGenBlock(t, 55, 80),
-		expectedTip: big.NewInt(55 * params.GWei),
-	}, timeCrunchConfig())
+type backend struct {
+	lock   sync.RWMutex
+	blocks []*blocks.Block // blocks[i] is block with number i
+
+	headEvents event.FeedOf[core.ChainHeadEvent]
+}
+
+func newBackend(genesis *blocks.Block) *backend {
+	return &backend{
+		blocks: []*blocks.Block{genesis},
+	}
+}
+
+func (b *backend) accept(blk *blocks.Block) {
+	b.lock.Lock()
+	b.blocks = append(b.blocks, blk)
+	b.lock.Unlock()
+
+	b.headEvents.Send(core.ChainHeadEvent{Block: blk.EthBlock()})
+}
+
+func (b *backend) ResolveBlockNumber(bn rpc.BlockNumber) (uint64, error) {
+	head := b.LastAcceptedBlock().NumberU64()
+	switch bn {
+	case rpc.EarliestBlockNumber:
+		return 0, nil
+	case rpc.FinalizedBlockNumber, rpc.SafeBlockNumber, rpc.LatestBlockNumber, rpc.PendingBlockNumber:
+		return head, nil
+	default:
+		if bn < 0 {
+			return 0, fmt.Errorf("%s block unsupported", bn)
+		}
+		n := uint64(bn) //nolint:gosec // Non-negative checked above
+		if n > head {
+			return 0, fmt.Errorf("%w: block %d", errMissingBlock, n)
+		}
+		return n, nil
+	}
+}
+
+func (b *backend) BlockByNumber(ctx context.Context, bn rpc.BlockNumber) (*types.Block, error) {
+	n, err := b.ResolveBlockNumber(bn)
+	if err != nil {
+		return nil, err
+	}
+
+	b.lock.RLock()
+	defer b.lock.RUnlock()
+
+	return b.blocks[n].EthBlock(), nil
+}
+
+func (b *backend) SubscribeChainHeadEvent(ch chan<- core.ChainHeadEvent) event.Subscription {
+	return b.headEvents.Subscribe(ch)
+}
+
+func (b *backend) LastAcceptedBlock() *blocks.Block {
+	b.lock.RLock()
+	defer b.lock.RUnlock()
+
+	return b.blocks[len(b.blocks)-1]
+}
+
+type SUT struct {
+	*Estimator
+
+	signer  types.Signer
+	wallet  *saetest.Wallet
+	builder *blockstest.ChainBuilder
+	backend *backend
+}
+
+func newSUT(tb testing.TB, c Config) *SUT {
+	tb.Helper()
+
+	db := rawdb.NewMemoryDatabase()
+	xdb := saetest.NewExecutionResultsDB()
+	config := saetest.ChainConfig()
+	signer := types.LatestSigner(config)
+	wallet := saetest.NewUNSAFEWallet(tb, 1, signer)
+	alloc := saetest.MaxAllocFor(wallet.Addresses()...)
+	genesis := blockstest.NewGenesis(tb, db, xdb, config, alloc)
+	builder := blockstest.NewChainBuilder(config, genesis)
+	backend := newBackend(genesis)
+
+	c.Now = func() time.Time {
+		return backend.LastAcceptedBlock().Timestamp()
+	}
+	log := saetest.NewTBLogger(tb, logging.Debug)
+	e, err := NewEstimator(backend, log, c)
+	require.NoError(tb, err)
+	tb.Cleanup(e.Close)
+
+	return &SUT{
+		Estimator: e,
+		signer:    signer,
+		wallet:    wallet,
+		builder:   builder,
+		backend:   backend,
+	}
+}
+
+func (s *SUT) acceptBlock(b *blocks.Block) {
+	s.backend.accept(b)
+}
+
+const gasLimit = 1_000_000
+
+func (s *SUT) newBlock(tb testing.TB, time uint64, bounds *blocks.WorstCaseBounds, txs ...*types.Transaction) *blocks.Block {
+	tb.Helper()
+	blk := s.builder.NewBlock(tb, txs, blockstest.WithEthBlockOptions(
+		blockstest.ModifyHeader(func(h *types.Header) {
+			h.GasLimit = gasLimit
+			h.GasUsed = 0
+			for _, tx := range txs {
+				h.GasUsed += tx.Gas()
+			}
+			h.Time = time
+			h.BaseFee = h.Number
+		}),
+	))
+	blk.SetWorstCaseBounds(bounds)
+	return blk
+}
+
+func (s *SUT) newTx(tb testing.TB, gas, price uint64) *types.Transaction {
+	tb.Helper()
+	return s.wallet.SignTx(tb, s.signer, 0, &types.DynamicFeeTx{
+		Gas:       gas,
+		GasTipCap: new(big.Int).SetUint64(price),
+		// Set the fee cap to a very large value so the tx tip is always the
+		// tip cap.
+		GasFeeCap: new(big.Int).SetUint64(math.MaxUint64),
+	})
+}
+
+const (
+	avax  = params.Ether
+	nAVAX = params.GWei
+	aAVAX = params.Wei
+)
+
+func TestSuggestTipCap(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.MinSuggestedTip = big.NewInt(aAVAX)
+	cfg.MaxSuggestedTip = big.NewInt(avax)
+	clk := time.Unix(100, 0)
+	cfg.Now = func() time.Time {
+		return clk
+	}
+	nowSec := uint64(clk.Unix()) //nolint:gosec // Guaranteed to be positive
+
+	newBlock := func(sut *SUT, time uint64, txs ...*types.Transaction) *blocks.Block {
+		t.Helper()
+		return sut.newBlock(t, time, nil, txs...)
+	}
+	newTx := func(sut *SUT, price uint64) *types.Transaction {
+		t.Helper()
+		return sut.newTx(t, 1, price)
+	}
+
+	type test struct {
+		name   string
+		blocks func(*SUT) []*blocks.Block
+		want   *big.Int
+	}
+	tests := []test{
+		{
+			name: "genesis",
+			want: cfg.MinSuggestedTip,
+		},
+		{
+			name: "single_tx",
+			blocks: func(sut *SUT) []*blocks.Block {
+				return []*blocks.Block{
+					newBlock(sut, nowSec, newTx(sut, nAVAX)),
+				}
+			},
+			want: big.NewInt(nAVAX),
+		},
+		{
+			name: "multiple_blocks",
+			blocks: func(sut *SUT) []*blocks.Block {
+				return []*blocks.Block{
+					newBlock(sut, nowSec-10, newTx(sut, nAVAX)),
+					newBlock(sut, nowSec, newTx(sut, 3*nAVAX), newTx(sut, 2*nAVAX)),
+				}
+			},
+			want: big.NewInt(nAVAX),
+		},
+		{
+			name: "increase_tip",
+			blocks: func(sut *SUT) []*blocks.Block {
+				return []*blocks.Block{
+					newBlock(sut, nowSec-20, newTx(sut, nAVAX)),
+					newBlock(sut, nowSec-10, newTx(sut, 3*nAVAX), newTx(sut, 2*nAVAX)),
+					newBlock(sut, nowSec, newTx(sut, 4*nAVAX)),
+				}
+			},
+			want: big.NewInt(2 * nAVAX),
+		},
+		{
+			name: "min_tip",
+			blocks: func(sut *SUT) []*blocks.Block {
+				return []*blocks.Block{
+					newBlock(sut, nowSec, newTx(sut, 1)),
+				}
+			},
+			want: cfg.MinSuggestedTip,
+		},
+		{
+			name: "exceed_max_tip",
+			blocks: func(sut *SUT) []*blocks.Block {
+				return []*blocks.Block{
+					newBlock(sut, nowSec-10, newTx(sut, math.MaxUint64)),
+					newBlock(sut, nowSec, newTx(sut, math.MaxUint64)),
+				}
+			},
+			want: cfg.MaxSuggestedTip,
+		},
+		{
+			name: "exceed_max_duration",
+			blocks: func(sut *SUT) []*blocks.Block {
+				return []*blocks.Block{
+					newBlock(sut, nowSec-(uint64(cfg.SuggestedTipMaxDuration.Seconds())+1), newTx(sut, math.MaxUint64), newTx(sut, math.MaxUint64), newTx(sut, math.MaxUint64)),
+					newBlock(sut, nowSec, newTx(sut, nAVAX)),
+				}
+			},
+			want: big.NewInt(1 * nAVAX),
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			sut := newSUT(t, cfg)
+			var newBlocks []*blocks.Block
+			if test.blocks != nil {
+				newBlocks = test.blocks(sut)
+			}
+			for _, block := range newBlocks {
+				sut.acceptBlock(block)
+			}
+
+			got, err := sut.SuggestTipCap(t.Context())
+			require.NoError(t, err)
+			require.Equal(t, test.want, got)
+		})
+	}
 }
 
 func TestFeeHistory(t *testing.T) {
-	upperBound := big.NewInt(999_999_999)
-	lastBlockNumber := 32
+	cfg := DefaultConfig()
+	cfg.HistoryMaxBlocksFromTip = 1
+	cfg.HistoryMaxBlocks = 2
+	bounds := &blocks.WorstCaseBounds{
+		NextGasTime: gastime.New(time.Now(), 1, math.MaxUint64),
+	}
 
-	cases := []struct {
-		name                  string
-		maxCallBlock          uint64
-		maxBlock              uint64
-		count                 uint64
-		last                  rpc.BlockNumber
-		percent               []float64
-		pruned                []uint64
-		nextBaseFeeUpperBound *big.Int
-		expFirst              uint64
-		expCount              int
-		expErr                error
-		expLastBaseFee        *big.Int // if set, assert last baseFee entry equals this value
+	newBlock := func(sut *SUT, txs ...*types.Transaction) *blocks.Block {
+		t.Helper()
+		return sut.newBlock(t, 0, bounds, txs...)
+	}
+	newTx := func(sut *SUT, gas, price uint64) *types.Transaction {
+		t.Helper()
+		return sut.newTx(t, gas, price)
+	}
+
+	type args struct {
+		numBlocks   uint64
+		lastBlock   rpc.BlockNumber
+		percentiles []float64
+	}
+	type results struct {
+		height      *big.Int
+		rewards     [][]*big.Int
+		baseFees    []*big.Int
+		portionFull []float64
+		err         error
+	}
+	tests := []struct {
+		name   string
+		blocks func(*SUT) []*blocks.Block
+		args   args
+		want   results
 	}{
-		// Standard libevm tests
-		{maxCallBlock: 0, maxBlock: 1000, count: 10, last: 30, percent: nil, expFirst: 21, expCount: 10, expErr: nil},
-		{maxCallBlock: 0, maxBlock: 1000, count: 10, last: 30, percent: []float64{0, 10}, expFirst: 21, expCount: 10, expErr: nil},
-		{maxCallBlock: 0, maxBlock: 1000, count: 10, last: 30, percent: []float64{20, 10}, expFirst: 0, expCount: 0, expErr: errBadPercentile},
-		{maxCallBlock: 0, maxBlock: 1000, count: 1000000000, last: 30, percent: nil, expFirst: 0, expCount: 31, expErr: nil},
-		{maxCallBlock: 0, maxBlock: 1000, count: 1000000000, last: rpc.PendingBlockNumber, percent: nil, expFirst: 0, expCount: 33, expErr: nil},
-		{maxCallBlock: 0, maxBlock: 1000, count: 10, last: 40, percent: nil, expFirst: 0, expCount: 0, expErr: errFutureBlock},
-		{maxCallBlock: 0, maxBlock: 2, count: 100, last: rpc.PendingBlockNumber, percent: []float64{0, 10}, expFirst: 31, expCount: 2, expErr: nil},
-		{maxCallBlock: 0, maxBlock: 2, count: 100, last: 32, percent: []float64{0, 10}, expFirst: 31, expCount: 2, expErr: nil},
-		// In SAE backend, `pending` resolves to accepted head (not head+1).
-		{maxCallBlock: 0, maxBlock: 1000, count: 1, last: rpc.PendingBlockNumber, percent: nil, expFirst: 32, expCount: 1, expErr: nil},
-		// With count=2, pending spans [head-1, head].
-		{maxCallBlock: 0, maxBlock: 1000, count: 2, last: rpc.PendingBlockNumber, percent: nil, expFirst: 31, expCount: 2, expErr: nil},
-		// Reward percentiles should not alter the pending range semantics.
-		{maxCallBlock: 0, maxBlock: 1000, count: 2, last: rpc.PendingBlockNumber, percent: []float64{0, 10}, expFirst: 31, expCount: 2, expErr: nil},
-
-		// Modified tests
-		{maxCallBlock: 0, maxBlock: 2, count: 100, last: rpc.PendingBlockNumber, percent: nil, expFirst: 31, expCount: 2, expErr: nil},    // apply block lookback limits even if only headers required
-		{maxCallBlock: 0, maxBlock: 10, count: 10, last: 30, percent: nil, expFirst: 23, expCount: 8, expErr: nil},                        // limit lookback based on maxHistory from latest block
-		{maxCallBlock: 0, maxBlock: 33, count: 1000000000, last: 10, percent: nil, expFirst: 0, expCount: 11, expErr: nil},                // handle truncation edge case
-		{maxCallBlock: 0, maxBlock: 2, count: 10, last: 20, percent: nil, expFirst: 0, expCount: 0, expErr: errHistoryDepthExhausted},     // query behind historical limit
-		{maxCallBlock: 10, maxBlock: 30, count: 100, last: rpc.PendingBlockNumber, percent: nil, expFirst: 23, expCount: 10, expErr: nil}, // ensure [MaxCallBlockHistory] is honored
-
-		// Pruned block tests
-		{maxCallBlock: 0, maxBlock: 1000, count: 5, last: 7, percent: []float64{50}, pruned: []uint64{5}, expFirst: 3, expCount: 2, expErr: nil}, // pruned in middle truncates
-		{maxCallBlock: 0, maxBlock: 1000, count: 3, last: 5, percent: []float64{50}, pruned: []uint64{3}, expFirst: 0, expCount: 0, expErr: nil}, // first block pruned returns empty
-		{maxCallBlock: 0, maxBlock: 1000, count: 3, last: 7, percent: nil, pruned: []uint64{7}, expFirst: 5, expCount: 2, expErr: nil},           // last block pruned
-
-		// Next base fee tests: verify the +1 baseFee entry value
 		{
-			name:                  "block_range_ends_at_head_uses_upper_bound",
-			maxBlock:              1000,
-			count:                 3,
-			last:                  rpc.BlockNumber(lastBlockNumber),
-			nextBaseFeeUpperBound: upperBound,
-			expFirst:              30,
-			expCount:              3,
-			expLastBaseFee:        upperBound,
+			name: "too_many_percentiles",
+			args: args{
+				percentiles: make([]float64, maxPercentiles+1),
+			},
+			want: results{
+				height: common.Big0,
+				err:    errBadPercentile,
+			},
 		},
 		{
-			name:                  "pending_resolves_to_head_uses_upper_bound",
-			maxBlock:              1000,
-			count:                 1,
-			last:                  rpc.PendingBlockNumber,
-			nextBaseFeeUpperBound: upperBound,
-			expFirst:              32,
-			expCount:              1,
-			expLastBaseFee:        upperBound,
+			name: "percentile_out_of_range",
+			args: args{
+				percentiles: []float64{-1},
+			},
+			want: results{
+				height: common.Big0,
+				err:    errBadPercentile,
+			},
 		},
 		{
-			name:                  "range_ends_before_head_uses_available_block_header",
-			maxBlock:              1000,
-			count:                 1,
-			last:                  30,
-			nextBaseFeeUpperBound: upperBound,
-			expFirst:              30,
-			expCount:              1,
-			expLastBaseFee:        backendBaseFee,
+			name: "duplicate_percentile",
+			args: args{
+				percentiles: []float64{1, 1},
+			},
+			want: results{
+				height: common.Big0,
+				err:    errBadPercentile,
+			},
 		},
 		{
-			name:                  "range_ends_at_head_nil_upper_bound_falls_back",
-			maxBlock:              1000,
-			count:                 1,
-			last:                  32,
-			nextBaseFeeUpperBound: nil,
-			expFirst:              32,
-			expCount:              1,
-			expLastBaseFee:        backendBaseFee,
+			name: "future_block",
+			args: args{
+				lastBlock: 1,
+			},
+			want: results{
+				height: common.Big0,
+				err:    errMissingBlock,
+			},
+		},
+		{
+			name: "no_blocks",
+			args: args{
+				lastBlock: rpc.EarliestBlockNumber,
+			},
+			want: results{
+				height: common.Big0,
+			},
+		},
+		{
+			name: "missing_worst_case_bounds",
+			args: args{
+				numBlocks: 1,
+				lastBlock: rpc.LatestBlockNumber,
+			},
+			want: results{
+				height: common.Big0,
+				err:    errMissingWorstCaseBounds,
+			},
+		},
+		{
+			name: "query_genesis",
+			blocks: func(sut *SUT) []*blocks.Block {
+				return []*blocks.Block{
+					newBlock(sut, newTx(sut, 21_000, nAVAX)),
+				}
+			},
+			args: args{
+				numBlocks: math.MaxUint64, // capped to prevent overflow
+				lastBlock: rpc.EarliestBlockNumber,
+			},
+			want: results{
+				height: common.Big0,
+				baseFees: []*big.Int{
+					big.NewInt(params.InitialBaseFee),
+					big.NewInt(1),
+				},
+				portionFull: []float64{
+					0,
+				},
+			},
+		},
+		{
+			name: "query_latest",
+			blocks: func(sut *SUT) []*blocks.Block {
+				return []*blocks.Block{
+					newBlock(sut, newTx(sut, 21_000, nAVAX)),
+				}
+			},
+			args: args{
+				numBlocks: 1,
+				lastBlock: rpc.LatestBlockNumber,
+			},
+			want: results{
+				height: common.Big1,
+				baseFees: []*big.Int{
+					big.NewInt(1),
+					bounds.NextGasTime.BaseFee().ToBig(),
+				},
+				portionFull: []float64{
+					21_000. / gasLimit,
+				},
+			},
+		},
+		{
+			name: "query_too_old_block",
+			blocks: func(sut *SUT) []*blocks.Block {
+				return []*blocks.Block{
+					newBlock(sut, newTx(sut, 21_000, nAVAX)),
+					newBlock(sut,
+						newTx(sut, 100_000, nAVAX),
+						newTx(sut, 100_000, 2*nAVAX),
+						newTx(sut, 100_000, 3*nAVAX),
+						newTx(sut, 100_000, 4*nAVAX),
+						newTx(sut, 100_000, 5*nAVAX),
+					),
+				}
+			},
+			args: args{
+				lastBlock: rpc.EarliestBlockNumber, // c.HistoryMaxBlocksFromTip is 1
+			},
+			want: results{
+				height: common.Big0,
+				err:    errHistoryDepthExhausted,
+			},
+		},
+		{
+			name: "query_max_blocks_with_percentiles",
+			blocks: func(sut *SUT) []*blocks.Block {
+				return []*blocks.Block{
+					newBlock(sut, newTx(sut, 21_000, nAVAX)),
+					newBlock(sut,
+						newTx(sut, 100_000, nAVAX),
+						newTx(sut, 100_000, 2*nAVAX),
+						newTx(sut, 100_000, 3*nAVAX),
+						newTx(sut, 100_000, 4*nAVAX),
+						newTx(sut, 100_000, 5*nAVAX),
+					),
+				}
+			},
+			args: args{
+				numBlocks:   math.MaxUint64, // capped
+				lastBlock:   rpc.LatestBlockNumber,
+				percentiles: []float64{25, 50, 75},
+			},
+			want: results{
+				height: common.Big1,
+				rewards: [][]*big.Int{
+					{big.NewInt(nAVAX), big.NewInt(nAVAX), big.NewInt(nAVAX)},
+					{big.NewInt(2 * nAVAX), big.NewInt(3 * nAVAX), big.NewInt(4 * nAVAX)},
+				},
+				baseFees: []*big.Int{
+					big.NewInt(1),
+					big.NewInt(2),
+					bounds.NextGasTime.BaseFee().ToBig(),
+				},
+				portionFull: []float64{
+					21_000. / gasLimit,
+					.5,
+				},
+			},
 		},
 	}
-	for i, c := range cases {
-		name := c.name
-		if name == "" {
-			name = fmt.Sprintf("case_%d", i)
-		}
-		t.Run(name, func(t *testing.T) {
-			kc := saetest.NewUNSAFEKeyChain(t, 1)
-			addr := kc.Addresses()[0]
-			signer := types.LatestSigner(testChainConfig)
-			tip := big.NewInt(1 * params.GWei)
-			backend := newTestBackend(t, lastBlockNumber, func(i int, b *testBlockGen) {
-				baseFee := b.BaseFee()
-				feeCap := new(big.Int).Add(baseFee, tip)
-
-				tx := kc.SignTx(t, signer, 0, &types.DynamicFeeTx{
-					ChainID:   testChainConfig.ChainID,
-					Nonce:     b.TxNonce(addr),
-					To:        &common.Address{},
-					Gas:       params.TxGas,
-					GasFeeCap: feeCap,
-					GasTipCap: tip,
-					Data:      []byte{},
-				})
-				b.AddTx(tx)
-			})
-			backend.pruned = c.pruned
-			backend.nextBaseFeeUpperBound = c.nextBaseFeeUpperBound
-			cfg := DefaultConfig()
-			if c.maxCallBlock != 0 {
-				cfg.MaxCallBlockHistory = c.maxCallBlock
-			}
-			if c.maxBlock != 0 {
-				cfg.MaxBlockHistory = c.maxBlock
-			}
-			estimator, err := NewEstimator(backend, cfg)
-			require.NoError(t, err)
-			defer estimator.Close()
-
-			first, reward, baseFee, ratio, err := estimator.FeeHistory(context.Background(), c.count, c.last, c.percent)
-			expReward := c.expCount
-			if len(c.percent) == 0 {
-				expReward = 0
-			}
-			// baseFee always includes a +1 entry for the block after the range,
-			// matching the eth_feeHistory convention.
-			expBaseFee := c.expCount
-			if c.expCount > 0 {
-				expBaseFee++
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sut := newSUT(t, cfg)
+			if tt.blocks != nil {
+				for _, blk := range tt.blocks(sut) {
+					sut.acceptBlock(blk)
+				}
 			}
 
-			assert.Equal(t, c.expFirst, first.Uint64(), "first block")
-			assert.Len(t, reward, expReward, "reward length")
-			assert.Len(t, baseFee, expBaseFee, "baseFee length")
-			assert.Len(t, ratio, c.expCount, "gasUsedRatio length")
-			assert.ErrorIs(t, err, c.expErr, "error")
-
-			if c.expLastBaseFee != nil {
-				lastFee := baseFee[len(baseFee)-1]
-				assert.Equal(t, c.expLastBaseFee, lastFee, "last baseFee")
-			}
+			a := tt.args
+			want := tt.want
+			height, rewards, baseFees, portionFull, err := sut.FeeHistory(t.Context(), a.numBlocks, a.lastBlock, a.percentiles)
+			require.ErrorIs(t, err, want.err)
+			assert.Equal(t, want.height, height)
+			assert.Equal(t, want.rewards, rewards)
+			assert.Equal(t, want.baseFees, baseFees)
+			assert.Equal(t, want.portionFull, portionFull)
 		})
 	}
 }
