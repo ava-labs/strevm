@@ -883,7 +883,9 @@ func TestEndOfBlockOpsGasUsed(t *testing.T) {
 
 	feeCap := uint256.NewInt(1e18)
 	_, sut := newSUT(t, 1, options.Func[sutConfig](func(c *sutConfig) {
-		c.vmConfig.Hooks.(*hookstest.Stub).Ops = []hook.Op{
+		h, ok := c.vmConfig.Hooks.(*hookstest.Stub)
+		require.Truef(t, ok, "%T.vmConfig.Hooks of type %T is not %T", c, c.vmConfig.Hooks, h)
+		h.Ops = []hook.Op{
 			{Gas: opGas1, GasFeeCap: *feeCap},
 			{Gas: opGas2, GasFeeCap: *feeCap},
 		}
