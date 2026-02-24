@@ -378,7 +378,7 @@ func TestFilterAPIs(t *testing.T) {
 		PrecompileOverrides: map[common.Address]libevm.PrecompiledContract{
 			precompile: vm.NewStatefulPrecompile(func(env vm.PrecompileEnvironment, _ []byte) ([]byte, error) {
 				env.StateDB().AddLog(&types.Log{
-					Address: precompile,
+					Address: env.Addresses().EVMSemantic.Self,
 					Topics:  []common.Hash{},
 				})
 				return nil, nil
@@ -390,7 +390,7 @@ func TestFilterAPIs(t *testing.T) {
 	createFilter := func(t *testing.T, method string, args ...any) string {
 		t.Helper()
 		var filterID string
-		require.NoError(t, sut.CallContext(ctx, &filterID, method, args...))
+		require.NoErrorf(t, sut.CallContext(ctx, &filterID, method, args...), "%T.Client.CallContext(..., %q, %v...), sut.Client, method, args)
 		require.NotEmpty(t, filterID)
 		return filterID
 	}
