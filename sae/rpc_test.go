@@ -767,7 +767,8 @@ func TestGetReceipts(t *testing.T) {
 	}
 
 	// Acceptance writes blocks to the DB but not receipts, so pending
-	// block receipts error.
+	// block receipts error, while pending tx receipts block until they're ready
+	// as long as they have been included in a block.
 	tests = append(tests, []rpcTest{
 		{
 			method: "eth_getTransactionReceipt",
