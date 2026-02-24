@@ -52,11 +52,9 @@ type Executor struct {
 	// [Executor.execute] and [Executor.Close]. Callers MUST treat
 	// values returned from [Executor.SnapshotTree] as read-only.
 	//
-	// [snapshot.Tree] is safe for concurrent read access.
-	// - blockchain.go accesses snaps while holding only a read-lock:
-	//   https://github.com/ava-labs/libevm/blob/main/core/blockchain.go#L1739-L1753
-	// - blockchain_reader.go calls snaps.Snapshot() without any lock:
-	//   https://github.com/ava-labs/libevm/blob/main/core/blockchain_reader.go#L356-L367
+	// [snapshot.Tree] is safe for concurrent read access - for example,
+	// blockchain_reader.go exposes bc.snaps without holding any lock:
+	// https://github.com/ava-labs/libevm/blob/312fa380513e/core/blockchain_reader.go#L356-L367
 	snaps *snapshot.Tree
 }
 

@@ -33,7 +33,7 @@ func BenchmarkApplyTxWithSnapshot(b *testing.B) {
 
 			snaps, err := snapshot.New(
 				snapshot.Config{
-					AsyncBuild: true,
+					AsyncBuild: false,
 					CacheSize:  saexec.SnapshotCacheSizeMB,
 				},
 				sut.db, sut.stateCache.TrieDB(), sut.genesis.PostExecutionStateRoot(),
