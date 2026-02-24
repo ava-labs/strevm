@@ -190,9 +190,7 @@ func (e *Executor) execute(b *blocks.Block, logger logging.Logger) error {
 
 	e.hooks.AfterExecutingBlock(stateDB, b.EthBlock(), receipts)
 	endTime := time.Now()
-	if err := gasClock.AfterBlock(blockGasConsumed, e.hooks, b.Header()); err != nil {
-		return fmt.Errorf("after-block gas time update: %w", err)
-	}
+	gasClock.AfterBlock(blockGasConsumed, e.hooks, b.Header())
 
 	logger.Debug(
 		"Block execution complete",

@@ -19,6 +19,6 @@ func CmpOpt() cmp.Option {
 	return cmp.Options{
 		cmp.AllowUnexported(TimeMarshaler{}),
 		cmpopts.IgnoreTypes(canotoData_TimeMarshaler{}),
-		proxytime.CmpOpt[gas.Gas](proxytime.CmpRateInvariantsByValue),
+		proxytime.CmpOpt[gas.Gas](),
 	}
 }

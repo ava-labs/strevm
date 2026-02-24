@@ -116,16 +116,6 @@ func TestNew(t *testing.T) {
 	}
 }
 
-func (tm *Time) mustSetRate(tb testing.TB, rate gas.Gas) {
-	tb.Helper()
-	require.NoErrorf(tb, tm.SetRate(rate), "%T.%T.SetRate(%d)", tm, TimeMarshaler{}, rate)
-}
-
-func (tm *Time) mustSetTarget(tb testing.TB, target gas.Gas) {
-	tb.Helper()
-	require.NoError(tb, tm.SetTarget(target), "%T.SetTarget(%d)", tm, target)
-}
-
 func TestScaling(t *testing.T) {
 	const initExcess = gas.Gas(1_234_567_890)
 	tm := New(time.Unix(42, 0), 1.6e6, initExcess)
@@ -146,7 +136,7 @@ func TestScaling(t *testing.T) {
 		Price:  initPrice,
 	}, ignore)
 
-	tm.mustSetTarget(t, 3.2e6)
+	tm.SetTarget(3.2e6)
 	tm.requireState(t, "after SetTarget()", state{
 		Rate:   6.4e6,
 		Target: 3.2e6,
@@ -175,7 +165,7 @@ func TestScaling(t *testing.T) {
 	}
 	for roundingError := range gas.Gas(TargetToRate) {
 		r := wantRate + roundingError
-		tm.mustSetRate(t, r)
+		tm.SetRate(r)
 		tm.requireState(t, fmt.Sprintf("after SetRate(%d)", r), want, ignore)
 	}
 
@@ -184,7 +174,7 @@ func TestScaling(t *testing.T) {
 		want := want
 		cloned.requireState(t, "unchanged immediately after clone", want, ignore)
 
-		cloned.mustSetRate(t, cloned.Rate()*2)
+		cloned.SetRate(cloned.Rate() * 2)
 		tm.requireState(t, "original Time unchanged by setting clone's rate", want, ignore)
 
 		want.Rate *= 2
@@ -350,7 +340,7 @@ func TestExcessScalingFactor(t *testing.T) {
 
 	tm := New(time.Unix(0, 0), 1, 0)
 	for _, tt := range tests {
-		require.NoErrorf(t, tm.SetTarget(tt.target), "%T.SetTarget(%v)", tm, tt.target)
+		tm.SetTarget(tt.target)
 		assert.Equalf(t, tt.want, tm.excessScalingFactor(), "T = %d", tt.target)
 	}
 }
@@ -369,8 +359,16 @@ func TestTargetClamping(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		require.NoErrorf(t, tm.SetTarget(tt.setTo), "%T.SetTarget(%d)", tm, tt.setTo)
+		tm.SetTarget(tt.setTo)
 		assert.Equalf(t, tt.want, tm.Target(), "%T.Target() after setting to %#x", tm, tt.setTo)
 		assert.Equalf(t, tm.Target()*TargetToRate, tm.Rate(), "%T.Rate() == %d * %[1]T.Target()", tm, TargetToRate)
 	}
+}
+
+func TestNoExcessOverflow(t *testing.T) {
+	tm := New(time.Unix(0, 0), 1, math.MaxUint64-100)
+	tm.SetTarget(MaxTarget)
+	require.Equal(t, gas.Gas(math.MaxUint64), tm.Excess(), "Excess() after scaling")
+	tm.FastForwardTo(1, 0)
+	require.Less(t, tm.Excess(), gas.Gas(math.MaxUint64), "Excess() after capped and then fast-forwarding")
 }

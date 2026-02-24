@@ -41,9 +41,5 @@ func (tm *Time) UnmarshalCanoto(bytes []byte) error {
 // UnmarshalCanotoFrom populates the [TimeMarshaler] from the reader and then
 // reestablishes invariants.
 func (tm *Time) UnmarshalCanotoFrom(r canoto.Reader) error {
-	if err := tm.TimeMarshaler.UnmarshalCanotoFrom(r); err != nil {
-		return err
-	}
-	tm.establishInvariants()
-	return nil
+	return tm.TimeMarshaler.UnmarshalCanotoFrom(r)
 }

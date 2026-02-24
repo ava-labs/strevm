@@ -4,8 +4,6 @@
 package gastime
 
 import (
-	"fmt"
-
 	"github.com/ava-labs/avalanchego/vms/components/gas"
 	"github.com/ava-labs/libevm/core/types"
 
@@ -23,11 +21,7 @@ func (tm *Time) BeforeBlock(hooks hook.Points, h *types.Header) {
 
 // AfterBlock is intended to be called after processing a block, with the target
 // sourced from [hook.Points] and [types.Header].
-func (tm *Time) AfterBlock(used gas.Gas, hooks hook.Points, h *types.Header) error {
+func (tm *Time) AfterBlock(used gas.Gas, hooks hook.Points, h *types.Header) {
 	tm.Tick(used)
-	target := hooks.GasTargetAfter(h)
-	if err := tm.SetTarget(target); err != nil {
-		return fmt.Errorf("%T.SetTarget() after block: %w", tm, err)
-	}
-	return nil
+	tm.SetTarget(hooks.GasTargetAfter(h))
 }

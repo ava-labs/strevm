@@ -42,12 +42,7 @@ func makeTime(t *proxytime.Time[gas.Gas], target, excess gas.Gas) *Time {
 			excess: excess,
 		},
 	}
-	tm.establishInvariants()
 	return tm
-}
-
-func (tm *Time) establishInvariants() {
-	tm.Time.SetRateInvariants(&tm.target, &tm.excess)
 }
 
 // New returns a new [Time], derived from a [time.Time]. The consumption of
@@ -56,9 +51,7 @@ func (tm *Time) establishInvariants() {
 func New(at time.Time, target, startingExcess gas.Gas) *Time {
 	target = clampTarget(target)
 	tm := proxytime.Of[gas.Gas](at)
-	// [proxytime.Time.SetRate] is documented as never returning an error when
-	// no invariants have been registered.
-	_ = tm.SetRate(rateOf(target))
+	tm.SetRate(rateOf(target))
 	return makeTime(tm, target, startingExcess)
 }
 
@@ -142,15 +135,25 @@ func (tm *Time) BaseFee() *uint256.Int {
 
 // SetRate changes the gas rate per second, rounding down the argument if it is
 // not a multiple of [TargetToRate]. See [Time.SetTarget] re potential error(s).
-func (tm *Time) SetRate(r gas.Gas) error {
-	return tm.TimeMarshaler.SetRate(roundRate(r))
+func (tm *Time) SetRate(r gas.Gas) {
+	r = roundRate(r)
+	x, err := tm.Scale(tm.excess, r)
+	if err != nil {
+		x = math.MaxUint64
+	}
+	// Cannot overflow as the current target is less than the current rate.
+	t, _ := tm.Scale(tm.target, r)
+
+	tm.TimeMarshaler.SetRate(r)
+	tm.excess = x
+	tm.target = t
 }
 
 // SetTarget changes the target gas consumption per second, clamping the
 // argument to [MaxTarget]. It returns an error if the scaled [Time.Excess]
 // overflows as a result of the scaling.
-func (tm *Time) SetTarget(t gas.Gas) error {
-	return tm.TimeMarshaler.SetRate(rateOf(clampTarget(t))) // also updates [Time.Target] as it was passed to [proxytime.Time.SetRateInvariants]
+func (tm *Time) SetTarget(t gas.Gas) {
+	tm.SetRate(rateOf(clampTarget(t))) // also updates [Time.Target]
 }
 
 // Tick is equivalent to [proxytime.Time.Tick] except that it also updates the
