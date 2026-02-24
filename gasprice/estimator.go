@@ -27,6 +27,14 @@ import (
 	"github.com/ava-labs/strevm/intmath"
 )
 
+var (
+	errNilNow             = errors.New("config Now must be non-nil")
+	errNilMinSuggestedTip = errors.New("config MinSuggestedTip must be non-nil")
+	errNilMaxSuggestedTip = errors.New("config MaxSuggestedTip must be non-nil")
+	errBadTipPercentile   = errors.New("config SuggestedTipPercentile must be in (0, 1]")
+	errMinTipExceedsMax   = errors.New("config MinSuggestedTip must be <= MaxSuggestedTip")
+)
+
 // Backend that the [Estimator] depends on for chain data.
 type Backend interface {
 	ResolveBlockNumber(bn rpc.BlockNumber) (uint64, error)
@@ -37,9 +45,6 @@ type Backend interface {
 
 // Config allows parameterizing an [Estimator].
 type Config struct {
-	// Log defaults to [logging.NoLog] if nil.
-	Log logging.Logger
-
 	// Now returns the current time. If nil, defaults to [time.Now]
 	Now func() time.Time
 
@@ -66,36 +71,39 @@ type Config struct {
 	HistoryMaxBlocks uint64
 }
 
-func (c *Config) setDefaults() {
-	if c.Log == nil {
-		c.Log = logging.NoLog{}
+// DefaultConfig returns a [Config] with all fields set to their default values.
+func DefaultConfig() Config {
+	return Config{
+		Now:                     time.Now,
+		MinSuggestedTip:         big.NewInt(1 * params.Wei),
+		SuggestedTipPercentile:  .4,
+		MaxSuggestedTip:         big.NewInt(150 * params.Wei),
+		SuggestedTipMaxBlocks:   20,
+		SuggestedTipMaxDuration: time.Minute,
+		// Chosen to be larger than the fee lookback window that MetaMask uses (20k blocks).
+		HistoryMaxBlocksFromTip: 25_000,
+		HistoryMaxBlocks:        2048,
 	}
+}
+
+// validate returns an error if the config is invalid.
+func (c *Config) validate() error {
 	if c.Now == nil {
-		c.Now = time.Now
+		return errNilNow
 	}
 	if c.MinSuggestedTip == nil {
-		c.MinSuggestedTip = big.NewInt(1 * params.Wei)
-	}
-	if c.SuggestedTipPercentile == 0 {
-		c.SuggestedTipPercentile = .4
+		return errNilMinSuggestedTip
 	}
 	if c.MaxSuggestedTip == nil {
-		c.MaxSuggestedTip = big.NewInt(150 * params.Wei)
+		return errNilMaxSuggestedTip
 	}
-	if c.SuggestedTipMaxBlocks == 0 {
-		c.SuggestedTipMaxBlocks = 20
+	if c.SuggestedTipPercentile <= 0 || c.SuggestedTipPercentile > 1 {
+		return errBadTipPercentile
 	}
-	if c.SuggestedTipMaxDuration == 0 {
-		c.SuggestedTipMaxDuration = time.Minute
+	if c.MinSuggestedTip.Cmp(c.MaxSuggestedTip) > 0 {
+		return errMinTipExceedsMax
 	}
-	if c.HistoryMaxBlocksFromTip == 0 {
-		// Default MaxBlockHistory is chosen to be a value larger than the
-		// required fee lookback window that MetaMask uses (20k blocks).
-		c.HistoryMaxBlocksFromTip = 25_000
-	}
-	if c.HistoryMaxBlocks == 0 {
-		c.HistoryMaxBlocks = 2048
-	}
+	return nil
 }
 
 // Estimator provides gas-price suggestions and fee-history data for SAE by
@@ -113,8 +121,10 @@ type Estimator struct {
 }
 
 // NewEstimator creates an Estimator for gas tips and fee history.
-func NewEstimator(backend Backend, c Config) *Estimator {
-	c.setDefaults()
+func NewEstimator(backend Backend, log logging.Logger, c Config) (*Estimator, error) {
+	if err := c.validate(); err != nil {
+		return nil, err
+	}
 
 	// New blocks are cached in the background to avoid slow responses after
 	// long periods of no requests to the estimator. This allows us to avoid
@@ -124,7 +134,7 @@ func NewEstimator(backend Backend, c Config) *Estimator {
 	events := make(chan core.ChainHeadEvent, 1)
 	sub := backend.SubscribeChainHeadEvent(events)
 	cache := newBlockCache(
-		c.Log,
+		log,
 		backend,
 		int(max( //nolint:gosec // Overflow would require misconfiguration
 			c.SuggestedTipMaxBlocks,
@@ -132,7 +142,7 @@ func NewEstimator(backend Backend, c Config) *Estimator {
 		)),
 	)
 	go func() {
-		defer sub.Unsubscribe()
+		defer sub.Unsubscribe() // This can fire twice on Close(), but it's fine.
 		for {
 			select {
 			case e := <-events:
@@ -149,7 +159,7 @@ func NewEstimator(backend Backend, c Config) *Estimator {
 		lastPrice:  c.MinSuggestedTip,
 		sub:        sub,
 		blockCache: cache,
-	}
+	}, nil
 }
 
 // SuggestTipCap recommends a priority-fee (tip) for new transactions based on
@@ -187,6 +197,9 @@ func (e *Estimator) SuggestTipCap(ctx context.Context) (tip *big.Int, _ error) {
 		tips       []transaction
 	)
 	for n := newest; n > tooOld; n-- {
+		if err := ctx.Err(); err != nil {
+			return common.Big0, err
+		}
 		b := e.blockCache.getBlock(ctx, n)
 		if b == nil || b.timestamp < recentUnix {
 			break
