@@ -164,6 +164,23 @@ func TestReceiptPropagation(t *testing.T) {
 	if diff := cmp.Diff(want, got, cmputils.ReceiptsByTxHash()); diff != "" {
 		t.Errorf("%T diff (-want +got):\n%s", got, diff)
 	}
+
+	t.Run("RecentReceipt", func(t *testing.T) {
+		for _, rs := range want {
+			for _, r := range rs {
+				t.Run(r.TxHash.String(), func(t *testing.T) {
+					// We call the function twice to ensure that the value is
+					// returned to the buffered channel, ready for the next one.
+					for range 2 {
+						got, gotOK, err := sut.RecentReceipt(ctx, r.TxHash)
+						require.NoError(t, err)
+						assert.True(t, gotOK)
+						assert.Equalf(t, r.TxHash, got.TxHash, "%T.TxHash", r)
+					}
+				})
+			}
+		}
+	})
 }
 
 func TestSubscriptions(t *testing.T) {
@@ -860,7 +877,7 @@ func TestSnapshotPersistence(t *testing.T) {
 	// The crux of the test is whether we can recover the EOA nonce using only a
 	// new set of snapshots, recovered from the databases.
 	conf := snapshot.Config{
-		CacheSize: 128,
+		CacheSize: SnapshotCacheSizeMB,
 		NoBuild:   true, // i.e. MUST be loaded from disk
 	}
 	snaps, err := snapshot.New(conf, sut.db, e.StateCache().TrieDB(), last.PostExecutionStateRoot())

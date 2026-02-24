@@ -869,12 +869,11 @@ func TestGetReceipts(t *testing.T) {
 	unsettled, wantUnsettled := slice(t, 4, 6)
 	sut.waitUntilExecuted(t, unsettled)
 
-	pendingTx := sut.wallet.SetNonceAndSign(t, 0, &types.LegacyTx{
+	pending := sut.runConsensusLoop(t, sut.wallet.SetNonceAndSign(t, 0, &types.LegacyTx{
 		To:       &blockingPrecompile,
 		Gas:      params.TxGas,
 		GasPrice: big.NewInt(1),
-	})
-	pending := sut.runConsensusLoop(t, pendingTx)
+	}))
 
 	var tests []rpcTest
 	for _, tc := range []struct {
@@ -914,13 +913,9 @@ func TestGetReceipts(t *testing.T) {
 	}
 
 	// Acceptance writes blocks to the DB but not receipts, so pending
-	// block receipts error while pending tx receipts return nil.
+	// block receipts error, while pending tx receipts block until they're ready
+	// as long as they have been included in a block.
 	tests = append(tests, []rpcTest{
-		{
-			method: "eth_getTransactionReceipt",
-			args:   []any{pendingTx.Hash()},
-			want:   (*types.Receipt)(nil),
-		},
 		{
 			method: "eth_getTransactionReceipt",
 			args:   []any{common.Hash{}},

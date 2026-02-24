@@ -116,8 +116,14 @@ func (vm *VM) ethRPCServer() (*rpc.Server, error) {
 		// - eth_getRawTransactionByBlockNumberAndIndex
 		// - eth_getRawTransactionByHash
 		// - eth_pendingTransactions
-		{"eth", ethapi.NewTransactionAPI(b, new(ethapi.AddrLocker))},
-		// Standard Ethereum node APIs:
+		{
+			"eth",
+			immediateReceipts{
+				vm.exec,
+				ethapi.NewTransactionAPI(b, new(ethapi.AddrLocker)),
+			},
+		},
+		// Standard Ethereum node APIS:
 		// - eth_getFilterChanges
 		// - eth_getFilterLogs
 		// - eth_getLogs
