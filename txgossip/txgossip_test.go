@@ -36,7 +36,6 @@ import (
 	"go.uber.org/goleak"
 
 	"github.com/ava-labs/strevm/blocks/blockstest"
-	"github.com/ava-labs/strevm/cache"
 	"github.com/ava-labs/strevm/cmputils"
 	"github.com/ava-labs/strevm/hook/hookstest"
 	"github.com/ava-labs/strevm/saetest"
@@ -79,9 +78,8 @@ func newSUT(t *testing.T, numAccounts uint) SUT {
 	xdb := saetest.NewExecutionResultsDB()
 	genesis := blockstest.NewGenesis(t, db, xdb, config, saetest.MaxAllocFor(wallet.Addresses()...))
 	chain := blockstest.NewChainBuilder(config, genesis)
-	receipts := cache.NewUniformlyKeyed[common.Hash, *saexec.ReceiptForRPC]()
 
-	exec, err := saexec.New(genesis, chain.GetBlock, config, db, xdb, nil, receipts, &hookstest.Stub{Target: 1e6}, logger)
+	exec, err := saexec.New(genesis, chain.GetBlock, config, db, xdb, nil, &hookstest.Stub{Target: 1e6}, logger)
 	require.NoError(t, err, "saexec.New()")
 	t.Cleanup(func() {
 		require.NoErrorf(t, exec.Close(), "%T.Close()", exec)

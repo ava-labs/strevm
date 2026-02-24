@@ -12,7 +12,6 @@ import (
 
 	"github.com/ava-labs/avalanchego/utils/logging"
 	"github.com/ava-labs/avalanchego/vms/components/gas"
-	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core"
 	"github.com/ava-labs/libevm/core/state"
 	"github.com/ava-labs/libevm/core/types"
@@ -29,6 +28,7 @@ var errExecutorClosed = errors.New("saexec.Executor closed")
 // before [blocks.Block.Executed] returns true then there is no guarantee that
 // the block will be executed.
 func (e *Executor) Enqueue(ctx context.Context, block *blocks.Block) error {
+	e.createReceiptBuffers(block)
 	select {
 	case e.queue <- block:
 		if n := len(e.queue); n == cap(e.queue) {
@@ -165,12 +165,13 @@ func (e *Executor) execute(b *blocks.Block, logger logging.Logger) error {
 		tip := tx.EffectiveGasTipValue(header.BaseFee)
 		receipt.EffectiveGasPrice = tip.Add(header.BaseFee, tip)
 
-		go e.receipts.Store(
-			tx.Hash(),
-			// Deliberately not using field names to ensure that any new fields
-			// are populated as the compiler will then complain.
-			&ReceiptForRPC{receipt, b.Hash(), b.NumberU64(), signer, tx, ti},
-		)
+		// Even though we populated the value ourselves and `ok == true` is
+		// guaranteed when using the [Executor] via the public API, it's clearer
+		// to check than to require the reader to reason about dropping the
+		// flag.
+		if ch, ok := e.receipts.Load(tx.Hash()); ok {
+			ch <- &Receipt{receipt, signer, tx}
+		}
 		receipts[ti] = receipt
 	}
 
@@ -227,15 +228,4 @@ func (e *Executor) execute(b *blocks.Block, logger logging.Logger) error {
 	}
 	e.sendPostExecutionEvents(b.EthBlock(), receipts) // (3)
 	return nil
-}
-
-// A ReceiptForRPC carries all information necessary for marshalling a receipt
-// to return as an RPC argument.
-type ReceiptForRPC struct {
-	Receipt     *types.Receipt
-	BlockHash   common.Hash
-	BlockNumber uint64
-	Signer      types.Signer
-	Tx          *types.Transaction
-	TxIndex     int
 }

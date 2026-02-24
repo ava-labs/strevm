@@ -8,19 +8,24 @@ import (
 
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/libevm/ethapi"
-
-	"github.com/ava-labs/strevm/cache"
 	"github.com/ava-labs/strevm/saexec"
 )
 
 type immediateReceipts struct {
-	recent *cache.UniformlyKeyed[common.Hash, *saexec.ReceiptForRPC]
+	exec *saexec.Executor
 	*ethapi.TransactionAPI
 }
 
 func (ir immediateReceipts) GetTransactionReceipt(ctx context.Context, h common.Hash) (map[string]any, error) {
-	if r, ok := ir.recent.Load(h); ok {
-		return ethapi.MarshalReceipt(r.Receipt, r.BlockHash, r.BlockNumber, r.Signer, r.Tx, r.TxIndex), nil
+	r, ok, err := ir.exec.RecentReceipt(ctx, h)
+	if err != nil {
+		return nil, err
 	}
+	if ok {
+		return ethapi.MarshalReceipt(r.Receipt, r.BlockHash, r.BlockNumber.Uint64(), r.Signer, r.Tx, int(r.TransactionIndex)), nil
+	}
+	// The transaction has either not been included yet, or it was cleared from
+	// the [saexec.Executor] cache but is on disk. The standard mechanism
+	// already differentiates between these scenarios.
 	return ir.TransactionAPI.GetTransactionReceipt(ctx, h)
 }
