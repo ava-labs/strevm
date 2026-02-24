@@ -32,12 +32,6 @@ func TestImmediateReceipts(t *testing.T) {
 	notBlocked := txs[0]
 
 	b := sut.runConsensusLoop(t, txs[:]...)
-
-	require.EventuallyWithT(t, func(c *assert.CollectT) {
-		_, err := sut.TransactionReceipt(ctx, notBlocked.Hash())
-		require.NoError(c, err, "%T.TransactionReceipt([non-blocked tx])", sut.Client)
-	}, time.Second, 10*time.Millisecond)
-
 	sut.testRPC(ctx, t, rpcTest{
 		method: "eth_getTransactionReceipt",
 		args:   []any{notBlocked.Hash()},
