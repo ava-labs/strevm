@@ -81,13 +81,6 @@ func (e *Executor) processQueue() {
 func (e *Executor) execute(b *blocks.Block, logger logging.Logger) error {
 	logger.Debug("Executing block")
 
-	defer func() {
-		// The current execution already has access via the [vm.BlockContext]
-		// whereas the [core.ChainContext] provides access to historical blocks
-		// for the BLOCKHASH op code.
-		e.chainContext.recent.Put(b.NumberU64(), b.Header())
-	}()
-
 	// Since `b` hasn't been executed, it definitely hasn't been settled, so we
 	// are guaranteed to have a non-nil parent available.
 	parent := b.ParentBlock()
@@ -207,6 +200,8 @@ func (e *Executor) execute(b *blocks.Block, logger logging.Logger) error {
 		zap.Time("gas_time", gasClock.AsTime()),
 		zap.Time("wall_time", endTime),
 	)
+
+	e.chainContext.recent.Put(b.NumberU64(), b.Header())
 
 	root, err := stateDB.Commit(b.NumberU64(), true)
 	if err != nil {
