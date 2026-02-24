@@ -22,7 +22,7 @@ type transaction struct {
 }
 
 func newTx(tx *types.Transaction, baseFee *big.Int) transaction {
-	tip, _ := tx.EffectiveGasTip(baseFee)
+	tip := tx.EffectiveGasTipValue(baseFee)
 	return transaction{tx.Gas(), tip}
 }
 
