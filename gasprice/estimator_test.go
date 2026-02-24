@@ -349,6 +349,15 @@ func TestFeeHistory(t *testing.T) {
 		NextGasTime: gastime.New(time.Now(), 1, math.MaxUint64),
 	}
 
+	newBlock := func(sut *SUT, txs ...*types.Transaction) *blocks.Block {
+		t.Helper()
+		return sut.newBlock(t, 0, bounds, txs...)
+	}
+	newTx := func(sut *SUT, gas, price uint64) *types.Transaction {
+		t.Helper()
+		return sut.newTx(t, gas, price)
+	}
+
 	type args struct {
 		numBlocks   uint64
 		lastBlock   rpc.BlockNumber
@@ -363,7 +372,7 @@ func TestFeeHistory(t *testing.T) {
 	}
 	tests := []struct {
 		name   string
-		blocks func(*testing.T, *SUT) []*blocks.Block
+		blocks func(*SUT) []*blocks.Block
 		args   args
 		want   results
 	}{
@@ -429,9 +438,9 @@ func TestFeeHistory(t *testing.T) {
 		},
 		{
 			name: "query_genesis",
-			blocks: func(t *testing.T, sut *SUT) []*blocks.Block {
+			blocks: func(sut *SUT) []*blocks.Block {
 				return []*blocks.Block{
-					sut.newBlock(t, 0, bounds, sut.newTx(t, 21_000, nAVAX)),
+					newBlock(sut, newTx(sut, 21_000, nAVAX)),
 				}
 			},
 			args: args{
@@ -451,9 +460,9 @@ func TestFeeHistory(t *testing.T) {
 		},
 		{
 			name: "query_latest",
-			blocks: func(t *testing.T, sut *SUT) []*blocks.Block {
+			blocks: func(sut *SUT) []*blocks.Block {
 				return []*blocks.Block{
-					sut.newBlock(t, 0, bounds, sut.newTx(t, 21_000, nAVAX)),
+					newBlock(sut, newTx(sut, 21_000, nAVAX)),
 				}
 			},
 			args: args{
@@ -473,15 +482,15 @@ func TestFeeHistory(t *testing.T) {
 		},
 		{
 			name: "query_too_old_block",
-			blocks: func(t *testing.T, sut *SUT) []*blocks.Block {
+			blocks: func(sut *SUT) []*blocks.Block {
 				return []*blocks.Block{
-					sut.newBlock(t, 0, bounds, sut.newTx(t, 21_000, nAVAX)),
-					sut.newBlock(t, 0, bounds,
-						sut.newTx(t, 100_000, nAVAX),
-						sut.newTx(t, 100_000, 2*nAVAX),
-						sut.newTx(t, 100_000, 3*nAVAX),
-						sut.newTx(t, 100_000, 4*nAVAX),
-						sut.newTx(t, 100_000, 5*nAVAX),
+					newBlock(sut, newTx(sut, 21_000, nAVAX)),
+					newBlock(sut,
+						newTx(sut, 100_000, nAVAX),
+						newTx(sut, 100_000, 2*nAVAX),
+						newTx(sut, 100_000, 3*nAVAX),
+						newTx(sut, 100_000, 4*nAVAX),
+						newTx(sut, 100_000, 5*nAVAX),
 					),
 				}
 			},
@@ -495,15 +504,15 @@ func TestFeeHistory(t *testing.T) {
 		},
 		{
 			name: "query_max_blocks_with_percentiles",
-			blocks: func(t *testing.T, sut *SUT) []*blocks.Block {
+			blocks: func(sut *SUT) []*blocks.Block {
 				return []*blocks.Block{
-					sut.newBlock(t, 0, bounds, sut.newTx(t, 21_000, nAVAX)),
-					sut.newBlock(t, 0, bounds,
-						sut.newTx(t, 100_000, nAVAX),
-						sut.newTx(t, 100_000, 2*nAVAX),
-						sut.newTx(t, 100_000, 3*nAVAX),
-						sut.newTx(t, 100_000, 4*nAVAX),
-						sut.newTx(t, 100_000, 5*nAVAX),
+					newBlock(sut, newTx(sut, 21_000, nAVAX)),
+					newBlock(sut,
+						newTx(sut, 100_000, nAVAX),
+						newTx(sut, 100_000, 2*nAVAX),
+						newTx(sut, 100_000, 3*nAVAX),
+						newTx(sut, 100_000, 4*nAVAX),
+						newTx(sut, 100_000, 5*nAVAX),
 					),
 				}
 			},
@@ -534,7 +543,7 @@ func TestFeeHistory(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			sut := newSUT(t, cfg)
 			if tt.blocks != nil {
-				for _, blk := range tt.blocks(t, sut) {
+				for _, blk := range tt.blocks(sut) {
 					sut.acceptBlock(blk)
 				}
 			}
