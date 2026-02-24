@@ -390,7 +390,7 @@ func TestFilterAPIs(t *testing.T) {
 	createFilter := func(t *testing.T, method string, args ...any) string {
 		t.Helper()
 		var filterID string
-		require.NoErrorf(t, sut.CallContext(ctx, &filterID, method, args...), "%T.Client.CallContext(..., %q, %v...), sut.Client, method, args)
+		require.NoErrorf(t, sut.CallContext(ctx, &filterID, method, args...), "%T.Client.CallContext(..., %q, %v...)", sut.Client, method, args)
 		require.NotEmpty(t, filterID)
 		return filterID
 	}
