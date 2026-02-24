@@ -243,10 +243,18 @@ func (vm *VM) buildBlock(
 
 	hdr.GasUsed = state.GasUsed()
 
+	var receipts types.Receipts
+	settling := blocks.Range(parent.LastSettled(), lastSettled)
+	for _, b := range settling {
+		receipts = append(receipts, b.Receipts()...)
+	}
+
 	// Apply end-of-block ops, mirroring the historical block loop above.
 	// The preliminary block is needed because EndOfBlockOps requires a
-	// *types.Block.
-	preBlk, err := builder.BuildBlock(hdr, included, nil)
+	// *types.Block. It MUST include the same settlement receipts as the final
+	// block, otherwise block-sensitive hooks can derive different ops here and
+	// during execution.
+	preBlk, err := builder.BuildBlock(hdr, included, receipts)
 	if err != nil {
 		return nil, fmt.Errorf("building preliminary block for end-of-block ops: %v", err)
 	}
@@ -268,12 +276,6 @@ func (vm *VM) buildBlock(
 			zap.Error(err),
 		)
 		return nil, fmt.Errorf("finishing worst-case state for new block: %v", err)
-	}
-
-	var receipts types.Receipts
-	settling := blocks.Range(parent.LastSettled(), lastSettled)
-	for _, b := range settling {
-		receipts = append(receipts, b.Receipts()...)
 	}
 
 	ethB, err := builder.BuildBlock(
