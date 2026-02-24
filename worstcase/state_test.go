@@ -12,9 +12,11 @@ import (
 	"github.com/ava-labs/avalanchego/vms/components/gas"
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core"
+	"github.com/ava-labs/libevm/core/state"
 	"github.com/ava-labs/libevm/core/txpool"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/crypto"
+	"github.com/ava-labs/libevm/ethdb"
 	"github.com/ava-labs/libevm/libevm/ethtest"
 	"github.com/ava-labs/libevm/params"
 	"github.com/google/go-cmp/cmp"
@@ -32,8 +34,10 @@ import (
 
 type SUT struct {
 	*State
-	Genesis *blocks.Block
-	Hooks   *hookstest.Stub
+	Genesis    *blocks.Block
+	Hooks      *hookstest.Stub
+	db         ethdb.Database
+	stateCache state.Database
 }
 
 const (
@@ -63,9 +67,11 @@ func newSUT(tb testing.TB, alloc types.GenesisAlloc) SUT {
 	require.NoError(tb, err, "NewState()")
 
 	return SUT{
-		State:   s,
-		Genesis: genesis,
-		Hooks:   hooks,
+		State:      s,
+		Genesis:    genesis,
+		Hooks:      hooks,
+		db:         db,
+		stateCache: cache,
 	}
 }
 
