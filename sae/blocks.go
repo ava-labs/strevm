@@ -246,11 +246,11 @@ func (vm *VM) buildBlock(
 	// Apply end-of-block ops, mirroring the historical block loop above.
 	// The preliminary block is needed because EndOfBlockOps requires a
 	// *types.Block.
-	prelimEthB, err := builder.BuildBlock(hdr, included, nil)
+	preBlk, err := builder.BuildBlock(hdr, included, nil)
 	if err != nil {
 		return nil, fmt.Errorf("building preliminary block for end-of-block ops: %v", err)
 	}
-	for i, op := range vm.hooks().EndOfBlockOps(prelimEthB) {
+	for i, op := range vm.hooks().EndOfBlockOps(preBlk) {
 		if err := state.Apply(op); err != nil {
 			log.Warn("Could not apply op during worst-case calculation",
 				zap.Int("op_index", i),
