@@ -31,15 +31,18 @@ func BenchmarkApplyTxWithSnapshot(b *testing.B) {
 				GasPrice: big.NewInt(1),
 			})
 
-			snapTree, err := snapshot.New(
-				snapshot.Config{CacheSize: saexec.SnapshotCacheSizeMB},
-				sut.DB, sut.StateCache.TrieDB(), sut.Genesis.PostExecutionStateRoot(),
+			snaps, err := snapshot.New(
+				snapshot.Config{
+					AsyncBuild: true,
+					CacheSize:  saexec.SnapshotCacheSizeMB,
+				},
+				sut.db, sut.stateCache.TrieDB(), sut.genesis.PostExecutionStateRoot(),
 			)
 			require.NoError(b, err, "snapshot.New()")
-			b.Cleanup(snapTree.Release)
+			b.Cleanup(snaps.Release)
 
 			hdr := &types.Header{
-				ParentHash: sut.Genesis.Hash(),
+				ParentHash: sut.genesis.Hash(),
 				Number:     big.NewInt(1),
 			}
 
@@ -48,12 +51,12 @@ func BenchmarkApplyTxWithSnapshot(b *testing.B) {
 				snaps *snapshot.Tree
 			}{
 				{name: "without_snapshot", snaps: nil},
-				{name: "with_snapshot", snaps: snapTree},
+				{name: "with_snapshot", snaps: snaps},
 			} {
 				b.Run(tt.name, func(b *testing.B) {
 					b.StopTimer()
 					for range b.N {
-						s, err := NewState(sut.Hooks, sut.Config, sut.StateCache, sut.Genesis, tt.snaps)
+						s, err := NewState(sut.hooks, sut.config, sut.stateCache, sut.genesis, tt.snaps)
 						require.NoError(b, err, "NewState()")
 						require.NoError(b, s.StartBlock(hdr), "StartBlock()")
 

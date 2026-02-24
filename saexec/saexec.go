@@ -144,7 +144,7 @@ func (e *Executor) StateCache() state.Database {
 }
 
 // SnapshotTree returns the snapshot tree, which MUST only be used for reading.
-func (e *Executor) SnapshotTree() state.SnapshotTree {
+func (e *Executor) SnapshotTree() *snapshot.Tree {
 	return e.snaps
 }
 
