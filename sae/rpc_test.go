@@ -391,7 +391,7 @@ func TestFilterAPIs(t *testing.T) {
 		t.Helper()
 		var filterID string
 		require.NoErrorf(t, sut.CallContext(ctx, &filterID, method, args...), "%T.Client.CallContext(..., %q, %v...)", sut.Client, method, args)
-		require.NotEmpty(t, filterID)
+		require.NotEmptyf(t, filterID, "Resulted populated by %T.Client.CallContext(..., %q, %v...)" sut.Client, method, args)
 		return filterID
 	}
 
