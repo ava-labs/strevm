@@ -109,25 +109,25 @@ func newSyncMap[K ~[32]byte, V any]() *syncMap[K, V] {
 // number of buckets, not the number of keys. To achieve this, the caller MUST
 // consider the order in which keys are passed to `fn` to be undefined.
 func (m *syncMap[K, V]) writeMany(fn func(map[K]V, K), ks ...K) {
-	if len(ks) == 0 {
-		return
-	}
 	slices.SortFunc(ks, func(a, b K) int {
 		return cmp.Compare(a[0], b[0])
 	})
 
-	var locked *bucket[K, V]
-	for _, k := range ks {
-		if b := &m.buckets[k[0]]; b != locked {
-			if locked != nil {
-				locked.Unlock()
-			}
-			locked = b
-			locked.Lock()
+	var b *bucket[K, V]
+	unlock := func() {
+		if b != nil {
+			b.Unlock()
 		}
-		fn(locked.data, k)
 	}
-	locked.Unlock()
+	for _, k := range ks {
+		if next := &m.buckets[k[0]]; next != b {
+			unlock()
+			next.Lock()
+			b = next
+		}
+		fn(b.data, k)
+	}
+	unlock()
 }
 
 func (m *syncMap[K, V]) StoreFromFunc(fn func(K) V, ks ...K) {
