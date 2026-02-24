@@ -68,7 +68,7 @@ func NewState(
 	config *params.ChainConfig,
 	stateCache state.Database,
 	settled *blocks.Block,
-	snaps state.SnapshotTree,
+	snaps *snapshot.Tree,
 ) (*State, error) {
 	if !settled.Executed() {
 		return nil, errSettledBlockNotExecuted

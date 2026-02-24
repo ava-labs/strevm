@@ -143,7 +143,7 @@ func (e *Executor) StateCache() state.Database {
 	return e.stateCache
 }
 
-// SnapshotTree returns the snapshot tree for read-only state lookups.
+// SnapshotTree returns the snapshot tree, which MUST only be used for reading.
 func (e *Executor) SnapshotTree() state.SnapshotTree {
 	return e.snaps
 }
