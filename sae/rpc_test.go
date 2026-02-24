@@ -838,26 +838,32 @@ func TestEthSigningAPIs(t *testing.T) {
 }
 
 func TestRPCTxFeeCap(t *testing.T) {
-	const cap = 0.001
-	_, sut := newSUT(t, 1, withTxFeeCap(cap))
-
 	tests := []struct {
 		name     string
+		cap      float64
 		gasPrice *big.Int
 		wantErr  testerr.Want
 	}{
 		{
 			name:     "under_cap",
+			cap:      0.001,
 			gasPrice: big.NewInt(1), // fee = 1 * 21000 / 1e18 ~= 0 ETH
 		},
 		{
 			name:     "over_cap",
+			cap:      0.001,
 			gasPrice: big.NewInt(1e18), // fee = 1e18 * 21000 / 1e18 = 21000 ETH
 			wantErr:  testerr.Contains("exceeds the configured cap"),
+		},
+		{
+			name:     "no_cap",
+			cap:      0, // 0 = no cap
+			gasPrice: big.NewInt(1e18),
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			_, sut := newSUT(t, 1, withTxFeeCap(tt.cap))
 			tx := sut.wallet.SetNonceAndSign(t, 0, &types.LegacyTx{
 				To:       &zeroAddr,
 				Gas:      params.TxGas,
@@ -993,6 +999,15 @@ func (sut *SUT) testGetByHash(ctx context.Context, t *testing.T, want *types.Blo
 			want:   want.Header(),
 		},
 		{
+			method: "eth_getBlockByHash",
+			args:   []any{want.Hash(), false},
+			want: struct {
+				TotalDifficulty *hexutil.Big `json:"totalDifficulty"`
+			}{
+				TotalDifficulty: (*hexutil.Big)(want.Number()),
+			},
+		},
+		{
 			method: "eth_getBlockTransactionCountByHash",
 			args:   []any{want.Hash()},
 			want:   hexutil.Uint(len(want.Transactions())),
@@ -1107,6 +1122,15 @@ func (sut *SUT) testGetByNumber(ctx context.Context, t *testing.T, want *types.B
 			method: "eth_getBlockByNumber",
 			args:   []any{n, false},
 			want:   want.Header(),
+		},
+		{
+			method: "eth_getBlockByNumber",
+			args:   []any{n, false},
+			want: struct {
+				TotalDifficulty *hexutil.Big `json:"totalDifficulty"`
+			}{
+				TotalDifficulty: (*hexutil.Big)(want.Number()),
+			},
 		},
 		{
 			method: "eth_getBlockTransactionCountByNumber",
