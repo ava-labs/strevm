@@ -418,12 +418,6 @@ func TestFilterAPIs(t *testing.T) {
 			"address": precompile,
 		})
 	)
-	defer func() {
-		uninstallFilter(t, txFilterID)
-		uninstallFilter(t, blockFilterID)
-		uninstallFilter(t, logFilterID)
-	}()
-
 	sut.testRPC(ctx, t, []rpcTest{
 		{
 			method: "eth_getFilterChanges",
@@ -468,13 +462,23 @@ func TestFilterAPIs(t *testing.T) {
 		BlockHash:   b.Hash(),
 		TxHash:      tx.Hash(),
 	}
+	// getFilterChanges gets accumulated changes, so a second call with
+	// the same ID returns empty, as there are no new changes.
 	sut.testRPC(ctx, t, []rpcTest{
+		// blockFilterID: new block hash available since last poll
 		{
 			method:     "eth_getFilterChanges",
 			args:       []any{blockFilterID},
 			want:       []common.Hash{b.Hash()},
 			eventually: true,
 		},
+		{
+			method: "eth_getFilterChanges",
+			args:   []any{blockFilterID},
+			want:   []common.Hash{},
+		},
+
+		// logFilterID: new log from block execution available since last poll
 		{
 			method:     "eth_getFilterChanges",
 			args:       []any{logFilterID},
@@ -483,25 +487,22 @@ func TestFilterAPIs(t *testing.T) {
 		},
 		{
 			method: "eth_getFilterChanges",
-			args:   []any{txFilterID},
-			want:   []common.Hash{},
-		},
-		{
-			method: "eth_getFilterChanges",
-			args:   []any{blockFilterID},
-			want:   []common.Hash{},
-		},
-		{
-			method: "eth_getFilterChanges",
 			args:   []any{logFilterID},
 			want:   []types.Log{},
 		},
+		// getFilterLogs returns all matching logs regardless of prior polling
 		{
 			method: "eth_getFilterLogs",
 			args:   []any{logFilterID},
 			want:   []types.Log{wantLog},
 		},
 	}...)
+
+	for _, id := range []string{txFilterID, blockFilterID, logFilterID} {
+		t.Run("uninstall/"+id, func(t *testing.T) {
+			uninstallFilter(t, id)
+		})
+	}
 }
 
 func TestEthSyncing(t *testing.T) {
