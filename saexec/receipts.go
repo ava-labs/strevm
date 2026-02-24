@@ -67,6 +67,10 @@ func (e *Executor) RecentReceipt(ctx context.Context, tx common.Hash) (*Receipt,
 	if !ok {
 		return nil, false, nil
 	}
+	// TODO(arr4n) abstract the internal libevm/parallel `eventual` type into a
+	// separate package and use it here with `peek()`. It's semantically
+	// identical but clearer than receiving and then immediately sending a value
+	// with a single-buffered channel.
 	select {
 	case r := <-ch:
 		ch <- r
