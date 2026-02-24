@@ -116,17 +116,13 @@ func (m *syncMap[K, V]) writeMany(fn func(map[K]V, K), ks ...K) {
 		return cmp.Compare(a[0], b[0])
 	})
 
-	var (
-		index  byte
-		locked *bucket[K, V]
-	)
+	var locked *bucket[K, V]
 	for _, k := range ks {
-		if idx := k[0]; locked == nil || idx != index {
+		if b := &m.buckets[k[0]]; b != locked {
 			if locked != nil {
 				locked.Unlock()
 			}
-			index = idx
-			locked = &m.buckets[idx]
+			locked = b
 			locked.Lock()
 		}
 		fn(locked.data, k)
