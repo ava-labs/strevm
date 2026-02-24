@@ -241,11 +241,20 @@ func TestSuggestTipCap(t *testing.T) {
 	cfg.Now = func() time.Time {
 		return clk
 	}
-	nowSec := uint64(clk.Unix())
+	nowSec := uint64(clk.Unix()) //nolint:gosec // Guaranteed to be positive
+
+	newBlock := func(sut *SUT, time uint64, txs ...*types.Transaction) *blocks.Block {
+		t.Helper()
+		return sut.newBlock(t, time, nil, txs...)
+	}
+	newTx := func(sut *SUT, price uint64) *types.Transaction {
+		t.Helper()
+		return sut.newTx(t, 1, price)
+	}
 
 	type test struct {
 		name   string
-		blocks func(*testing.T, *SUT) []*blocks.Block
+		blocks func(*SUT) []*blocks.Block
 		want   *big.Int
 	}
 	tests := []test{
@@ -255,59 +264,59 @@ func TestSuggestTipCap(t *testing.T) {
 		},
 		{
 			name: "single_tx",
-			blocks: func(t *testing.T, sut *SUT) []*blocks.Block {
+			blocks: func(sut *SUT) []*blocks.Block {
 				return []*blocks.Block{
-					sut.newBlock(t, nowSec, nil, sut.newTx(t, 1, nAVAX)),
+					newBlock(sut, nowSec, newTx(sut, nAVAX)),
 				}
 			},
 			want: big.NewInt(nAVAX),
 		},
 		{
 			name: "multiple_blocks",
-			blocks: func(t *testing.T, sut *SUT) []*blocks.Block {
+			blocks: func(sut *SUT) []*blocks.Block {
 				return []*blocks.Block{
-					sut.newBlock(t, nowSec-10, nil, sut.newTx(t, 1, nAVAX)),
-					sut.newBlock(t, nowSec, nil, sut.newTx(t, 1, 3*nAVAX), sut.newTx(t, 1, 2*nAVAX)),
+					newBlock(sut, nowSec-10, newTx(sut, nAVAX)),
+					newBlock(sut, nowSec, newTx(sut, 3*nAVAX), newTx(sut, 2*nAVAX)),
 				}
 			},
 			want: big.NewInt(nAVAX),
 		},
 		{
 			name: "increase_tip",
-			blocks: func(t *testing.T, sut *SUT) []*blocks.Block {
+			blocks: func(sut *SUT) []*blocks.Block {
 				return []*blocks.Block{
-					sut.newBlock(t, nowSec-20, nil, sut.newTx(t, 1, nAVAX)),
-					sut.newBlock(t, nowSec-10, nil, sut.newTx(t, 1, 3*nAVAX), sut.newTx(t, 1, 2*nAVAX)),
-					sut.newBlock(t, nowSec, nil, sut.newTx(t, 1, 4*nAVAX)),
+					newBlock(sut, nowSec-20, newTx(sut, nAVAX)),
+					newBlock(sut, nowSec-10, newTx(sut, 3*nAVAX), newTx(sut, 2*nAVAX)),
+					newBlock(sut, nowSec, newTx(sut, 4*nAVAX)),
 				}
 			},
 			want: big.NewInt(2 * nAVAX),
 		},
 		{
 			name: "min_tip",
-			blocks: func(t *testing.T, sut *SUT) []*blocks.Block {
+			blocks: func(sut *SUT) []*blocks.Block {
 				return []*blocks.Block{
-					sut.newBlock(t, nowSec, nil, sut.newTx(t, 1, 1)),
+					newBlock(sut, nowSec, newTx(sut, 1)),
 				}
 			},
 			want: cfg.MinSuggestedTip,
 		},
 		{
 			name: "exceed_max_tip",
-			blocks: func(t *testing.T, sut *SUT) []*blocks.Block {
+			blocks: func(sut *SUT) []*blocks.Block {
 				return []*blocks.Block{
-					sut.newBlock(t, nowSec-10, nil, sut.newTx(t, 1, math.MaxUint64)),
-					sut.newBlock(t, nowSec, nil, sut.newTx(t, 1, math.MaxUint64)),
+					newBlock(sut, nowSec-10, newTx(sut, math.MaxUint64)),
+					newBlock(sut, nowSec, newTx(sut, math.MaxUint64)),
 				}
 			},
 			want: cfg.MaxSuggestedTip,
 		},
 		{
 			name: "exceed_max_duration",
-			blocks: func(t *testing.T, sut *SUT) []*blocks.Block {
+			blocks: func(sut *SUT) []*blocks.Block {
 				return []*blocks.Block{
-					sut.newBlock(t, nowSec-(uint64(cfg.SuggestedTipMaxDuration.Seconds())+1), nil, sut.newTx(t, 1, math.MaxUint64), sut.newTx(t, 1, math.MaxUint64), sut.newTx(t, 1, math.MaxUint64)),
-					sut.newBlock(t, nowSec, nil, sut.newTx(t, 1, nAVAX)),
+					newBlock(sut, nowSec-(uint64(cfg.SuggestedTipMaxDuration.Seconds())+1), newTx(sut, math.MaxUint64), newTx(sut, math.MaxUint64), newTx(sut, math.MaxUint64)),
+					newBlock(sut, nowSec, newTx(sut, nAVAX)),
 				}
 			},
 			want: big.NewInt(1 * nAVAX),
@@ -319,7 +328,7 @@ func TestSuggestTipCap(t *testing.T) {
 			sut := newSUT(t, cfg)
 			var newBlocks []*blocks.Block
 			if test.blocks != nil {
-				newBlocks = test.blocks(t, sut)
+				newBlocks = test.blocks(sut)
 			}
 			for _, block := range newBlocks {
 				sut.acceptBlock(block)
