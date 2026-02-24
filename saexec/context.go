@@ -32,6 +32,9 @@ func (c *chainContext) GetHeader(h common.Hash, n uint64) *types.Header {
 	if !ok {
 		return nil
 	}
+	// We explicitly DO NOT populate the cache with these historical values
+	// because they'll evict the recent headers, which are populated by
+	// [Executor.execute] for use by BLOCKHASH in newly executed blocks.
 	return hdr
 }
 
