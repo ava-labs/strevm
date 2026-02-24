@@ -873,3 +873,38 @@ func TestBlockSources(t *testing.T) {
 		})
 	}
 }
+
+func TestEndOfBlockOpsGasUsed(t *testing.T) {
+	const (
+		opGas1 = 100_000
+		opGas2 = 150_000
+		opsGas = uint64(opGas1 + opGas2)
+	)
+
+	feeCap := uint256.NewInt(1e18)
+	_, sut := newSUT(t, 1, options.Func[sutConfig](func(c *sutConfig) {
+		c.vmConfig.Hooks.(*hookstest.Stub).Ops = []hook.Op{
+			{Gas: opGas1, GasFeeCap: *feeCap},
+			{Gas: opGas2, GasFeeCap: *feeCap},
+		}
+	}))
+
+	t.Run("with_tx", func(t *testing.T) {
+		tx := sut.wallet.SetNonceAndSign(t, 0, &types.DynamicFeeTx{
+			To:        &common.Address{},
+			Gas:       params.TxGas,
+			GasFeeCap: feeCap.ToBig(),
+		})
+		b := sut.runConsensusLoop(t, tx)
+		require.Equalf(t, params.TxGas+opsGas, b.Header().GasUsed,
+			"GasUsed must include tx gas + end-of-block op gas",
+		)
+	})
+
+	t.Run("without_tx", func(t *testing.T) {
+		b := sut.runConsensusLoop(t)
+		require.Equalf(t, opsGas, b.Header().GasUsed,
+			"GasUsed must include only end-of-block op gas",
+		)
+	})
+}

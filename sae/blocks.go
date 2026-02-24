@@ -241,8 +241,25 @@ func (vm *VM) buildBlock(
 		included = append(included, tx)
 	}
 
-	// TODO: Should the [hook.BlockBuilder] populate [types.Header.GasUsed] so
-	// that [hook.Op.Gas] can be included?
+	hdr.GasUsed = state.GasUsed()
+
+	// Apply end-of-block ops, mirroring the historical block loop above.
+	// The preliminary block is needed because EndOfBlockOps requires a
+	// *types.Block.
+	prelimEthB, err := builder.BuildBlock(hdr, included, nil)
+	if err != nil {
+		return nil, fmt.Errorf("building preliminary block for end-of-block ops: %v", err)
+	}
+	for i, op := range vm.hooks().EndOfBlockOps(prelimEthB) {
+		if err := state.Apply(op); err != nil {
+			log.Warn("Could not apply op during worst-case calculation",
+				zap.Int("op_index", i),
+				zap.Stringer("op_id", op.ID),
+				zap.Error(err),
+			)
+			return nil, fmt.Errorf("applying op at end of new block to worst-case state: %v", err)
+		}
+	}
 	hdr.GasUsed = state.GasUsed()
 
 	bounds, err := state.FinishBlock()
