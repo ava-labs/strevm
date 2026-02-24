@@ -435,15 +435,26 @@ func (vm *VM) GetBlockIDAtHeight(ctx context.Context, height uint64) (ids.ID, er
 	return id, nil
 }
 
-var _ blocks.Source = (*VM)(nil).blockSource
+var (
+	_ blocks.EthBlockSource = (*VM)(nil).ethBlockSource
+	_ blocks.HeaderSource   = (*VM)(nil).headerSource
+)
 
-func (vm *VM) blockSource(hash common.Hash, num uint64) (*blocks.Block, bool) {
-	// TODO(arr4n) this MUST be updated to support all blocks (256) necessary to
-	// back a [core.ChainContext] in [saexec.Executor] otherwise op codes like
-	// BLOCKHASH will panic.
-	b, ok := vm.blocks.Load(hash)
-	if !ok || b.NumberU64() != num {
-		return nil, false
+func (vm *VM) ethBlockSource(hash common.Hash, num uint64) (*types.Block, bool) {
+	return source(vm, hash, num, (*blocks.Block).EthBlock, rawdb.ReadBlock)
+}
+
+func (vm *VM) headerSource(hash common.Hash, num uint64) (*types.Header, bool) {
+	return source(vm, hash, num, (*blocks.Block).Header, rawdb.ReadHeader)
+}
+
+func source[T any](vm *VM, hash common.Hash, num uint64, fromMem blockAccessor[T], fromDB canonicalReader[T]) (*T, bool) {
+	if b, ok := vm.blocks.Load(hash); ok {
+		if b.NumberU64() != num {
+			return nil, false
+		}
+		return fromMem(b), true
 	}
-	return b, true
+	x := fromDB(vm.db, hash, num)
+	return x, x != nil
 }

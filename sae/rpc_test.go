@@ -425,21 +425,29 @@ func TestEthGetters(t *testing.T) {
 
 	genesis := sut.lastAcceptedBlock(t)
 
+	createTx := func(t *testing.T, to common.Address) *types.Transaction {
+		t.Helper()
+		return sut.wallet.SetNonceAndSign(t, 0, &types.DynamicFeeTx{
+			To:        &to,
+			Gas:       params.TxGas,
+			GasFeeCap: big.NewInt(1),
+		})
+	}
+
+	// TODO(arr4n) abstract the construction of blocks at all stages as it's
+	// copy-pasta'd elsewhere.
+
 	// Once a block is settled, its ancestors are only accessible from the
 	// database.
-	onDisk := sut.runConsensusLoop(t)
+	onDisk := sut.runConsensusLoop(t, createTx(t, zeroAddr))
 
-	settled := sut.runConsensusLoop(t)
+	settled := sut.runConsensusLoop(t, createTx(t, zeroAddr))
 	vmTime.advanceToSettle(ctx, t, settled)
 
-	executed := sut.runConsensusLoop(t)
+	executed := sut.runConsensusLoop(t, createTx(t, zeroAddr))
 	require.NoErrorf(t, executed.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", executed)
 
-	pending := sut.runConsensusLoop(t, sut.wallet.SetNonceAndSign(t, 0, &types.DynamicFeeTx{
-		To:        &blockingPrecompile,
-		Gas:       params.TxGas,
-		GasFeeCap: big.NewInt(1),
-	}))
+	pending := sut.runConsensusLoop(t, createTx(t, blockingPrecompile))
 
 	for _, b := range []*blocks.Block{genesis, onDisk, settled, executed, pending} {
 		t.Run(fmt.Sprintf("block_num_%d", b.Height()), func(t *testing.T) {
