@@ -34,6 +34,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
 
+	"github.com/ava-labs/strevm/blocks"
 	"github.com/ava-labs/strevm/blocks/blockstest"
 	"github.com/ava-labs/strevm/cmputils"
 	"github.com/ava-labs/strevm/gastime"
@@ -87,8 +88,9 @@ func newSUT(tb testing.TB, hooks *saehookstest.Stub) (context.Context, SUT) {
 		blockstest.WithLogger(logger),
 	)
 	chain := blockstest.NewChainBuilder(config, genesis, opts)
+	src := blocks.Source(chain.GetBlock)
 
-	e, err := New(genesis, chain.GetBlock, config, db, xdb, tdbConfig, hooks, logger)
+	e, err := New(genesis, src.AsHeaderSource(), config, db, xdb, tdbConfig, hooks, logger)
 	require.NoError(tb, err, "New()")
 	tb.Cleanup(func() {
 		require.NoErrorf(tb, e.Close(), "%T.Close()", e)

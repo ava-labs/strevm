@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"sync/atomic"
 
+	"github.com/ava-labs/avalanchego/cache/lru"
 	"github.com/ava-labs/avalanchego/utils/logging"
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core"
@@ -41,7 +42,7 @@ type Executor struct {
 	logEvents   event.FeedOf[[]*types.Log]
 	receipts    *syncMap[common.Hash, chan *Receipt]
 
-	chainContext core.ChainContext
+	chainContext *chainContext
 	chainConfig  *params.ChainConfig
 	db           ethdb.Database
 	xdb          saedb.ExecutionResults
@@ -59,7 +60,7 @@ type Executor struct {
 // executed block after shutdown and recovery.
 func New(
 	lastExecuted *blocks.Block,
-	blockSrc blocks.Source,
+	headerSrc blocks.HeaderSource,
 	chainConfig *params.ChainConfig,
 	db ethdb.Database,
 	xdb saedb.ExecutionResults,
@@ -85,14 +86,18 @@ func New(
 		// On startup we enqueue every block since the last time the trie DB was
 		// committed, so the queue needs sufficient capacity to avoid
 		// [Executor.Enqueue] warning about it being too full.
-		queue:        make(chan *blocks.Block, 2*saedb.CommitTrieDBEvery),
-		chainContext: &chainContext{blockSrc, log},
-		chainConfig:  chainConfig,
-		db:           db,
-		stateCache:   cache,
-		snaps:        snaps,
-		xdb:          xdb,
-		receipts:     newSyncMap[common.Hash, chan *Receipt](),
+		queue: make(chan *blocks.Block, 2*saedb.CommitTrieDBEvery),
+		chainContext: &chainContext{
+			headerSrc,
+			lru.NewCache[uint64, *types.Header](256), // minimum history for BLOCKHASH op
+			log,
+		},
+		chainConfig: chainConfig,
+		db:          db,
+		stateCache:  cache,
+		snaps:       snaps,
+		xdb:         xdb,
+		receipts:    newSyncMap[common.Hash, chan *Receipt](),
 	}
 	e.lastExecuted.Store(lastExecuted)
 
