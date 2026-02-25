@@ -599,14 +599,14 @@ func TestSyntacticBlockChecks(t *testing.T) {
 	tests := []struct {
 		name    string
 		header  *types.Header
-		wantErr testerr.Want
+		wantErr error
 	}{
 		{
 			name: "block_height_overflow_protection",
 			header: &types.Header{
 				Number: new(big.Int).Lsh(big.NewInt(1), 64),
 			},
-			wantErr: testerr.Is(errBlockHeightNotUint64),
+			wantErr: errBlockHeightNotUint64,
 		},
 		{
 			name: "block_time_at_maximum",
@@ -621,7 +621,7 @@ func TestSyntacticBlockChecks(t *testing.T) {
 				Number: big.NewInt(1),
 				Time:   now + uint64(maxFutureBlockTime.Seconds()) + 1,
 			},
-			wantErr: testerr.Is(errBlockTooFarInFuture),
+			wantErr: errBlockTooFarInFuture,
 		},
 	}
 
@@ -629,9 +629,7 @@ func TestSyntacticBlockChecks(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			b := blockstest.NewBlock(t, types.NewBlockWithHeader(tt.header), nil, nil)
 			_, err := sut.ParseBlock(ctx, b.Bytes())
-			if diff := testerr.Diff(err, tt.wantErr); diff != "" {
-				t.Fatalf("ParseBlock(#%v @ time %v) %s", tt.header.Number, tt.header.Time, diff)
-			}
+			assert.ErrorIs(t, err, tt.wantErr, "ParseBlock(#%v @ time %v) when stubbed time is %d", tt.header.Number, tt.header.Time, uint64(now))
 		})
 	}
 }
@@ -727,6 +725,11 @@ func TestSemanticBlockChecks(t *testing.T) {
 			wantErr: errBlockTimeBeforeParent,
 		},
 		{
+			name:    "block_time_after_maximum",
+			time:    now + uint64(maxFutureBlockTime.Seconds()) + 1,
+			wantErr: errBlockTimeAfterMaximum,
+		},
+		{
 			name: "hash_mismatch",
 			receipts: types.Receipts{
 				&types.Receipt{}, // Unexpected receipt
@@ -734,23 +737,6 @@ func TestSemanticBlockChecks(t *testing.T) {
 			wantErr: errHashMismatch,
 		},
 	}
-
-	// Tested separately by calling VerifyBlock directly, bypassing
-	// ParseBlock which would otherwise reject the block first.
-	t.Run("block_time_after_maximum", func(t *testing.T) {
-		blockTime := now + uint64(maxFutureBlockTime.Seconds()) + 1
-		ethB := types.NewBlock(
-			&types.Header{
-				ParentHash: common.Hash(lastAccepted.ID()),
-				Number:     new(big.Int).SetUint64(lastAccepted.Height() + 1),
-				Time:       blockTime,
-			},
-			nil, nil, nil,
-			saetest.TrieHasher(),
-		)
-		b := blockstest.NewBlock(t, ethB, nil, nil)
-		require.ErrorIs(t, sut.rawVM.VerifyBlock(ctx, nil, b), errBlockTimeAfterMaximum, "VerifyBlock()")
-	})
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -777,9 +763,7 @@ func TestSemanticBlockChecks(t *testing.T) {
 				saetest.TrieHasher(),
 			)
 			b := blockstest.NewBlock(t, ethB, nil, nil)
-			snowB, err := sut.ParseBlock(ctx, b.Bytes())
-			require.NoErrorf(t, err, "ParseBlock(...)")
-			require.ErrorIs(t, snowB.Verify(ctx), tt.wantErr, "Verify()")
+			require.ErrorIs(t, sut.rawVM.VerifyBlock(ctx, nil, b), tt.wantErr, "VerifyBlock()")
 		})
 	}
 }
