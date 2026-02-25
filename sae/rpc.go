@@ -609,7 +609,7 @@ func (vm *VM) ResolveBlockNumber(bn rpc.BlockNumber) (uint64, error) {
 	return n, nil
 }
 
-func (b *apiBackend) GetPoolNonce(_ context.Context, addr common.Address) (uint64, error) {
+func (b *apiBackend) GetPoolNonce(ctx context.Context, addr common.Address) (uint64, error) {
 	return b.Set.Pool.Nonce(addr), nil
 }
 
