@@ -98,3 +98,4 @@ linters:
     generated: lax
     presets:
       - std-error-handling # errcheck on Close/Write etc.
+

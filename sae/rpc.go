@@ -318,7 +318,7 @@ type ethAPIBackend struct {
 
 var _ APIBackend = (*ethAPIBackend)(nil)
 
-func (b *ethAPIBackend) ChainDb() ethdb.Database { //nolint:staticcheck this name is required by ethapi.Backend interface.
+func (b *ethAPIBackend) ChainDb() ethdb.Database { //nolint:staticcheck // this name required by ethapi.Backend interface.
 	return b.vm.db
 }
 
