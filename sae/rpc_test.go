@@ -491,6 +491,7 @@ func TestFilterAPIs(t *testing.T) {
 			want:   []types.Log{},
 		},
 		// getFilterLogs returns all matching logs regardless of prior polling
+		// because it is based on block-range criteria, not "changes".
 		{
 			method: "eth_getFilterLogs",
 			args:   []any{logFilterID},
