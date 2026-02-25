@@ -777,7 +777,6 @@ func TestEthPendingTransactions(t *testing.T) {
 	})
 }
 
-<<<<<<< HEAD
 func TestGetReceipts(t *testing.T) {
 	// Blocking precompile creates accepted-but-not-executed blocks
 	blockingPrecompile := common.Address{'b', 'l', 'o', 'c', 'k'}
