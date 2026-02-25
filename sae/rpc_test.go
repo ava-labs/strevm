@@ -82,13 +82,13 @@ func (s *SUT) testRPC(ctx context.Context, t *testing.T, tcs ...rpcTest) {
 
 		t.Run(tc.method, func(t *testing.T) {
 			t.Logf("%T.CallContext(ctx, %T, %q, %v...)", s.rpcClient, &tc.want, tc.method, tc.args)
-			if !tc.eventually {
+			if tc.eventually {
+				require.EventuallyWithT(t, func(c *assert.CollectT) {
+					test(c)
+				}, time.Second, 10*time.Millisecond)
+			} else {
 				test(t)
-				return
 			}
-			require.EventuallyWithT(t, func(c *assert.CollectT) {
-				test(c)
-			}, time.Second, 10*time.Millisecond)
 		})
 	}
 }
