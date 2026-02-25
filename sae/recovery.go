@@ -42,6 +42,7 @@ func (rec *recovery) newCanonicalBlock(num uint64, parent *blocks.Block) (*block
 }
 
 func (rec *recovery) lastBlockWithStateRootAvailable() (*blocks.Block, error) {
+	// TODO(alarso16): unless there was an ungraceful shutdown, we can use the last executed block.
 	num := saedb.LastCommittedTrieDBHeight(
 		rawdb.ReadHeadHeader(rec.db).Number.Uint64(),
 	)

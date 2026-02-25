@@ -10,6 +10,7 @@ import (
 	"math/big"
 	"math/rand/v2"
 	"slices"
+	"sync"
 	"testing"
 
 	"github.com/ava-labs/avalanchego/utils/logging"
@@ -26,6 +27,7 @@ import (
 	"github.com/ava-labs/libevm/libevm"
 	libevmhookstest "github.com/ava-labs/libevm/libevm/hookstest"
 	"github.com/ava-labs/libevm/params"
+	"github.com/ava-labs/libevm/trie"
 	"github.com/ava-labs/libevm/triedb"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
@@ -41,6 +43,7 @@ import (
 	"github.com/ava-labs/strevm/hook"
 	saehookstest "github.com/ava-labs/strevm/hook/hookstest"
 	"github.com/ava-labs/strevm/proxytime"
+	"github.com/ava-labs/strevm/saedb"
 	"github.com/ava-labs/strevm/saetest"
 	"github.com/ava-labs/strevm/saetest/escrow"
 )
@@ -60,16 +63,17 @@ func TestMain(m *testing.M) {
 // SUT is the system under test, primarily the [Executor].
 type SUT struct {
 	*Executor
-	chain  *blockstest.ChainBuilder
-	wallet *saetest.Wallet
-	logger *saetest.TBLogger
-	db     ethdb.Database
+	chain     *blockstest.ChainBuilder
+	wallet    *saetest.Wallet
+	logger    *saetest.TBLogger
+	db        ethdb.Database
+	closeOnce sync.Once
 }
 
 // newSUT returns a new SUT. Any >= [logging.Error] on the logger will also
 // cancel the returned context, which is useful when waiting for blocks that
 // can never finish execution because of an error.
-func newSUT(tb testing.TB, hooks *saehookstest.Stub) (context.Context, SUT) {
+func newSUT(tb testing.TB, hooks *saehookstest.Stub) (context.Context, *SUT) {
 	tb.Helper()
 
 	logger := saetest.NewTBLogger(tb, logging.Warn)
@@ -92,17 +96,26 @@ func newSUT(tb testing.TB, hooks *saehookstest.Stub) (context.Context, SUT) {
 
 	e, err := New(genesis, src.AsHeaderSource(), config, db, xdb, tdbConfig, hooks, logger)
 	require.NoError(tb, err, "New()")
-	tb.Cleanup(func() {
-		require.NoErrorf(tb, e.Close(), "%T.Close()", e)
-	})
 
-	return ctx, SUT{
+	sut := &SUT{
 		Executor: e,
 		chain:    chain,
 		wallet:   wallet,
 		logger:   logger,
 		db:       db,
 	}
+	tb.Cleanup(func() {
+		require.NoErrorf(tb, sut.Close(), "%T.Close()", sut)
+	})
+	return ctx, sut
+}
+
+func (s *SUT) Close() error {
+	var err error
+	s.closeOnce.Do(func() {
+		err = s.Executor.Close()
+	})
+	return err
 }
 
 func defaultHooks() *saehookstest.Stub {
@@ -860,7 +873,7 @@ func TestSnapshotPersistence(t *testing.T) {
 	// The crux of the test is whether we can recover the EOA nonce using only a
 	// new set of snapshots, recovered from the databases.
 	conf := snapshot.Config{
-		CacheSize: SnapshotCacheSizeMB,
+		CacheSize: saedb.SnapshotCacheSizeMB,
 		NoBuild:   true, // i.e. MUST be loaded from disk
 	}
 	snaps, err := snapshot.New(conf, sut.db, e.StateCache().TrieDB(), last.PostExecutionStateRoot())
@@ -875,4 +888,54 @@ func TestSnapshotPersistence(t *testing.T) {
 		require.NotNil(t, got) // yes, this is still possible with nil error
 		require.Equalf(t, uint64(n), got.Nonce, "%T.Nonce", got)
 	})
+}
+
+func TestCloseRecoversHashDB(t *testing.T) {
+	ctx, sut := newSUT(t, defaultHooks())
+	e, chain := sut.Executor, sut.chain
+
+	numBlocks := saedb.StateHistory + 10
+	for range numBlocks {
+		b := chain.NewBlock(t, types.Transactions{
+			sut.wallet.SetNonceAndSign(t, 0, &types.LegacyTx{
+				To:       &common.Address{},
+				Gas:      params.TxGas,
+				GasPrice: big.NewInt(1),
+			}),
+		})
+		require.NoError(t, e.Enqueue(ctx, b), "Enqueue()")
+	}
+
+	final := chain.Last()
+	require.NoErrorf(t, final.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted() on last-enqueued block", final)
+
+	// We expect to not find blocks older than [saedb.StateHistory]
+	for _, b := range chain.AllBlocks() {
+		sdb, err := e.StateDB(b.PostExecutionStateRoot())
+		if saedb.ShouldCommitTrieDB(b.NumberU64()) || b.NumberU64()+saedb.StateHistory > uint64(numBlocks) {
+			require.NoErrorf(t, err, "%T.StateDB() for block %d", e.StateRecorder, b.NumberU64())
+			require.NotNilf(t, sdb, "%T.StateDB() for block %d", e.StateRecorder, b.NumberU64())
+		} else {
+			require.IsTypef(t, &trie.MissingNodeError{}, err, "%T.StateDB() should not find block %d", e.StateRecorder, b.NumberU64())
+		}
+	}
+
+	// Restart the chain to remove the TrieDB cache.
+	require.NoErrorf(t, sut.Close(), "%T.Close()", e)
+	src := blocks.Source(chain.GetBlock)
+	e, err := New(final, src.AsHeaderSource(), sut.chainConfig, sut.db, sut.xdb, &triedb.Config{}, defaultHooks(), sut.log) // TODO: share parameters better
+	require.NoError(t, err, "New()")
+	t.Cleanup(func() {
+		require.NoErrorf(t, e.Close(), "%T.Close()", e)
+	})
+
+	for _, b := range chain.AllBlocks() {
+		sdb, err := e.StateDB(b.PostExecutionStateRoot())
+		if saedb.ShouldCommitTrieDB(b.NumberU64()) || b == final {
+			require.NoErrorf(t, err, "%T.StateDB() for block %d", e.StateRecorder, b.NumberU64())
+			require.NotNilf(t, sdb, "%T.StateDB() for block %d", e.StateRecorder, b.NumberU64())
+		} else {
+			require.IsTypef(t, &trie.MissingNodeError{}, err, "%T.StateDB() should not find block %d", e.StateRecorder, b.NumberU64())
+		}
+	}
 }
