@@ -609,14 +609,14 @@ func TestSyntacticBlockChecks(t *testing.T) {
 			wantErr: testerr.Is(errBlockHeightNotUint64),
 		},
 		{
-			name: "block_time_at_boundary",
+			name: "block_time_at_maximum",
 			header: &types.Header{
 				Number: big.NewInt(1),
 				Time:   now + uint64(maxFutureBlockTime.Seconds()),
 			},
 		},
 		{
-			name: "block_time_beyond_boundary",
+			name: "block_time_beyond_maximum",
 			header: &types.Header{
 				Number: big.NewInt(1),
 				Time:   now + uint64(maxFutureBlockTime.Seconds()) + 1,
