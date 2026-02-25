@@ -93,4 +93,4 @@ linters:
   exclusions:
     generated: lax
     presets:
-      - std-error-handling # errcheck on Close/Write etc. 
+      - std-error-handling # errcheck on Close/Write etc.
