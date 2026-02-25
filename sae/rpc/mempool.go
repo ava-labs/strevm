@@ -11,7 +11,7 @@ import (
 	"github.com/ava-labs/libevm/core/types"
 )
 
-func (b *backend) GetPoolNonce(_ context.Context, addr common.Address) (uint64, error) {
+func (b *backend) GetPoolNonce(ctx context.Context, addr common.Address) (uint64, error) {
 	return b.Set.Pool.Nonce(addr), nil
 }
 
