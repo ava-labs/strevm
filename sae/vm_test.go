@@ -735,6 +735,23 @@ func TestSemanticBlockChecks(t *testing.T) {
 		},
 	}
 
+	// Tested separately by calling VerifyBlock directly, bypassing
+	// ParseBlock which would otherwise reject the block first.
+	t.Run("block_time_after_maximum", func(t *testing.T) {
+		blockTime := now + uint64(maxFutureBlockTime.Seconds()) + 1
+		ethB := types.NewBlock(
+			&types.Header{
+				ParentHash: common.Hash(lastAccepted.ID()),
+				Number:     new(big.Int).SetUint64(lastAccepted.Height() + 1),
+				Time:       blockTime,
+			},
+			nil, nil, nil,
+			saetest.TrieHasher(),
+		)
+		b := blockstest.NewBlock(t, ethB, nil, nil)
+		require.ErrorIs(t, sut.rawVM.VerifyBlock(ctx, nil, b), errBlockTimeAfterMaximum, "VerifyBlock()")
+	})
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			if tt.parentHash == (common.Hash{}) {
