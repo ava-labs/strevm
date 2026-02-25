@@ -11,7 +11,9 @@ import (
 	"fmt"
 	"sync/atomic"
 
+	"github.com/ava-labs/avalanchego/cache/lru"
 	"github.com/ava-labs/avalanchego/utils/logging"
+	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core"
 	"github.com/ava-labs/libevm/core/state"
 	"github.com/ava-labs/libevm/core/state/snapshot"
@@ -26,6 +28,9 @@ import (
 	"github.com/ava-labs/strevm/saedb"
 )
 
+// SnapshotCacheSizeMB is the snapshot cache size used by the executor.
+const SnapshotCacheSizeMB = 128
+
 // An Executor accepts and executes a [blocks.Block] FIFO queue.
 type Executor struct {
 	quit, done chan struct{}
@@ -38,14 +43,20 @@ type Executor struct {
 	headEvents  event.FeedOf[core.ChainHeadEvent]
 	chainEvents event.FeedOf[core.ChainEvent]
 	logEvents   event.FeedOf[[]*types.Log]
+	receipts    *syncMap[common.Hash, chan *Receipt]
 
-	chainContext core.ChainContext
+	chainContext *chainContext
 	chainConfig  *params.ChainConfig
 	db           ethdb.Database
 	xdb          saedb.ExecutionResults
 	stateCache   state.Database
-	// snaps MUST NOT be accessed by any methods other than [Executor.execute]
-	// and [Executor.Close].
+	// snaps is owned by [Executor]. It may be mutated during
+	// [Executor.execute] and [Executor.Close]. Callers MUST treat
+	// values returned from [Executor.SnapshotTree] as read-only.
+	//
+	// [snapshot.Tree] is safe for concurrent read access - for example,
+	// blockchain_reader.go exposes bc.snaps without holding any lock:
+	// https://github.com/ava-labs/libevm/blob/312fa380513e/core/blockchain_reader.go#L356-L367
 	snaps *snapshot.Tree
 }
 
@@ -57,7 +68,7 @@ type Executor struct {
 // executed block after shutdown and recovery.
 func New(
 	lastExecuted *blocks.Block,
-	blockSrc blocks.Source,
+	headerSrc blocks.HeaderSource,
 	chainConfig *params.ChainConfig,
 	db ethdb.Database,
 	xdb saedb.ExecutionResults,
@@ -67,7 +78,7 @@ func New(
 ) (*Executor, error) {
 	cache := state.NewDatabaseWithConfig(db, triedbConfig)
 	snapConf := snapshot.Config{
-		CacheSize:  128, // MB
+		CacheSize:  SnapshotCacheSizeMB,
 		AsyncBuild: true,
 	}
 	snaps, err := snapshot.New(snapConf, db, cache.TrieDB(), lastExecuted.PostExecutionStateRoot())
@@ -83,13 +94,18 @@ func New(
 		// On startup we enqueue every block since the last time the trie DB was
 		// committed, so the queue needs sufficient capacity to avoid
 		// [Executor.Enqueue] warning about it being too full.
-		queue:        make(chan *blocks.Block, 2*saedb.CommitTrieDBEvery),
-		chainContext: &chainContext{blockSrc, log},
-		chainConfig:  chainConfig,
-		db:           db,
-		stateCache:   cache,
-		snaps:        snaps,
-		xdb:          xdb,
+		queue: make(chan *blocks.Block, 2*saedb.CommitTrieDBEvery),
+		chainContext: &chainContext{
+			headerSrc,
+			lru.NewCache[uint64, *types.Header](256), // minimum history for BLOCKHASH op
+			log,
+		},
+		chainConfig: chainConfig,
+		db:          db,
+		stateCache:  cache,
+		snaps:       snaps,
+		xdb:         xdb,
+		receipts:    newSyncMap[common.Hash, chan *Receipt](),
 	}
 	e.lastExecuted.Store(lastExecuted)
 
@@ -131,6 +147,11 @@ func (e *Executor) ChainContext() core.ChainContext {
 // StateCache returns caching database underpinning execution.
 func (e *Executor) StateCache() state.Database {
 	return e.stateCache
+}
+
+// SnapshotTree returns the snapshot tree, which MUST only be used for reading.
+func (e *Executor) SnapshotTree() *snapshot.Tree {
+	return e.snaps
 }
 
 // LastExecuted returns the last-executed block in a threadsafe manner.
