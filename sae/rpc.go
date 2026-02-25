@@ -334,10 +334,8 @@ func (b *ethAPIBackend) UnprotectedAllowed() bool {
 	return false
 }
 
-// ExtRPCEnabled reports whether external RPC access is enabled. This is only
-// used as an additional security measure for the personal API, which we do not
-// support. Returning true enables the security check, which is more secure than
-// disabling it.
+// ExtRPCEnabled reports that external RPC access is enabled. This adds an
+// additional security measure in case we add support for the personal API.
 func (*ethAPIBackend) ExtRPCEnabled() bool {
 	return true
 }
