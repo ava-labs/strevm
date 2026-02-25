@@ -612,14 +612,14 @@ func TestSyntacticBlockChecks(t *testing.T) {
 			name: "block_time_at_maximum",
 			header: &types.Header{
 				Number: big.NewInt(1),
-				Time:   now + uint64(maxFutureBlockTime.Seconds()),
+				Time:   now + maxFutureBlockSeconds,
 			},
 		},
 		{
 			name: "block_time_after_maximum",
 			header: &types.Header{
 				Number: big.NewInt(1),
-				Time:   now + uint64(maxFutureBlockTime.Seconds()) + 1,
+				Time:   now + maxFutureBlockSeconds + 1,
 			},
 			wantErr: errBlockTooFarInFuture,
 		},
@@ -726,7 +726,7 @@ func TestSemanticBlockChecks(t *testing.T) {
 		},
 		{
 			name:    "block_time_after_maximum",
-			time:    now + uint64(maxFutureBlockTime.Seconds()) + 1,
+			time:    now + maxFutureBlockSeconds + 1,
 			wantErr: errBlockTimeAfterMaximum,
 		},
 		{
