@@ -217,7 +217,7 @@ func (vm *VM) buildBlock(
 		if remainingGas := state.GasLimit() - state.GasUsed(); remainingGas < params.TxGas {
 			break
 		}
-		log = log.With(
+		txLog := log.With(
 			zap.Stringer("tx_hash", ltx.Hash),
 			zap.Int("tx_index", len(included)),
 			zap.Stringer("sender", ltx.Sender),
@@ -225,7 +225,7 @@ func (vm *VM) buildBlock(
 
 		tx, ok := ltx.Resolve()
 		if !ok {
-			log.Debug("Could not resolve lazy transaction")
+			txLog.Debug("Could not resolve lazy transaction")
 			continue
 		}
 
@@ -233,10 +233,10 @@ func (vm *VM) buildBlock(
 		// execution so we MUST record it at the equivalent point, before
 		// ApplyTx().
 		if err := state.ApplyTx(tx); err != nil {
-			log.Debug("Could not apply transaction", zap.Error(err))
+			txLog.Debug("Could not apply transaction", zap.Error(err))
 			continue
 		}
-		log.Trace("Including transaction")
+		txLog.Trace("Including transaction")
 		included = append(included, tx)
 	}
 
