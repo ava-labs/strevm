@@ -36,4 +36,3 @@ func (b *ethAPIBackend) PendingBlockAndReceipts() (*types.Block, types.Receipts)
 func (b *ethAPIBackend) GetReceipts(context.Context, common.Hash) (types.Receipts, error) {
 	panic(errUnimplemented)
 }
-
