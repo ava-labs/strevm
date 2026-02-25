@@ -21,10 +21,10 @@ func PreciseTime(hooks hook.Points, hdr *types.Header) time.Time {
 	return preciseTime(hdr, hooks.SubSecondBlockTime(hdr))
 }
 
-func preciseTime(hdr *types.Header, subSec time.Duration) time.Time {
+func preciseTime(hdr *types.Header, sub time.Duration) time.Time {
 	return time.Unix(
 		int64(hdr.Time), //nolint:gosec // Won't overflow for a few millennia
-		subSec.Nanoseconds(),
+		sub.Nanoseconds(),
 	)
 }
 
