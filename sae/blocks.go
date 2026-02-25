@@ -247,28 +247,14 @@ func (vm *VM) buildBlock(
 		receipts = append(receipts, b.Receipts()...)
 	}
 
-	// BuildBlock populates hdr.GasUsed including end-of-block op gas.
 	ethB, err := builder.BuildBlock(
 		hdr,
+		state,
 		included,
 		receipts,
 	)
 	if err != nil {
 		return nil, err
-	}
-
-	// Apply end-of-block ops to worst-case state, mirroring the historical
-	// block loop above. This must happen before FinishBlock so that the
-	// queue size and MinOpBurnerBalances include op gas.
-	for i, op := range vm.hooks().EndOfBlockOps(ethB) {
-		if err := state.Apply(op); err != nil {
-			log.Warn("Could not apply op during worst-case calculation",
-				zap.Int("op_index", i),
-				zap.Stringer("op_id", op.ID),
-				zap.Error(err),
-			)
-			return nil, fmt.Errorf("applying op at end of new block to worst-case state: %v", err)
-		}
 	}
 
 	bounds, err := state.FinishBlock()

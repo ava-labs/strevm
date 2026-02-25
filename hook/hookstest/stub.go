@@ -61,21 +61,21 @@ func (s *Stub) BuildHeader(parent *types.Header) *types.Header {
 	return hdr
 }
 
-// BuildBlock populates [types.Header.GasUsed] with the sum of transaction gas
-// and [Stub.Ops] gas, then calls [types.NewBlock] with its arguments.
+// BuildBlock applies end-of-block [hook.Op]s via [hook.State.Apply], populates
+// [types.Header.GasUsed] from [hook.State.GasUsed], then calls
+// [types.NewBlock] with its arguments.
 func (s *Stub) BuildBlock(
 	header *types.Header,
+	state hook.State,
 	txs []*types.Transaction,
 	receipts []*types.Receipt,
 ) (*types.Block, error) {
-	var gasUsed uint64
-	for _, tx := range txs {
-		gasUsed += tx.Gas()
-	}
 	for _, op := range s.Ops {
-		gasUsed += uint64(op.Gas)
+		if err := state.Apply(op); err != nil {
+			return nil, err
+		}
 	}
-	header.GasUsed = gasUsed
+	header.GasUsed = state.GasUsed()
 	return types.NewBlock(header, txs, nil, receipts, saetest.TrieHasher()), nil
 }
 
