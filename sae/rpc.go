@@ -609,6 +609,10 @@ func (vm *VM) ResolveBlockNumber(bn rpc.BlockNumber) (uint64, error) {
 	return n, nil
 }
 
+func (b *apiBackend) GetPoolNonce(_ context.Context, addr common.Address) (uint64, error) {
+	return b.Set.Pool.Nonce(addr), nil
+}
+
 func (b *apiBackend) Stats() (pending int, queued int) {
 	return b.Set.Pool.Stats()
 }
