@@ -334,6 +334,21 @@ func (b *ethAPIBackend) UnprotectedAllowed() bool {
 	return false
 }
 
+// ExtRPCEnabled reports that external RPC access is enabled. This adds an
+// additional security measure in case we add support for the personal API.
+func (*ethAPIBackend) ExtRPCEnabled() bool {
+	return true
+}
+
+// PendingBlockAndReceipts returns a nil block and receipts. Returning nil tells
+// geth that this backend does not support pending blocks. In SAE, the pending
+// block is defined as the most recently accepted block, but receipts are only
+// available after execution. Returning a non-nil block with incorrect or empty
+// receipts could cause geth to encounter errors.
+func (*ethAPIBackend) PendingBlockAndReceipts() (*types.Block, types.Receipts) {
+	return nil, nil
+}
+
 func (b *ethAPIBackend) AccountManager() *accounts.Manager {
 	return b.accountManager
 }
