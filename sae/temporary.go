@@ -37,6 +37,3 @@ func (b *ethAPIBackend) GetReceipts(context.Context, common.Hash) (types.Receipt
 	panic(errUnimplemented)
 }
 
-func (b *ethAPIBackend) GetPoolNonce(context.Context, common.Address) (uint64, error) {
-	panic(errUnimplemented)
-}

@@ -667,6 +667,69 @@ func TestEthPendingTransactions(t *testing.T) {
 	})
 }
 
+func TestGetTransactionCount(t *testing.T) {
+	ctx, sut := newSUT(t, 1)
+	addr := sut.wallet.Addresses()[0]
+
+	sut.testRPC(ctx, t, rpcTest{
+		method: "eth_getTransactionCount",
+		args:   []any{addr, "pending"},
+		want:   hexutil.Uint64(0),
+	})
+
+	tx := sut.wallet.SetNonceAndSign(t, 0, &types.DynamicFeeTx{
+		To:        &zeroAddr,
+		Gas:       params.TxGas,
+		GasFeeCap: big.NewInt(1),
+	})
+	sut.mustSendTx(t, tx)
+	sut.requireInMempool(t, tx.Hash())
+
+	sut.testRPC(ctx, t, rpcTest{
+		method: "eth_getTransactionCount",
+		args:   []any{addr, "pending"},
+		want:   hexutil.Uint64(1),
+	})
+}
+
+// eth_fillTransaction fills defaults (nonce, gas price) without signing,
+// so it succeeds without a keystore.
+func TestFillTransaction(t *testing.T) {
+	ctx, sut := newSUT(t, 1)
+
+	var got json.RawMessage
+	err := sut.CallContext(ctx, &got, "eth_fillTransaction", map[string]any{
+		"from":  sut.wallet.Addresses()[0],
+		"to":    zeroAddr,
+		"gas":   hexutil.Uint64(params.TxGas),
+		"value": hexutil.Big(*big.NewInt(100)),
+	})
+	require.NoError(t, err, "eth_fillTransaction()")
+	require.NotEmpty(t, got, "eth_fillTransaction()")
+}
+
+// eth_resend exercises setDefaults (SuggestGasTipCap, GetPoolNonce) then
+// fails gracefully because no matching pending transaction exists.
+func TestResend(t *testing.T) {
+	ctx, sut := newSUT(t, 1)
+
+	sut.testRPC(ctx, t, rpcTest{
+		method: "eth_resend",
+		// By not inclduing some fields we can force setDefaults() to
+		// call SuggestGasTipCap().
+		args: []any{
+			map[string]any{
+				"to":    zeroAddr,
+				"gas":   hexutil.Uint64(params.TxGas),
+				"nonce": hexutil.Uint64(0),
+			},
+			hexutil.Big(*big.NewInt(2)),
+			hexutil.Uint64(params.TxGas),
+		},
+		wantErr: testerr.Contains("not found"),
+	})
+}
+
 // SAE doesn't really support APIs that require a key on the node, as there is
 // no way to add keys. But, we want to ensure the methods error gracefully.
 func TestEthSigningAPIs(t *testing.T) {

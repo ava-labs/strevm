@@ -489,6 +489,10 @@ func (b *ethAPIBackend) ResolveBlockNumber(bn rpc.BlockNumber) (uint64, error) {
 	return n, nil
 }
 
+func (b *ethAPIBackend) GetPoolNonce(_ context.Context, addr common.Address) (uint64, error) {
+	return b.Set.Pool.Nonce(addr), nil
+}
+
 func (b *ethAPIBackend) Stats() (pending int, queued int) {
 	return b.Set.Pool.Stats()
 }
