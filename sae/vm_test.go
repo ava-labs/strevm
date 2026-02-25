@@ -599,22 +599,29 @@ func TestSyntacticBlockChecks(t *testing.T) {
 	tests := []struct {
 		name    string
 		header  *types.Header
-		wantErr error
+		wantErr testerr.Want
 	}{
 		{
 			name: "block_height_overflow_protection",
 			header: &types.Header{
 				Number: new(big.Int).Lsh(big.NewInt(1), 64),
 			},
-			wantErr: errBlockHeightNotUint64,
+			wantErr: testerr.Is(errBlockHeightNotUint64),
 		},
 		{
-			name: "block_time_overflow_protection",
+			name: "block_time_at_boundary",
 			header: &types.Header{
 				Number: big.NewInt(1),
-				Time:   now + maxBlockFutureSeconds + 1,
+				Time:   now + uint64(maxFutureBlockTime.Seconds()),
 			},
-			wantErr: errBlockTooFarInFuture,
+		},
+		{
+			name: "block_time_beyond_boundary",
+			header: &types.Header{
+				Number: big.NewInt(1),
+				Time:   now + uint64(maxFutureBlockTime.Seconds()) + 1,
+			},
+			wantErr: testerr.Is(errBlockTooFarInFuture),
 		},
 	}
 
@@ -622,7 +629,9 @@ func TestSyntacticBlockChecks(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			b := blockstest.NewBlock(t, types.NewBlockWithHeader(tt.header), nil, nil)
 			_, err := sut.ParseBlock(ctx, b.Bytes())
-			assert.ErrorIs(t, err, tt.wantErr, "ParseBlock(#%v @ time %v) when stubbed time is %d", tt.header.Number, tt.header.Time, uint64(now))
+			if diff := testerr.Diff(err, tt.wantErr); diff != "" {
+				t.Fatalf("ParseBlock(#%v @ time %v) %s", tt.header.Number, tt.header.Time, diff)
+			}
 		})
 	}
 }
@@ -716,11 +725,6 @@ func TestSemanticBlockChecks(t *testing.T) {
 			name:    "block_time_before_parent",
 			time:    lastAccepted.BuildTime() - 1,
 			wantErr: errBlockTimeBeforeParent,
-		},
-		{
-			name:    "block_time_after_maximum",
-			time:    now + uint64(maxFutureBlockTime.Seconds()) + 1,
-			wantErr: errBlockTimeAfterMaximum,
 		},
 		{
 			name: "hash_mismatch",
