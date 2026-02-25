@@ -88,19 +88,16 @@ func DefaultConfig() Config {
 
 // validate returns an error if the config is invalid.
 func (c *Config) validate() error {
-	if c.Now == nil {
+	switch {
+	case c.Now == nil:
 		return errNilNow
-	}
-	if c.MinSuggestedTip == nil {
+	case c.MinSuggestedTip == nil:
 		return errNilMinSuggestedTip
-	}
-	if c.MaxSuggestedTip == nil {
+	case c.MaxSuggestedTip == nil:
 		return errNilMaxSuggestedTip
-	}
-	if c.SuggestedTipPercentile <= 0 || c.SuggestedTipPercentile > 1 {
+	case c.SuggestedTipPercentile < 0 || c.SuggestedTipPercentile > 1:
 		return errBadTipPercentile
-	}
-	if c.MinSuggestedTip.Cmp(c.MaxSuggestedTip) > 0 {
+	case c.MinSuggestedTip.Cmp(c.MaxSuggestedTip) > 0:
 		return errMinTipExceedsMax
 	}
 	return nil
@@ -130,7 +127,7 @@ func NewEstimator(backend Backend, log logging.Logger, c Config) (*Estimator, er
 	// long periods of no requests to the estimator. This allows us to avoid
 	// parallelizing reads inside individual API calls.
 	//
-	// TODO: Consider caching upon acceptance rather than execution.
+	// TODO(StephenButtolph): Consider caching upon acceptance rather than execution.
 	events := make(chan core.ChainHeadEvent, 1)
 	sub := backend.SubscribeChainHeadEvent(events)
 	cache := newBlockCache(
@@ -162,9 +159,9 @@ func NewEstimator(backend Backend, log logging.Logger, c Config) (*Estimator, er
 	}, nil
 }
 
-// SuggestTipCap recommends a priority-fee (tip) for new transactions based on
+// SuggestGasTipCap recommends a priority-fee (tip) for new transactions based on
 // tips from recently accepted transactions.
-func (e *Estimator) SuggestTipCap(ctx context.Context) (tip *big.Int, _ error) {
+func (e *Estimator) SuggestGasTipCap(ctx context.Context) (tip *big.Int, _ error) {
 	defer func() {
 		// Tip is modified by callers of this function, so we must ensure that
 		// it is copied.
@@ -197,9 +194,6 @@ func (e *Estimator) SuggestTipCap(ctx context.Context) (tip *big.Int, _ error) {
 		tips       []transaction
 	)
 	for n := newest; n > tooOld; n-- {
-		if err := ctx.Err(); err != nil {
-			return common.Big0, err
-		}
 		b := e.blockCache.getBlock(ctx, n)
 		if b == nil || b.timestamp < recentUnix {
 			break
@@ -254,16 +248,16 @@ func (e *Estimator) FeeHistory(
 	_ error,
 ) {
 	if err := validatePercentiles(rewardPercentiles); err != nil {
-		return common.Big0, nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	last, err := e.backend.ResolveBlockNumber(unresolvedLastBlock)
 	if err != nil {
-		return common.Big0, nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	headBlock := e.backend.LastAcceptedBlock()
 	head := headBlock.NumberU64()
 	if minLast := intmath.BoundedSubtract(head, e.c.HistoryMaxBlocksFromTip, 0); last < minLast {
-		return common.Big0, nil, nil, nil, fmt.Errorf("%w: block %d requested, accepted head is %d (max depth %d)",
+		return nil, nil, nil, nil, fmt.Errorf("%w: block %d requested, accepted head is %d (max depth %d)",
 			errHistoryDepthExhausted,
 			last,
 			head,
@@ -290,11 +284,11 @@ func (e *Estimator) FeeHistory(
 	)
 	for n := first; n <= last; n++ {
 		if err := ctx.Err(); err != nil {
-			return common.Big0, nil, nil, nil, err
+			return nil, nil, nil, nil, err
 		}
 		b := e.blockCache.getBlock(ctx, n)
 		if b == nil {
-			return common.Big0, nil, nil, nil, fmt.Errorf("%w: %d", errMissingBlock, n)
+			return nil, nil, nil, nil, fmt.Errorf("%w: %d", errMissingBlock, n)
 		}
 
 		if len(rewardPercentiles) != 0 {
@@ -306,20 +300,21 @@ func (e *Estimator) FeeHistory(
 	if last == head {
 		bounds := headBlock.WorstCaseBounds()
 		if bounds == nil {
-			return common.Big0, nil, nil, nil, errMissingWorstCaseBounds
+			return nil, nil, nil, nil, errMissingWorstCaseBounds
 		}
 		baseFee = append(baseFee, bounds.NextGasTime.BaseFee().ToBig())
 	} else if b := e.blockCache.getBlock(ctx, last+1); b != nil {
 		baseFee = append(baseFee, b.baseFee)
 	} else {
-		return common.Big0, nil, nil, nil, fmt.Errorf("%w: %d", errMissingBlock, last+1)
+		return nil, nil, nil, nil, fmt.Errorf("%w: %d", errMissingBlock, last+1)
 	}
 	return new(big.Int).SetUint64(first), reward, baseFee, gasUsedRatio, nil
 }
 
 // Close releases allocated resources.
-func (e *Estimator) Close() {
+func (e *Estimator) Close() error {
 	e.sub.Unsubscribe()
+	return nil
 }
 
 const maxPercentiles = 100
