@@ -143,7 +143,7 @@ func (e *StateRecorder) StateDB(root common.Hash) (*state.StateDB, error) {
 // to the database if the height is on an multiple of [CommitTrieDBEvery].
 func (e *StateRecorder) Record(root common.Hash, height uint64) error {
 	// Push root if unique - don't want to remove an in-use state!
-	if next, ok := e.inMemory.Index(e.inMemory.Len() - 1); e.inMemory.Len() == 0 || (ok && next != root) {
+	if next, ok := e.inMemory.Index(e.inMemory.Len() - 1); !ok || next != root {
 		e.inMemory.Push(root)
 	}
 
