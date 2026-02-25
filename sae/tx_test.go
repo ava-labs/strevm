@@ -36,9 +36,11 @@ func TestTxTypeSupport(t *testing.T) {
 		},
 	}
 
-	for _, tx := range txs {
-		t.Run(fmt.Sprintf("%T", tx), func(t *testing.T) {
-			sut.mustSendTx(t, sut.wallet.SetNonceAndSign(t, 0, tx))
+	for _, txData := range txs {
+		t.Run(fmt.Sprintf("%T", txData), func(t *testing.T) {
+			tx := sut.wallet.SetNonceAndSign(t, 0, txData)
+			sut.mustSendTx(t, tx)
+			sut.requireInMempool(t, tx.Hash())
 		})
 		if t.Failed() {
 			t.FailNow()
