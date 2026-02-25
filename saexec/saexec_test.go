@@ -904,38 +904,44 @@ func TestCloseRecoversHashDB(t *testing.T) {
 			}),
 		})
 		require.NoError(t, e.Enqueue(ctx, b), "Enqueue()")
+		_ = b.WaitUntilExecuted(ctx)
+		t.Log(b.PostExecutionStateRoot())
 	}
 
 	final := chain.Last()
 	require.NoErrorf(t, final.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted() on last-enqueued block", final)
 
-	// We expect to not find blocks older than [saedb.StateHistory]
-	for _, b := range chain.AllBlocks() {
-		sdb, err := e.StateDB(b.PostExecutionStateRoot())
-		if saedb.ShouldCommitTrieDB(b.NumberU64()) || b.NumberU64()+saedb.StateHistory > uint64(numBlocks) {
-			require.NoErrorf(t, err, "%T.StateDB() for block %d", e.StateRecorder, b.NumberU64())
-			require.NotNilf(t, sdb, "%T.StateDB() for block %d", e.StateRecorder, b.NumberU64())
-		} else {
-			require.IsTypef(t, &trie.MissingNodeError{}, err, "%T.StateDB() should not find block %d", e.StateRecorder, b.NumberU64())
+	t.Run("remove in memory state", func(t *testing.T) {
+		// We expect to not find blocks older than [saedb.StateHistory]
+		for _, b := range chain.AllBlocks() {
+			sdb, err := e.StateDB(b.PostExecutionStateRoot())
+			if saedb.ShouldCommitTrieDB(b.NumberU64()) || b.NumberU64()+saedb.StateHistory > uint64(numBlocks) {
+				require.NoErrorf(t, err, "%T.StateDB() for block %d", e.StateRecorder, b.NumberU64())
+				require.NotNilf(t, sdb, "%T.StateDB() for block %d", e.StateRecorder, b.NumberU64())
+			} else {
+				require.IsTypef(t, &trie.MissingNodeError{}, err, "%T.StateDB() should not find block %d", e.StateRecorder, b.NumberU64())
+			}
 		}
-	}
-
-	// Restart the chain to remove the TrieDB cache.
-	require.NoErrorf(t, sut.Close(), "%T.Close()", e)
-	src := blocks.Source(chain.GetBlock)
-	e, err := New(final, src.AsHeaderSource(), sut.chainConfig, sut.db, sut.xdb, &triedb.Config{}, defaultHooks(), sut.log) // TODO: share parameters better
-	require.NoError(t, err, "New()")
-	t.Cleanup(func() {
-		require.NoErrorf(t, e.Close(), "%T.Close()", e)
 	})
 
-	for _, b := range chain.AllBlocks() {
-		sdb, err := e.StateDB(b.PostExecutionStateRoot())
-		if saedb.ShouldCommitTrieDB(b.NumberU64()) || b == final {
-			require.NoErrorf(t, err, "%T.StateDB() for block %d", e.StateRecorder, b.NumberU64())
-			require.NotNilf(t, sdb, "%T.StateDB() for block %d", e.StateRecorder, b.NumberU64())
-		} else {
-			require.IsTypef(t, &trie.MissingNodeError{}, err, "%T.StateDB() should not find block %d", e.StateRecorder, b.NumberU64())
+	t.Run("recover", func(t *testing.T) {
+		// Restart the chain to remove the TrieDB cache.
+		require.NoErrorf(t, sut.Close(), "%T.Close()", e)
+		src := blocks.Source(chain.GetBlock)
+		e, err := New(final, src.AsHeaderSource(), sut.chainConfig, sut.db, sut.xdb, &triedb.Config{}, defaultHooks(), sut.log) // TODO: share parameters better
+		require.NoError(t, err, "New()")
+		t.Cleanup(func() {
+			require.NoErrorf(t, e.Close(), "%T.Close()", e)
+		})
+
+		for _, b := range chain.AllBlocks() {
+			sdb, err := e.StateDB(b.PostExecutionStateRoot())
+			if saedb.ShouldCommitTrieDB(b.NumberU64()) || b == final {
+				require.NoErrorf(t, err, "%T.StateDB() for block %d", e.StateRecorder, b.NumberU64())
+				require.NotNilf(t, sdb, "%T.StateDB() for block %d", e.StateRecorder, b.NumberU64())
+			} else {
+				require.IsTypef(t, &trie.MissingNodeError{}, err, "%T.StateDB() should not find block %d", e.StateRecorder, b.NumberU64())
+			}
 		}
-	}
+	})
 }
