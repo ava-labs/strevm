@@ -330,7 +330,7 @@ func (b *ethAPIBackend) UnprotectedAllowed() bool {
 
 // ExtRPCEnabled reports whether external RPC access is enabled. This is only
 // used as an additional security measure for the personal API, which we do not
-// support in its entirety.
+// support.
 func (*ethAPIBackend) ExtRPCEnabled() bool {
 	return true
 }
