@@ -104,6 +104,10 @@ func NewStateRecorder(db ethdb.Database, c *triedb.Config, lastExecuted common.H
 
 // Close commits the most recent state to the database for shutdown.
 func (e *StateRecorder) Close() error {
+	if e.inMemory.Len() == 0 {
+		return nil
+	}
+
 	root, _ := e.inMemory.Index(e.inMemory.Len() - 1)
 	// We don't use [snapshot.Tree.Journal] because re-orgs are impossible under
 	// SAE so we don't mind flattening all snapshot layers to disk. Note that
@@ -138,7 +142,11 @@ func (e *StateRecorder) StateDB(root common.Hash) (*state.StateDB, error) {
 // Record tracks the root and may commit the trie associated with the root
 // to the database if the height is on an multiple of [CommitTrieDBEvery].
 func (e *StateRecorder) Record(root common.Hash, height uint64) error {
-	e.inMemory.Push(root)
+	// Push root if unique - don't want to remove an in-use state!
+	if next, ok := e.inMemory.Index(e.inMemory.Len() - 1); ok && next != root {
+		e.inMemory.Push(root)
+	}
+
 	if !ShouldCommitTrieDB(height) {
 		return nil
 	}
