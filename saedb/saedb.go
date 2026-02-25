@@ -36,7 +36,7 @@ func ShouldCommitTrieDB(blockNum uint64) bool {
 }
 
 // LastCommittedTrieDBHeight returns the largest value <= the argument at which
-// [shouldCommitTrieDB] would have returned true.
+// [ShouldCommitTrieDB] would have returned true.
 func LastCommittedTrieDBHeight(atOrBefore uint64) uint64 {
 	return atOrBefore &^ commitTrieDBMask
 }
