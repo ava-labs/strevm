@@ -402,6 +402,17 @@ func TestFilterAPIs(t *testing.T) {
 			"address": precompile,
 		})
 	)
+
+	defer func() {
+		for _, id := range []string{txFilterID, blockFilterID, logFilterID} {
+			sut.testRPC(ctx, t, rpcTest{
+				method: "eth_uninstallFilter",
+				args:   []any{id},
+				want:   true,
+			})
+		}
+	}()
+
 	sut.testRPC(ctx, t, []rpcTest{
 		{
 			method: "eth_getFilterChanges",
@@ -482,16 +493,6 @@ func TestFilterAPIs(t *testing.T) {
 			want:   []types.Log{wantLog},
 		},
 	}...)
-
-	defer func() {
-		for _, id := range []string{txFilterID, blockFilterID, logFilterID} {
-			sut.testRPC(ctx, t, rpcTest{
-				method: "eth_uninstallFilter",
-				args:   []any{id},
-				want:   true,
-			})
-		}
-	}()
 }
 
 func TestEthSyncing(t *testing.T) {
