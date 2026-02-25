@@ -616,7 +616,7 @@ func TestSyntacticBlockChecks(t *testing.T) {
 			},
 		},
 		{
-			name: "block_time_beyond_maximum",
+			name: "block_time_after_maximum",
 			header: &types.Header{
 				Number: big.NewInt(1),
 				Time:   now + uint64(maxFutureBlockTime.Seconds()) + 1,
