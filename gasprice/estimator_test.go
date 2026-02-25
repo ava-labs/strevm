@@ -241,8 +241,8 @@ func TestSuggestTipCap(t *testing.T) {
 	nowSec := uint64(clk.Unix()) //nolint:gosec // Guaranteed to be positive
 
 	type blockSpec struct {
-		time     uint64
-		txprices []uint64
+		time   uint64
+		txTips []uint64
 	}
 
 	tests := []struct {
@@ -258,8 +258,8 @@ func TestSuggestTipCap(t *testing.T) {
 			name: "single_tx",
 			blocks: []blockSpec{
 				{
-					time:     nowSec,
-					txprices: []uint64{nAVAX},
+					time:   nowSec,
+					txTips: []uint64{nAVAX},
 				},
 			},
 			want: big.NewInt(nAVAX),
@@ -268,12 +268,12 @@ func TestSuggestTipCap(t *testing.T) {
 			name: "multiple_blocks",
 			blocks: []blockSpec{
 				{
-					time:     nowSec - 10,
-					txprices: []uint64{nAVAX},
+					time:   nowSec - 10,
+					txTips: []uint64{nAVAX},
 				},
 				{
-					time:     nowSec,
-					txprices: []uint64{3 * nAVAX, 2 * nAVAX},
+					time:   nowSec,
+					txTips: []uint64{3 * nAVAX, 2 * nAVAX},
 				},
 			},
 			want: big.NewInt(nAVAX),
@@ -282,16 +282,16 @@ func TestSuggestTipCap(t *testing.T) {
 			name: "increase_tip",
 			blocks: []blockSpec{
 				{
-					time:     nowSec - 20,
-					txprices: []uint64{nAVAX},
+					time:   nowSec - 20,
+					txTips: []uint64{nAVAX},
 				},
 				{
-					time:     nowSec - 10,
-					txprices: []uint64{3 * nAVAX, 2 * nAVAX},
+					time:   nowSec - 10,
+					txTips: []uint64{3 * nAVAX, 2 * nAVAX},
 				},
 				{
-					time:     nowSec,
-					txprices: []uint64{4 * nAVAX},
+					time:   nowSec,
+					txTips: []uint64{4 * nAVAX},
 				},
 			},
 			want: big.NewInt(2 * nAVAX),
@@ -300,8 +300,8 @@ func TestSuggestTipCap(t *testing.T) {
 			name: "min_tip",
 			blocks: []blockSpec{
 				{
-					time:     nowSec,
-					txprices: []uint64{1},
+					time:   nowSec,
+					txTips: []uint64{1},
 				},
 			},
 			want: cfg.MinSuggestedTip,
@@ -310,12 +310,12 @@ func TestSuggestTipCap(t *testing.T) {
 			name: "exceed_max_tip",
 			blocks: []blockSpec{
 				{
-					time:     nowSec - 10,
-					txprices: []uint64{math.MaxUint64},
+					time:   nowSec - 10,
+					txTips: []uint64{math.MaxUint64},
 				},
 				{
-					time:     nowSec,
-					txprices: []uint64{math.MaxUint64},
+					time:   nowSec,
+					txTips: []uint64{math.MaxUint64},
 				},
 			},
 			want: cfg.MaxSuggestedTip,
@@ -324,12 +324,12 @@ func TestSuggestTipCap(t *testing.T) {
 			name: "exceed_max_duration",
 			blocks: []blockSpec{
 				{
-					time:     nowSec - (uint64(cfg.SuggestedTipMaxDuration.Seconds()) + 1),
-					txprices: []uint64{math.MaxUint64, math.MaxUint64, math.MaxUint64},
+					time:   nowSec - (uint64(cfg.SuggestedTipMaxDuration.Seconds()) + 1),
+					txTips: []uint64{math.MaxUint64, math.MaxUint64, math.MaxUint64},
 				},
 				{
-					time:     nowSec,
-					txprices: []uint64{nAVAX},
+					time:   nowSec,
+					txTips: []uint64{nAVAX},
 				},
 			},
 			want: big.NewInt(1 * nAVAX),
@@ -338,12 +338,12 @@ func TestSuggestTipCap(t *testing.T) {
 			name: "no_transactions_fallback_to_last_price",
 			blocks: []blockSpec{
 				{
-					time:     nowSec,
-					txprices: []uint64{nAVAX},
+					time:   nowSec,
+					txTips: []uint64{nAVAX},
 				},
 				{
-					time:     nowSec,
-					txprices: []uint64{},
+					time:   nowSec,
+					txTips: []uint64{},
 				},
 			},
 			want: big.NewInt(nAVAX),
@@ -354,9 +354,9 @@ func TestSuggestTipCap(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			sut := newSUT(t, cfg)
 			for _, spec := range test.blocks {
-				txs := make([]*types.Transaction, 0, len(spec.txprices))
-				for _, price := range spec.txprices {
-					txs = append(txs, sut.newTx(t, 1, price))
+				txs := make([]*types.Transaction, len(spec.txTips))
+				for i, price := range spec.txTips {
+					txs[i] = sut.newTx(t, 1, price)
 				}
 				sut.acceptBlock(sut.newBlock(t, spec.time, nil, txs...))
 			}
@@ -375,27 +375,25 @@ func TestFeeHistory(t *testing.T) {
 	bounds := &blocks.WorstCaseBounds{
 		NextGasTime: gastime.New(time.Now(), 1, math.MaxUint64),
 	}
-	type txSpec struct {
-		gas   uint64
-		price uint64
-	}
-
-	type blockSpec struct {
-		txs []txSpec
-	}
-
-	type args struct {
-		numBlocks   uint64
-		lastBlock   rpc.BlockNumber
-		percentiles []float64
-	}
-	type results struct {
-		height      *big.Int
-		rewards     [][]*big.Int
-		baseFees    []*big.Int
-		portionFull []float64
-		err         error
-	}
+	type (
+		txSpec struct {
+			gas   uint64
+			price uint64
+		}
+		blockSpec []txSpec
+		args      struct {
+			numBlocks   uint64
+			lastBlock   rpc.BlockNumber
+			percentiles []float64
+		}
+		results struct {
+			height      *big.Int
+			rewards     [][]*big.Int
+			baseFees    []*big.Int
+			portionFull []float64
+			err         error
+		}
+	)
 	tests := []struct {
 		name   string
 		blocks []blockSpec
@@ -466,9 +464,7 @@ func TestFeeHistory(t *testing.T) {
 			name: "query_genesis",
 			blocks: []blockSpec{
 				{
-					txs: []txSpec{
-						{gas: 21_000, price: nAVAX},
-					},
+					{gas: 21_000, price: nAVAX},
 				},
 			},
 			args: args{
@@ -490,9 +486,7 @@ func TestFeeHistory(t *testing.T) {
 			name: "query_latest",
 			blocks: []blockSpec{
 				{
-					txs: []txSpec{
-						{gas: 21_000, price: nAVAX},
-					},
+					{gas: 21_000, price: nAVAX},
 				},
 			},
 			args: args{
@@ -514,18 +508,14 @@ func TestFeeHistory(t *testing.T) {
 			name: "query_too_old_block",
 			blocks: []blockSpec{
 				{
-					txs: []txSpec{
-						{gas: 21_000, price: nAVAX},
-					},
+					{gas: 21_000, price: nAVAX},
 				},
 				{
-					txs: []txSpec{
-						{gas: 100_000, price: nAVAX},
-						{gas: 100_000, price: 2 * nAVAX},
-						{gas: 100_000, price: 3 * nAVAX},
-						{gas: 100_000, price: 4 * nAVAX},
-						{gas: 100_000, price: 5 * nAVAX},
-					},
+					{gas: 100_000, price: nAVAX},
+					{gas: 100_000, price: 2 * nAVAX},
+					{gas: 100_000, price: 3 * nAVAX},
+					{gas: 100_000, price: 4 * nAVAX},
+					{gas: 100_000, price: 5 * nAVAX},
 				},
 			},
 			args: args{
@@ -540,18 +530,14 @@ func TestFeeHistory(t *testing.T) {
 			name: "query_max_blocks_with_percentiles",
 			blocks: []blockSpec{
 				{
-					txs: []txSpec{
-						{gas: 21_000, price: nAVAX},
-					},
+					{gas: 21_000, price: nAVAX},
 				},
 				{
-					txs: []txSpec{
-						{gas: 100_000, price: nAVAX},
-						{gas: 100_000, price: 2 * nAVAX},
-						{gas: 100_000, price: 3 * nAVAX},
-						{gas: 100_000, price: 4 * nAVAX},
-						{gas: 100_000, price: 5 * nAVAX},
-					},
+					{gas: 100_000, price: nAVAX},
+					{gas: 100_000, price: 2 * nAVAX},
+					{gas: 100_000, price: 3 * nAVAX},
+					{gas: 100_000, price: 4 * nAVAX},
+					{gas: 100_000, price: 5 * nAVAX},
 				},
 			},
 			args: args{
@@ -580,10 +566,10 @@ func TestFeeHistory(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			sut := newSUT(t, cfg)
-			for _, block := range tt.blocks {
-				txs := make([]*types.Transaction, 0, len(block.txs))
-				for _, tx := range block.txs {
-					txs = append(txs, sut.newTx(t, tx.gas, tx.price))
+			for _, txSpecs := range tt.blocks {
+				txs := make([]*types.Transaction, len(txSpecs))
+				for i, tx := range txSpecs {
+					txs[i] = sut.newTx(t, tx.gas, tx.price)
 				}
 				sut.acceptBlock(sut.newBlock(t, 0, bounds, txs...))
 			}

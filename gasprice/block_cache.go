@@ -76,6 +76,9 @@ func (b *block) tipPercentiles(percentiles []float64) []*big.Int {
 	)
 	for i, p := range percentiles {
 		threshold := uint64(float64(b.gasUsed) * p / 100)
+		// TODO:(StephenButtolph): Improve from `O(txs + percentiles)` to
+		// `O(percentiles * log(txs))` by binary searching for each threshold if
+		// networks with large blocks encounter performance degradation.
 		for sumGas < threshold && txIndex < len(b.txs)-1 {
 			txIndex++
 			sumGas += b.txs[txIndex].gas
