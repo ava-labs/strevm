@@ -104,16 +104,19 @@ func (vm *VM) ethRPCServer() (*rpc.Server, error) {
 		// - eth_getTransactionByBlockHashAndIndex
 		// - eth_getTransactionByBlockNumberAndIndex
 		// - eth_getTransactionByHash
+		// - eth_getTransactionCount
 		// - eth_sendRawTransaction
 		// - eth_sendTransaction
 		// - eth_sign
 		// - eth_signTransaction
 		//
 		// Undocumented APIs:
+		//- eth_fillTransaction
 		// - eth_getRawTransactionByBlockHashAndIndex
 		// - eth_getRawTransactionByBlockNumberAndIndex
 		// - eth_getRawTransactionByHash
 		// - eth_pendingTransactions
+		// - eth_resend
 		{"eth", ethapi.NewTransactionAPI(b, new(ethapi.AddrLocker))},
 		// Standard Ethereum node APIS:
 		// - eth_getLogs
