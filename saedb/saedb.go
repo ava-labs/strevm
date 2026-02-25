@@ -51,13 +51,6 @@ type ExecutionResults struct {
 // StateRecorder provides an abstraction to deciding if/when to persist a state
 // to the database or dereference it, making it unavailable and uncommittable.
 type StateRecorder struct {
-	// snaps is owned by [Executor]. It may be mutated during
-	// [Executor.execute] and [Executor.Close]. Callers MUST treat
-	// values returned from [Executor.SnapshotTree] as read-only.
-	//
-	// [snapshot.Tree] is safe for concurrent read access - for example,
-	// blockchain_reader.go exposes bc.snaps without holding any lock:
-	// https://github.com/ava-labs/libevm/blob/312fa380513e/core/blockchain_reader.go#L356-L367
 	snaps    *snapshot.Tree
 	cache    state.Database
 	inMemory buffer.Queue[common.Hash]
@@ -131,11 +124,18 @@ func (e *StateRecorder) StateCache() state.Database {
 }
 
 // SnapshotTree returns the snapshot tree, which MUST only be used for reading.
+//
+// [snapshot.Tree] is safe for concurrent read access - for example,
+// blockchain_reader.go exposes bc.snaps without holding any lock:
+// https://github.com/ava-labs/libevm/blob/312fa380513e/core/blockchain_reader.go#L356-L367
 func (e *StateRecorder) SnapshotTree() *snapshot.Tree {
 	return e.snaps
 }
 
 // StateDB provides a [state.StateDB] at the given root.
+//
+// Although this can be called concurrently, it is only safe for concurrent reading.
+// [state.StateDB.Commit] (i.e. writes) cannot occur concurrently.
 func (e *StateRecorder) StateDB(root common.Hash) (*state.StateDB, error) {
 	return state.New(root, e.cache, e.snaps)
 }
