@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/arr4n/shed/testerr"
 	"github.com/ava-labs/avalanchego/database"
 	"github.com/ava-labs/avalanchego/database/memdb"
 	"github.com/ava-labs/avalanchego/ids"
@@ -40,6 +41,8 @@ import (
 	"github.com/ava-labs/libevm/log"
 	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/rpc"
+	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/holiman/uint256"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -48,6 +51,7 @@ import (
 	"github.com/ava-labs/strevm/adaptor"
 	"github.com/ava-labs/strevm/blocks"
 	"github.com/ava-labs/strevm/blocks/blockstest"
+	"github.com/ava-labs/strevm/cmputils"
 	"github.com/ava-labs/strevm/hook"
 	"github.com/ava-labs/strevm/hook/hookstest"
 	saeparams "github.com/ava-labs/strevm/params"
@@ -301,11 +305,16 @@ func (s *SUT) mustSendTx(tb testing.TB, tx *types.Transaction) {
 	require.NoErrorf(tb, s.Client.SendTransaction(s.context(tb), tx), "%T.SendTransaction([%#x])", s.Client, tx.Hash())
 }
 
-func (s *SUT) stateAt(tb testing.TB, root common.Hash) *state.StateDB {
+// addToMempool is a convenience wrapper around [SUT.mustSendTx] (per tx) and
+// [SUT.requireInMempool].
+func (s *SUT) addToMempool(tb testing.TB, txs ...*types.Transaction) {
 	tb.Helper()
-	sdb, err := state.New(root, s.rawVM.exec.StateCache(), nil)
-	require.NoErrorf(tb, err, "state.New(%#x, %T.StateCache())", root, s.rawVM.exec)
-	return sdb
+	txHashes := make([]common.Hash, len(txs))
+	for i, tx := range txs {
+		s.mustSendTx(tb, tx)
+		txHashes[i] = tx.Hash()
+	}
+	s.requireInMempool(tb, txHashes...)
 }
 
 // syncMempool is a convenience wrapper for calling [txpool.TxPool.Sync], which
@@ -334,47 +343,61 @@ func (s *SUT) requireInMempool(tb testing.TB, txs ...common.Hash) {
 	)
 }
 
-// createAndAcceptBlock sends all of the transactions to the mempool, asserts
-// that they are present in the mempool, then returns the result of [SUT.runConsensusLoop] with
-// [SUT.lastAcceptedBlock] as its argument.
-// Because the mempool may already include other transactions, or the transactions
-// provided may fail validation, there is no guarantee that the returned block
-// includes all of the provided transactions.
-func (s *SUT) createAndAcceptBlock(tb testing.TB, txs ...*types.Transaction) *blocks.Block {
+// buildAndParseBlock calls [SUT.addToMempool] with the provided transactions,
+// builds a new block and passes its bytes to [VM.ParseBlock], the result of
+// which is returned. This is equivalent to a validator having received valid
+// bytes from a peer, but with no element of consensus performed.
+//
+// A block at this stage is rarely useful and does not meet invariants required
+// of a [blocks.Block], hence its return as a [snowman.Block].
+func (s *SUT) buildAndParseBlock(tb testing.TB, preference *blocks.Block, txs ...*types.Transaction) snowman.Block {
 	tb.Helper()
+	s.addToMempool(tb, txs...)
 
-	txHashes := make([]common.Hash, len(txs))
-	for i, tx := range txs {
-		s.mustSendTx(tb, tx)
-		txHashes[i] = tx.Hash()
-	}
-	s.requireInMempool(tb, txHashes...)
-
-	return s.runConsensusLoop(tb, s.lastAcceptedBlock(tb))
-}
-
-// runConsensusLoop syncs the mempool, sets the preference to the specified
-// block, then builds, verifies, accepts, and returns the new block. It does NOT
-// wait for it to be executed; to do this automatically, set the [VM] to
-// [snow.Bootstrapping].
-func (s *SUT) runConsensusLoop(tb testing.TB, preference *blocks.Block) *blocks.Block {
-	tb.Helper()
-
-	s.syncMempool(tb)
 	ctx := s.context(tb)
 	require.NoError(tb, s.SetPreference(ctx, preference.ID()), "SetPreference()")
 
 	proposed, err := s.BuildBlock(ctx)
 	require.NoError(tb, err, "BuildBlock()")
-	// Ensure that a peer would be able to perform the consensus loop by parsing
-	// the block.
 	b, err := s.ParseBlock(ctx, proposed.Bytes())
 	require.NoError(tb, err, "ParseBlock(BuildBlock().Bytes())")
+	return b
+}
 
-	require.NoErrorf(tb, b.Verify(ctx), "%T.Verify()", b)
-	require.NoErrorf(tb, b.Accept(ctx), "%T.Accept()", b)
+// createAndVerifyBlock calls [SUT.buildAndParseBlock] with the provided
+// transactions. It verifies the block with [VM.VerifyBlock] (via the [adaptor])
+// before returning it.
+//
+// Although the block is now in a functional state, it is still returned as a
+// [snowman.Block] to expose its `Accept()` method, ensuring that we test via
+// the public API as exposed to the consensus engine.
+func (s *SUT) createAndVerifyBlock(tb testing.TB, preference *blocks.Block, txs ...*types.Transaction) snowman.Block {
+	tb.Helper()
+	b := s.buildAndParseBlock(tb, preference, txs...)
+	require.NoErrorf(tb, b.Verify(s.context(tb)), "%T.Verify()", b)
+	return b
+}
 
-	return s.lastAcceptedBlock(tb)
+// runConsensusLoopOnPreference is equivalent to [SUT.createAndVerifyBlock]
+// except that it also accepts the block with [VM.AcceptBlock]. It does NOT wait
+// for it to be executed; to do this automatically, set the [VM] to
+// [snow.Bootstrapping].
+//
+// There is no longer any need to wrap the block as an [adaptor.Block] so it is
+// returned in its raw form, unlike earlier steps in the consenus loop.
+func (s *SUT) runConsensusLoopOnPreference(tb testing.TB, preference *blocks.Block, txs ...*types.Transaction) *blocks.Block {
+	tb.Helper()
+	b := s.createAndVerifyBlock(tb, preference, txs...)
+	require.NoErrorf(tb, b.Accept(s.context(tb)), "%T.Accept()", b)
+	return unwrap(tb, b)
+}
+
+// runConsensusLoop is a convenience wrapper for
+// [SUT.runConsensusLoopOnPreference], using [SUT.lastAcceptedBlock] as the
+// preference.
+func (s *SUT) runConsensusLoop(tb testing.TB, txs ...*types.Transaction) *blocks.Block {
+	tb.Helper()
+	return s.runConsensusLoopOnPreference(tb, s.lastAcceptedBlock(tb), txs...)
 }
 
 // waitUntilExecuted blocks until an external indicator shows that `b` has been
@@ -412,6 +435,13 @@ func (s *SUT) waitUntilExecuted(tb testing.TB, b *blocks.Block) {
 			}
 		}
 	}
+}
+
+func (s *SUT) stateAt(tb testing.TB, root common.Hash) *state.StateDB {
+	tb.Helper()
+	sdb, err := state.New(root, s.rawVM.exec.StateCache(), nil)
+	require.NoErrorf(tb, err, "state.New(%#x, %T.StateCache())", root, s.rawVM.exec)
+	return sdb
 }
 
 // lastAcceptedBlock is a convenience wrapper for calling [VM.GetBlock] with
@@ -519,7 +549,7 @@ func TestIntegration(t *testing.T) {
 	sut.syncMempool(t) // technically we've only proven 1 tx added, as unlikely as a race is
 	require.Equal(t, numTxs, sut.rawVM.numPendingTxs(), "number of pending txs")
 
-	b := sut.runConsensusLoop(t, sut.genesis)
+	b := sut.runConsensusLoopOnPreference(t, sut.genesis)
 	assert.Equal(t, sut.genesis.ID(), b.Parent(), "BuildBlock() builds on preference")
 	require.Lenf(t, b.Transactions(), numTxs, "%T.Transactions()", b)
 
@@ -533,7 +563,7 @@ func TestIntegration(t *testing.T) {
 		// If the tx-inclusion logic were broken then this would include the
 		// transactions again, resulting in a FATAL in the execution loop due to
 		// non-increasing nonce.
-		b := sut.runConsensusLoop(t, b)
+		b := sut.runConsensusLoopOnPreference(t, b)
 		assert.Emptyf(t, b.Transactions(), "%T.Transactions()", b)
 		require.NoErrorf(t, b.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", b)
 	})
@@ -554,9 +584,8 @@ func TestEmptyChainConfig(t *testing.T) {
 		}
 	}))
 	for range 5 {
-		sut.runConsensusLoop(t, sut.lastAcceptedBlock(t))
+		sut.runConsensusLoop(t)
 	}
-	sut.waitUntilExecuted(t, sut.lastAcceptedBlock(t))
 }
 
 func TestSyntacticBlockChecks(t *testing.T) {
@@ -613,9 +642,6 @@ func TestAcceptBlock(t *testing.T) {
 	require.NoError(t, sut.SetState(ctx, snow.Bootstrapping), "SetState(Bootstrapping)")
 
 	unsettled := []*blocks.Block{sut.genesis}
-	last := func() *blocks.Block {
-		return unsettled[len(unsettled)-1]
-	}
 	sut.genesis = nil // allow it to be GCd when appropriate
 
 	rng := rand.New(rand.NewPCG(0, 0)) //nolint:gosec // Reproducibility is useful for tests
@@ -623,7 +649,7 @@ func TestAcceptBlock(t *testing.T) {
 		ffMillis := 100 + rng.IntN(1000*(1+saeparams.TauSeconds))
 		vmTime.advance(time.Millisecond * time.Duration(ffMillis))
 
-		b := sut.runConsensusLoop(t, last())
+		b := sut.runConsensusLoop(t)
 		unsettled = append(unsettled, b)
 		sut.assertBlockHashInvariants(ctx, t)
 
@@ -773,4 +799,77 @@ func TestGossip(t *testing.T) {
 	api.mustSendTx(t, tx)
 	requireReceiveTx(t, n.allValidators(), tx.Hash())
 	requireNotReceiveTx(t, nonValidators[1:], tx.Hash())
+}
+
+func TestBlockSources(t *testing.T) {
+	opt, vmTime := withVMTime(t, time.Unix(saeparams.TauSeconds, 0))
+	ctx, sut := newSUT(t, 1, opt)
+
+	genesis := sut.lastAcceptedBlock(t)
+	// Once a block is settled, its ancestors are only accessible from the
+	// database.
+	onDisk := sut.runConsensusLoop(t)
+	settled := sut.runConsensusLoop(t)
+	vmTime.advanceToSettle(ctx, t, settled)
+	unsettled := sut.runConsensusLoop(t)
+
+	verified := sut.createAndVerifyBlock(t, unsettled)
+	unverified := sut.buildAndParseBlock(t, unwrap(t, verified))
+
+	tests := []struct {
+		name            string
+		block           *blocks.Block
+		wantGetBlockErr testerr.Want
+	}{
+		{"genesis", genesis, nil},
+		{"on_disk", onDisk, nil},
+		{"settled_in_memory", settled, nil},
+		{"unsettled", unsettled, nil},
+		{"verified", unwrap(t, verified), nil},
+		{"unverified", unwrap(t, unverified), testerr.Equals(database.ErrNotFound)},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Run("GetBlock", func(t *testing.T) {
+				got, err := sut.GetBlock(ctx, tt.block.ID())
+				if diff := testerr.Diff(err, tt.wantGetBlockErr); diff != "" {
+					t.Fatalf("GetBlock(...) %s", diff)
+				}
+				if tt.wantGetBlockErr != nil {
+					return
+				}
+				if diff := cmp.Diff(tt.block, unwrap(t, got), blocks.CmpOpt()); diff != "" {
+					t.Errorf("GetBlock(...) diff (-want +got):\n%s", diff)
+				}
+			})
+
+			wantOK := tt.wantGetBlockErr == nil
+			opts := cmp.Options{
+				cmputils.Blocks(),
+				cmputils.Headers(),
+				cmpopts.EquateEmpty(),
+			}
+			t.Run("EthBlockSource", func(t *testing.T) {
+				got, gotOK := sut.rawVM.ethBlockSource(tt.block.Hash(), tt.block.NumberU64())
+				require.Equalf(t, wantOK, gotOK, "%T.ethBlockSource(...)", sut.rawVM)
+				if !wantOK {
+					return
+				}
+				if diff := cmp.Diff(tt.block.EthBlock(), got, opts); diff != "" {
+					t.Errorf("%T.ethBlockSource(...) diff (-want +got)\n%s", sut.rawVM, diff)
+				}
+			})
+			t.Run("HeaderSource", func(t *testing.T) {
+				got, gotOK := sut.rawVM.headerSource(tt.block.Hash(), tt.block.NumberU64())
+				require.Equalf(t, wantOK, gotOK, "%T.headerSource(...)", sut.rawVM)
+				if !wantOK {
+					return
+				}
+				if diff := cmp.Diff(tt.block.Header(), got, opts); diff != "" {
+					t.Errorf("%T.headerSource(...) diff (-want +got)\n%s", sut.rawVM, diff)
+				}
+			})
+		})
+	}
 }

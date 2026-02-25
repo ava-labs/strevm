@@ -16,11 +16,13 @@ import (
 	"github.com/ava-labs/libevm/core/rawdb"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/ethdb"
+	"github.com/ava-labs/libevm/params"
 	"github.com/google/go-cmp/cmp"
 	"github.com/holiman/uint256"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/ava-labs/strevm/cmputils"
 	"github.com/ava-labs/strevm/gastime"
 	"github.com/ava-labs/strevm/saedb"
 	"github.com/ava-labs/strevm/saetest"
@@ -34,10 +36,14 @@ func (b *Block) markExecutedForTests(tb testing.TB, db ethdb.Database, xdb saedb
 }
 
 func TestMarkExecuted(t *testing.T) {
+	const gasPrice = 100
 	txs := make(types.Transactions, 10)
 	for i := range txs {
 		txs[i] = types.NewTx(&types.LegacyTx{
-			Nonce: uint64(i), //nolint:gosec // Won't overflow
+			Nonce:    uint64(i), //nolint:gosec // Won't overflow
+			GasPrice: big.NewInt(gasPrice),
+			Gas:      params.TxGas,
+			To:       &common.Address{},
 		})
 	}
 
@@ -92,17 +98,29 @@ func TestMarkExecuted(t *testing.T) {
 	wallTime := time.Unix(42, 100)
 	stateRoot := common.Hash{'s', 't', 'a', 't', 'e'}
 	baseFee := uint256.NewInt(314159)
-	var receipts types.Receipts
-	for _, tx := range txs {
+	var (
+		receipts      types.Receipts
+		cumulativeGas uint64
+	)
+	for i, tx := range txs {
+		cumulativeGas += params.TxGas
 		receipts = append(receipts, &types.Receipt{
-			TxHash: tx.Hash(),
+			Type:              tx.Type(),
+			Status:            types.ReceiptStatusSuccessful,
+			TxHash:            tx.Hash(),
+			GasUsed:           params.TxGas,
+			CumulativeGasUsed: cumulativeGas,
+			EffectiveGasPrice: big.NewInt(gasPrice),
+			BlockHash:         ethB.Hash(),
+			BlockNumber:       new(big.Int).Set(ethB.Number()),
+			TransactionIndex:  uint(i), //nolint:gosec // Won't overflow
 		})
 	}
 	lastExecuted := new(atomic.Pointer[Block])
 	require.NoError(t, b.MarkExecuted(db, xdb, gasTime, wallTime, baseFee.ToBig(), receipts, stateRoot, lastExecuted), "MarkExecuted()")
 
 	fromDB := newBlock(t, b.EthBlock(), b.ParentBlock(), b.LastSettled())
-	require.NoError(t, fromDB.RestoreExecutionArtefacts(db, xdb), "RestoreExecutionArtefacts()")
+	require.NoError(t, fromDB.RestoreExecutionArtefacts(db, xdb, saetest.ChainConfig()), "RestoreExecutionArtefacts()")
 	tests := []struct {
 		name           string
 		isLastExecuted bool
@@ -129,7 +147,7 @@ func TestMarkExecuted(t *testing.T) {
 
 			assert.Zero(t, b.ExecutedByGasTime().Compare(gasTime.Time), "ExecutedByGasTime().Compare([original input])")
 			assert.Zero(t, b.BaseFee().Cmp(baseFee), "BaseFee().Cmp([original input])")
-			assert.Empty(t, cmp.Diff(receipts, b.Receipts(), saetest.CmpByMerkleRoots[types.Receipts]()), "Receipts()")
+			assert.Empty(t, cmp.Diff(receipts, b.Receipts(), cmputils.Receipts(), cmputils.NilSlicesAreEmpty[[]*types.Log]()), "Receipts()")
 
 			assert.Equal(t, stateRoot, b.PostExecutionStateRoot(), "PostExecutionStateRoot()") // i.e. this block
 			// Although not directly relevant to MarkExecuted, demonstrate that the

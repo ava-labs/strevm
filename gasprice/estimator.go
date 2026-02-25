@@ -27,6 +27,14 @@ import (
 	"github.com/ava-labs/strevm/intmath"
 )
 
+var (
+	errNilNow             = errors.New("config Now must be non-nil")
+	errNilMinSuggestedTip = errors.New("config MinSuggestedTip must be non-nil")
+	errNilMaxSuggestedTip = errors.New("config MaxSuggestedTip must be non-nil")
+	errBadTipPercentile   = errors.New("config SuggestedTipPercentile must be in (0, 1]")
+	errMinTipExceedsMax   = errors.New("config MinSuggestedTip must be <= MaxSuggestedTip")
+)
+
 // Backend that the [Estimator] depends on for chain data.
 type Backend interface {
 	ResolveBlockNumber(bn rpc.BlockNumber) (uint64, error)
@@ -37,9 +45,6 @@ type Backend interface {
 
 // Config allows parameterizing an [Estimator].
 type Config struct {
-	// Log defaults to [logging.NoLog] if nil.
-	Log logging.Logger
-
 	// Now returns the current time. If nil, defaults to [time.Now]
 	Now func() time.Time
 
@@ -66,36 +71,36 @@ type Config struct {
 	HistoryMaxBlocks uint64
 }
 
-func (c *Config) setDefaults() {
-	if c.Log == nil {
-		c.Log = logging.NoLog{}
+// DefaultConfig returns a [Config] with all fields set to their default values.
+func DefaultConfig() Config {
+	return Config{
+		Now:                     time.Now,
+		MinSuggestedTip:         big.NewInt(1 * params.Wei),
+		SuggestedTipPercentile:  .4,
+		MaxSuggestedTip:         big.NewInt(150 * params.Wei),
+		SuggestedTipMaxBlocks:   20,
+		SuggestedTipMaxDuration: time.Minute,
+		// Chosen to be larger than the fee lookback window that MetaMask uses (20k blocks).
+		HistoryMaxBlocksFromTip: 25_000,
+		HistoryMaxBlocks:        2048,
 	}
-	if c.Now == nil {
-		c.Now = time.Now
+}
+
+// validate returns an error if the config is invalid.
+func (c *Config) validate() error {
+	switch {
+	case c.Now == nil:
+		return errNilNow
+	case c.MinSuggestedTip == nil:
+		return errNilMinSuggestedTip
+	case c.MaxSuggestedTip == nil:
+		return errNilMaxSuggestedTip
+	case c.SuggestedTipPercentile < 0 || c.SuggestedTipPercentile > 1:
+		return errBadTipPercentile
+	case c.MinSuggestedTip.Cmp(c.MaxSuggestedTip) > 0:
+		return errMinTipExceedsMax
 	}
-	if c.MinSuggestedTip == nil {
-		c.MinSuggestedTip = big.NewInt(1 * params.Wei)
-	}
-	if c.SuggestedTipPercentile == 0 {
-		c.SuggestedTipPercentile = .4
-	}
-	if c.MaxSuggestedTip == nil {
-		c.MaxSuggestedTip = big.NewInt(150 * params.Wei)
-	}
-	if c.SuggestedTipMaxBlocks == 0 {
-		c.SuggestedTipMaxBlocks = 20
-	}
-	if c.SuggestedTipMaxDuration == 0 {
-		c.SuggestedTipMaxDuration = time.Minute
-	}
-	if c.HistoryMaxBlocksFromTip == 0 {
-		// Default MaxBlockHistory is chosen to be a value larger than the
-		// required fee lookback window that MetaMask uses (20k blocks).
-		c.HistoryMaxBlocksFromTip = 25_000
-	}
-	if c.HistoryMaxBlocks == 0 {
-		c.HistoryMaxBlocks = 2048
-	}
+	return nil
 }
 
 // Estimator provides gas-price suggestions and fee-history data for SAE by
@@ -113,18 +118,20 @@ type Estimator struct {
 }
 
 // NewEstimator creates an Estimator for gas tips and fee history.
-func NewEstimator(backend Backend, c Config) *Estimator {
-	c.setDefaults()
+func NewEstimator(backend Backend, log logging.Logger, c Config) (*Estimator, error) {
+	if err := c.validate(); err != nil {
+		return nil, err
+	}
 
 	// New blocks are cached in the background to avoid slow responses after
 	// long periods of no requests to the estimator. This allows us to avoid
 	// parallelizing reads inside individual API calls.
 	//
-	// TODO: Consider caching upon acceptance rather than execution.
+	// TODO(StephenButtolph): Consider caching upon acceptance rather than execution.
 	events := make(chan core.ChainHeadEvent, 1)
 	sub := backend.SubscribeChainHeadEvent(events)
 	cache := newBlockCache(
-		c.Log,
+		log,
 		backend,
 		int(max( //nolint:gosec // Overflow would require misconfiguration
 			c.SuggestedTipMaxBlocks,
@@ -132,7 +139,7 @@ func NewEstimator(backend Backend, c Config) *Estimator {
 		)),
 	)
 	go func() {
-		defer sub.Unsubscribe()
+		defer sub.Unsubscribe() // This can fire twice on Close(), but it's fine.
 		for {
 			select {
 			case e := <-events:
@@ -149,12 +156,12 @@ func NewEstimator(backend Backend, c Config) *Estimator {
 		lastPrice:  c.MinSuggestedTip,
 		sub:        sub,
 		blockCache: cache,
-	}
+	}, nil
 }
 
-// SuggestTipCap recommends a priority-fee (tip) for new transactions based on
+// SuggestGasTipCap recommends a priority-fee (tip) for new transactions based on
 // tips from recently accepted transactions.
-func (e *Estimator) SuggestTipCap(ctx context.Context) (tip *big.Int, _ error) {
+func (e *Estimator) SuggestGasTipCap(ctx context.Context) (tip *big.Int, _ error) {
 	defer func() {
 		// Tip is modified by callers of this function, so we must ensure that
 		// it is copied.
@@ -241,16 +248,16 @@ func (e *Estimator) FeeHistory(
 	_ error,
 ) {
 	if err := validatePercentiles(rewardPercentiles); err != nil {
-		return common.Big0, nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	last, err := e.backend.ResolveBlockNumber(unresolvedLastBlock)
 	if err != nil {
-		return common.Big0, nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	headBlock := e.backend.LastAcceptedBlock()
 	head := headBlock.NumberU64()
 	if minLast := intmath.BoundedSubtract(head, e.c.HistoryMaxBlocksFromTip, 0); last < minLast {
-		return common.Big0, nil, nil, nil, fmt.Errorf("%w: block %d requested, accepted head is %d (max depth %d)",
+		return nil, nil, nil, nil, fmt.Errorf("%w: block %d requested, accepted head is %d (max depth %d)",
 			errHistoryDepthExhausted,
 			last,
 			head,
@@ -277,11 +284,11 @@ func (e *Estimator) FeeHistory(
 	)
 	for n := first; n <= last; n++ {
 		if err := ctx.Err(); err != nil {
-			return common.Big0, nil, nil, nil, err
+			return nil, nil, nil, nil, err
 		}
 		b := e.blockCache.getBlock(ctx, n)
 		if b == nil {
-			return common.Big0, nil, nil, nil, fmt.Errorf("%w: %d", errMissingBlock, n)
+			return nil, nil, nil, nil, fmt.Errorf("%w: %d", errMissingBlock, n)
 		}
 
 		if len(rewardPercentiles) != 0 {
@@ -293,13 +300,13 @@ func (e *Estimator) FeeHistory(
 	if last == head {
 		bounds := headBlock.WorstCaseBounds()
 		if bounds == nil {
-			return common.Big0, nil, nil, nil, errMissingWorstCaseBounds
+			return nil, nil, nil, nil, errMissingWorstCaseBounds
 		}
 		baseFee = append(baseFee, bounds.NextGasTime.BaseFee().ToBig())
 	} else if b := e.blockCache.getBlock(ctx, last+1); b != nil {
 		baseFee = append(baseFee, b.baseFee)
 	} else {
-		return common.Big0, nil, nil, nil, fmt.Errorf("%w: %d", errMissingBlock, last+1)
+		return nil, nil, nil, nil, fmt.Errorf("%w: %d", errMissingBlock, last+1)
 	}
 	return new(big.Int).SetUint64(first), reward, baseFee, gasUsedRatio, nil
 }
