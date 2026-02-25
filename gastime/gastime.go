@@ -47,7 +47,7 @@ func makeTime(t *proxytime.Time[gas.Gas], target, excess gas.Gas) *Time {
 }
 
 func (tm *Time) establishInvariants() {
-	tm.SetRateInvariants(&tm.target, &tm.excess)
+	tm.Time.SetRateInvariants(&tm.target, &tm.excess)
 }
 
 // New returns a new [Time], derived from a [time.Time]. The consumption of

@@ -652,7 +652,7 @@ func FuzzOpCodes(f *testing.F) {
 
 		// Ensure that the SUT [logging.Logger] remains of this type so >=WARN
 		// logs become failures.
-		logger := sut.logger
+		var logger *saetest.TBLogger = sut.logger //nolint:staticcheck
 		// Errors in execution (i.e. reverts) are fine, but we don't want them
 		// bubbling up any further.
 		require.NoErrorf(t, sut.execute(b, logger), "%T.execute()", sut.Executor)

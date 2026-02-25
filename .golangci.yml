@@ -71,6 +71,10 @@ linters:
               reason: "Avoid dependency loop"
           - github.com/ava-labs/subnet-evm:
               reason: "Avoid dependency loop"
+    staticcheck:
+      checks:
+        - "all"
+        - "-QF1008" # Explicit embedded field selectors improve readability.
     revive:
       rules:
         - name: unused-parameter

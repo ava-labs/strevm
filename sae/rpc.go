@@ -318,7 +318,7 @@ type ethAPIBackend struct {
 
 var _ APIBackend = (*ethAPIBackend)(nil)
 
-func (b *ethAPIBackend) ChainDb() ethdb.Database {
+func (b *ethAPIBackend) ChainDb() ethdb.Database { //nolint:staticcheck this name is required by ethapi.Backend interface.
 	return b.vm.db
 }
 
@@ -399,7 +399,7 @@ func (b *ethAPIBackend) GetTransaction(ctx context.Context, txHash common.Hash) 
 }
 
 func (b *ethAPIBackend) GetPoolTransaction(txHash common.Hash) *types.Transaction {
-	return b.Pool.Get(txHash)
+	return b.Set.Pool.Get(txHash)
 }
 
 func (b *ethAPIBackend) GetBody(ctx context.Context, hash common.Hash, number rpc.BlockNumber) (*types.Body, error) {
@@ -572,15 +572,15 @@ func (b *ethAPIBackend) resolveBlockNumber(bn rpc.BlockNumber) (uint64, error) {
 }
 
 func (b *ethAPIBackend) Stats() (pending int, queued int) {
-	return b.Pool.Stats()
+	return b.Set.Pool.Stats()
 }
 
 func (b *ethAPIBackend) TxPoolContent() (map[common.Address][]*types.Transaction, map[common.Address][]*types.Transaction) {
-	return b.Pool.Content()
+	return b.Set.Pool.Content()
 }
 
 func (b *ethAPIBackend) TxPoolContentFrom(addr common.Address) ([]*types.Transaction, []*types.Transaction) {
-	return b.Pool.ContentFrom(addr)
+	return b.Set.Pool.ContentFrom(addr)
 }
 
 func (b *ethAPIBackend) SubscribeChainEvent(ch chan<- core.ChainEvent) event.Subscription {
@@ -593,7 +593,7 @@ func (b *ethAPIBackend) SubscribeChainSideEvent(chan<- core.ChainSideEvent) even
 }
 
 func (b *ethAPIBackend) SubscribeNewTxsEvent(ch chan<- core.NewTxsEvent) event.Subscription {
-	return b.Pool.SubscribeTransactions(ch, true)
+	return b.Set.Pool.SubscribeTransactions(ch, true)
 }
 
 func (b *ethAPIBackend) SubscribeRemovedLogsEvent(chan<- core.RemovedLogsEvent) event.Subscription {

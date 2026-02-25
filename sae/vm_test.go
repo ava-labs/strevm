@@ -216,7 +216,7 @@ func marshalJSON(tb testing.TB, v any) []byte {
 // CallContext propagates its arguments to and from [SUT.rpcClient.CallContext].
 // Embedding both the [ethclient.Client] and the underlying [rpc.Client] isn't
 // possible due to a name conflict, so this method is manually exposed.
-func (s *SUT) CallContext(ctx context.Context, result any, method string, args ...any) error {
+func (s *SUT) CallContext(ctx context.Context, result any, method string, args ...any) error { //nolint:staticcheck
 	return s.rpcClient.CallContext(ctx, result, method, args...)
 }
 
@@ -233,7 +233,7 @@ func (t *vmTime) set(n time.Time) {
 }
 
 func (t *vmTime) advance(d time.Duration) {
-	t.Time = t.Add(d)
+	t.Time = t.Time.Add(d)
 }
 
 // advanceToSettle advances the time such that the next call to [vmTime.now] is
@@ -302,7 +302,7 @@ func (s *SUT) context(tb testing.TB) context.Context {
 
 func (s *SUT) mustSendTx(tb testing.TB, tx *types.Transaction) {
 	tb.Helper()
-	require.NoErrorf(tb, s.SendTransaction(s.context(tb), tx), "%T.SendTransaction([%#x])", s.Client, tx.Hash())
+	require.NoErrorf(tb, s.Client.SendTransaction(s.context(tb), tx), "%T.SendTransaction([%#x])", s.Client, tx.Hash())
 }
 
 // addToMempool is a convenience wrapper around [SUT.mustSendTx] (per tx) and
@@ -489,7 +489,7 @@ func (s *SUT) assertBlockHashInvariants(ctx context.Context, t *testing.T) {
 			rpc.FinalizedBlockNumber:            b.LastSettled().Hash(), // Because we maintain label monotonicity
 		} {
 			t.Run(num.String(), func(t *testing.T) {
-				got, err := s.HeaderByNumber(ctx, big.NewInt(num.Int64()))
+				got, err := s.Client.HeaderByNumber(ctx, big.NewInt(num.Int64()))
 				require.NoErrorf(t, err, "%T.HeaderByNumber(%v)", s.Client, num)
 				assert.Equalf(t, want, got.Hash(), "%T.HeaderByNumber(%v).Hash()", s.Client, num)
 			})
