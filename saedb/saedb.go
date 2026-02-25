@@ -75,11 +75,10 @@ func NewStateRecorder(db ethdb.Database, c *triedb.Config, lastExecuted common.H
 			log.Error("Dereferencing old root from memory", zap.Stringer("root", root), zap.Error(err))
 		}
 	})
-	q.Push(lastExecuted)
-
 	if err != nil {
 		return nil, err
 	}
+	q.Push(lastExecuted)
 
 	snapConf := snapshot.Config{
 		CacheSize:  SnapshotCacheSizeMB,
