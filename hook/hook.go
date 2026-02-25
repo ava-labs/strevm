@@ -76,8 +76,9 @@ type BlockBuilder interface {
 	//
 	// The returned header MUST have [types.Header.ParentHash],
 	// [types.Header.Number] and [types.Header.Time] set appropriately.
-	// [types.Header.Root], [types.Header.GasLimit], and [types.Header.BaseFee]
-	// will be ignored and overwritten. Any other fields MAY be set as desired.
+	// [types.Header.Root], [types.Header.GasLimit], [types.Header.BaseFee], and
+	// [types.Header.GasUsed] will be ignored and overwritten. Any other fields
+	// MAY be set as desired.
 	//
 	// SAE always uses this method instead of directly constructing a header, to
 	// ensure any libevm header extras are properly populated.
