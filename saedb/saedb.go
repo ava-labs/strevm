@@ -96,25 +96,35 @@ func NewStateRecorder(db ethdb.Database, c *triedb.Config, lastExecuted common.H
 }
 
 // Close commits the most recent state to the database for shutdown.
-func (e *StateRecorder) Close() error {
-	if e.inMemory.Len() == 0 {
-		return nil
+func (e *StateRecorder) Close() (errs error) {
+	// Always release resources
+	defer func() {
+		e.snaps.Release()
+		if err := e.cache.TrieDB().Close(); err != nil {
+			errs = errors.Join(errs, fmt.Errorf("triedb.Database.Close(): %v", err))
+		}
+	}()
+
+	// If we have new state, attempt to commit changes to database for easier startup.
+	root, ok := e.inMemory.Index(e.inMemory.Len() - 1)
+	if !ok {
+		return nil // buffer empty
 	}
 
-	root, _ := e.inMemory.Index(e.inMemory.Len() - 1)
 	// We don't use [snapshot.Tree.Journal] because re-orgs are impossible under
 	// SAE so we don't mind flattening all snapshot layers to disk. Note that
 	// calling `Cap([disk root], 0)` returns an error when it's actually a
-	// no-op, so we ignore it.
+	// no-op, so we ensure there are changes.
 	if root != e.snaps.DiskRoot() {
 		if err := e.snaps.Cap(root, 0); err != nil {
-			return fmt.Errorf("snapshot.Tree.Cap([last post-execution state root], 0): %v", err)
+			errs = errors.Join(errs, fmt.Errorf("snapshot.Tree.Cap([last post-execution state root], 0): %v", err))
 		}
 	}
-	e.snaps.Release()
 
-	err := e.cache.TrieDB().Commit(root, true /* log */)
-	return errors.Join(err, e.cache.TrieDB().Close())
+	if err := e.cache.TrieDB().Commit(root, true /* log */); err != nil {
+		errs = errors.Join(errs, fmt.Errorf("triedb.Database.Commit() for %#x: %v", root, err))
+	}
+	return errs
 }
 
 // StateCache returns caching database underpinning execution.
@@ -141,6 +151,8 @@ func (e *StateRecorder) StateDB(root common.Hash) (*state.StateDB, error) {
 
 // Record tracks the root and may commit the trie associated with the root
 // to the database if the height is on an multiple of [CommitTrieDBEvery].
+//
+// Note: Snapshot memory leaks are avoided internally by [state.StateDB.Commit].
 func (e *StateRecorder) Record(root common.Hash, height uint64) error {
 	// Push root if unique - don't want to remove an in-use state!
 	next, ok := e.inMemory.Index(e.inMemory.Len() - 1)
