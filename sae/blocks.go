@@ -241,24 +241,26 @@ func (vm *VM) buildBlock(
 		included = append(included, tx)
 	}
 
-	hdr.GasUsed = state.GasUsed()
-
 	var receipts types.Receipts
 	settling := blocks.Range(parent.LastSettled(), lastSettled)
 	for _, b := range settling {
 		receipts = append(receipts, b.Receipts()...)
 	}
 
-	// Apply end-of-block ops, mirroring the historical block loop above.
-	// The preliminary block is needed because EndOfBlockOps requires a
-	// *types.Block. It MUST include the same settlement receipts as the final
-	// block, otherwise block-sensitive hooks can derive different ops here and
-	// during execution.
-	preBlk, err := builder.BuildBlock(hdr, included, receipts)
+	// BuildBlock populates hdr.GasUsed including end-of-block op gas.
+	ethB, err := builder.BuildBlock(
+		hdr,
+		included,
+		receipts,
+	)
 	if err != nil {
-		return nil, fmt.Errorf("building preliminary block for end-of-block ops: %v", err)
+		return nil, err
 	}
-	for i, op := range vm.hooks().EndOfBlockOps(preBlk) {
+
+	// Apply end-of-block ops to worst-case state, mirroring the historical
+	// block loop above. This must happen before FinishBlock so that the
+	// queue size and MinOpBurnerBalances include op gas.
+	for i, op := range vm.hooks().EndOfBlockOps(ethB) {
 		if err := state.Apply(op); err != nil {
 			log.Warn("Could not apply op during worst-case calculation",
 				zap.Int("op_index", i),
@@ -268,7 +270,6 @@ func (vm *VM) buildBlock(
 			return nil, fmt.Errorf("applying op at end of new block to worst-case state: %v", err)
 		}
 	}
-	hdr.GasUsed = state.GasUsed()
 
 	bounds, err := state.FinishBlock()
 	if err != nil {
@@ -276,15 +277,6 @@ func (vm *VM) buildBlock(
 			zap.Error(err),
 		)
 		return nil, fmt.Errorf("finishing worst-case state for new block: %v", err)
-	}
-
-	ethB, err := builder.BuildBlock(
-		hdr,
-		included,
-		receipts,
-	)
-	if err != nil {
-		return nil, err
 	}
 
 	b, err := vm.newBlock(ethB, parent, lastSettled)

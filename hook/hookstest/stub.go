@@ -61,17 +61,26 @@ func (s *Stub) BuildHeader(parent *types.Header) *types.Header {
 	return hdr
 }
 
-// BuildBlock calls [types.NewBlock] with its arguments.
-func (*Stub) BuildBlock(
+// BuildBlock populates [types.Header.GasUsed] with the sum of transaction gas
+// and [Stub.Ops] gas, then calls [types.NewBlock] with its arguments.
+func (s *Stub) BuildBlock(
 	header *types.Header,
 	txs []*types.Transaction,
 	receipts []*types.Receipt,
 ) (*types.Block, error) {
+	var gasUsed uint64
+	for _, tx := range txs {
+		gasUsed += tx.Gas()
+	}
+	for _, op := range s.Ops {
+		gasUsed += uint64(op.Gas)
+	}
+	header.GasUsed = gasUsed
 	return types.NewBlock(header, txs, nil, receipts, saetest.TrieHasher()), nil
 }
 
 // BlockRebuilderFrom returns a block builder that uses the provided block as a
-// source of time.
+// source of time and the parent stub's [Stub.Ops] for gas accounting.
 func (s *Stub) BlockRebuilderFrom(b *types.Block) hook.BlockBuilder {
 	return &Stub{
 		Now: func() time.Time {
@@ -80,6 +89,7 @@ func (s *Stub) BlockRebuilderFrom(b *types.Block) hook.BlockBuilder {
 				s.SubSecondBlockTime(b.Header()).Nanoseconds(),
 			)
 		},
+		Ops: s.Ops,
 	}
 }
 
