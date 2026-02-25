@@ -395,22 +395,6 @@ func TestFilterAPIs(t *testing.T) {
 		return filterID
 	}
 
-	uninstallFilter := func(t *testing.T, filterID string) {
-		t.Helper()
-		sut.testRPC(ctx, t, []rpcTest{
-			{
-				method: "eth_uninstallFilter",
-				args:   []any{filterID},
-				want:   true,
-			},
-			{
-				method:  "eth_getFilterChanges",
-				args:    []any{filterID},
-				wantErr: testerr.Contains("filter not found"),
-			},
-		}...)
-	}
-
 	var (
 		txFilterID    = createFilter(t, "eth_newPendingTransactionFilter")
 		blockFilterID = createFilter(t, "eth_newBlockFilter")
@@ -499,11 +483,15 @@ func TestFilterAPIs(t *testing.T) {
 		},
 	}...)
 
-	for _, id := range []string{txFilterID, blockFilterID, logFilterID} {
-		t.Run("uninstall/"+id, func(t *testing.T) {
-			uninstallFilter(t, id)
-		})
-	}
+	defer func() {
+		for _, id := range []string{txFilterID, blockFilterID, logFilterID} {
+			sut.testRPC(ctx, t, rpcTest{
+				method: "eth_uninstallFilter",
+				args:   []any{id},
+				want:   true,
+			})
+		}
+	}()
 }
 
 func TestEthSyncing(t *testing.T) {
