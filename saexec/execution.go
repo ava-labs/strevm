@@ -27,10 +27,14 @@ var errExecutorClosed = errors.New("saexec.Executor closed")
 // Enqueue pushes a new block to the FIFO queue. If [Executor.Close] is called
 // before [blocks.Block.Executed] returns true then there is no guarantee that
 // the block will be executed.
+//
+// A successful return of Enqueue guarantees that [Executor.RecentReceipt] will
+// block until the respective transaction has been executed.
 func (e *Executor) Enqueue(ctx context.Context, block *blocks.Block) error {
 	e.createReceiptBuffers(block)
 	select {
 	case e.queue <- block:
+		e.enqueueEvents.Send(block)
 		if n := len(e.queue); n == cap(e.queue) {
 			// If this happens then increase the channel's buffer size.
 			e.log.Warn(

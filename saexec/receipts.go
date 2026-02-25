@@ -12,6 +12,7 @@ import (
 
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core/types"
+	"github.com/ava-labs/libevm/libevm/ethapi"
 
 	"github.com/ava-labs/strevm/blocks"
 )
@@ -43,6 +44,19 @@ type Receipt struct {
 	*types.Receipt
 	Signer types.Signer
 	Tx     *types.Transaction
+}
+
+// MarshalForRPC returns [ethapi.MarshalReceipt] with all arguments sourced from
+// `r`.
+func (r *Receipt) MarshalForRPC() map[string]any {
+	return ethapi.MarshalReceipt(
+		r.Receipt,
+		r.BlockHash,
+		r.BlockNumber.Uint64(),
+		r.Signer,
+		r.Tx,
+		int(r.TransactionIndex), //nolint:gosec // Known to not overflow
+	)
 }
 
 // RecentReceipt returns the receipt for the specified [types.Transaction] hash,
