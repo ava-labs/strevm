@@ -915,7 +915,8 @@ func TestCloseRecoversHashDB(t *testing.T) {
 		// We expect to not find blocks older than [saedb.StateHistory]
 		for _, b := range chain.AllBlocks() {
 			sdb, err := e.StateDB(b.PostExecutionStateRoot())
-			if saedb.ShouldCommitTrieDB(b.NumberU64()) || b.NumberU64()+saedb.StateHistory > uint64(numBlocks) {
+			inMemory := b.NumberU64()+saedb.StateHistory > uint64(numBlocks) //nolint:gosec // positive plus positive
+			if saedb.ShouldCommitTrieDB(b.NumberU64()) || inMemory {
 				require.NoErrorf(t, err, "%T.StateDB() for block %d", e.StateRecorder, b.NumberU64())
 				require.NotNilf(t, sdb, "%T.StateDB() for block %d", e.StateRecorder, b.NumberU64())
 			} else {
