@@ -6,6 +6,7 @@ package sae
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"math/big"
 	"math/rand/v2"
@@ -37,6 +38,8 @@ import (
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/ethclient"
 	"github.com/ava-labs/libevm/ethdb"
+	"github.com/ava-labs/libevm/libevm"
+	libevmhookstest "github.com/ava-labs/libevm/libevm/hookstest"
 	"github.com/ava-labs/libevm/libevm/options"
 	"github.com/ava-labs/libevm/log"
 	"github.com/ava-labs/libevm/params"
@@ -575,6 +578,43 @@ func TestIntegration(t *testing.T) {
 		want := new(uint256.Int).Mul(transfer, uint256.NewInt(numTxs))
 		require.Equalf(t, want, got, "%T.GetBalance(...)", sdb)
 	})
+}
+
+// TestCanCreateContractSoftError verifies that a CanCreateContract rejection
+// results in a failed receipt, not a fatal execution error.
+func TestCanCreateContractSoftError(t *testing.T) {
+	errContractCreationBlocked := errors.New("contract creation blocked")
+	ctx, sut := newSUT(t, 1)
+
+	stub := &libevmhookstest.Stub{
+		CanCreateContractFn: func(_ *libevm.AddressContext, _ uint64, _ libevm.StateReader) (uint64, error) {
+			return 0, errContractCreationBlocked
+		},
+		MinimumGasConsumptionFn: hook.MinimumGasConsumption,
+	}
+	libevmExtras := stub.Register(t)
+	libevmExtras.ChainConfig.Set(sut.rawVM.exec.ChainConfig(), stub)
+
+	const gasLimit uint64 = 100_000
+	tx := sut.wallet.SetNonceAndSign(t, 0, &types.DynamicFeeTx{
+		To:        nil, // contract creation
+		Gas:       gasLimit,
+		GasFeeCap: big.NewInt(1),
+	})
+	sut.mustSendTx(t, tx)
+
+	b := sut.runConsensusLoop(t)
+	require.NoErrorf(t, b.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", b)
+	require.Lenf(t, b.Receipts(), 1, "%T.Receipts()", b)
+
+	r := b.Receipts()[0]
+	assert.Equalf(t, types.ReceiptStatusFailed, r.Status, "%T.Status (contract creation should fail)", r)
+	assert.Positivef(t, r.GasUsed, "%T.GasUsed > 0", r)
+
+	// Verify the sender's nonce was incremented despite the failure.
+	sdb := sut.stateAt(t, b.PostExecutionStateRoot())
+	senderAddr := sut.wallet.Addresses()[0]
+	assert.Equalf(t, uint64(1), sdb.GetNonce(senderAddr), "sender nonce incremented after failed contract creation")
 }
 
 func TestEmptyChainConfig(t *testing.T) {
