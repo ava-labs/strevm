@@ -340,10 +340,10 @@ func (*ethAPIBackend) ExtRPCEnabled() bool {
 	return true
 }
 
-// PendingBlockAndReceipts returns the pending block and associated receipts.
-// In SAE, the pending block is the most recently accepted block, but receipts
-// are only available after execution. Returning nil tells geth that this
-// backend does not support pending blocks. Returning a block with incorrect
+// PendingBlockAndReceipts returns a nil block and receipts. Returning nil tells
+// geth that this backend does not support pending blocks. In SAE, the pending
+// block is defined as the most recently accepted block, but receipts are only
+// available after execution. Returning a non-nil block with incorrect or empty
 // receipts could cause geth to encounter errors.
 func (*ethAPIBackend) PendingBlockAndReceipts() (*types.Block, types.Receipts) {
 	return nil, nil
