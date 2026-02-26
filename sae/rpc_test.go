@@ -1449,7 +1449,7 @@ func TestGasPriceAPIs(t *testing.T) {
 				b := sut.runConsensusLoop(t, sut.wallet.SetNonceAndSign(t, 0, &types.DynamicFeeTx{
 					To:        &zeroAddr,
 					Gas:       params.TxGas,
-					GasTipCap: big.NewInt(int64(tip)),
+					GasTipCap: new(big.Int).SetUint64(tip),
 					GasFeeCap: new(big.Int).SetUint64(math.MaxUint64),
 				}))
 				require.NoErrorf(t, b.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", b)
@@ -1554,7 +1554,7 @@ func TestFeeHistory(t *testing.T) {
 				b := sut.runConsensusLoop(t, sut.wallet.SetNonceAndSign(t, 0, &types.DynamicFeeTx{
 					To:        &zeroAddr,
 					Gas:       params.TxGas,
-					GasTipCap: big.NewInt(int64(tip)),
+					GasTipCap: new(big.Int).SetUint64(tip),
 					GasFeeCap: new(big.Int).SetUint64(math.MaxUint64),
 				}))
 				require.NoErrorf(t, b.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", b)
