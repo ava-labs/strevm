@@ -6,6 +6,7 @@ package saexec
 import (
 	"context"
 	"encoding/binary"
+	"fmt"
 	"math"
 	"math/big"
 	"math/rand/v2"
@@ -13,6 +14,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/arr4n/shed/testerr"
 	"github.com/ava-labs/avalanchego/utils/logging"
 	"github.com/ava-labs/avalanchego/vms/components/gas"
 	"github.com/ava-labs/libevm/common"
@@ -62,11 +64,14 @@ func TestMain(m *testing.M) {
 // SUT is the system under test, primarily the [Executor].
 type SUT struct {
 	*Executor
-	chain     *blockstest.ChainBuilder
-	wallet    *saetest.Wallet
-	logger    *saetest.TBLogger
-	db        ethdb.Database
-	closeOnce sync.Once
+	chain  *blockstest.ChainBuilder
+	wallet *saetest.Wallet
+	logger *saetest.TBLogger
+	db     ethdb.Database
+
+	// [closeOnce] ensures that [Executor.Close] is only called once, so tests can
+	// explicitly close the [Executor] without worrying about the cleanup calling it again.
+	closeOnce func() error
 }
 
 // newSUT returns a new SUT. Any >= [logging.Error] on the logger will also
@@ -96,25 +101,23 @@ func newSUT(tb testing.TB, hooks *saehookstest.Stub) (context.Context, *SUT) {
 	e, err := New(genesis, src.AsHeaderSource(), config, db, xdb, tdbConfig, hooks, logger)
 	require.NoError(tb, err, "New()")
 
-	sut := &SUT{
-		Executor: e,
-		chain:    chain,
-		wallet:   wallet,
-		logger:   logger,
-		db:       db,
-	}
+	closeOnce := sync.OnceValue(e.Close)
 	tb.Cleanup(func() {
-		require.NoErrorf(tb, sut.Close(), "%T.Close()", sut)
+		require.NoErrorf(tb, closeOnce(), "%T.Close()", e)
 	})
+	sut := &SUT{
+		Executor:  e,
+		chain:     chain,
+		wallet:    wallet,
+		logger:    logger,
+		db:        db,
+		closeOnce: closeOnce,
+	}
 	return ctx, sut
 }
 
 func (s *SUT) Close() error {
-	var err error
-	s.closeOnce.Do(func() {
-		err = s.Executor.Close()
-	})
-	return err
+	return s.closeOnce()
 }
 
 func defaultHooks() *saehookstest.Stub {
@@ -893,7 +896,7 @@ func TestCloseRecoversHashDB(t *testing.T) {
 	ctx, sut := newSUT(t, defaultHooks())
 	e, chain := sut.Executor, sut.chain
 
-	numBlocks := StateHistory + 10
+	numBlocks := uint64(saedb.CommitTrieDBEvery) + 10
 	for range numBlocks {
 		b := chain.NewBlock(t, types.Transactions{
 			sut.wallet.SetNonceAndSign(t, 0, &types.LegacyTx{
@@ -902,46 +905,60 @@ func TestCloseRecoversHashDB(t *testing.T) {
 				GasPrice: big.NewInt(1),
 			}),
 		})
-		require.NoError(t, e.Enqueue(ctx, b), "Enqueue()")
-		_ = b.WaitUntilExecuted(ctx)
-		t.Log(b.PostExecutionStateRoot())
+		require.NoError(t, e.Enqueue(ctx, b), "%T.Enqueue()", e)
 	}
 
 	final := chain.Last()
 	require.NoErrorf(t, final.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted() on last-enqueued block", final)
 
-	t.Run("remove in memory state", func(t *testing.T) {
-		// We expect to not find blocks older than [saedb.StateHistory]
+	checkStates := func(t *testing.T, e *Executor, expectReferenced func(height uint64) bool) {
+		t.Helper()
+
 		for _, b := range chain.AllBlocks() {
-			sdb, err := e.StateDB(b.PostExecutionStateRoot())
-			inMemory := b.NumberU64()+StateHistory > uint64(numBlocks) //nolint:gosec // positive plus positive
-			if saedb.ShouldCommitTrieDB(b.NumberU64()) || inMemory {
-				require.NoErrorf(t, err, "%T.StateDB() for block %d", e.stateRecorder, b.NumberU64())
-				require.NotNilf(t, sdb, "%T.StateDB() for block %d", e.stateRecorder, b.NumberU64())
-			} else {
-				require.IsTypef(t, &trie.MissingNodeError{}, err, "%T.StateDB() should not find block %d", e.stateRecorder, b.NumberU64())
+			root := b.PostExecutionStateRoot()
+
+			var want testerr.Want
+			switch {
+			case saedb.ShouldCommitTrieDB(b.NumberU64()):
+				// on disk
+			case expectReferenced(b.NumberU64()):
+				// still referenced
+			default:
+				// don't expect the state to be available
+				want = testerr.As(func(got *trie.MissingNodeError) string {
+					if got.NodeHash != root {
+						return fmt.Sprintf("%T for hash %#x", got, root)
+					}
+					return ""
+				})
+			}
+
+			_, err := e.StateDB(root)
+			if diff := testerr.Diff(err, want); diff != "" {
+				t.Errorf("%T.StateDB([post-exeuction root of block %d]) %s", e, b.NumberU64(), diff)
 			}
 		}
+	}
+
+	t.Run("remove in memory state", func(t *testing.T) {
+		checkStates(t, e, func(height uint64) bool {
+			return height > numBlocks-StateHistory
+		})
 	})
+
+	require.NoErrorf(t, sut.Close(), "%T.Close()", e)
 
 	t.Run("recover", func(t *testing.T) {
 		// Restart the chain to remove the TrieDB cache.
-		require.NoErrorf(t, sut.Close(), "%T.Close()", e)
 		src := blocks.Source(chain.GetBlock)
-		e, err := New(final, src.AsHeaderSource(), sut.chainConfig, sut.db, sut.xdb, &triedb.Config{}, defaultHooks(), sut.log) // TODO: share parameters better
+		e, err := New(final, src.AsHeaderSource(), sut.chainConfig, sut.db, sut.xdb, &triedb.Config{}, defaultHooks(), sut.log)
 		require.NoError(t, err, "New()")
 		t.Cleanup(func() {
 			require.NoErrorf(t, e.Close(), "%T.Close()", e)
 		})
 
-		for _, b := range chain.AllBlocks() {
-			sdb, err := e.StateDB(b.PostExecutionStateRoot())
-			if saedb.ShouldCommitTrieDB(b.NumberU64()) || b == final {
-				require.NoErrorf(t, err, "%T.StateDB() for block %d", e.stateRecorder, b.NumberU64())
-				require.NotNilf(t, sdb, "%T.StateDB() for block %d", e.stateRecorder, b.NumberU64())
-			} else {
-				require.IsTypef(t, &trie.MissingNodeError{}, err, "%T.StateDB() should not find block %d", e.stateRecorder, b.NumberU64())
-			}
-		}
+		checkStates(t, e, func(height uint64) bool {
+			return height == final.NumberU64()
+		})
 	})
 }
