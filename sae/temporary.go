@@ -12,11 +12,6 @@ import (
 	"math/big"
 
 	"github.com/ava-labs/libevm/common"
-	"github.com/ava-labs/libevm/core"
-	"github.com/ava-labs/libevm/core/state"
-	"github.com/ava-labs/libevm/core/types"
-	"github.com/ava-labs/libevm/core/vm"
-	"github.com/ava-labs/libevm/eth/tracers"
 	"github.com/ava-labs/libevm/rpc"
 )
 
@@ -31,9 +26,5 @@ func (b *ethAPIBackend) FeeHistory(context.Context, uint64, rpc.BlockNumber, []f
 }
 
 func (b *ethAPIBackend) GetPoolNonce(context.Context, common.Address) (uint64, error) {
-	panic(errUnimplemented)
-}
-
-func (b *ethAPIBackend) StateAtTransaction(ctx context.Context, block *types.Block, txIndex int, reexec uint64) (*core.Message, vm.BlockContext, *state.StateDB, tracers.StateReleaseFunc, error) {
 	panic(errUnimplemented)
 }
