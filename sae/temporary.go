@@ -30,8 +30,8 @@ func (b *ethAPIBackend) FeeHistory(context.Context, uint64, rpc.BlockNumber, []f
 	panic(errUnimplemented)
 }
 
-func (b *ethAPIBackend) GetPoolNonce(context.Context, common.Address) (uint64, error) {
-	panic(errUnimplemented)
+func (b *ethAPIBackend) GetPoolNonce(ctx context.Context, addr common.Address) (uint64, error) {
+	return b.Pool.Nonce(addr), nil
 }
 
 func (b *ethAPIBackend) StateAtBlock(ctx context.Context, block *types.Block, reexec uint64, base *state.StateDB, readOnly bool, preferDisk bool) (*state.StateDB, tracers.StateReleaseFunc, error) {
