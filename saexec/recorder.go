@@ -15,6 +15,7 @@ import (
 	"github.com/ava-labs/libevm/ethdb"
 	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/triedb"
+	"github.com/ava-labs/libevm/triedb/hashdb"
 	"go.uber.org/zap"
 
 	"github.com/ava-labs/strevm/blocks"
@@ -24,11 +25,36 @@ import (
 )
 
 const (
-	// SnapshotCacheSizeMB is the snapshot cache size used by the executor.
-	SnapshotCacheSizeMB = 128
-	// StateHistory is the number of recent states available in memory.
-	StateHistory = 32
+	// DefaultSnapshotCacheSizeMB is the snapshot cache size used by the executor.
+	DefaultSnapshotCacheSizeMB = 128
+	// DefaultStateHistory is the number of recent states available in memory.
+	DefaultStateHistory = 32
 )
+
+// Config is the minimal configurable parameters allowed for EVM state.
+type Config struct {
+	Archival             bool // whether to commit every root or not. Default: false
+	StateHistory         int  // Number of recent states to keep. Default: [DefaultStateHistory]
+	SnapshotCacheSizeMB  int  // Default: [DefaultSnapshotCacheSizeMB]
+	TrieDBCacheSizeBytes int  // Default: No cache
+}
+
+// TrieDBConfig returns a config that can be used to create a [triedb.Database] based on
+// the [Config] parameters provided.
+//
+// TODO(alarso16): This will need reworked to create a Firewood node, since there
+// cannot be multiple accessors of the same database and needs a path.
+func (c Config) TrieDBConfig() *triedb.Config {
+	if c.TrieDBCacheSizeBytes <= 0 {
+		return triedb.HashDefaults
+	}
+
+	return &triedb.Config{
+		HashDB: &hashdb.Config{
+			CleanCacheSize: c.TrieDBCacheSizeBytes,
+		},
+	}
+}
 
 // stateRecorder provides an abstraction to all state-related operations of the executor.
 // It manages all database operations not exposed by the [state.StateDB] itself.
@@ -36,12 +62,21 @@ type stateRecorder struct {
 	snaps           *snapshot.Tree
 	cache           state.Database
 	referencedRoots buffer.Queue[common.Hash]
+	archival        bool
 }
 
-// TODO(alarso16): Provide a custom config to generate the [triedb.Config].
-func newStateRecorder(db ethdb.Database, c *triedb.Config, lastExecuted common.Hash, log logging.Logger) (*stateRecorder, error) {
-	cache := state.NewDatabaseWithConfig(db, c)
-	q, err := buffer.NewBoundedQueue(StateHistory, func(root common.Hash) {
+func newStateRecorder(db ethdb.Database, c Config, lastExecuted common.Hash, log logging.Logger) (*stateRecorder, error) {
+	stateHistory := c.StateHistory
+	if c.StateHistory <= 0 {
+		stateHistory = DefaultStateHistory
+	}
+	snapshotCache := c.SnapshotCacheSizeMB
+	if c.SnapshotCacheSizeMB <= 0 {
+		snapshotCache = DefaultSnapshotCacheSizeMB
+	}
+
+	cache := state.NewDatabaseWithConfig(db, c.TrieDBConfig())
+	q, err := buffer.NewBoundedQueue(stateHistory, func(root common.Hash) {
 		// Error only occurs if it is not a the [triedb.Backend] is not a [triedb.HashDB]
 		if err := cache.TrieDB().Dereference(root); err != nil {
 			log.Error("(*triedb.Database).Dereference()", zap.Stringer("root", root), zap.Error(err))
@@ -50,10 +85,12 @@ func newStateRecorder(db ethdb.Database, c *triedb.Config, lastExecuted common.H
 	if err != nil {
 		return nil, err
 	}
-	q.Push(lastExecuted)
+	if !c.Archival {
+		q.Push(lastExecuted)
+	}
 
 	snapConf := snapshot.Config{
-		CacheSize:  SnapshotCacheSizeMB,
+		CacheSize:  snapshotCache,
 		AsyncBuild: true,
 	}
 	snaps, err := snapshot.New(snapConf, db, cache.TrieDB(), lastExecuted)
@@ -64,6 +101,7 @@ func newStateRecorder(db ethdb.Database, c *triedb.Config, lastExecuted common.H
 		snaps:           snaps,
 		cache:           cache,
 		referencedRoots: q,
+		archival:        c.Archival,
 	}, nil
 }
 
@@ -76,11 +114,11 @@ func (s *stateRecorder) record(root common.Hash, height uint64) error {
 	// Because nonces are incremented sequentially, we know that if this root
 	// already is tracked, then it must be the most recent one.
 	// In this case, we don't need to push it again or dereference any old root.
-	if last, ok := s.referencedRoots.Index(s.referencedRoots.Len() - 1); !ok || last != root {
+	if last, ok := s.referencedRoots.Index(s.referencedRoots.Len() - 1); ok && last != root {
 		s.referencedRoots.Push(root)
 	}
 
-	if !saedb.ShouldCommitTrieDB(height) {
+	if !saedb.ShouldCommitTrieDB(height) && !s.archival {
 		return nil
 	}
 

@@ -50,7 +50,7 @@ func (vm *SinceGenesis) Initialize(
 	appSender snowcommon.AppSender,
 ) error {
 	db := newEthDB(avaDB)
-	tdb := triedb.NewDatabase(db, vm.config.TrieDBConfig)
+	tdb := triedb.NewDatabase(db, vm.config.StateConfig.TrieDBConfig())
 
 	genesis := new(core.Genesis)
 	if err := json.Unmarshal(genesisBytes, genesis); err != nil {

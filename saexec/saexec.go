@@ -18,7 +18,6 @@ import (
 	"github.com/ava-labs/libevm/ethdb"
 	"github.com/ava-labs/libevm/event"
 	"github.com/ava-labs/libevm/params"
-	"github.com/ava-labs/libevm/triedb"
 
 	"github.com/ava-labs/strevm/blocks"
 	"github.com/ava-labs/strevm/hook"
@@ -58,11 +57,11 @@ func New(
 	chainConfig *params.ChainConfig,
 	db ethdb.Database,
 	xdb saedb.ExecutionResults,
-	triedbConfig *triedb.Config,
+	stateConfig Config,
 	hooks hook.Points,
 	log logging.Logger,
 ) (*Executor, error) {
-	s, err := newStateRecorder(db, triedbConfig, lastExecuted.PostExecutionStateRoot(), log)
+	s, err := newStateRecorder(db, stateConfig, lastExecuted.PostExecutionStateRoot(), log)
 	if err != nil {
 		return nil, err
 	}
