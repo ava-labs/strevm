@@ -64,6 +64,8 @@ func (b *blockBuilder) Rebuild(
 	parent *blocks.Block,
 	block *blocks.Block,
 ) (*blocks.Block, error) {
+	// Moving sender caching into [VM.ParseBlock] is not robust as there is
+	// insufficient spam protection, so it must be done here.
 	signer := b.exec.SignerForBlock(block)
 	core.SenderCacher.Recover(signer, block.Transactions()) // asynchronous
 
