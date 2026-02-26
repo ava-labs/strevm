@@ -298,20 +298,27 @@ func NewVM(
 		bloomIdx := newBloomIndexer(vm.db, chainIdx, override, cfg.RPCConfig.BlocksPerBloomSection)
 		vm.toClose = append(vm.toClose, bloomIdx.Close)
 
-		vm.apiBackend = &ethAPIBackend{
-			vm:             vm,
-			accountManager: accountManager,
-			Set:            vm.mempool,
-			chainIndexer:   chainIdx,
-			bloomIndexer:   bloomIdx,
-			bloomOverrider: override,
+		estimatorBackend := &estimatorBackend{
+			chainIndexer: chainIdx,
+			db:           vm.db,
+			lastAccepted: &vm.last.accepted,
+			lastSettled:  &vm.last.settled,
 		}
-
-		estimator := gasprice.NewEstimator(vm.apiBackend, gasprice.Config{
-			Log: snowCtx.Log,
-		})
+		estimator, err := gasprice.NewEstimator(estimatorBackend, snowCtx.Log, gasprice.DefaultConfig())
+		if err != nil {
+			return nil, fmt.Errorf("gasprice.NewEstimator(...): %v", err)
+		}
 		vm.toClose = append(vm.toClose, estimator.Close)
-		vm.apiBackend.estimator = estimator
+
+		vm.apiBackend = &ethAPIBackend{
+			vm:               vm,
+			accountManager:   accountManager,
+			Set:              vm.mempool,
+			Estimator:        estimator,
+			bloomIndexer:     bloomIdx,
+			bloomOverrider:   override,
+			estimatorBackend: estimatorBackend,
+		}
 	}
 
 	return vm, nil

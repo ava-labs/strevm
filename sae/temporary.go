@@ -16,7 +16,6 @@ import (
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/core/vm"
 	"github.com/ava-labs/libevm/eth/tracers"
-	"github.com/ava-labs/libevm/rpc"
 )
 
 var errUnimplemented = errors.New("unimplemented")
