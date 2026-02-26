@@ -82,7 +82,7 @@ func TestStateTracing(t *testing.T) {
 		for i, tr := range got {
 			assert.Equalf(t, block.Transactions()[i].Hash(), tr.TxHash, "txHash[%d]", i)
 			require.NotNilf(t, tr.Result, "trace result[%d]", i)
-			assert.Greaterf(t, tr.Result.Gas, uint64(0), "gas[%d]", i)
+			assert.Positivef(t, tr.Result.Gas, "gas[%d]", i)
 			assert.Falsef(t, tr.Result.Failed, "failed[%d]", i)
 		}
 	}
@@ -153,7 +153,7 @@ func TestStateTracing(t *testing.T) {
 					var got traceResult
 					err := sut.CallContext(ctx, &got, "debug_traceTransaction", tx.Hash())
 					require.NoError(t, err)
-					assert.Greater(t, got.Gas, uint64(0), "gas")
+					assert.Positive(t, got.Gas, "gas")
 					assert.False(t, got.Failed, "failed")
 				})
 			}
