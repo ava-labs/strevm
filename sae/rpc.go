@@ -10,6 +10,7 @@ import (
 	"math/big"
 	"strconv"
 	"sync"
+	"sync/atomic"
 
 	"github.com/ava-labs/avalanchego/network/p2p"
 	"github.com/ava-labs/avalanchego/version"
@@ -84,6 +85,9 @@ func (vm *VM) ethRPCServer() (*rpc.Server, error) {
 		// - txpool_status
 		{"txpool", ethapi.NewTxPoolAPI(b)},
 		// Standard Ethereum node APIs:
+		// - eth_gasPrice
+		// - eth_maxPriorityFeePerGas
+		// - eth_feeHistory
 		// - eth_syncing
 		{"eth", ethapi.NewEthereumAPI(b)},
 		// Standard Ethereum node APIs:
@@ -308,14 +312,56 @@ func (b bloomOverrider) OverrideHeaderBloom(header *types.Header) types.Bloom {
 	))
 }
 
+// estimatorBackend implements the subset of [ethapi.Backend] required to back a
+// [gasprice.Backend].
+type estimatorBackend struct {
+	chainIndexer
+	db           ethdb.Database
+	lastAccepted *atomic.Pointer[blocks.Block]
+	lastSettled  *atomic.Pointer[blocks.Block]
+}
+
+var _ gasprice.Backend = (*estimatorBackend)(nil)
+
+func (e *estimatorBackend) ResolveBlockNumber(bn rpc.BlockNumber) (uint64, error) {
+	head := e.lastAccepted.Load().Height()
+
+	switch bn {
+	case rpc.PendingBlockNumber:
+		return head, nil
+	case rpc.LatestBlockNumber:
+		return e.exec.LastExecuted().Height(), nil
+	case rpc.SafeBlockNumber, rpc.FinalizedBlockNumber:
+		return e.lastSettled.Load().Height(), nil
+	}
+
+	if bn < 0 {
+		return 0, fmt.Errorf("%s block unsupported", bn.String())
+	}
+	n := uint64(bn) //nolint:gosec // Non-negative check performed above
+	if n > head {
+		return 0, fmt.Errorf("%w: block %d", errFutureBlockNotResolved, n)
+	}
+	return n, nil
+}
+
+func (e *estimatorBackend) BlockByNumber(_ context.Context, n rpc.BlockNumber) (*types.Block, error) {
+	return readByNumber(e, e.db, n, neverErrs(rawdb.ReadBlock))
+}
+
+func (b *estimatorBackend) LastAcceptedBlock() *blocks.Block {
+	return b.lastAccepted.Load()
+}
+
 type ethAPIBackend struct {
 	vm             *VM
 	accountManager *accounts.Manager
+	*gasprice.Estimator
 
 	*txgossip.Set
-	chainIndexer
 	bloomOverrider
 	*bloomIndexer
+	*estimatorBackend
 }
 
 var _ APIBackend = (*ethAPIBackend)(nil)
@@ -354,11 +400,7 @@ func (b *ethAPIBackend) SyncProgress() ethereum.SyncProgress {
 }
 
 func (b *ethAPIBackend) HeaderByNumber(ctx context.Context, n rpc.BlockNumber) (*types.Header, error) {
-	return readByNumber(b, n, neverErrs(rawdb.ReadHeader))
-}
-
-func (b *ethAPIBackend) BlockByNumber(ctx context.Context, n rpc.BlockNumber) (*types.Block, error) {
-	return readByNumber(b, n, neverErrs(rawdb.ReadBlock))
+	return readByNumber(b, b.vm.db, n, neverErrs(rawdb.ReadHeader))
 }
 
 func (b *ethAPIBackend) HeaderByHash(ctx context.Context, hash common.Hash) (*types.Header, error) {
@@ -443,14 +485,18 @@ func neverErrs[T any](fn func(ethdb.Reader, common.Hash, uint64) *T) canonicalRe
 	}
 }
 
-func readByNumber[T any](b *ethAPIBackend, n rpc.BlockNumber, read canonicalReaderWithErr[T]) (*T, error) {
-	num, err := b.ResolveBlockNumber(n)
+type numberResolver interface {
+	ResolveBlockNumber(rpc.BlockNumber) (uint64, error)
+}
+
+func readByNumber[T any](r numberResolver, db ethdb.Database, n rpc.BlockNumber, read canonicalReaderWithErr[T]) (*T, error) {
+	num, err := r.ResolveBlockNumber(n)
 	if errors.Is(err, errFutureBlockNotResolved) {
 		return nil, nil
 	} else if err != nil {
 		return nil, err
 	}
-	return read(b.vm.db, rawdb.ReadCanonicalHash(b.vm.db, num), num)
+	return read(db, rawdb.ReadCanonicalHash(db, num), num)
 }
 
 // readByHash returns `fromMem(b)` if a block with the specified hash is in the
@@ -505,7 +551,7 @@ func (b *ethAPIBackend) resolveBlockNumberOrHash(numOrHash rpc.BlockNumberOrHash
 			return 0, common.Hash{}, err
 		}
 
-		hash := rawdb.ReadCanonicalHash(b.db, num)
+		hash := rawdb.ReadCanonicalHash(b.vm.db, num)
 		if hash == (common.Hash{}) {
 			return 0, common.Hash{}, fmt.Errorf("block %d not found", num)
 		}
@@ -514,13 +560,13 @@ func (b *ethAPIBackend) resolveBlockNumberOrHash(numOrHash rpc.BlockNumberOrHash
 	case isHash:
 		if bl, ok := b.vm.blocks.Load(hash); ok {
 			n := bl.NumberU64()
-			if numOrHash.RequireCanonical && hash != rawdb.ReadCanonicalHash(b.db, n) {
+			if numOrHash.RequireCanonical && hash != rawdb.ReadCanonicalHash(b.vm.db, n) {
 				return 0, common.Hash{}, errNonCanonicalBlock
 			}
 			return n, hash, nil
 		}
 
-		numPtr := rawdb.ReadHeaderNumber(b.db, hash)
+		numPtr := rawdb.ReadHeaderNumber(b.vm.db, hash)
 		if numPtr == nil {
 			return 0, common.Hash{}, fmt.Errorf("block %#x not found", hash)
 		}
@@ -577,10 +623,6 @@ func (b *ethAPIBackend) SubscribeChainEvent(ch chan<- core.ChainEvent) event.Sub
 func (b *ethAPIBackend) SubscribeChainSideEvent(chan<- core.ChainSideEvent) event.Subscription {
 	// SAE never reorgs, so there are no side events.
 	return newNoopSubscription()
-}
-
-func (b *ethAPIBackend) LastAcceptedBlock() *blocks.Block {
-	return b.vm.last.accepted.Load()
 }
 
 func (b *ethAPIBackend) SubscribeNewTxsEvent(ch chan<- core.NewTxsEvent) event.Subscription {
