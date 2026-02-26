@@ -8,12 +8,13 @@ import (
 	"testing"
 
 	"github.com/ava-labs/avalanchego/version"
+	"github.com/ava-labs/strevm/hook/hookstest"
 	"github.com/stretchr/testify/require"
 )
 
 func TestSinceGenesisBeforeInit(t *testing.T) {
 	ctx := t.Context()
-	sut := NewSinceGenesis(Config{})
+	sut := NewSinceGenesis(&hookstest.Stub{}, Config{})
 	t.Run(fmt.Sprintf("%T.Version", sut), func(t *testing.T) {
 		got, err := sut.Version(ctx)
 		require.NoError(t, err)
