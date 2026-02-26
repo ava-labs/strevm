@@ -969,10 +969,10 @@ func (c *AccountDebit) MarshalCanotoInto(w canoto.Writer) canoto.Writer {
 
 const (
 	canoto__AccountCredit__Address = 1
-	canoto__AccountCredit__Amount  = 3
+	canoto__AccountCredit__Amount  = 2
 
 	canoto__AccountCredit__Address__tag = "\x0a" // canoto.Tag(canoto__AccountCredit__Address, canoto.Len)
-	canoto__AccountCredit__Amount__tag  = "\x1a" // canoto.Tag(canoto__AccountCredit__Amount, canoto.Len)
+	canoto__AccountCredit__Amount__tag  = "\x12" // canoto.Tag(canoto__AccountCredit__Amount, canoto.Len)
 )
 
 type canotoData_AccountCredit struct {
