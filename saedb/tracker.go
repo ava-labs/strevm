@@ -14,20 +14,56 @@ import (
 	"github.com/ava-labs/libevm/ethdb"
 	"github.com/ava-labs/libevm/log"
 	"github.com/ava-labs/libevm/triedb"
+	"github.com/ava-labs/libevm/triedb/hashdb"
 	"go.uber.org/zap"
+)
+
+const (
+	// DefaultSnapshotCacheSizeMB is the snapshot cache size used by the executor.
+	DefaultSnapshotCacheSizeMB = 128
+	// DefaultTrieDBCacheSizeMB is the default cache size for trie nodes.
+	DefaultTrieDBCacheSizeMB = 512
 )
 
 // Config allows parameterization of the TrieDB and when
 // state is committed.
 type Config struct {
-	// TODO(alarso16): move minimal elements to config and construct in method.
-	TrieDBConfig *triedb.Config
-	Archival     bool // if true, will store every state on disk
+	Archival             bool // whether to store every state on disk
+	SnapshotCacheSizeMB  int  // Default: [DefaultSnapshotCacheSizeMB]. Set < 0 to disable snapshot.
+	TrieDBCacheSizeBytes int  // Default: [DefaultTrieDBCacheSizeMB]. Set < 0 to disable cache.
 }
 
-// SnapshotCacheSizeMB is the snapshot cache size used by a [Tracker].
-// TODO(alarso16): move to config
-const SnapshotCacheSizeMB = 128
+// TrieDBConfig returns a config that can be used to create a [triedb.Database] based on
+// the [Config] parameters provided.
+//
+// All [triedb.Database] must be closed, unless the TrieDB cache is disabled, as this can
+// result in a memory leak.
+func (c Config) TrieDBConfig() *triedb.Config {
+	if c.TrieDBCacheSizeBytes <= 0 {
+		return triedb.HashDefaults
+	}
+
+	return &triedb.Config{
+		HashDB: &hashdb.Config{
+			CleanCacheSize: c.TrieDBCacheSizeBytes,
+		},
+	}
+}
+
+func (c Config) snapConfig() *snapshot.Config {
+	size := DefaultSnapshotCacheSizeMB
+	switch {
+	case c.SnapshotCacheSizeMB < 0:
+		return nil
+	case c.SnapshotCacheSizeMB > 0:
+		size = c.SnapshotCacheSizeMB
+	}
+
+	return &snapshot.Config{
+		CacheSize:  size,
+		AsyncBuild: true,
+	}
+}
 
 var _ StateDBOpener = (*Tracker)(nil)
 
@@ -39,7 +75,6 @@ var _ StateDBOpener = (*Tracker)(nil)
 type Tracker struct {
 	snaps       *snapshot.Tree
 	cache       state.Database
-	isHashDB    bool
 	isArchival  bool
 	log         logging.Logger
 	currentRoot common.Hash
@@ -47,21 +82,23 @@ type Tracker struct {
 
 // NewTracker provides a new [Tracker] on the underlying database.
 func NewTracker(db ethdb.Database, c Config, lastExecuted common.Hash, log logging.Logger) (*Tracker, error) {
-	cache := state.NewDatabaseWithConfig(db, c.TrieDBConfig)
+	cache := state.NewDatabaseWithConfig(db, c.TrieDBConfig())
 	_, isHashDB := cache.TrieDB().Backend().(triedb.HashDB)
-	snapConf := snapshot.Config{
-		CacheSize:  SnapshotCacheSizeMB,
-		AsyncBuild: true,
+	if !isHashDB {
+		return nil, fmt.Errorf("unsupported DB: %T", cache.TrieDB().Backend())
 	}
-	snaps, err := snapshot.New(snapConf, db, cache.TrieDB(), lastExecuted)
-	if err != nil {
-		return nil, err
+	var snaps *snapshot.Tree
+	if snapConf := c.snapConfig(); snapConf != nil {
+		var err error
+		snaps, err = snapshot.New(*snapConf, db, cache.TrieDB(), lastExecuted)
+		if err != nil {
+			return nil, err
+		}
 	}
 	return &Tracker{
 		snaps:       snaps,
 		cache:       cache,
 		currentRoot: lastExecuted,
-		isHashDB:    isHashDB,
 		isArchival:  c.Archival,
 		log:         log,
 	}, nil
@@ -81,11 +118,7 @@ func (t *Tracker) Track(root common.Hash) {
 }
 
 func (t *Tracker) reference(root common.Hash) {
-	if !t.isHashDB {
-		return
-	}
-
-	// Never returns an error because of the above check.
+	// Never returns an error because it's [triedb.HashDB].
 	if err := t.cache.TrieDB().Reference(root, common.Hash{}); err != nil {
 		log.Error("*triedb.Database.Reference()", zap.Error(err))
 	}
@@ -125,11 +158,7 @@ func (t *Tracker) CheckCommit(settledRoot, executionRoot common.Hash, height uin
 // This should be called on each block after its state is no longer
 // needed. If the state is already on disk, no operation is performed.
 func (t *Tracker) Untrack(root common.Hash) {
-	if !t.isHashDB {
-		return
-	}
-
-	// Never returns an error because of the above check.
+	// Never returns an error because it's [triedb.HashDB].
 	if err := t.cache.TrieDB().Dereference(root); err != nil {
 		log.Error("*triedb.Database.Dereference()", zap.Error(err))
 	}
@@ -148,12 +177,22 @@ func (t *Tracker) StateDB(root common.Hash) (*state.StateDB, error) {
 // Close commits the most recent state to the database for shutdown.
 func (t *Tracker) Close() (errs error) {
 	defer func() {
-		t.snaps.Release()
 		if err := t.cache.TrieDB().Close(); err != nil {
 			errs = errors.Join(errs, fmt.Errorf("triedb.Database.Close(): %v", err))
 		}
 	}()
 
+	// If we have new state, commit changes to database for easier startup.
+	// If there's no changes, this is a no-op.
+	if err := t.cache.TrieDB().Commit(t.currentRoot, true /* log */); err != nil {
+		errs = errors.Join(errs, fmt.Errorf("triedb.Database.Commit() for %#x: %v", t.currentRoot, err))
+	}
+
+	if t.snaps == nil {
+		return errs
+	}
+
+	defer t.snaps.Release()
 	// We don't use [snapshot.Tree.Journal] because re-orgs are impossible under
 	// SAE so we don't mind flattening all snapshot layers to disk. Note that
 	// calling `Cap([disk root], 0)` returns an error when it's actually a
@@ -164,10 +203,5 @@ func (t *Tracker) Close() (errs error) {
 		}
 	}
 
-	// If we have new state, commit changes to database for easier startup.
-	// If there's no changes, this is a no-op.
-	if err := t.cache.TrieDB().Commit(t.currentRoot, true /* log */); err != nil {
-		errs = errors.Join(errs, fmt.Errorf("triedb.Database.Commit() for %#x: %v", t.currentRoot, err))
-	}
 	return errs
 }
