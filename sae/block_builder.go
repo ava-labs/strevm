@@ -45,7 +45,7 @@ type blockBuilder interface {
 		ctx context.Context,
 		bCtx *block.Context,
 		parent *blocks.Block,
-		block *types.Block,
+		block *blocks.Block,
 	) (*blocks.Block, error)
 }
 
@@ -75,7 +75,7 @@ func (b *blockBuilderG[_]) Rebuild(
 	ctx context.Context,
 	bCtx *block.Context,
 	parent *blocks.Block,
-	block *types.Block,
+	block *blocks.Block,
 ) (*blocks.Block, error) {
 	signer := b.exec.SignerForBlock(block)
 	txs := block.Transactions()
@@ -114,7 +114,7 @@ func (b *blockBuilderG[_]) Rebuild(
 		bCtx,
 		parent,
 		func(f txpool.PendingFilter) []*txgossip.LazyTransaction { return lazyTxs },
-		b.hooks.BlockRebuilderFrom(block),
+		b.hooks.BlockRebuilderFrom(block.EthBlock()),
 	)
 }
 

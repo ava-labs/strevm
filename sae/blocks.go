@@ -85,7 +85,7 @@ func (vm *VM) VerifyBlock(ctx context.Context, bCtx *block.Context, b *blocks.Bl
 		return fmt.Errorf("%w at height %d <= last-accepted (%d)", errBlockHeightTooLow, height, accepted)
 	}
 
-	rebuilt, err := vm.blockBuilder.Rebuild(ctx, bCtx, parent, b.EthBlock())
+	rebuilt, err := vm.blockBuilder.Rebuild(ctx, bCtx, parent, b)
 	if err != nil {
 		return err
 	}

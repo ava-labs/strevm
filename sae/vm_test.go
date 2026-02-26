@@ -6,6 +6,7 @@ package sae
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"math/big"
 	"math/rand/v2"
@@ -37,6 +38,8 @@ import (
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/ethclient"
 	"github.com/ava-labs/libevm/ethdb"
+	"github.com/ava-labs/libevm/libevm"
+	libevmhookstest "github.com/ava-labs/libevm/libevm/hookstest"
 	"github.com/ava-labs/libevm/libevm/options"
 	"github.com/ava-labs/libevm/log"
 	"github.com/ava-labs/libevm/params"
@@ -52,7 +55,6 @@ import (
 	"github.com/ava-labs/strevm/blocks"
 	"github.com/ava-labs/strevm/blocks/blockstest"
 	"github.com/ava-labs/strevm/cmputils"
-	"github.com/ava-labs/strevm/hook"
 	"github.com/ava-labs/strevm/hook/hookstest"
 	saeparams "github.com/ava-labs/strevm/params"
 	"github.com/ava-labs/strevm/saedb"
@@ -88,7 +90,7 @@ type SUT struct {
 	wallet  *saetest.Wallet
 	avaDB   database.Database
 	db      ethdb.Database
-	hooks   hook.Points
+	hooks   *hookstest.Stub
 	logger  *saetest.TBLogger
 
 	validators *validatorstest.State
@@ -259,8 +261,8 @@ func withVMTime(tb testing.TB, startTime time.Time) (sutOption, *vmTime) {
 	opt := options.Func[sutConfig](func(c *sutConfig) {
 		// TODO(StephenButtolph) unify the time functions provided in the config
 		// and the hooks.
-		c.vmConfig.Now = t.now
 		c.hooks.Now = t.now
+		c.vmConfig.Now = t.now
 	})
 
 	return opt, t
@@ -570,6 +572,38 @@ func TestIntegration(t *testing.T) {
 		want := new(uint256.Int).Mul(transfer, uint256.NewInt(numTxs))
 		require.Equalf(t, want, got, "%T.GetBalance(...)", sdb)
 	})
+}
+
+// TestCanCreateContractSoftError verifies that a CanCreateContract rejection
+// results in a failed receipt, not a fatal execution error.
+func TestCanCreateContractSoftError(t *testing.T) {
+	ctx, sut := newSUT(t, 1)
+
+	stub := &libevmhookstest.Stub{
+		CanCreateContractFn: func(*libevm.AddressContext, uint64, libevm.StateReader) (uint64, error) {
+			return 0, errors.New("contract creation blocked")
+		},
+	}
+	stub.Register(t)
+
+	const gasLimit uint64 = 100_000
+	tx := sut.wallet.SetNonceAndSign(t, 0, &types.DynamicFeeTx{
+		To:        nil, // contract creation
+		Gas:       gasLimit,
+		GasFeeCap: big.NewInt(1),
+	})
+
+	b := sut.runConsensusLoop(t, tx)
+	require.NoErrorf(t, b.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", b)
+	require.Lenf(t, b.Receipts(), 1, "%T.Receipts()", b)
+
+	r := b.Receipts()[0]
+	assert.Equalf(t, types.ReceiptStatusFailed, r.Status, "%T.Status (contract creation should fail)", r)
+	assert.Equalf(t, gasLimit, r.GasUsed, "%T.GasUsed == limit because CanCreateContract returns 0 gas remaining", r)
+
+	// Verify the sender's nonce was incremented despite the failure.
+	sdb := sut.stateAt(t, b.PostExecutionStateRoot())
+	assert.Equalf(t, uint64(1), sdb.GetNonce(sut.wallet.Addresses()[0]), "%T.GetNonce([sender]) after blocked contract creation", sdb)
 }
 
 func TestEmptyChainConfig(t *testing.T) {

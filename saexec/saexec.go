@@ -133,9 +133,9 @@ func (e *Executor) Close() error {
 	return nil
 }
 
-// SignerForBlock returns the transaction signer for the provided block.
-func (e *Executor) SignerForBlock(b *types.Block) types.Signer {
-	return types.MakeSigner(e.chainConfig, b.Number(), b.Time())
+// SignerForBlock returns the transaction signer for the block.
+func (e *Executor) SignerForBlock(b *blocks.Block) types.Signer {
+	return types.MakeSigner(e.chainConfig, b.Number(), b.BuildTime())
 }
 
 // ChainConfig returns the config originally passed to [New].
