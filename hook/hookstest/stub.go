@@ -48,7 +48,8 @@ func (s *Stub) ExecutionResultsDB(dataDir string) (saedb.ExecutionResults, error
 }
 
 // BuildHeader constructs a header that builds on top of the parent header. The
-// `Extra` field SHOULD NOT be modified as it encodes sub-second block time.
+// `Extra` field SHOULD NOT be modified as it encodes the sub-second block time
+// and end-of-block ops.
 func (s *Stub) BuildHeader(parent *types.Header) *types.Header {
 	var now time.Time
 	if s.Now != nil {
@@ -57,14 +58,14 @@ func (s *Stub) BuildHeader(parent *types.Header) *types.Header {
 		now = time.Now()
 	}
 
-	canonicalExtra := extra{
+	e := extra{
 		nanoseconds: time.Duration(now.Nanosecond()),
 	}
 	hdr := &types.Header{
 		ParentHash: parent.Hash(),
 		Number:     new(big.Int).Add(parent.Number, common.Big1),
 		Time:       uint64(now.Unix()), //nolint:gosec // Known non-negative
-		Extra:      canonicalExtra.MarshalCanoto(),
+		Extra:      e.MarshalCanoto(),
 	}
 	return hdr
 }
@@ -140,11 +141,11 @@ func (s *Stub) GasTargetAfter(*types.Header) gas.Gas {
 // [Stub.BuildHeader] in the header's `Extra` field. If said field is empty,
 // SubSecondBlockTime returns 0.
 func (s *Stub) SubSecondBlockTime(hdr *types.Header) time.Duration {
-	canonicalExtra := extra{}
-	if err := canonicalExtra.UnmarshalCanoto(hdr.Extra); err != nil {
+	e := extra{}
+	if err := e.UnmarshalCanoto(hdr.Extra); err != nil {
 		panic(err)
 	}
-	return canonicalExtra.nanoseconds
+	return e.nanoseconds
 }
 
 // EndOfBlockOps return the ops included in the block from [BuildBlock].
