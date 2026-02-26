@@ -986,18 +986,18 @@ func TestRPCTxFeeCap(t *testing.T) {
 		{
 			name:     "under_cap",
 			cap:      0.001,
-			gasPrice: big.NewInt(1), // fee = 1 * 21000 / 1e18 ~= 0 ETH
+			gasPrice: big.NewInt(params.Wei), // fee = 21000 wei < 0.001 ETH
 		},
 		{
 			name:     "over_cap",
 			cap:      0.001,
-			gasPrice: big.NewInt(1e18), // fee = 1e18 * 21000 / 1e18 = 21000 ETH
+			gasPrice: big.NewInt(params.Ether), // fee = 21000 ETH > 0.001 ETH
 			wantErr:  testerr.Contains("exceeds the configured cap"),
 		},
 		{
 			name:     "no_cap",
 			cap:      0, // 0 = no cap
-			gasPrice: big.NewInt(1e18),
+			gasPrice: big.NewInt(params.Ether),
 		},
 	}
 	for _, tt := range tests {
