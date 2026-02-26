@@ -277,22 +277,22 @@ func (c *extra) MarshalCanotoInto(w canoto.Writer) canoto.Writer {
 }
 
 const (
-	canoto__op__op        = 1
-	canoto__op__gas       = 2
-	canoto__op__gasFeeCap = 3
-	canoto__op__burn      = 4
-	canoto__op__mint      = 5
+	canoto__Op__ID        = 1
+	canoto__Op__Gas       = 2
+	canoto__Op__GasFeeCap = 3
+	canoto__Op__Burn      = 4
+	canoto__Op__Mint      = 5
 
-	canoto__op__op__tag        = "\x0a" // canoto.Tag(canoto__op__op, canoto.Len)
-	canoto__op__gas__tag       = "\x10" // canoto.Tag(canoto__op__gas, canoto.Varint)
-	canoto__op__gasFeeCap__tag = "\x1a" // canoto.Tag(canoto__op__gasFeeCap, canoto.Len)
-	canoto__op__burn__tag      = "\x22" // canoto.Tag(canoto__op__burn, canoto.Len)
-	canoto__op__mint__tag      = "\x2a" // canoto.Tag(canoto__op__mint, canoto.Len)
+	canoto__Op__ID__tag        = "\x0a" // canoto.Tag(canoto__Op__ID, canoto.Len)
+	canoto__Op__Gas__tag       = "\x10" // canoto.Tag(canoto__Op__Gas, canoto.Varint)
+	canoto__Op__GasFeeCap__tag = "\x1a" // canoto.Tag(canoto__Op__GasFeeCap, canoto.Len)
+	canoto__Op__Burn__tag      = "\x22" // canoto.Tag(canoto__Op__Burn, canoto.Len)
+	canoto__Op__Mint__tag      = "\x2a" // canoto.Tag(canoto__Op__Mint, canoto.Len)
 )
 
-type canotoData_op struct {
+type canotoData_Op struct {
 	size          uint64
-	gasFeeCapSize uint64
+	GasFeeCapSize uint64
 }
 
 // CanotoSpec returns the specification of this canoto message.
@@ -300,23 +300,23 @@ func (*Op) CanotoSpec(types ...reflect.Type) *canoto.Spec {
 	types = append(types, reflect.TypeOf(Op{}))
 	var zero Op
 	s := &canoto.Spec{
-		Name: "op",
+		Name: "Op",
 		Fields: []canoto.FieldType{
 			{
-				FieldNumber:    canoto__op__op,
-				Name:           "op",
+				FieldNumber:    canoto__Op__ID,
+				Name:           "ID",
 				OneOf:          "",
 				TypeFixedBytes: uint64(len(zero.ID)),
 			},
 			{
-				FieldNumber: canoto__op__gas,
-				Name:        "gas",
+				FieldNumber: canoto__Op__Gas,
+				Name:        "Gas",
 				OneOf:       "",
 				TypeUint:    canoto.SizeOf(zero.Gas),
 			},
 			{
-				FieldNumber: canoto__op__gasFeeCap,
-				Name:        "gasFeeCap",
+				FieldNumber: canoto__Op__GasFeeCap,
+				Name:        "GasFeeCap",
 				FixedLength: uint64(len(zero.GasFeeCap)),
 				Repeated:    true,
 				OneOf:       "",
@@ -324,8 +324,8 @@ func (*Op) CanotoSpec(types ...reflect.Type) *canoto.Spec {
 			},
 			canoto.FieldTypeFromField(
 				/*type inference:*/ (canoto.MakeEntryNilPointer(zero.Burn)),
-				/*FieldNumber:   */ canoto__op__burn,
-				/*Name:          */ "burn",
+				/*FieldNumber:   */ canoto__Op__Burn,
+				/*Name:          */ "Burn",
 				/*FixedLength:   */ 0,
 				/*Repeated:      */ true,
 				/*OneOf:         */ "",
@@ -333,8 +333,8 @@ func (*Op) CanotoSpec(types ...reflect.Type) *canoto.Spec {
 			),
 			canoto.FieldTypeFromField(
 				/*type inference:*/ (canoto.MakeEntryNilPointer(zero.Mint)),
-				/*FieldNumber:   */ canoto__op__mint,
-				/*Name:          */ "mint",
+				/*FieldNumber:   */ canoto__Op__Mint,
+				/*Name:          */ "Mint",
 				/*FixedLength:   */ 0,
 				/*Repeated:      */ true,
 				/*OneOf:         */ "",
@@ -383,7 +383,7 @@ func (c *Op) UnmarshalCanotoFrom(r canoto.Reader) error {
 		}
 
 		switch field {
-		case canoto__op__op:
+		case canoto__Op__ID:
 			if wireType != canoto.Len {
 				return canoto.ErrUnexpectedWireType
 			}
@@ -408,7 +408,7 @@ func (c *Op) UnmarshalCanotoFrom(r canoto.Reader) error {
 				return canoto.ErrZeroValue
 			}
 			r.B = r.B[expectedLength:]
-		case canoto__op__gas:
+		case canoto__Op__Gas:
 			if wireType != canoto.Varint {
 				return canoto.ErrUnexpectedWireType
 			}
@@ -419,7 +419,7 @@ func (c *Op) UnmarshalCanotoFrom(r canoto.Reader) error {
 			if canoto.IsZero(c.Gas) {
 				return canoto.ErrZeroValue
 			}
-		case canoto__op__gasFeeCap:
+		case canoto__Op__GasFeeCap:
 			if wireType != canoto.Len {
 				return canoto.ErrUnexpectedWireType
 			}
@@ -448,8 +448,8 @@ func (c *Op) UnmarshalCanotoFrom(r canoto.Reader) error {
 				return canoto.ErrZeroValue
 			}
 			r.B = remainingBytes
-			atomic.StoreUint64(&c.canotoData.gasFeeCapSize, uint64(len(msgBytes)))
-		case canoto__op__burn:
+			atomic.StoreUint64(&c.canotoData.GasFeeCapSize, uint64(len(msgBytes)))
+		case canoto__Op__Burn:
 			if wireType != canoto.Len {
 				return canoto.ErrUnexpectedWireType
 			}
@@ -465,7 +465,7 @@ func (c *Op) UnmarshalCanotoFrom(r canoto.Reader) error {
 			r.Unsafe = originalUnsafe
 
 			// Count the number of additional entries after the first entry.
-			countMinus1, err := canoto.CountBytes(r.B, canoto__op__burn__tag)
+			countMinus1, err := canoto.CountBytes(r.B, canoto__Op__Burn__tag)
 			if err != nil {
 				return err
 			}
@@ -484,7 +484,7 @@ func (c *Op) UnmarshalCanotoFrom(r canoto.Reader) error {
 
 			// Read the rest of the entries, stripping the tag each time.
 			for i := range additionalField {
-				r.B = r.B[len(canoto__op__burn__tag):]
+				r.B = r.B[len(canoto__Op__Burn__tag):]
 				r.Unsafe = true
 				if err := canoto.ReadBytes(&r, &msgBytes); err != nil {
 					return err
@@ -501,7 +501,7 @@ func (c *Op) UnmarshalCanotoFrom(r canoto.Reader) error {
 				}
 				r.B = remainingBytes
 			}
-		case canoto__op__mint:
+		case canoto__Op__Mint:
 			if wireType != canoto.Len {
 				return canoto.ErrUnexpectedWireType
 			}
@@ -517,7 +517,7 @@ func (c *Op) UnmarshalCanotoFrom(r canoto.Reader) error {
 			r.Unsafe = originalUnsafe
 
 			// Count the number of additional entries after the first entry.
-			countMinus1, err := canoto.CountBytes(r.B, canoto__op__mint__tag)
+			countMinus1, err := canoto.CountBytes(r.B, canoto__Op__Mint__tag)
 			if err != nil {
 				return err
 			}
@@ -536,7 +536,7 @@ func (c *Op) UnmarshalCanotoFrom(r canoto.Reader) error {
 
 			// Read the rest of the entries, stripping the tag each time.
 			for i := range additionalField {
-				r.B = r.B[len(canoto__op__mint__tag):]
+				r.B = r.B[len(canoto__Op__Mint__tag):]
 				r.Unsafe = true
 				if err := canoto.ReadBytes(&r, &msgBytes); err != nil {
 					return err
@@ -602,25 +602,25 @@ func (c *Op) CalculateCanotoCache() {
 	}
 	var size uint64
 	if !canoto.IsZero(c.ID) {
-		size += uint64(len(canoto__op__op__tag)) + canoto.SizeBytes((&c.ID)[:])
+		size += uint64(len(canoto__Op__ID__tag)) + canoto.SizeBytes((&c.ID)[:])
 	}
 	if !canoto.IsZero(c.Gas) {
-		size += uint64(len(canoto__op__gas__tag)) + canoto.SizeUint(c.Gas)
+		size += uint64(len(canoto__Op__Gas__tag)) + canoto.SizeUint(c.Gas)
 	}
 	if !canoto.IsZero(c.GasFeeCap) {
 		var fieldSize uint64
 		for _, v := range &c.GasFeeCap {
 			fieldSize += canoto.SizeUint(v)
 		}
-		size += uint64(len(canoto__op__gasFeeCap__tag)) + canoto.SizeUint(fieldSize) + fieldSize
-		atomic.StoreUint64(&c.canotoData.gasFeeCapSize, fieldSize)
+		size += uint64(len(canoto__Op__GasFeeCap__tag)) + canoto.SizeUint(fieldSize) + fieldSize
+		atomic.StoreUint64(&c.canotoData.GasFeeCapSize, fieldSize)
 	}
 	{
 		field := c.Burn
 		for i := range field {
 			(&field[i]).CalculateCanotoCache()
 			fieldSize := (&field[i]).CachedCanotoSize()
-			size += uint64(len(canoto__op__burn__tag)) + canoto.SizeUint(fieldSize) + fieldSize
+			size += uint64(len(canoto__Op__Burn__tag)) + canoto.SizeUint(fieldSize) + fieldSize
 		}
 	}
 	{
@@ -628,7 +628,7 @@ func (c *Op) CalculateCanotoCache() {
 		for i := range field {
 			(&field[i]).CalculateCanotoCache()
 			fieldSize := (&field[i]).CachedCanotoSize()
-			size += uint64(len(canoto__op__mint__tag)) + canoto.SizeUint(fieldSize) + fieldSize
+			size += uint64(len(canoto__Op__Mint__tag)) + canoto.SizeUint(fieldSize) + fieldSize
 		}
 	}
 	atomic.StoreUint64(&c.canotoData.size, size)
@@ -676,16 +676,16 @@ func (c *Op) MarshalCanotoInto(w canoto.Writer) canoto.Writer {
 		return w
 	}
 	if !canoto.IsZero(c.ID) {
-		canoto.Append(&w, canoto__op__op__tag)
+		canoto.Append(&w, canoto__Op__ID__tag)
 		canoto.AppendBytes(&w, (&c.ID)[:])
 	}
 	if !canoto.IsZero(c.Gas) {
-		canoto.Append(&w, canoto__op__gas__tag)
+		canoto.Append(&w, canoto__Op__Gas__tag)
 		canoto.AppendUint(&w, c.Gas)
 	}
 	if !canoto.IsZero(c.GasFeeCap) {
-		canoto.Append(&w, canoto__op__gasFeeCap__tag)
-		canoto.AppendUint(&w, atomic.LoadUint64(&c.canotoData.gasFeeCapSize))
+		canoto.Append(&w, canoto__Op__GasFeeCap__tag)
+		canoto.AppendUint(&w, atomic.LoadUint64(&c.canotoData.GasFeeCapSize))
 		for _, v := range &c.GasFeeCap {
 			canoto.AppendUint(&w, v)
 		}
@@ -693,7 +693,7 @@ func (c *Op) MarshalCanotoInto(w canoto.Writer) canoto.Writer {
 	{
 		field := c.Burn
 		for i := range field {
-			canoto.Append(&w, canoto__op__burn__tag)
+			canoto.Append(&w, canoto__Op__Burn__tag)
 			canoto.AppendUint(&w, (&field[i]).CachedCanotoSize())
 			w = (&field[i]).MarshalCanotoInto(w)
 		}
@@ -701,7 +701,7 @@ func (c *Op) MarshalCanotoInto(w canoto.Writer) canoto.Writer {
 	{
 		field := c.Mint
 		for i := range field {
-			canoto.Append(&w, canoto__op__mint__tag)
+			canoto.Append(&w, canoto__Op__Mint__tag)
 			canoto.AppendUint(&w, (&field[i]).CachedCanotoSize())
 			w = (&field[i]).MarshalCanotoInto(w)
 		}
@@ -710,41 +710,41 @@ func (c *Op) MarshalCanotoInto(w canoto.Writer) canoto.Writer {
 }
 
 const (
-	canoto__burn__address = 1
-	canoto__burn__nonce   = 2
-	canoto__burn__amount  = 3
+	canoto__AccountDebit__Address = 1
+	canoto__AccountDebit__Nonce   = 2
+	canoto__AccountDebit__Amount  = 3
 
-	canoto__burn__address__tag = "\x0a" // canoto.Tag(canoto__burn__address, canoto.Len)
-	canoto__burn__nonce__tag   = "\x10" // canoto.Tag(canoto__burn__nonce, canoto.Varint)
-	canoto__burn__amount__tag  = "\x1a" // canoto.Tag(canoto__burn__amount, canoto.Len)
+	canoto__AccountDebit__Address__tag = "\x0a" // canoto.Tag(canoto__AccountDebit__Address, canoto.Len)
+	canoto__AccountDebit__Nonce__tag   = "\x10" // canoto.Tag(canoto__AccountDebit__Nonce, canoto.Varint)
+	canoto__AccountDebit__Amount__tag  = "\x1a" // canoto.Tag(canoto__AccountDebit__Amount, canoto.Len)
 )
 
-type canotoData_burn struct {
+type canotoData_AccountDebit struct {
 	size       uint64
-	amountSize uint64
+	AmountSize uint64
 }
 
 // CanotoSpec returns the specification of this canoto message.
 func (*AccountDebit) CanotoSpec(...reflect.Type) *canoto.Spec {
 	var zero AccountDebit
 	s := &canoto.Spec{
-		Name: "burn",
+		Name: "AccountDebit",
 		Fields: []canoto.FieldType{
 			{
-				FieldNumber:    canoto__burn__address,
-				Name:           "address",
+				FieldNumber:    canoto__AccountDebit__Address,
+				Name:           "Address",
 				OneOf:          "",
 				TypeFixedBytes: uint64(len(zero.Address)),
 			},
 			{
-				FieldNumber: canoto__burn__nonce,
-				Name:        "nonce",
+				FieldNumber: canoto__AccountDebit__Nonce,
+				Name:        "Nonce",
 				OneOf:       "",
 				TypeUint:    canoto.SizeOf(zero.Nonce),
 			},
 			{
-				FieldNumber: canoto__burn__amount,
-				Name:        "amount",
+				FieldNumber: canoto__AccountDebit__Amount,
+				Name:        "Amount",
 				FixedLength: uint64(len(zero.Amount)),
 				Repeated:    true,
 				OneOf:       "",
@@ -793,7 +793,7 @@ func (c *AccountDebit) UnmarshalCanotoFrom(r canoto.Reader) error {
 		}
 
 		switch field {
-		case canoto__burn__address:
+		case canoto__AccountDebit__Address:
 			if wireType != canoto.Len {
 				return canoto.ErrUnexpectedWireType
 			}
@@ -818,7 +818,7 @@ func (c *AccountDebit) UnmarshalCanotoFrom(r canoto.Reader) error {
 				return canoto.ErrZeroValue
 			}
 			r.B = r.B[expectedLength:]
-		case canoto__burn__nonce:
+		case canoto__AccountDebit__Nonce:
 			if wireType != canoto.Varint {
 				return canoto.ErrUnexpectedWireType
 			}
@@ -829,7 +829,7 @@ func (c *AccountDebit) UnmarshalCanotoFrom(r canoto.Reader) error {
 			if canoto.IsZero(c.Nonce) {
 				return canoto.ErrZeroValue
 			}
-		case canoto__burn__amount:
+		case canoto__AccountDebit__Amount:
 			if wireType != canoto.Len {
 				return canoto.ErrUnexpectedWireType
 			}
@@ -858,7 +858,7 @@ func (c *AccountDebit) UnmarshalCanotoFrom(r canoto.Reader) error {
 				return canoto.ErrZeroValue
 			}
 			r.B = remainingBytes
-			atomic.StoreUint64(&c.canotoData.amountSize, uint64(len(msgBytes)))
+			atomic.StoreUint64(&c.canotoData.AmountSize, uint64(len(msgBytes)))
 		default:
 			return canoto.ErrUnknownField
 		}
@@ -892,18 +892,18 @@ func (c *AccountDebit) CalculateCanotoCache() {
 	}
 	var size uint64
 	if !canoto.IsZero(c.Address) {
-		size += uint64(len(canoto__burn__address__tag)) + canoto.SizeBytes((&c.Address)[:])
+		size += uint64(len(canoto__AccountDebit__Address__tag)) + canoto.SizeBytes((&c.Address)[:])
 	}
 	if !canoto.IsZero(c.Nonce) {
-		size += uint64(len(canoto__burn__nonce__tag)) + canoto.SizeUint(c.Nonce)
+		size += uint64(len(canoto__AccountDebit__Nonce__tag)) + canoto.SizeUint(c.Nonce)
 	}
 	if !canoto.IsZero(c.Amount) {
 		var fieldSize uint64
 		for _, v := range &c.Amount {
 			fieldSize += canoto.SizeUint(v)
 		}
-		size += uint64(len(canoto__burn__amount__tag)) + canoto.SizeUint(fieldSize) + fieldSize
-		atomic.StoreUint64(&c.canotoData.amountSize, fieldSize)
+		size += uint64(len(canoto__AccountDebit__Amount__tag)) + canoto.SizeUint(fieldSize) + fieldSize
+		atomic.StoreUint64(&c.canotoData.AmountSize, fieldSize)
 	}
 	atomic.StoreUint64(&c.canotoData.size, size)
 }
@@ -950,16 +950,16 @@ func (c *AccountDebit) MarshalCanotoInto(w canoto.Writer) canoto.Writer {
 		return w
 	}
 	if !canoto.IsZero(c.Address) {
-		canoto.Append(&w, canoto__burn__address__tag)
+		canoto.Append(&w, canoto__AccountDebit__Address__tag)
 		canoto.AppendBytes(&w, (&c.Address)[:])
 	}
 	if !canoto.IsZero(c.Nonce) {
-		canoto.Append(&w, canoto__burn__nonce__tag)
+		canoto.Append(&w, canoto__AccountDebit__Nonce__tag)
 		canoto.AppendUint(&w, c.Nonce)
 	}
 	if !canoto.IsZero(c.Amount) {
-		canoto.Append(&w, canoto__burn__amount__tag)
-		canoto.AppendUint(&w, atomic.LoadUint64(&c.canotoData.amountSize))
+		canoto.Append(&w, canoto__AccountDebit__Amount__tag)
+		canoto.AppendUint(&w, atomic.LoadUint64(&c.canotoData.AmountSize))
 		for _, v := range &c.Amount {
 			canoto.AppendUint(&w, v)
 		}
@@ -968,33 +968,33 @@ func (c *AccountDebit) MarshalCanotoInto(w canoto.Writer) canoto.Writer {
 }
 
 const (
-	canoto__mint__address = 1
-	canoto__mint__amount  = 3
+	canoto__AccountCredit__Address = 1
+	canoto__AccountCredit__Amount  = 3
 
-	canoto__mint__address__tag = "\x0a" // canoto.Tag(canoto__mint__address, canoto.Len)
-	canoto__mint__amount__tag  = "\x1a" // canoto.Tag(canoto__mint__amount, canoto.Len)
+	canoto__AccountCredit__Address__tag = "\x0a" // canoto.Tag(canoto__AccountCredit__Address, canoto.Len)
+	canoto__AccountCredit__Amount__tag  = "\x1a" // canoto.Tag(canoto__AccountCredit__Amount, canoto.Len)
 )
 
-type canotoData_mint struct {
+type canotoData_AccountCredit struct {
 	size       uint64
-	amountSize uint64
+	AmountSize uint64
 }
 
 // CanotoSpec returns the specification of this canoto message.
 func (*AccountCredit) CanotoSpec(...reflect.Type) *canoto.Spec {
 	var zero AccountCredit
 	s := &canoto.Spec{
-		Name: "mint",
+		Name: "AccountCredit",
 		Fields: []canoto.FieldType{
 			{
-				FieldNumber:    canoto__mint__address,
-				Name:           "address",
+				FieldNumber:    canoto__AccountCredit__Address,
+				Name:           "Address",
 				OneOf:          "",
 				TypeFixedBytes: uint64(len(zero.Address)),
 			},
 			{
-				FieldNumber: canoto__mint__amount,
-				Name:        "amount",
+				FieldNumber: canoto__AccountCredit__Amount,
+				Name:        "Amount",
 				FixedLength: uint64(len(zero.Amount)),
 				Repeated:    true,
 				OneOf:       "",
@@ -1043,7 +1043,7 @@ func (c *AccountCredit) UnmarshalCanotoFrom(r canoto.Reader) error {
 		}
 
 		switch field {
-		case canoto__mint__address:
+		case canoto__AccountCredit__Address:
 			if wireType != canoto.Len {
 				return canoto.ErrUnexpectedWireType
 			}
@@ -1068,7 +1068,7 @@ func (c *AccountCredit) UnmarshalCanotoFrom(r canoto.Reader) error {
 				return canoto.ErrZeroValue
 			}
 			r.B = r.B[expectedLength:]
-		case canoto__mint__amount:
+		case canoto__AccountCredit__Amount:
 			if wireType != canoto.Len {
 				return canoto.ErrUnexpectedWireType
 			}
@@ -1097,7 +1097,7 @@ func (c *AccountCredit) UnmarshalCanotoFrom(r canoto.Reader) error {
 				return canoto.ErrZeroValue
 			}
 			r.B = remainingBytes
-			atomic.StoreUint64(&c.canotoData.amountSize, uint64(len(msgBytes)))
+			atomic.StoreUint64(&c.canotoData.AmountSize, uint64(len(msgBytes)))
 		default:
 			return canoto.ErrUnknownField
 		}
@@ -1131,15 +1131,15 @@ func (c *AccountCredit) CalculateCanotoCache() {
 	}
 	var size uint64
 	if !canoto.IsZero(c.Address) {
-		size += uint64(len(canoto__mint__address__tag)) + canoto.SizeBytes((&c.Address)[:])
+		size += uint64(len(canoto__AccountCredit__Address__tag)) + canoto.SizeBytes((&c.Address)[:])
 	}
 	if !canoto.IsZero(c.Amount) {
 		var fieldSize uint64
 		for _, v := range &c.Amount {
 			fieldSize += canoto.SizeUint(v)
 		}
-		size += uint64(len(canoto__mint__amount__tag)) + canoto.SizeUint(fieldSize) + fieldSize
-		atomic.StoreUint64(&c.canotoData.amountSize, fieldSize)
+		size += uint64(len(canoto__AccountCredit__Amount__tag)) + canoto.SizeUint(fieldSize) + fieldSize
+		atomic.StoreUint64(&c.canotoData.AmountSize, fieldSize)
 	}
 	atomic.StoreUint64(&c.canotoData.size, size)
 }
@@ -1186,12 +1186,12 @@ func (c *AccountCredit) MarshalCanotoInto(w canoto.Writer) canoto.Writer {
 		return w
 	}
 	if !canoto.IsZero(c.Address) {
-		canoto.Append(&w, canoto__mint__address__tag)
+		canoto.Append(&w, canoto__AccountCredit__Address__tag)
 		canoto.AppendBytes(&w, (&c.Address)[:])
 	}
 	if !canoto.IsZero(c.Amount) {
-		canoto.Append(&w, canoto__mint__amount__tag)
-		canoto.AppendUint(&w, atomic.LoadUint64(&c.canotoData.amountSize))
+		canoto.Append(&w, canoto__AccountCredit__Amount__tag)
+		canoto.AppendUint(&w, atomic.LoadUint64(&c.canotoData.AmountSize))
 		for _, v := range &c.Amount {
 			canoto.AppendUint(&w, v)
 		}
