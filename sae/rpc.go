@@ -370,7 +370,7 @@ func (b *ethAPIBackend) CurrentBlock() *types.Header {
 //
 // TODO(JonathanOppenheimer): Once we update libevm, remove GetTd.
 func (b *ethAPIBackend) GetTd(ctx context.Context, hash common.Hash) *big.Int {
-	return big.NewInt(0)
+	return common.Big0
 }
 
 func (b *ethAPIBackend) SyncProgress() ethereum.SyncProgress {
