@@ -173,7 +173,7 @@ func TestOp_ApplyTo(t *testing.T) {
 					},
 				},
 			},
-			wantErr: core.ErrInsufficientFunds,
+			wantErr: ErrInvalidAccountDebit,
 			wantAccounts: []account{
 				{
 					address: eoa,
@@ -192,7 +192,7 @@ func TestOp_ApplyTo(t *testing.T) {
 					},
 				},
 			},
-			wantErr: core.ErrInsufficientFunds,
+			wantErr: ErrInvalidAccountDebit,
 			wantAccounts: []account{
 				{
 					address: eoa,

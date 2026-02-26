@@ -8,6 +8,8 @@
 package hook
 
 import (
+	"errors"
+	"fmt"
 	"math"
 	"time"
 
@@ -25,6 +27,8 @@ import (
 	saeparams "github.com/ava-labs/strevm/params"
 	"github.com/ava-labs/strevm/saedb"
 )
+
+var ErrInvalidAccountDebit = errors.New("invalid account debit")
 
 // Points define user-injected hook points.
 //
@@ -100,9 +104,15 @@ type AccountDebit struct {
 	// This mirrors geth's balanceCheck in buyGas: the account is validated
 	// against MaxAmount (e.g. gasLimit * gasFeeCap + value) but only
 	// charged Amount (e.g. gasLimit * effectiveGasPrice + value).
-	//
-	// MaxAmount MUST be set and MUST be >= Amount.
 	MaxAmount uint256.Int
+}
+
+// Validate checks that the debit fields are consistent.
+func (d AccountDebit) Validate() error {
+	if d.MaxAmount.Lt(&d.Amount) {
+		return ErrInvalidAccountDebit
+	}
+	return nil
 }
 
 // Op is an operation that can be applied to state during the execution of a
@@ -125,11 +135,15 @@ type Op struct {
 
 // ApplyTo applies the operation to the statedb.
 //
-// If an account has insufficient funds, [core.ErrInsufficientFunds] is returned
-// and the statedb is unchanged.
+// If an account has insufficient funds, [core.ErrInsufficientFunds] is
+// returned. If an entry has malformed fields, [ErrInvalidAccountDebit] is returned.
+// In either case, the statedb is unchanged.
 func (o *Op) ApplyTo(stateDB *state.StateDB) error {
 	for from, acc := range o.Burn {
-		if b := stateDB.GetBalance(from); b.Lt(&acc.MaxAmount) || b.Lt(&acc.Amount) {
+		if err := acc.Validate(); err != nil {
+			return fmt.Errorf("%w: account %s", err, from)
+		}
+		if b := stateDB.GetBalance(from); b.Lt(&acc.MaxAmount) {
 			return core.ErrInsufficientFunds
 		}
 	}
