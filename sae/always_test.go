@@ -8,8 +8,9 @@ import (
 	"testing"
 
 	"github.com/ava-labs/avalanchego/version"
-	"github.com/ava-labs/strevm/hook/hookstest"
 	"github.com/stretchr/testify/require"
+
+	"github.com/ava-labs/strevm/hook/hookstest"
 )
 
 func TestSinceGenesisBeforeInit(t *testing.T) {
