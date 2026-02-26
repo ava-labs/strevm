@@ -37,10 +37,11 @@ linters:
     - gocheckcompilerdirectives
     - goheader
     - gomodguard
+    - gocritic
+    - godoclint
     - gosec
     - govet
     - ineffassign
-    # TODO(arr4n): investigate ireturn
     - misspell
     - nakedret
     - nestif
@@ -67,9 +68,11 @@ linters:
         modules:
           - github.com/ethereum/go-ethereum:
               reason: "Use ava-labs/libevm instead"
-          - github.com/ava-labs/coreth:
+          - github.com/ava-labs/avalanchego/graft/coreth:
               reason: "Avoid dependency loop"
-          - github.com/ava-labs/subnet-evm:
+          - github.com/ava-labs/avalanchego/graft/evm:
+              reason: "Avoid dependency loop"
+          - github.com/ava-labs/avalanchego/graft/subnet-evm:
               reason: "Avoid dependency loop"
     staticcheck:
       checks:

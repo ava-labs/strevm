@@ -29,7 +29,7 @@ func TestImmediateReceipts(t *testing.T) {
 	}
 	notBlocked := txs[0]
 
-	b := sut.runConsensusLoop(t, txs[:]...)
+	b := sut.runConsensusLoop(t, txs...)
 	sut.testRPC(ctx, t, rpcTest{
 		method: "eth_getTransactionReceipt",
 		args:   []any{notBlocked.Hash()},
