@@ -26,7 +26,7 @@ import (
 
 // An Executor accepts and executes a [blocks.Block] FIFO queue.
 type Executor struct {
-	*saedb.StateRecorder
+	*stateRecorder
 	quit, done chan struct{}
 	log        logging.Logger
 	hooks      hook.Points
@@ -60,13 +60,13 @@ func New(
 	hooks hook.Points,
 	log logging.Logger,
 ) (*Executor, error) {
-	s, err := saedb.NewStateRecorder(db, triedbConfig, lastExecuted.PostExecutionStateRoot(), log)
+	s, err := newStateRecorder(db, triedbConfig, lastExecuted.PostExecutionStateRoot(), log)
 	if err != nil {
 		return nil, err
 	}
 
 	e := &Executor{
-		StateRecorder: s,
+		stateRecorder: s,
 		quit:          make(chan struct{}), // closed by [Executor.Close]
 		done:          make(chan struct{}), // closed by [Executor.processQueue] after `quit` is closed
 		log:           log,
@@ -96,7 +96,7 @@ func (e *Executor) Close() error {
 	close(e.quit)
 	<-e.done
 
-	return e.StateRecorder.Close()
+	return e.stateRecorder.close()
 }
 
 // ChainConfig returns the config originally passed to [New].

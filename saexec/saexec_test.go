@@ -18,7 +18,6 @@ import (
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core"
 	"github.com/ava-labs/libevm/core/rawdb"
-	"github.com/ava-labs/libevm/core/state"
 	"github.com/ava-labs/libevm/core/state/snapshot"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/core/vm"
@@ -341,7 +340,7 @@ func TestExecution(t *testing.T) {
 	}
 
 	t.Run("committed_state", func(t *testing.T) {
-		sdb, err := state.New(b.PostExecutionStateRoot(), e.StateCache(), nil)
+		sdb, err := e.StateDB(b.PostExecutionStateRoot())
 		require.NoErrorf(t, err, "state.New(%T.PostExecutionStateRoot(), %T.StateCache(), nil)", b, e)
 
 		if got, want := sdb.GetBalance(contract).ToBig(), new(big.Int).SetUint64(wantEscrowBalance); got.Cmp(want) != 0 {
@@ -395,7 +394,7 @@ func TestEndOfBlockOps(t *testing.T) {
 	require.NoErrorf(t, b.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", b)
 
 	t.Run("committed_state", func(t *testing.T) {
-		sdb, err := state.New(b.PostExecutionStateRoot(), e.StateCache(), nil)
+		sdb, err := e.StateDB(b.PostExecutionStateRoot())
 		require.NoErrorf(t, err, "state.New(%T.PostExecutionStateRoot(), %T.StateCache(), nil)", b, e)
 		assert.Equal(t, uint64(1), sdb.GetNonce(exportEOA), "export nonce incremented")
 		assert.Zero(t, sdb.GetNonce(importEOA), "import nonce unchanged")
@@ -873,10 +872,10 @@ func TestSnapshotPersistence(t *testing.T) {
 	// The crux of the test is whether we can recover the EOA nonce using only a
 	// new set of snapshots, recovered from the databases.
 	conf := snapshot.Config{
-		CacheSize: saedb.SnapshotCacheSizeMB,
+		CacheSize: SnapshotCacheSizeMB,
 		NoBuild:   true, // i.e. MUST be loaded from disk
 	}
-	snaps, err := snapshot.New(conf, sut.db, e.StateCache().TrieDB(), last.PostExecutionStateRoot())
+	snaps, err := snapshot.New(conf, sut.db, e.stateRecorder.cache.TrieDB(), last.PostExecutionStateRoot())
 	require.NoError(t, err, "snapshot.New(..., [post-execution state root of last-executed block])")
 	snap := snaps.Snapshot(last.PostExecutionStateRoot())
 	require.NotNilf(t, snap, "%T.Snapshot([post-execution state root of last-executed block])", snaps)
@@ -894,7 +893,7 @@ func TestCloseRecoversHashDB(t *testing.T) {
 	ctx, sut := newSUT(t, defaultHooks())
 	e, chain := sut.Executor, sut.chain
 
-	numBlocks := saedb.StateHistory + 10
+	numBlocks := StateHistory + 10
 	for range numBlocks {
 		b := chain.NewBlock(t, types.Transactions{
 			sut.wallet.SetNonceAndSign(t, 0, &types.LegacyTx{
@@ -915,12 +914,12 @@ func TestCloseRecoversHashDB(t *testing.T) {
 		// We expect to not find blocks older than [saedb.StateHistory]
 		for _, b := range chain.AllBlocks() {
 			sdb, err := e.StateDB(b.PostExecutionStateRoot())
-			inMemory := b.NumberU64()+saedb.StateHistory > uint64(numBlocks) //nolint:gosec // positive plus positive
+			inMemory := b.NumberU64()+StateHistory > uint64(numBlocks) //nolint:gosec // positive plus positive
 			if saedb.ShouldCommitTrieDB(b.NumberU64()) || inMemory {
-				require.NoErrorf(t, err, "%T.StateDB() for block %d", e.StateRecorder, b.NumberU64())
-				require.NotNilf(t, sdb, "%T.StateDB() for block %d", e.StateRecorder, b.NumberU64())
+				require.NoErrorf(t, err, "%T.StateDB() for block %d", e.stateRecorder, b.NumberU64())
+				require.NotNilf(t, sdb, "%T.StateDB() for block %d", e.stateRecorder, b.NumberU64())
 			} else {
-				require.IsTypef(t, &trie.MissingNodeError{}, err, "%T.StateDB() should not find block %d", e.StateRecorder, b.NumberU64())
+				require.IsTypef(t, &trie.MissingNodeError{}, err, "%T.StateDB() should not find block %d", e.stateRecorder, b.NumberU64())
 			}
 		}
 	})
@@ -938,10 +937,10 @@ func TestCloseRecoversHashDB(t *testing.T) {
 		for _, b := range chain.AllBlocks() {
 			sdb, err := e.StateDB(b.PostExecutionStateRoot())
 			if saedb.ShouldCommitTrieDB(b.NumberU64()) || b == final {
-				require.NoErrorf(t, err, "%T.StateDB() for block %d", e.StateRecorder, b.NumberU64())
-				require.NotNilf(t, sdb, "%T.StateDB() for block %d", e.StateRecorder, b.NumberU64())
+				require.NoErrorf(t, err, "%T.StateDB() for block %d", e.stateRecorder, b.NumberU64())
+				require.NotNilf(t, sdb, "%T.StateDB() for block %d", e.stateRecorder, b.NumberU64())
 			} else {
-				require.IsTypef(t, &trie.MissingNodeError{}, err, "%T.StateDB() should not find block %d", e.StateRecorder, b.NumberU64())
+				require.IsTypef(t, &trie.MissingNodeError{}, err, "%T.StateDB() should not find block %d", e.stateRecorder, b.NumberU64())
 			}
 		}
 	})

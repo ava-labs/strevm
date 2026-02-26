@@ -71,9 +71,6 @@ func TestRecoverFromDatabase(t *testing.T) {
 
 		if quick {
 			t.Log("quick, skipping test")
-			if b.NumberU64() == 40 {
-				_ = b
-			}
 			continue
 		}
 		t.Run("recover", func(t *testing.T) {
