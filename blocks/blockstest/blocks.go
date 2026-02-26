@@ -36,7 +36,7 @@ import (
 type EthBlockOption = options.Option[ethBlockProperties]
 
 // NewEthBlock constructs a raw Ethereum block with the given arguments.
-func NewEthBlock(parent *types.Block, txs types.Transactions, opts ...EthBlockOption) *types.Block {
+func NewEthBlock(tb testing.TB, parent *types.Block, txs types.Transactions, opts ...EthBlockOption) *types.Block {
 	props := &ethBlockProperties{
 		header: &types.Header{
 			Number:        new(big.Int).Add(parent.Number(), big.NewInt(1)),
@@ -47,9 +47,7 @@ func NewEthBlock(parent *types.Block, txs types.Transactions, opts ...EthBlockOp
 	}
 	props = options.ApplyTo(props, opts...)
 	block, err := hookstest.BuildBlock(props.header, txs, props.receipts, props.ops)
-	if err != nil {
-		panic(err)
-	}
+	require.NoError(tb, err, "hookstest.BuildBlock()")
 	return block
 }
 
