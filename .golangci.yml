@@ -97,8 +97,3 @@ linters:
       enable-all: true
       disable:
         - require-error # Blanket usage of require over assert is an anti-pattern
-  exclusions:
-    generated: lax
-    presets:
-      - std-error-handling # errcheck on Close/Write etc.
-
