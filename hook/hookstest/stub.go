@@ -107,10 +107,10 @@ func BuildBlock(
 
 // BlockRebuilderFrom returns a block builder that uses the provided block as a
 // source of time.
-func (s *Stub) BlockRebuilderFrom(b *types.Block) hook.BlockBuilder[Op] {
+func (s *Stub) BlockRebuilderFrom(b *types.Block) (hook.BlockBuilder[Op], error) {
 	e := extra{}
 	if err := e.UnmarshalCanoto(b.Extra()); err != nil {
-		panic(err)
+		return nil, err
 	}
 
 	return &Stub{
@@ -121,7 +121,7 @@ func (s *Stub) BlockRebuilderFrom(b *types.Block) hook.BlockBuilder[Op] {
 			)
 		},
 		Ops: e.ops,
-	}
+	}, nil
 }
 
 // GasTargetAfter ignores its argument and always returns [Stub.Target].
@@ -135,6 +135,8 @@ func (s *Stub) GasTargetAfter(*types.Header) gas.Gas {
 func (s *Stub) SubSecondBlockTime(hdr *types.Header) time.Duration {
 	e := extra{}
 	if err := e.UnmarshalCanoto(hdr.Extra); err != nil {
+		// This is left as a panic to avoid polluting various functions with
+		// error returns when no error is possible in production.
 		panic(err)
 	}
 	return e.nanoseconds

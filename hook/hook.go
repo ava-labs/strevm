@@ -41,7 +41,7 @@ type PointsG[T Transaction] interface {
 	// reconstruct the provided block. If the provided block is valid for
 	// inclusion, then the returned builder MUST be able to reconstruct an
 	// identical block.
-	BlockRebuilderFrom(block *types.Block) BlockBuilder[T]
+	BlockRebuilderFrom(block *types.Block) (BlockBuilder[T], error)
 }
 
 // Points define user-injected hook points which do not depend on generic

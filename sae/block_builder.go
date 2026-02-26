@@ -109,12 +109,16 @@ func (b *blockBuilderG[_]) Rebuild(
 		}
 	}
 
+	rebuilder, err := b.hooks.BlockRebuilderFrom(block.EthBlock())
+	if err != nil {
+		return nil, fmt.Errorf("making rebuilder: %v", err)
+	}
 	return b.build(
 		ctx,
 		bCtx,
 		parent,
 		func(f txpool.PendingFilter) []*txgossip.LazyTransaction { return lazyTxs },
-		b.hooks.BlockRebuilderFrom(block.EthBlock()),
+		rebuilder,
 	)
 }
 
