@@ -265,7 +265,7 @@ func (b *blockChainAPI) GetBlockReceipts(ctx context.Context, blockNrOrHash rpc.
 		return nil, nil //nolint:nilerr // This follows Geth behavior for [ethapi.BlockChainAPI.GetBlockReceipts]
 	}
 
-	signer := b.b.vm.signerForBlock(blk.EthBlock())
+	signer := b.b.vm.exec.SignerForBlock(blk.EthBlock())
 	hash := blk.Hash()
 	num := blk.NumberU64()
 	txs := blk.Transactions()

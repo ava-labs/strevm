@@ -114,7 +114,7 @@ func (e *Executor) execute(b *blocks.Block, logger logging.Logger) error {
 	gasPool := core.GasPool(math.MaxUint64) // required by geth but irrelevant so max it out
 	var blockGasConsumed gas.Gas
 
-	signer := types.MakeSigner(e.chainConfig, b.Number(), b.BuildTime())
+	signer := e.SignerForBlock(b.EthBlock())
 	receipts := make(types.Receipts, len(b.Transactions()))
 	for ti, tx := range b.Transactions() {
 		stateDB.SetTxContext(tx.Hash(), ti)

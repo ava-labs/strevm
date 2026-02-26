@@ -1,0 +1,331 @@
+// Copyright (C) 2025-2026, Ava Labs, Inc. All rights reserved.
+// See the file LICENSE for licensing terms.
+
+package sae
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"time"
+
+	"github.com/ava-labs/avalanchego/snow/engine/snowman/block"
+	"github.com/ava-labs/avalanchego/utils/logging"
+	"github.com/ava-labs/libevm/common"
+	"github.com/ava-labs/libevm/core"
+	"github.com/ava-labs/libevm/core/txpool"
+	"github.com/ava-labs/libevm/core/types"
+	"github.com/ava-labs/libevm/params"
+	"go.uber.org/zap"
+
+	"github.com/ava-labs/strevm/blocks"
+	"github.com/ava-labs/strevm/hook"
+	saeparams "github.com/ava-labs/strevm/params"
+	"github.com/ava-labs/strevm/saexec"
+	"github.com/ava-labs/strevm/txgossip"
+	"github.com/ava-labs/strevm/worstcase"
+)
+
+var (
+	errBlockTimeUnderMinimum = errors.New("block time under minimum allowed time")
+	errBlockTimeBeforeParent = errors.New("block time before parent time")
+	errBlockTimeAfterMaximum = errors.New("block time after maximum allowed time")
+	errExecutionLagging      = errors.New("execution lagging for settlement")
+)
+
+// blockBuilder hides blockBuilderG's generic type behind the non-generic
+// methods.
+type blockBuilder interface {
+	Build(
+		ctx context.Context,
+		bCtx *block.Context,
+		parent *blocks.Block,
+	) (*blocks.Block, error)
+	Rebuild(
+		ctx context.Context,
+		bCtx *block.Context,
+		parent *blocks.Block,
+		block *types.Block,
+	) (*blocks.Block, error)
+}
+
+type blockBuilderG[T any] struct {
+	log     logging.Logger
+	now     func() time.Time
+	hooks   hook.PointsG[T]
+	exec    *saexec.Executor
+	mempool *txgossip.Set
+}
+
+func (b *blockBuilderG[_]) Build(
+	ctx context.Context,
+	bCtx *block.Context,
+	parent *blocks.Block,
+) (*blocks.Block, error) {
+	return b.build(
+		ctx,
+		bCtx,
+		parent,
+		b.mempool.TransactionsByPriority,
+		b.hooks,
+	)
+}
+
+func (b *blockBuilderG[_]) Rebuild(
+	ctx context.Context,
+	bCtx *block.Context,
+	parent *blocks.Block,
+	block *types.Block,
+) (*blocks.Block, error) {
+	signer := b.exec.SignerForBlock(block)
+	txs := block.Transactions()
+	core.SenderCacher.Recover(signer, txs) // asynchronous
+
+	lazyTxs := make([]*txgossip.LazyTransaction, len(txs))
+	for i, tx := range txs {
+		s, err := types.Sender(signer, tx)
+		if err != nil {
+			return nil, fmt.Errorf("recovering sender of tx %#x: %v", tx.Hash(), err)
+		}
+
+		feeCap, err := uint256FromBig(tx.GasFeeCap())
+		if err != nil {
+			return nil, fmt.Errorf("tx %#x fee cap: %v", tx.Hash(), err)
+		}
+		tipCap, err := uint256FromBig(tx.GasTipCap())
+		if err != nil {
+			return nil, fmt.Errorf("tx %#x tip cap: %v", tx.Hash(), err)
+		}
+
+		lazyTxs[i] = &txgossip.LazyTransaction{
+			LazyTransaction: &txpool.LazyTransaction{
+				Hash:      tx.Hash(),
+				Tx:        tx,
+				GasFeeCap: feeCap,
+				GasTipCap: tipCap,
+				Gas:       tx.Gas(),
+			},
+			Sender: s,
+		}
+	}
+
+	return b.build(
+		ctx,
+		bCtx,
+		parent,
+		func(f txpool.PendingFilter) []*txgossip.LazyTransaction { return lazyTxs },
+		b.hooks.BlockRebuilderFrom(block),
+	)
+}
+
+func (b *blockBuilderG[T]) build(
+	ctx context.Context,
+	bCtx *block.Context,
+	parent *blocks.Block,
+	pendingTxs func(txpool.PendingFilter) []*txgossip.LazyTransaction,
+	builder hook.BlockBuilder[T],
+) (*blocks.Block, error) {
+	hdr := builder.BuildHeader(parent.Header())
+	log := b.log.With(
+		zap.Uint64("parent_height", parent.Height()),
+		zap.Stringer("parent_hash", parent.Hash()),
+		zap.Uint64("block_time", hdr.Time),
+	)
+	if hdr.Root != (common.Hash{}) || hdr.GasLimit != 0 || hdr.BaseFee != nil || hdr.GasUsed != 0 {
+		log.Warn("Block builder returned header with at least one reserved field set",
+			zap.Stringer("root", hdr.Root),
+			zap.Uint64("gas_limit", hdr.GasLimit),
+			zap.Stringer("base_fee", hdr.BaseFee),
+			zap.Uint64("gas_used", hdr.GasUsed),
+		)
+	}
+
+	bTime := blocks.PreciseTime(b.hooks, hdr)
+	pTime := blocks.PreciseTime(b.hooks, parent.Header())
+
+	// It is allowed for [hook.PointsG] to further constrain the allowed block
+	// times. However, every block MUST at least satisfy these basic sanity
+	// checks.
+	if bTime.Unix() < saeparams.TauSeconds {
+		return nil, fmt.Errorf("%w: %d < %d", errBlockTimeUnderMinimum, hdr.Time, saeparams.TauSeconds)
+	}
+	if bTime.Compare(pTime) < 0 {
+		return nil, fmt.Errorf("%w: %s < %s", errBlockTimeBeforeParent, bTime.String(), pTime.String())
+	}
+	maxTime := b.now().Add(maxFutureBlockDuration)
+	if bTime.Compare(maxTime) > 0 {
+		return nil, fmt.Errorf("%w: %s > %s", errBlockTimeAfterMaximum, bTime.String(), maxTime.String())
+	}
+
+	// Underflow of Add(-tau) is prevented by the above check.
+	lastSettled, ok, err := blocks.LastToSettleAt(b.hooks, bTime.Add(-saeparams.Tau), parent)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		log.Warn("Execution lagging when determining last block to settle")
+		return nil, errExecutionLagging
+	}
+
+	log = log.With(
+		zap.Uint64("last_settled_height", lastSettled.Height()),
+		zap.Stringer("last_settled_hash", lastSettled.Hash()),
+	)
+
+	state, err := worstcase.NewState(b.hooks, b.exec.ChainConfig(), b.exec.StateCache(), lastSettled, b.exec.SnapshotTree())
+	if err != nil {
+		log.Warn("Worst-case state not able to be created",
+			zap.Error(err),
+		)
+		return nil, err
+	}
+
+	unsettled := blocks.Range(lastSettled, parent)
+	for _, blk := range unsettled {
+		log := log.With(
+			zap.Uint64("block_height", blk.Height()),
+			zap.Stringer("block_hash", blk.Hash()),
+		)
+		if err := state.StartBlock(blk.Header()); err != nil {
+			log.Warn("Could not start historical worst-case calculation",
+				zap.Error(err),
+			)
+			return nil, fmt.Errorf("starting worst-case state for block %d: %v", blk.Height(), err)
+		}
+		for i, tx := range blk.Transactions() {
+			if err := state.ApplyTx(tx); err != nil {
+				log.Warn("Could not apply tx during historical worst-case calculation",
+					zap.Int("tx_index", i),
+					zap.Stringer("tx_hash", tx.Hash()),
+					zap.Error(err),
+				)
+				return nil, fmt.Errorf("applying tx %#x in block %d to worst-case state: %v", tx.Hash(), blk.Height(), err)
+			}
+		}
+		for i, op := range b.hooks.EndOfBlockOps(blk.EthBlock()) {
+			if err := state.Apply(op); err != nil {
+				log.Warn("Could not apply op during historical worst-case calculation",
+					zap.Int("op_index", i),
+					zap.Stringer("op_id", op.ID),
+					zap.Error(err),
+				)
+				return nil, fmt.Errorf("applying op at end of block %d to worst-case state: %v", blk.Height(), err)
+			}
+		}
+		if _, err := state.FinishBlock(); err != nil {
+			log.Warn("Could not finish historical worst-case calculation",
+				zap.Error(err),
+			)
+			return nil, fmt.Errorf("finishing worst-case state for block %d: %v", blk.Height(), err)
+		}
+	}
+
+	hdr.Root = lastSettled.PostExecutionStateRoot()
+	if err := state.StartBlock(hdr); err != nil {
+		// A full queue is a normal mode of operation (backpressure working as
+		// intended) so should not be a warning.
+		logTo := log.Warn
+		if errors.Is(err, worstcase.ErrQueueFull) {
+			logTo = log.Debug
+		}
+		logTo("Could not start worst-case block calculation",
+			zap.Error(err),
+		)
+		return nil, fmt.Errorf("starting worst-case state for new block: %w", err)
+	}
+
+	hdr.GasLimit = state.GasLimit()
+	hdr.BaseFee = state.BaseFee().ToBig()
+
+	var (
+		candidates = pendingTxs(txpool.PendingFilter{
+			BaseFee: state.BaseFee(),
+		})
+		included []*types.Transaction
+	)
+	for _, ltx := range candidates {
+		// If we don't have enough gas remaining in the block for the minimum
+		// gas amount, we are done including transactions.
+		if remainingGas := state.GasLimit() - state.GasUsed(); remainingGas < params.TxGas {
+			break
+		}
+		log := log.With(
+			zap.Stringer("tx_hash", ltx.Hash),
+			zap.Int("tx_index", len(included)),
+			zap.Stringer("sender", ltx.Sender),
+		)
+
+		tx, ok := ltx.Resolve()
+		if !ok {
+			log.Debug("Could not resolve lazy transaction")
+			continue
+		}
+
+		// The [saexec.Executor] checks the worst-case balance before tx
+		// execution so we MUST record it at the equivalent point, before
+		// ApplyTx().
+		if err := state.ApplyTx(tx); err != nil {
+			log.Debug("Could not apply transaction", zap.Error(err))
+			continue
+		}
+		log.Trace("Including transaction")
+		included = append(included, tx)
+	}
+	var includedOps []T
+	for op := range builder.PotentialEndOfBlockOps() {
+		// If we don't have enough gas remaining in the block for the minimum
+		// gas amount, we are done including transactions.
+		if remainingGas := state.GasLimit() - state.GasUsed(); remainingGas < params.TxGas {
+			break
+		}
+
+		// TODO: FIXME
+		hookOp, _ := any(op).(hook.Op)
+		log := log.With(
+			zap.Stringer("op_id", hookOp.ID),
+			zap.Int("op_index", len(includedOps)),
+		)
+
+		// The [saexec.Executor] checks the worst-case balance before tx
+		// execution so we MUST record it at the equivalent point, before
+		// ApplyTx().
+		if err := state.Apply(hookOp); err != nil {
+			log.Debug("Could not apply op", zap.Error(err))
+			continue
+		}
+		log.Trace("Including op")
+		includedOps = append(includedOps, op)
+	}
+
+	hdr.GasUsed = state.GasUsed()
+	bounds, err := state.FinishBlock()
+	if err != nil {
+		log.Warn("Could not finish worst-case block calculation",
+			zap.Error(err),
+		)
+		return nil, fmt.Errorf("finishing worst-case state for new block: %v", err)
+	}
+
+	var receipts types.Receipts
+	settling := blocks.Range(parent.LastSettled(), lastSettled)
+	for _, b := range settling {
+		receipts = append(receipts, b.Receipts()...)
+	}
+
+	ethB, err := builder.BuildBlock(
+		hdr,
+		included,
+		receipts,
+		includedOps,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	newB, err := blocks.New(ethB, parent, lastSettled, b.log)
+	if err != nil {
+		return nil, err
+	}
+	newB.SetWorstCaseBounds(bounds)
+	return newB, nil
+}

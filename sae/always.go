@@ -16,25 +16,30 @@ import (
 
 	"github.com/ava-labs/strevm/adaptor"
 	"github.com/ava-labs/strevm/blocks"
+	"github.com/ava-labs/strevm/hook"
 )
 
-var _ adaptor.ChainVM[*blocks.Block] = (*SinceGenesis)(nil)
+var _ adaptor.ChainVM[*blocks.Block] = (*SinceGenesis[any])(nil)
 
 // SinceGenesis is a harness around a [VM], providing an `Initialize` method
 // that treats the chain as being asynchronous since genesis.
-type SinceGenesis struct {
+type SinceGenesis[T any] struct {
 	*VM // created by [SinceGenesis.Initialize]
 
+	hooks  hook.PointsG[T]
 	config Config
 }
 
 // NewSinceGenesis constructs a new [SinceGenesis].
-func NewSinceGenesis(c Config) *SinceGenesis {
-	return &SinceGenesis{config: c}
+func NewSinceGenesis[T any](hooks hook.PointsG[T], c Config) *SinceGenesis[T] {
+	return &SinceGenesis[T]{
+		hooks:  hooks,
+		config: c,
+	}
 }
 
 // Initialize initializes the VM.
-func (vm *SinceGenesis) Initialize(
+func (vm *SinceGenesis[_]) Initialize(
 	ctx context.Context,
 	snowCtx *snow.Context,
 	avaDB database.Database,
@@ -56,7 +61,7 @@ func (vm *SinceGenesis) Initialize(
 		return fmt.Errorf("core.SetupGenesisBlock(...): %v", err)
 	}
 
-	inner, err := NewVM(ctx, vm.config, snowCtx, config, db, genesis.ToBlock(), appSender)
+	inner, err := NewVM(ctx, vm.hooks, vm.config, snowCtx, config, db, genesis.ToBlock(), appSender)
 	if err != nil {
 		return err
 	}
@@ -65,7 +70,7 @@ func (vm *SinceGenesis) Initialize(
 }
 
 // Shutdown gracefully closes the VM.
-func (vm *SinceGenesis) Shutdown(ctx context.Context) error {
+func (vm *SinceGenesis[_]) Shutdown(ctx context.Context) error {
 	if vm.VM == nil {
 		return nil
 	}

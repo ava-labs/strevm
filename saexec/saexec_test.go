@@ -378,7 +378,7 @@ func TestEndOfBlockOps(t *testing.T) {
 
 	initialTime := sut.lastExecuted.Load().ExecutedByGasTime()
 
-	hooks.Ops = []hook.Op{
+	b := sut.chain.NewBlock(t, nil, blockstest.WithEthBlockOptions(blockstest.WithOps([]hook.Op{
 		{
 			Gas: 100_000,
 			Burn: map[common.Address]hook.AccountDebit{
@@ -391,9 +391,7 @@ func TestEndOfBlockOps(t *testing.T) {
 				importEOA: *uint256.NewInt(100),
 			},
 		},
-	}
-
-	b := sut.chain.NewBlock(t, nil)
+	})))
 	e := sut.Executor
 	require.NoError(t, e.Enqueue(ctx, b), "Enqueue()")
 	require.NoErrorf(t, b.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", b)

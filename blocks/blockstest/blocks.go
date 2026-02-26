@@ -25,6 +25,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/ava-labs/strevm/blocks"
+	"github.com/ava-labs/strevm/hook"
 	"github.com/ava-labs/strevm/hook/hookstest"
 	"github.com/ava-labs/strevm/saedb"
 	"github.com/ava-labs/strevm/saetest"
@@ -45,12 +46,17 @@ func NewEthBlock(parent *types.Block, txs types.Transactions, opts ...EthBlockOp
 		},
 	}
 	props = options.ApplyTo(props, opts...)
-	return types.NewBlock(props.header, txs, nil, props.receipts, saetest.TrieHasher())
+	block, err := hookstest.BuildBlock(props.header, txs, props.receipts, props.ops)
+	if err != nil {
+		panic(err)
+	}
+	return block
 }
 
 type ethBlockProperties struct {
 	header   *types.Header
 	receipts types.Receipts
+	ops      []hook.Op
 }
 
 // ModifyHeader returns an option to modify the [types.Header] constructed by
@@ -67,6 +73,14 @@ func ModifyHeader(fn func(*types.Header)) EthBlockOption {
 func WithReceipts(rs types.Receipts) EthBlockOption {
 	return options.Func[ethBlockProperties](func(p *ethBlockProperties) {
 		p.receipts = slices.Clone(rs)
+	})
+}
+
+// WithReceipts returns an option to set the receipts of a block constructed by
+// [NewEthBlock].
+func WithOps(ops []hook.Op) EthBlockOption {
+	return options.Func[ethBlockProperties](func(p *ethBlockProperties) {
+		p.ops = slices.Clone(ops)
 	})
 }
 
