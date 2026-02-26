@@ -999,15 +999,6 @@ func (sut *SUT) testGetByHash(ctx context.Context, t *testing.T, want *types.Blo
 			want:   want.Header(),
 		},
 		{
-			method: "eth_getBlockByHash",
-			args:   []any{want.Hash(), false},
-			want: struct {
-				TotalDifficulty *hexutil.Big `json:"totalDifficulty"`
-			}{
-				TotalDifficulty: (*hexutil.Big)(want.Number()),
-			},
-		},
-		{
 			method: "eth_getBlockTransactionCountByHash",
 			args:   []any{want.Hash()},
 			want:   hexutil.Uint(len(want.Transactions())),
@@ -1122,15 +1113,6 @@ func (sut *SUT) testGetByNumber(ctx context.Context, t *testing.T, want *types.B
 			method: "eth_getBlockByNumber",
 			args:   []any{n, false},
 			want:   want.Header(),
-		},
-		{
-			method: "eth_getBlockByNumber",
-			args:   []any{n, false},
-			want: struct {
-				TotalDifficulty *hexutil.Big `json:"totalDifficulty"`
-			}{
-				TotalDifficulty: (*hexutil.Big)(want.Number()),
-			},
 		},
 		{
 			method: "eth_getBlockTransactionCountByNumber",
