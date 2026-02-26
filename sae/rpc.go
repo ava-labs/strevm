@@ -333,7 +333,7 @@ func (b *ethAPIBackend) ChainConfig() *params.ChainConfig {
 }
 
 func (b *ethAPIBackend) RPCTxFeeCap() float64 {
-	return 0 // TODO(arr4n)
+	return b.vm.config.RPCConfig.TxFeeCap
 }
 
 func (b *ethAPIBackend) UnprotectedAllowed() bool {
@@ -363,8 +363,14 @@ func (b *ethAPIBackend) CurrentBlock() *types.Header {
 	return b.CurrentHeader()
 }
 
-func (b *ethAPIBackend) GetTd(context.Context, common.Hash) *big.Int {
-	return big.NewInt(0) // TODO(arr4n)
+// Total difficulty does not make sense in snowman consensus, as it is not PoW.
+// Ethereum, post merge (switch to PoS), sets the difficulty of each block to 0
+// (see: https://github.com/ethereum/go-ethereum/blob/be92f5487e67939b8dbbc9675d6c15be76ffd18d/consensus/beacon/consensus.go#L228-L231)
+// and no longer exposes the total difficulty of the chain at all via the API.
+//
+// TODO(JonathanOppenheimer): Once we update libevm, remove GetTd.
+func (b *ethAPIBackend) GetTd(ctx context.Context, hash common.Hash) *big.Int {
+	return common.Big0
 }
 
 func (b *ethAPIBackend) SyncProgress() ethereum.SyncProgress {
