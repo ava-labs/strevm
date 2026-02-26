@@ -99,6 +99,8 @@ type BlockBuilder[T Transaction] interface {
 	) (*types.Block, error)
 }
 
+// Transaction is a user defined transaction type that can be represented as an
+// [Op].
 type Transaction interface {
 	AsOp() Op
 }

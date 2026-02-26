@@ -179,6 +179,7 @@ type extra struct {
 	canotoData canotoData_extra
 }
 
+// Op is a serializable representation of [hook.Op].
 type Op struct {
 	ID        ids.ID          `canoto:"fixed bytes,1"`
 	Gas       gas.Gas         `canoto:"uint,2"`
@@ -186,35 +187,10 @@ type Op struct {
 	Burn      []AccountDebit  `canoto:"repeated value,4"`
 	Mint      []AccountCredit `canoto:"repeated value,5"`
 
-	canotoData canotoData_op
+	canotoData canotoData_Op
 }
 
-func NewOp(o hook.Op) Op {
-	op := Op{
-		ID:        o.ID,
-		Gas:       o.Gas,
-		GasFeeCap: o.GasFeeCap,
-		Burn:      make([]AccountDebit, 0, len(o.Burn)),
-		Mint:      make([]AccountCredit, 0, len(o.Mint)),
-	}
-	for addr, b := range o.Burn {
-		op.Burn = append(op.Burn, AccountDebit{
-			Address: addr,
-			Nonce:   b.Nonce,
-			Amount:  b.Amount,
-		})
-	}
-	for addr, amount := range o.Mint {
-		op.Mint = append(op.Mint, AccountCredit{
-			Address: addr,
-			Amount:  amount,
-		})
-	}
-	slices.SortFunc(op.Burn, AccountDebit.Compare)
-	slices.SortFunc(op.Mint, AccountCredit.Compare)
-	return op
-}
-
+// AsOp converts the op into a representation that SAE can use directly.
 func (o Op) AsOp() hook.Op {
 	hookOp := hook.Op{
 		ID:        o.ID,
@@ -235,25 +211,37 @@ func (o Op) AsOp() hook.Op {
 	return hookOp
 }
 
+// AccountDebit is a serializable representation of an entry in [hook.Op.Burn].
 type AccountDebit struct {
 	Address common.Address `canoto:"fixed bytes,1"`
 	Nonce   uint64         `canoto:"uint,2"`
 	Amount  uint256.Int    `canoto:"fixed repeated uint,3"`
 
-	canotoData canotoData_burn
+	canotoData canotoData_AccountDebit
 }
 
-func (b AccountDebit) Compare(o AccountDebit) int {
-	return b.Address.Cmp(o.Address)
+// Compare returns
+//
+//	-1 if a < o
+//	 0 if a == o
+//	+1 if a > o.
+func (a AccountDebit) Compare(o AccountDebit) int {
+	return a.Address.Cmp(o.Address)
 }
 
+// AccountCredit is a serializable representation of an entry in [hook.Op.Mint].
 type AccountCredit struct {
 	Address common.Address `canoto:"fixed bytes,1"`
-	Amount  uint256.Int    `canoto:"fixed repeated uint,3"`
+	Amount  uint256.Int    `canoto:"fixed repeated uint,2"`
 
-	canotoData canotoData_mint
+	canotoData canotoData_AccountCredit
 }
 
-func (m AccountCredit) Compare(o AccountCredit) int {
-	return m.Address.Cmp(o.Address)
+// Compare returns
+//
+//	-1 if a < o
+//	 0 if a == o
+//	+1 if a > o.
+func (a AccountCredit) Compare(o AccountCredit) int {
+	return a.Address.Cmp(o.Address)
 }
