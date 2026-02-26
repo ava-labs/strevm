@@ -6,6 +6,7 @@ package sae
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"math/big"
 	"math/rand/v2"
@@ -37,11 +38,14 @@ import (
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/ethclient"
 	"github.com/ava-labs/libevm/ethdb"
+	"github.com/ava-labs/libevm/libevm"
+	libevmhookstest "github.com/ava-labs/libevm/libevm/hookstest"
 	"github.com/ava-labs/libevm/libevm/options"
 	"github.com/ava-labs/libevm/log"
 	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/rpc"
 	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/holiman/uint256"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -50,6 +54,7 @@ import (
 	"github.com/ava-labs/strevm/adaptor"
 	"github.com/ava-labs/strevm/blocks"
 	"github.com/ava-labs/strevm/blocks/blockstest"
+	"github.com/ava-labs/strevm/cmputils"
 	"github.com/ava-labs/strevm/hook"
 	"github.com/ava-labs/strevm/hook/hookstest"
 	saeparams "github.com/ava-labs/strevm/params"
@@ -575,6 +580,38 @@ func TestIntegration(t *testing.T) {
 	})
 }
 
+// TestCanCreateContractSoftError verifies that a CanCreateContract rejection
+// results in a failed receipt, not a fatal execution error.
+func TestCanCreateContractSoftError(t *testing.T) {
+	ctx, sut := newSUT(t, 1)
+
+	stub := &libevmhookstest.Stub{
+		CanCreateContractFn: func(*libevm.AddressContext, uint64, libevm.StateReader) (uint64, error) {
+			return 0, errors.New("contract creation blocked")
+		},
+	}
+	stub.Register(t)
+
+	const gasLimit uint64 = 100_000
+	tx := sut.wallet.SetNonceAndSign(t, 0, &types.DynamicFeeTx{
+		To:        nil, // contract creation
+		Gas:       gasLimit,
+		GasFeeCap: big.NewInt(1),
+	})
+
+	b := sut.runConsensusLoop(t, tx)
+	require.NoErrorf(t, b.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", b)
+	require.Lenf(t, b.Receipts(), 1, "%T.Receipts()", b)
+
+	r := b.Receipts()[0]
+	assert.Equalf(t, types.ReceiptStatusFailed, r.Status, "%T.Status (contract creation should fail)", r)
+	assert.Equalf(t, gasLimit, r.GasUsed, "%T.GasUsed == limit because CanCreateContract returns 0 gas remaining", r)
+
+	// Verify the sender's nonce was incremented despite the failure.
+	sdb := sut.stateAt(t, b.PostExecutionStateRoot())
+	assert.Equalf(t, uint64(1), sdb.GetNonce(sut.wallet.Addresses()[0]), "%T.GetNonce([sender]) after blocked contract creation", sdb)
+}
+
 func TestEmptyChainConfig(t *testing.T) {
 	_, sut := newSUT(t, 1, options.Func[sutConfig](func(c *sutConfig) {
 		c.genesis.Config = &params.ChainConfig{
@@ -607,10 +644,17 @@ func TestSyntacticBlockChecks(t *testing.T) {
 			wantErr: errBlockHeightNotUint64,
 		},
 		{
-			name: "block_time_overflow_protection",
+			name: "block_time_at_maximum",
 			header: &types.Header{
 				Number: big.NewInt(1),
-				Time:   now + maxBlockFutureSeconds + 1,
+				Time:   now + maxFutureBlockSeconds,
+			},
+		},
+		{
+			name: "block_time_after_maximum",
+			header: &types.Header{
+				Number: big.NewInt(1),
+				Time:   now + maxFutureBlockSeconds + 1,
 			},
 			wantErr: errBlockTooFarInFuture,
 		},
@@ -717,7 +761,7 @@ func TestSemanticBlockChecks(t *testing.T) {
 		},
 		{
 			name:    "block_time_after_maximum",
-			time:    now + uint64(maxFutureBlockTime.Seconds()) + 1,
+			time:    now + maxFutureBlockSeconds + 1,
 			wantErr: errBlockTimeAfterMaximum,
 		},
 		{
@@ -754,9 +798,7 @@ func TestSemanticBlockChecks(t *testing.T) {
 				saetest.TrieHasher(),
 			)
 			b := blockstest.NewBlock(t, ethB, nil, nil)
-			snowB, err := sut.ParseBlock(ctx, b.Bytes())
-			require.NoErrorf(t, err, "ParseBlock(...)")
-			require.ErrorIs(t, snowB.Verify(ctx), tt.wantErr, "Verify()")
+			require.ErrorIs(t, sut.rawVM.VerifyBlock(ctx, nil, b), tt.wantErr, "VerifyBlock()")
 		})
 	}
 }
@@ -799,7 +841,7 @@ func TestGossip(t *testing.T) {
 	requireNotReceiveTx(t, nonValidators[1:], tx.Hash())
 }
 
-func TestGetBlock(t *testing.T) {
+func TestBlockSources(t *testing.T) {
 	opt, vmTime := withVMTime(t, time.Unix(saeparams.TauSeconds, 0))
 	ctx, sut := newSUT(t, 1, opt)
 
@@ -812,21 +854,12 @@ func TestGetBlock(t *testing.T) {
 	unsettled := sut.runConsensusLoop(t)
 
 	verified := sut.createAndVerifyBlock(t, unsettled)
-	unverified := sut.buildAndParseBlock(
-		t,
-		unsettled,
-		// Ensures that this is a completely unknown block.
-		sut.wallet.SetNonceAndSign(t, 0, &types.LegacyTx{
-			To:       &common.Address{},
-			Gas:      params.TxGas,
-			GasPrice: big.NewInt(1),
-		}),
-	)
+	unverified := sut.buildAndParseBlock(t, unwrap(t, verified))
 
 	tests := []struct {
-		name    string
-		block   *blocks.Block
-		wantErr testerr.Want
+		name            string
+		block           *blocks.Block
+		wantGetBlockErr testerr.Want
 	}{
 		{"genesis", genesis, nil},
 		{"on_disk", onDisk, nil},
@@ -838,16 +871,45 @@ func TestGetBlock(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := sut.GetBlock(ctx, tt.block.ID())
-			if diff := testerr.Diff(err, tt.wantErr); diff != "" {
-				t.Fatalf("GetBlock(...) %s", diff)
+			t.Run("GetBlock", func(t *testing.T) {
+				got, err := sut.GetBlock(ctx, tt.block.ID())
+				if diff := testerr.Diff(err, tt.wantGetBlockErr); diff != "" {
+					t.Fatalf("GetBlock(...) %s", diff)
+				}
+				if tt.wantGetBlockErr != nil {
+					return
+				}
+				if diff := cmp.Diff(tt.block, unwrap(t, got), blocks.CmpOpt()); diff != "" {
+					t.Errorf("GetBlock(...) diff (-want +got):\n%s", diff)
+				}
+			})
+
+			wantOK := tt.wantGetBlockErr == nil
+			opts := cmp.Options{
+				cmputils.Blocks(),
+				cmputils.Headers(),
+				cmpopts.EquateEmpty(),
 			}
-			if tt.wantErr != nil {
-				return
-			}
-			if diff := cmp.Diff(tt.block, unwrap(t, got), blocks.CmpOpt()); diff != "" {
-				t.Errorf("GetBlock(...) diff (-want +got):\n%s", diff)
-			}
+			t.Run("EthBlockSource", func(t *testing.T) {
+				got, gotOK := sut.rawVM.ethBlockSource(tt.block.Hash(), tt.block.NumberU64())
+				require.Equalf(t, wantOK, gotOK, "%T.ethBlockSource(...)", sut.rawVM)
+				if !wantOK {
+					return
+				}
+				if diff := cmp.Diff(tt.block.EthBlock(), got, opts); diff != "" {
+					t.Errorf("%T.ethBlockSource(...) diff (-want +got)\n%s", sut.rawVM, diff)
+				}
+			})
+			t.Run("HeaderSource", func(t *testing.T) {
+				got, gotOK := sut.rawVM.headerSource(tt.block.Hash(), tt.block.NumberU64())
+				require.Equalf(t, wantOK, gotOK, "%T.headerSource(...)", sut.rawVM)
+				if !wantOK {
+					return
+				}
+				if diff := cmp.Diff(tt.block.Header(), got, opts); diff != "" {
+					t.Errorf("%T.headerSource(...) diff (-want +got)\n%s", sut.rawVM, diff)
+				}
+			})
 		})
 	}
 }

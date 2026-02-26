@@ -165,7 +165,7 @@ func NewVM(
 
 		exec, err := saexec.New(
 			lastExecuted,
-			vm.blockSource,
+			vm.headerSource,
 			chainConfig,
 			db,
 			xdb,
@@ -209,7 +209,7 @@ func NewVM(
 	}
 
 	{ // ==========  Mempool  ==========
-		bc := txgossip.NewBlockChain(vm.exec, vm.blockSource)
+		bc := txgossip.NewBlockChain(vm.exec, vm.ethBlockSource)
 		pools := []txpool.SubPool{
 			legacypool.New(cfg.MempoolConfig, bc),
 		}

@@ -116,9 +116,21 @@ func (vm *VM) ethRPCServer() (*rpc.Server, error) {
 		// - eth_getRawTransactionByBlockNumberAndIndex
 		// - eth_getRawTransactionByHash
 		// - eth_pendingTransactions
-		{"eth", ethapi.NewTransactionAPI(b, new(ethapi.AddrLocker))},
+		{
+			"eth",
+			immediateReceipts{
+				vm.exec,
+				ethapi.NewTransactionAPI(b, new(ethapi.AddrLocker)),
+			},
+		},
 		// Standard Ethereum node APIS:
+		// - eth_getFilterChanges
+		// - eth_getFilterLogs
 		// - eth_getLogs
+		// - eth_newBlockFilter
+		// - eth_newFilter
+		// - eth_newPendingTransactionFilter
+		// - eth_uninstallFilter
 		//
 		// Geth-specific APIs:
 		// - eth_subscribe
@@ -328,6 +340,21 @@ func (b *ethAPIBackend) UnprotectedAllowed() bool {
 	return false
 }
 
+// ExtRPCEnabled reports that external RPC access is enabled. This adds an
+// additional security measure in case we add support for the personal API.
+func (*ethAPIBackend) ExtRPCEnabled() bool {
+	return true
+}
+
+// PendingBlockAndReceipts returns a nil block and receipts. Returning nil tells
+// geth that this backend does not support pending blocks. In SAE, the pending
+// block is defined as the most recently accepted block, but receipts are only
+// available after execution. Returning a non-nil block with incorrect or empty
+// receipts could cause geth to encounter errors.
+func (*ethAPIBackend) PendingBlockAndReceipts() (*types.Block, types.Receipts) {
+	return nil, nil
+}
+
 func (b *ethAPIBackend) AccountManager() *accounts.Manager {
 	return b.accountManager
 }
@@ -431,17 +458,18 @@ func (b *ethAPIBackend) GetPoolTransactions() (types.Transactions, error) {
 }
 
 type (
-	canonicalReader[T any] func(ethdb.Reader, common.Hash, uint64) (*T, error)
-	blockAccessor[T any]   func(*blocks.Block) *T
+	canonicalReader[T any]        func(ethdb.Reader, common.Hash, uint64) *T
+	canonicalReaderWithErr[T any] func(ethdb.Reader, common.Hash, uint64) (*T, error)
+	blockAccessor[T any]          func(*blocks.Block) *T
 )
 
-func neverErrs[T any](fn func(ethdb.Reader, common.Hash, uint64) *T) canonicalReader[T] {
+func neverErrs[T any](fn func(ethdb.Reader, common.Hash, uint64) *T) canonicalReaderWithErr[T] {
 	return func(r ethdb.Reader, h common.Hash, n uint64) (*T, error) {
 		return fn(r, h, n), nil
 	}
 }
 
-func readByNumber[T any](b *ethAPIBackend, n rpc.BlockNumber, read canonicalReader[T]) (*T, error) {
+func readByNumber[T any](b *ethAPIBackend, n rpc.BlockNumber, read canonicalReaderWithErr[T]) (*T, error) {
 	num, err := b.resolveBlockNumber(n)
 	if errors.Is(err, errFutureBlockNotResolved) {
 		return nil, nil
@@ -459,7 +487,7 @@ func readByNumber[T any](b *ethAPIBackend, n rpc.BlockNumber, read canonicalRead
 // A hash that is in neither of the VM's memory nor the database will result in
 // a return of `(nil, errWhenNotFound)` to allow for usage with the [rawdb]
 // pattern of returning `(nil, nil)`.
-func readByHash[T any](vm *VM, hash common.Hash, fromMem blockAccessor[T], fromDB canonicalReader[T], errWhenNotFound error) (*T, error) {
+func readByHash[T any](vm *VM, hash common.Hash, fromMem blockAccessor[T], fromDB canonicalReaderWithErr[T], errWhenNotFound error) (*T, error) {
 	if blk, ok := vm.blocks.Load(hash); ok {
 		return fromMem(blk), nil
 	}
@@ -472,7 +500,7 @@ func readByHash[T any](vm *VM, hash common.Hash, fromMem blockAccessor[T], fromD
 
 // TODO(arr4n) DRY [readByHash] and [readByNumberOrHash]
 
-func readByNumberOrHash[T any](b *ethAPIBackend, blockNrOrHash rpc.BlockNumberOrHash, fromMem blockAccessor[T], fromDB canonicalReader[T]) (*T, error) {
+func readByNumberOrHash[T any](b *ethAPIBackend, blockNrOrHash rpc.BlockNumberOrHash, fromMem blockAccessor[T], fromDB canonicalReaderWithErr[T]) (*T, error) {
 	n, hash, err := b.resolveBlockNumberOrHash(blockNrOrHash)
 	if err != nil {
 		return nil, err
