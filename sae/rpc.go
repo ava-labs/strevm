@@ -124,7 +124,13 @@ func (vm *VM) ethRPCServer() (*rpc.Server, error) {
 			},
 		},
 		// Standard Ethereum node APIS:
+		// - eth_getFilterChanges
+		// - eth_getFilterLogs
 		// - eth_getLogs
+		// - eth_newBlockFilter
+		// - eth_newFilter
+		// - eth_newPendingTransactionFilter
+		// - eth_uninstallFilter
 		//
 		// Geth-specific APIs:
 		// - eth_subscribe
