@@ -588,6 +588,8 @@ func TestEmptyChainConfig(t *testing.T) {
 	}
 }
 
+const maxFutureBlockSeconds = uint64(maxFutureBlockDuration / time.Second)
+
 func TestSyntacticBlockChecks(t *testing.T) {
 	ctx, sut := newSUT(t, 0)
 

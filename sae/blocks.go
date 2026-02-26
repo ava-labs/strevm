@@ -34,13 +34,10 @@ func (vm *VM) newBlock(eth *types.Block, parent, lastSettled *blocks.Block) (*bl
 	return blocks.New(eth, parent, lastSettled, vm.log())
 }
 
-// maxFutureBlockDuration is the maximum time from the current time allowed for
-// blocks before they're considered future blocks and fail parsing or
+// maxFutureBlockDuration is the maximum time, from the current time, allowed
+// for blocks before they're considered future blocks and fail parsing or
 // verification.
-const (
-	maxFutureBlockSeconds  uint64 = 10
-	maxFutureBlockDuration        = time.Duration(maxFutureBlockSeconds) * time.Second
-)
+const maxFutureBlockDuration = 10 * time.Second
 
 var (
 	errBlockHeightNotUint64 = errors.New("block height not uint64")
@@ -61,7 +58,7 @@ func (vm *VM) ParseBlock(ctx context.Context, buf []byte) (*blocks.Block, error)
 	}
 	// The uint64 timestamp can't underflow [time.Time] but it can overflow so
 	// make this some future engineer's problem in a few millennia.
-	if b.Time() > unix(vm.config.Now())+maxFutureBlockSeconds {
+	if b.Time() > unix(vm.config.Now().Add(maxFutureBlockDuration)) {
 		return nil, fmt.Errorf("%w: >%s", errBlockTooFarInFuture, maxFutureBlockDuration)
 	}
 
