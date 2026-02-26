@@ -583,17 +583,15 @@ func TestIntegration(t *testing.T) {
 // TestCanCreateContractSoftError verifies that a CanCreateContract rejection
 // results in a failed receipt, not a fatal execution error.
 func TestCanCreateContractSoftError(t *testing.T) {
-	errContractCreationBlocked := errors.New("contract creation blocked")
 	ctx, sut := newSUT(t, 1)
 
 	stub := &libevmhookstest.Stub{
-		CanCreateContractFn: func(_ *libevm.AddressContext, _ uint64, _ libevm.StateReader) (uint64, error) {
-			return 0, errContractCreationBlocked
+		CanCreateContractFn: func(*libevm.AddressContext, uint64, libevm.StateReader) (uint64, error) {
+			return 0, errors.New("contract creation blocked")
 		},
 		MinimumGasConsumptionFn: hook.MinimumGasConsumption,
 	}
-	libevmExtras := stub.Register(t)
-	libevmExtras.ChainConfig.Set(sut.rawVM.exec.ChainConfig(), stub)
+	stub.Register(t)
 
 	const gasLimit uint64 = 100_000
 	tx := sut.wallet.SetNonceAndSign(t, 0, &types.DynamicFeeTx{
@@ -601,20 +599,18 @@ func TestCanCreateContractSoftError(t *testing.T) {
 		Gas:       gasLimit,
 		GasFeeCap: big.NewInt(1),
 	})
-	sut.mustSendTx(t, tx)
 
-	b := sut.runConsensusLoop(t)
+	b := sut.runConsensusLoop(t, tx)
 	require.NoErrorf(t, b.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", b)
 	require.Lenf(t, b.Receipts(), 1, "%T.Receipts()", b)
 
 	r := b.Receipts()[0]
 	assert.Equalf(t, types.ReceiptStatusFailed, r.Status, "%T.Status (contract creation should fail)", r)
-	assert.Positivef(t, r.GasUsed, "%T.GasUsed > 0", r)
+	assert.Equalf(t, gasLimit, r.GasUsed, "%T.GasUsed == limit because CanCreateContract returns 0 gas remaining", r)
 
 	// Verify the sender's nonce was incremented despite the failure.
 	sdb := sut.stateAt(t, b.PostExecutionStateRoot())
-	senderAddr := sut.wallet.Addresses()[0]
-	assert.Equalf(t, uint64(1), sdb.GetNonce(senderAddr), "sender nonce incremented after failed contract creation")
+	assert.Equalf(t, uint64(1), sdb.GetNonce(sut.wallet.Addresses()[0]), "%T.GetNonce([sender]) after blocked contract creation", sdb)
 }
 
 func TestEmptyChainConfig(t *testing.T) {

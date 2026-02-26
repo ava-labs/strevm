@@ -620,25 +620,20 @@ func TestStartBlockQueueFullDueToTargetChanges(t *testing.T) {
 }
 
 func TestCanExecuteTransactionHook(t *testing.T) {
+	config := saetest.ChainConfig()
+	signer := types.LatestSigner(config)
+	const (
+		blocked = iota
+		allowed
+
+		numAccounts
+	)
+	wallet := saetest.NewUNSAFEWallet(t, numAccounts, signer)
+	sut := newSUT(t, saetest.MaxAllocFor(wallet.Addresses()...))
+
 	errSenderBlocked := errors.New("sender blocked by allowlist")
-
-	blockedKey, err := crypto.GenerateKey()
-	require.NoError(t, err, "crypto.GenerateKey() for blocked")
-	blockedAddr := crypto.PubkeyToAddress(blockedKey.PublicKey)
-
-	allowedKey, err := crypto.GenerateKey()
-	require.NoError(t, err, "crypto.GenerateKey() for allowed")
-	allowedAddr := crypto.PubkeyToAddress(allowedKey.PublicKey)
-
-	const balance = 10 * params.Ether
-
-	sut := newSUT(t, types.GenesisAlloc{
-		blockedAddr: {Balance: new(big.Int).SetUint64(balance)},
-		allowedAddr: {Balance: new(big.Int).SetUint64(balance)},
-	})
-
 	sut.hooks.CanExecuteTransactionFn = func(from common.Address, _ *common.Address, _ libevm.StateReader) error {
-		if from == blockedAddr {
+		if from == wallet.Addresses()[blocked] {
 			return errSenderBlocked
 		}
 		return nil
@@ -646,47 +641,39 @@ func TestCanExecuteTransactionHook(t *testing.T) {
 
 	header := &types.Header{
 		ParentHash: sut.genesis.Hash(),
-		Number:     big.NewInt(0),
+		Number:     big.NewInt(1),
 	}
 	require.NoError(t, sut.StartBlock(header), "StartBlock()")
 
-	config := sut.config
-	signer := types.NewCancunSigner(config.ChainID)
-
 	tests := []struct {
-		name      string
-		key       *ecdsa.PrivateKey
-		addr      common.Address
-		wantErr   error
-		wantNonce uint64
+		name           string
+		account        int
+		wantErr        error
+		wantNonceAfter uint64
 	}{
 		{
-			name:      "blocked_sender_rejected",
-			key:       blockedKey,
-			addr:      blockedAddr,
-			wantErr:   errSenderBlocked,
-			wantNonce: 0,
+			name:           "blocked_sender_rejected",
+			account:        blocked,
+			wantErr:        errSenderBlocked,
+			wantNonceAfter: 0,
 		},
 		{
-			name:      "allowed_sender_accepted",
-			key:       allowedKey,
-			addr:      allowedAddr,
-			wantErr:   nil,
-			wantNonce: 1,
+			name:           "allowed_sender_accepted",
+			account:        allowed,
+			wantErr:        nil,
+			wantNonceAfter: 1,
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tx := types.MustSignNewTx(tt.key, signer, &types.DynamicFeeTx{
-				ChainID:   config.ChainID,
+			tx := wallet.SetNonceAndSign(t, tt.account, &types.DynamicFeeTx{
 				GasTipCap: big.NewInt(0),
 				GasFeeCap: big.NewInt(1),
 				Gas:       params.TxGas,
 				To:        &common.Address{},
 			})
-			gotErr := sut.ApplyTx(tx)
-			require.ErrorIsf(t, gotErr, tt.wantErr, "ApplyTx() error")
-			assert.Equalf(t, tt.wantNonce, sut.State.db.GetNonce(tt.addr), "sender nonce after ApplyTx()")
+			require.ErrorIsf(t, sut.ApplyTx(tx), tt.wantErr, "ApplyTx() error")
+			assert.Equalf(t, tt.wantNonceAfter, sut.State.db.GetNonce(wallet.Addresses()[tt.account]), "sender nonce after ApplyTx()")
 		})
 	}
 }
