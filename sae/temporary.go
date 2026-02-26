@@ -10,9 +10,11 @@ import (
 	"context"
 	"errors"
 
-	"github.com/ava-labs/libevm/common"
+	"github.com/ava-labs/libevm/core"
+	"github.com/ava-labs/libevm/core/state"
 	"github.com/ava-labs/libevm/core/types"
-	"github.com/ava-labs/libevm/rpc"
+	"github.com/ava-labs/libevm/core/vm"
+	"github.com/ava-labs/libevm/eth/tracers"
 )
 
 var errUnimplemented = errors.New("unimplemented")
@@ -21,18 +23,14 @@ func (b *ethAPIBackend) ExtRPCEnabled() bool {
 	panic(errUnimplemented)
 }
 
-func (b *ethAPIBackend) HeaderByNumberOrHash(context.Context, rpc.BlockNumberOrHash) (*types.Header, error) {
-	panic(errUnimplemented)
-}
-
-func (b *ethAPIBackend) BlockByNumberOrHash(context.Context, rpc.BlockNumberOrHash) (*types.Block, error) {
-	panic(errUnimplemented)
-}
-
 func (b *ethAPIBackend) PendingBlockAndReceipts() (*types.Block, types.Receipts) {
 	panic(errUnimplemented)
 }
 
-func (b *ethAPIBackend) GetReceipts(context.Context, common.Hash) (types.Receipts, error) {
+func (b *ethAPIBackend) StateAtBlock(ctx context.Context, block *types.Block, reexec uint64, base *state.StateDB, readOnly bool, preferDisk bool) (*state.StateDB, tracers.StateReleaseFunc, error) {
+	panic(errUnimplemented)
+}
+
+func (b *ethAPIBackend) StateAtTransaction(ctx context.Context, block *types.Block, txIndex int, reexec uint64) (*core.Message, vm.BlockContext, *state.StateDB, tracers.StateReleaseFunc, error) {
 	panic(errUnimplemented)
 }

@@ -81,7 +81,7 @@ func (b *ethAPIBackend) StateAndHeaderByNumberOrHash(ctx context.Context, numOrH
 		hdr.Root = bl.PostExecutionStateRoot()
 		hdr.BaseFee = bl.BaseFee().ToBig()
 	} else {
-		hdr = rawdb.ReadHeader(b.db, hash, num)
+		hdr = rawdb.ReadHeader(b.vm.db, hash, num)
 
 		// TODO(arr4n) export [blocks.executionResults] to avoid multiple
 		// database reads and canoto unmarshallings here.

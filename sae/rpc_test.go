@@ -24,6 +24,7 @@ import (
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/core/vm"
 	"github.com/ava-labs/libevm/crypto"
+	"github.com/ava-labs/libevm/ethclient"
 	"github.com/ava-labs/libevm/libevm"
 	"github.com/ava-labs/libevm/libevm/ethapi"
 	"github.com/ava-labs/libevm/libevm/hookstest"
@@ -59,6 +60,7 @@ func (s *SUT) testRPC(ctx context.Context, t *testing.T, tcs ...rpcTest) {
 		cmputils.Headers(),
 		cmputils.HexutilBigs(),
 		cmputils.TransactionsByHash(),
+		cmputils.Receipts(),
 	}
 
 	for _, tc := range tcs {
@@ -165,7 +167,7 @@ func TestSubscriptions(t *testing.T) {
 	runConsensusLoop := func(wantLogs ...types.Log) {
 		t.Helper()
 
-		b := sut.runConsensusLoop(t, sut.lastAcceptedBlock(t))
+		b := sut.runConsensusLoop(t)
 		require.Equal(t, b.Hash(), (<-newHeads).Hash(), "header hash from newHeads subscription")
 
 		for _, want := range wantLogs {
@@ -422,6 +424,8 @@ func TestEthGetters(t *testing.T) {
 	blockingPrecompile := common.Address{'b', 'l', 'o', 'c', 'k'}
 	registerBlockingPrecompile(t, blockingPrecompile)
 
+	genesis := sut.lastAcceptedBlock(t)
+
 	createTx := func(t *testing.T, to common.Address) *types.Transaction {
 		t.Helper()
 		return sut.wallet.SetNonceAndSign(t, 0, &types.DynamicFeeTx{
@@ -431,19 +435,20 @@ func TestEthGetters(t *testing.T) {
 		})
 	}
 
-	genesis := sut.lastAcceptedBlock(t)
+	// TODO(arr4n) abstract the construction of blocks at all stages as it's
+	// copy-pasta'd elsewhere.
 
 	// Once a block is settled, its ancestors are only accessible from the
 	// database.
-	onDisk := sut.createAndAcceptBlock(t, createTx(t, zeroAddr))
+	onDisk := sut.runConsensusLoop(t, createTx(t, zeroAddr))
 
-	settled := sut.createAndAcceptBlock(t, createTx(t, zeroAddr))
+	settled := sut.runConsensusLoop(t, createTx(t, zeroAddr))
 	vmTime.advanceToSettle(ctx, t, settled)
 
-	executed := sut.createAndAcceptBlock(t, createTx(t, zeroAddr))
+	executed := sut.runConsensusLoop(t, createTx(t, zeroAddr))
 	require.NoErrorf(t, executed.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", executed)
 
-	pending := sut.createAndAcceptBlock(t, createTx(t, blockingPrecompile))
+	pending := sut.runConsensusLoop(t, createTx(t, blockingPrecompile))
 
 	for _, b := range []*blocks.Block{genesis, onDisk, settled, executed, pending} {
 		t.Run(fmt.Sprintf("block_num_%d", b.Height()), func(t *testing.T) {
@@ -531,15 +536,15 @@ func TestGetLogs(t *testing.T) {
 	// and therefore moved to disk.
 	indexed := make([]*blocks.Block, bloomSectionSize)
 	for i := range indexed {
-		indexed[i] = sut.createAndAcceptBlock(t, txWithLog(t))
+		indexed[i] = sut.runConsensusLoop(t, txWithLog(t))
 	}
 
-	settled := sut.createAndAcceptBlock(t, txWithLog(t))
+	settled := sut.runConsensusLoop(t, txWithLog(t))
 	vmTime.advanceToSettle(ctx, t, settled)
 
-	noLogs := sut.createAndAcceptBlock(t, txWithoutLog(t))
+	noLogs := sut.runConsensusLoop(t, txWithoutLog(t))
 
-	executed := sut.createAndAcceptBlock(t, txWithLog(t))
+	executed := sut.runConsensusLoop(t, txWithLog(t))
 	require.NoErrorf(t, executed.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", executed)
 
 	// Although the FiltersAPI will work without any blocks indexed, such a
@@ -730,6 +735,135 @@ func TestResend(t *testing.T) {
 	})
 }
 
+func TestGetReceipts(t *testing.T) {
+	timeOpt, vmTime := withVMTime(t, time.Unix(saeparams.TauSeconds, 0))
+	ctx, sut := newSUT(t, 1, timeOpt)
+
+	// Blocking precompile creates accepted-but-not-executed blocks
+	blockingPrecompile := common.Address{'b', 'l', 'o', 'c', 'k'}
+	registerBlockingPrecompile(t, blockingPrecompile)
+
+	var (
+		txs  []*types.Transaction
+		want []*types.Receipt
+	)
+	for range 6 {
+		tx := sut.wallet.SetNonceAndSign(t, 0, &types.LegacyTx{
+			To:       &zeroAddr,
+			Gas:      params.TxGas,
+			GasPrice: big.NewInt(1),
+		})
+		txs = append(txs, tx)
+		want = append(want, &types.Receipt{
+			TxHash:            tx.Hash(),
+			Status:            types.ReceiptStatusSuccessful,
+			GasUsed:           params.TxGas,
+			EffectiveGasPrice: big.NewInt(1),
+			Logs:              []*types.Log{},
+		})
+	}
+
+	slice := func(t *testing.T, from, to int) (*blocks.Block, []*types.Receipt) {
+		t.Helper()
+		b := sut.runConsensusLoop(t, txs[from:to]...)
+		rs := want[from:to]
+
+		var totalGas uint64
+		for i, r := range rs {
+			totalGas += r.GasUsed
+			r.CumulativeGasUsed = totalGas
+			r.BlockHash = b.Hash()
+			r.BlockNumber = b.Number()
+			r.TransactionIndex = uint(i) //nolint:gosec // Known non-negative
+		}
+		return b, rs
+	}
+
+	genesis := sut.lastAcceptedBlock(t)
+
+	onDisk, wantOnDisk := slice(t, 0, 2)
+	settled, wantSettled := slice(t, 2, 4)
+	vmTime.advanceToSettle(ctx, t, settled)
+	unsettled, wantUnsettled := slice(t, 4, 6)
+	sut.waitUntilExecuted(t, unsettled)
+
+	pending := sut.runConsensusLoop(t, sut.wallet.SetNonceAndSign(t, 0, &types.LegacyTx{
+		To:       &blockingPrecompile,
+		Gas:      params.TxGas,
+		GasPrice: big.NewInt(1),
+	}))
+
+	var tests []rpcTest
+	for _, tc := range []struct {
+		id   rpc.BlockNumberOrHash
+		want []*types.Receipt
+	}{
+		{
+			id:   rpc.BlockNumberOrHashWithHash(onDisk.Hash(), true),
+			want: wantOnDisk,
+		},
+		{
+			id:   rpc.BlockNumberOrHashWithHash(settled.Hash(), true),
+			want: wantSettled,
+		},
+		{
+			id:   rpc.BlockNumberOrHashWithHash(unsettled.Hash(), true),
+			want: wantUnsettled,
+		},
+		{
+			id:   rpc.BlockNumberOrHashWithNumber(rpc.LatestBlockNumber),
+			want: wantUnsettled,
+		},
+	} {
+		tests = append(tests, rpcTest{
+			method: "eth_getBlockReceipts",
+			args:   []any{tc.id.String()},
+			want:   tc.want,
+		})
+	}
+
+	for i, tx := range txs {
+		tests = append(tests, rpcTest{
+			method: "eth_getTransactionReceipt",
+			args:   []any{tx.Hash()},
+			want:   want[i],
+		})
+	}
+
+	// Acceptance writes blocks to the DB but not receipts, so pending
+	// block receipts error, while pending tx receipts block until they're ready
+	// as long as they have been included in a block.
+	tests = append(tests, []rpcTest{
+		{
+			method: "eth_getTransactionReceipt",
+			args:   []any{common.Hash{}},
+			want:   (*types.Receipt)(nil),
+		},
+		{
+			method: "eth_getBlockReceipts",
+			args:   []any{common.Hash{}},
+			want:   ([]*types.Receipt)(nil),
+		},
+		{
+			method: "eth_getBlockReceipts",
+			args:   []any{genesis.Hash()},
+			want:   []*types.Receipt{},
+		},
+		{
+			method: "eth_getBlockReceipts",
+			args:   []any{pending.Hash()},
+			want:   ([]*types.Receipt)(nil),
+		},
+		{
+			method: "eth_getBlockReceipts",
+			args:   []any{hexutil.Uint64(pending.Height())},
+			want:   ([]*types.Receipt)(nil),
+		},
+	}...)
+
+	sut.testRPC(ctx, t, tests...)
+}
+
 // SAE doesn't really support APIs that require a key on the node, as there is
 // no way to add keys. But, we want to ensure the methods error gracefully.
 func TestEthSigningAPIs(t *testing.T) {
@@ -740,8 +874,8 @@ func TestEthSigningAPIs(t *testing.T) {
 		"from":     zeroAddr,
 		"to":       zeroAddr,
 		"gas":      hexutil.Uint64(params.TxGas),
-		"gasPrice": hexutil.Big(*big.NewInt(1)),
-		"value":    hexutil.Big(*big.NewInt(100)),
+		"gasPrice": hexBig(1),
+		"value":    hexBig(100),
 		"nonce":    hexutil.Uint64(0),
 	}
 	sut.testRPC(ctx, t, []rpcTest{
@@ -841,7 +975,7 @@ func TestDebugGetRawTransaction(t *testing.T) {
 		Gas:       params.TxGas,
 		GasFeeCap: big.NewInt(1),
 	})
-	b := sut.createAndAcceptBlock(t, tx)
+	b := sut.runConsensusLoop(t, tx)
 	require.NoErrorf(t, b.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", b)
 
 	marshaled, err := tx.MarshalBinary()
@@ -1107,17 +1241,17 @@ func TestResolveBlockNumberOrHash(t *testing.T) {
 	opt, vmTime := withVMTime(t, time.Unix(saeparams.TauSeconds, 0))
 	ctx, sut := newSUT(t, 0, opt)
 
-	settled := sut.runConsensusLoop(t, sut.lastAcceptedBlock(t))
+	settled := sut.runConsensusLoop(t)
 	vmTime.advanceToSettle(ctx, t, settled)
 
 	for range 2 {
-		b := sut.runConsensusLoop(t, sut.lastAcceptedBlock(t))
+		b := sut.runConsensusLoop(t)
 		vmTime.advanceToSettle(ctx, t, b)
 	}
 	_, ok := sut.rawVM.blocks.Load(settled.Hash())
 	require.False(t, ok, "settled block still in VM memory")
 
-	accepted := sut.runConsensusLoop(t, sut.lastAcceptedBlock(t))
+	accepted := sut.runConsensusLoop(t)
 	require.NoError(t, sut.SetPreference(ctx, accepted.ID()), "SetPreference()")
 
 	b, err := sut.BuildBlock(ctx)
@@ -1198,153 +1332,155 @@ func TestResolveBlockNumberOrHash(t *testing.T) {
 	}
 }
 
-func generateTx(tipCap int64) types.TxData {
-	return &types.DynamicFeeTx{
-		To:        &zeroAddr,
-		Gas:       params.TxGas,
-		GasTipCap: big.NewInt(tipCap),
-		GasFeeCap: new(big.Int).SetUint64(math.MaxUint64),
-	}
-}
-
-func TestSuggestGasTipCap(t *testing.T) {
-	steps := []struct {
-		name string
-		txs  []types.TxData // each tx is a separate block
-		want *hexutil.Big
+func TestGasPriceAPIs(t *testing.T) {
+	tests := []struct {
+		name       string
+		tipToBlock []uint64 // each tip formed to tx which are included in separate blocks
+		wantTip    uint64
 	}{
 		{
-			name: "genesis",
-			want: (*hexutil.Big)(big.NewInt(params.Wei)),
+			name:    "genesis",
+			wantTip: params.Wei,
 		},
 		{
-			name: "after_block_with_tip",
-			txs:  []types.TxData{generateTx(100)},
-			want: (*hexutil.Big)(big.NewInt(100)),
+			name:       "after_block_with_tip",
+			tipToBlock: []uint64{100},
+			wantTip:    100,
 		},
 		{
-			name: "multiple_blocks",
-			txs: []types.TxData{
-				generateTx(100),
-				generateTx(200),
-				generateTx(300),
-			},
-			want: (*hexutil.Big)(big.NewInt(100)),
+			name:       "multiple_blocks",
+			tipToBlock: []uint64{100, 200, 300},
+			wantTip:    100,
 		},
 	}
-	for _, s := range steps {
-		ctx, sut := newSUT(t, 1)
-		for _, tx := range s.txs {
-			b := sut.createAndAcceptBlock(t, sut.wallet.SetNonceAndSign(t, 0, tx))
-			require.NoErrorf(t, b.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", b)
-		}
-
-		t.Run(s.name, func(t *testing.T) {
-			sut.testRPC(ctx, t, rpcTest{
-				method: "eth_maxPriorityFeePerGas",
-				want:   s.want,
-			})
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx, sut := newSUT(t, 1)
+			lastBlock := sut.lastAcceptedBlock(t)
+			for _, tip := range tt.tipToBlock {
+				b := sut.runConsensusLoop(t, sut.wallet.SetNonceAndSign(t, 0, &types.DynamicFeeTx{
+					To:        &zeroAddr,
+					Gas:       params.TxGas,
+					GasTipCap: new(big.Int).SetUint64(tip),
+					GasFeeCap: new(big.Int).SetUint64(math.MaxUint64),
+				}))
+				require.NoErrorf(t, b.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", b)
+				lastBlock = b
+			}
+			baseFee := lastBlock.BaseFee()
+			sut.testRPC(ctx, t,
+				rpcTest{
+					method: "eth_maxPriorityFeePerGas",
+					want:   hexutil.Uint64(tt.wantTip),
+				},
+				rpcTest{
+					method: "eth_gasPrice",
+					want:   hexutil.Uint64(tt.wantTip + baseFee.Uint64()),
+				},
+			)
 		})
 	}
 }
 
 func TestFeeHistory(t *testing.T) {
 	const (
-		baseFee  int64 = 1             // zero excess => e^0 = 1
-		gasLimit int64 = 2_000_000_000 // Target(100e6) * TargetToRate(2) * TauSeconds(5) * Lambda(2)
+		gasLimit       = 2_000_000_000 // Default newSut Target(100e6) * TargetToRate(2) * TauSeconds(5) * Lambda(2)
+		txGasUsedRatio = float64(params.TxGas) / float64(gasLimit)
 	)
-	txGasUsedRatio := float64(params.TxGas) / float64(gasLimit)
 
-	// feeHistoryResult mirrors the JSON response of eth_feeHistory for use with
-	// [SUT.testRPC].
-	type feeHistoryResult struct {
-		OldestBlock  *hexutil.Big     `json:"oldestBlock"`
-		Reward       [][]*hexutil.Big `json:"reward,omitempty"`
-		BaseFee      []*hexutil.Big   `json:"baseFeePerGas,omitempty"`
-		GasUsedRatio []float64        `json:"gasUsedRatio"`
-	}
+	baseFeeHex := hexBig(1) // zero excess => e^0 = 1
 
 	tests := []struct {
 		name              string
-		txs               []types.TxData
-		blockCount        hexutil.Uint
+		tipToBlock        []uint64 // each tip formed to tx which are included in separate blocks
+		blockCount        uint64
 		lastBlock         rpc.BlockNumber
 		rewardPercentiles []float64
-		want              feeHistoryResult
+		want              ethclient.FeeHistoryResult
 	}{
 		{
 			name:       "genesis",
-			txs:        []types.TxData{},
+			tipToBlock: []uint64{},
 			blockCount: 0,
 			lastBlock:  rpc.LatestBlockNumber,
-			want: feeHistoryResult{
-				OldestBlock: (*hexutil.Big)(big.NewInt(0)),
+			want: ethclient.FeeHistoryResult{
+				OldestBlock: hexBig(0),
 			},
 		},
 		{
 			name:       "latest_block",
-			txs:        []types.TxData{generateTx(100)},
+			tipToBlock: []uint64{100},
 			blockCount: 1,
 			lastBlock:  rpc.LatestBlockNumber,
-			want: feeHistoryResult{
-				OldestBlock:  (*hexutil.Big)(big.NewInt(1)),
-				BaseFee:      []*hexutil.Big{(*hexutil.Big)(big.NewInt(baseFee)), (*hexutil.Big)(big.NewInt(baseFee))},
+			want: ethclient.FeeHistoryResult{
+				OldestBlock:  hexBig(1),
+				BaseFee:      []*hexutil.Big{baseFeeHex, baseFeeHex},
 				GasUsedRatio: []float64{txGasUsedRatio},
 			},
 		},
 		{
 			name:              "with_reward_percentiles",
-			txs:               []types.TxData{generateTx(100)},
+			tipToBlock:        []uint64{100},
 			blockCount:        1,
 			lastBlock:         rpc.LatestBlockNumber,
 			rewardPercentiles: []float64{50},
-			want: feeHistoryResult{
-				OldestBlock:  (*hexutil.Big)(big.NewInt(1)),
-				Reward:       [][]*hexutil.Big{{(*hexutil.Big)(big.NewInt(100))}},
-				BaseFee:      []*hexutil.Big{(*hexutil.Big)(big.NewInt(baseFee)), (*hexutil.Big)(big.NewInt(baseFee))},
+			want: ethclient.FeeHistoryResult{
+				OldestBlock:  hexBig(1),
+				Reward:       [][]*hexutil.Big{{hexBig(100)}},
+				BaseFee:      []*hexutil.Big{baseFeeHex, baseFeeHex},
 				GasUsedRatio: []float64{txGasUsedRatio},
 			},
 		},
 		{
 			name:       "multiple_blocks",
-			txs:        []types.TxData{generateTx(100), generateTx(200)},
+			tipToBlock: []uint64{100, 200},
 			blockCount: 2,
 			lastBlock:  rpc.LatestBlockNumber,
-			want: feeHistoryResult{
-				OldestBlock:  (*hexutil.Big)(big.NewInt(1)),
-				BaseFee:      []*hexutil.Big{(*hexutil.Big)(big.NewInt(baseFee)), (*hexutil.Big)(big.NewInt(baseFee)), (*hexutil.Big)(big.NewInt(baseFee))},
+			want: ethclient.FeeHistoryResult{
+				OldestBlock:  hexBig(1),
+				BaseFee:      []*hexutil.Big{baseFeeHex, baseFeeHex, baseFeeHex},
 				GasUsedRatio: []float64{txGasUsedRatio, txGasUsedRatio},
 			},
 		},
 		{
 			name:              "specific_block_number",
-			txs:               []types.TxData{generateTx(100), generateTx(200), generateTx(300)},
+			tipToBlock:        []uint64{100, 200, 300},
 			blockCount:        2,
-			lastBlock:         rpc.BlockNumber(3),
+			lastBlock:         3,
 			rewardPercentiles: []float64{50},
-			want: feeHistoryResult{
-				OldestBlock: (*hexutil.Big)(big.NewInt(2)),
+			want: ethclient.FeeHistoryResult{
+				OldestBlock: hexBig(2),
 				Reward: [][]*hexutil.Big{
-					{(*hexutil.Big)(big.NewInt(200))},
-					{(*hexutil.Big)(big.NewInt(300))},
+					{hexBig(200)},
+					{hexBig(300)},
 				},
-				BaseFee:      []*hexutil.Big{(*hexutil.Big)(big.NewInt(baseFee)), (*hexutil.Big)(big.NewInt(baseFee)), (*hexutil.Big)(big.NewInt(baseFee))},
+				BaseFee:      []*hexutil.Big{baseFeeHex, baseFeeHex, baseFeeHex},
 				GasUsedRatio: []float64{txGasUsedRatio, txGasUsedRatio},
 			},
 		},
 	}
 	for _, tt := range tests {
-		ctx, sut := newSUT(t, 1)
-		for _, txData := range tt.txs {
-			b := sut.createAndAcceptBlock(t, sut.wallet.SetNonceAndSign(t, 0, txData))
-			require.NoErrorf(t, b.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", b)
-		}
 		t.Run(tt.name, func(t *testing.T) {
+			ctx, sut := newSUT(t, 1)
+			for _, tip := range tt.tipToBlock {
+				b := sut.runConsensusLoop(t, sut.wallet.SetNonceAndSign(t, 0, &types.DynamicFeeTx{
+					To:        &zeroAddr,
+					Gas:       params.TxGas,
+					GasTipCap: new(big.Int).SetUint64(tip),
+					GasFeeCap: new(big.Int).SetUint64(math.MaxUint64),
+				}))
+				require.NoErrorf(t, b.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", b)
+			}
+			hexBlockCount := hexutil.Uint64(tt.blockCount)
 			sut.testRPC(ctx, t, rpcTest{
 				method: "eth_feeHistory",
-				args:   []any{tt.blockCount, tt.lastBlock, tt.rewardPercentiles},
+				args:   []any{hexBlockCount, tt.lastBlock, tt.rewardPercentiles},
 				want:   tt.want,
 			})
 		})
 	}
+}
+
+func hexBig(n int64) *hexutil.Big {
+	return (*hexutil.Big)(big.NewInt(n))
 }

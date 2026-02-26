@@ -12,9 +12,11 @@ import (
 	"github.com/ava-labs/avalanchego/vms/components/gas"
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core"
+	"github.com/ava-labs/libevm/core/state"
 	"github.com/ava-labs/libevm/core/txpool"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/crypto"
+	"github.com/ava-labs/libevm/ethdb"
 	"github.com/ava-labs/libevm/libevm/ethtest"
 	"github.com/ava-labs/libevm/params"
 	"github.com/google/go-cmp/cmp"
@@ -32,8 +34,11 @@ import (
 
 type SUT struct {
 	*State
-	Genesis *blocks.Block
-	Hooks   *hookstest.Stub
+	genesis    *blocks.Block
+	hooks      *hookstest.Stub
+	config     *params.ChainConfig
+	stateCache state.Database
+	db         ethdb.Database
 }
 
 const (
@@ -59,13 +64,16 @@ func newSUT(tb testing.TB, alloc types.GenesisAlloc) SUT {
 	hooks := &hookstest.Stub{
 		Target: initialGasTarget,
 	}
-	s, err := NewState(hooks, config, cache, genesis)
+	s, err := NewState(hooks, config, cache, genesis, nil)
 	require.NoError(tb, err, "NewState()")
 
 	return SUT{
-		State:   s,
-		Genesis: genesis,
-		Hooks:   hooks,
+		State:      s,
+		genesis:    genesis,
+		hooks:      hooks,
+		config:     config,
+		stateCache: cache,
+		db:         db,
 	}
 }
 
@@ -97,7 +105,8 @@ func TestMultipleBlocks(t *testing.T) {
 	})
 
 	state := sut.State
-	lastHash := sut.Genesis.Hash()
+	lastHash := sut.genesis.Hash()
+	expectedNextGasTime := sut.genesis.ExecutedByGasTime().Clone()
 
 	const importedAmount = 10
 	type op struct {
@@ -262,13 +271,15 @@ func TestMultipleBlocks(t *testing.T) {
 	}
 	for i, block := range tests {
 		if block.hooks != nil {
-			*sut.Hooks = *block.hooks
+			*sut.hooks = *block.hooks
 		}
 		header := &types.Header{
 			ParentHash: lastHash,
 			Number:     big.NewInt(int64(i)),
 			Time:       block.time,
 		}
+
+		expectedNextGasTime.BeforeBlock(sut.hooks, header)
 		require.NoErrorf(t, state.StartBlock(header), "StartBlock(%d)", i)
 		require.Equalf(t, block.wantBaseFee, state.BaseFee(), "base fee after StartBlock(%d)", i)
 		require.Equalf(t, block.wantGasLimit, state.GasLimit(), "gas limit after StartBlock(%d)", i)
@@ -283,9 +294,11 @@ func TestMultipleBlocks(t *testing.T) {
 
 		got, err := state.FinishBlock()
 		require.NoError(t, err, "FinishBlock()")
+		require.NoError(t, expectedNextGasTime.AfterBlock(gas.Gas(state.GasUsed()), sut.hooks, header), "AfterBlock()")
 
 		want := &blocks.WorstCaseBounds{
-			MaxBaseFee: block.wantBaseFee,
+			MaxBaseFee:  block.wantBaseFee,
+			NextGasTime: expectedNextGasTime.Clone(),
 		}
 		for _, bals := range block.wantMinSenderBalances {
 			uBals := make(map[common.Address]*uint256.Int)
@@ -294,7 +307,7 @@ func TestMultipleBlocks(t *testing.T) {
 			}
 			want.MinOpBurnerBalances = append(want.MinOpBurnerBalances, uBals)
 		}
-		if diff := cmp.Diff(want, got, cmpopts.EquateEmpty(), cmpopts.IgnoreFields(blocks.WorstCaseBounds{}, "NextGasTime")); diff != "" {
+		if diff := cmp.Diff(want, got, cmpopts.EquateEmpty(), gastime.CmpOpt()); diff != "" {
 			t.Errorf("FinishBlock() diff (-want +got): \n%s", diff)
 		}
 
@@ -513,7 +526,7 @@ func TestTransactionValidation(t *testing.T) {
 			state := sut.State
 
 			header := &types.Header{
-				ParentHash: sut.Genesis.Hash(),
+				ParentHash: sut.genesis.Hash(),
 				Number:     big.NewInt(0),
 			}
 			require.NoErrorf(t, state.StartBlock(header), "StartBlock()")
@@ -533,7 +546,7 @@ func TestTransactionValidation(t *testing.T) {
 func TestStartBlockNonConsecutiveBlocks(t *testing.T) {
 	sut := newSUT(t, nil)
 	state := sut.State
-	genesisHash := sut.Genesis.Hash()
+	genesisHash := sut.genesis.Hash()
 
 	err := state.StartBlock(&types.Header{
 		ParentHash: genesisHash,
@@ -550,7 +563,7 @@ func TestStartBlockNonConsecutiveBlocks(t *testing.T) {
 func TestStartBlockQueueFull(t *testing.T) {
 	sut := newSUT(t, nil)
 	state := sut.State
-	lastHash := sut.Genesis.Hash()
+	lastHash := sut.genesis.Hash()
 
 	// Fill the queue with the minimum amount of gas to prevent additional
 	// blocks.
@@ -585,9 +598,9 @@ func TestStartBlockQueueFullDueToTargetChanges(t *testing.T) {
 	sut := newSUT(t, nil)
 	state := sut.State
 
-	sut.Hooks.Target = 1 // applied after the first block
+	sut.hooks.Target = 1 // applied after the first block
 	h := &types.Header{
-		ParentHash: sut.Genesis.Hash(),
+		ParentHash: sut.genesis.Hash(),
 		Number:     big.NewInt(0),
 	}
 	require.NoError(t, state.StartBlock(h), "StartBlock()")

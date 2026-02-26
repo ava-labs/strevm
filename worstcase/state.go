@@ -17,6 +17,7 @@ import (
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core"
 	"github.com/ava-labs/libevm/core/state"
+	"github.com/ava-labs/libevm/core/state/snapshot"
 	"github.com/ava-labs/libevm/core/txpool"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/params"
@@ -68,13 +69,13 @@ func NewState(
 	config *params.ChainConfig,
 	stateCache state.Database,
 	settled *blocks.Block,
+	snaps *snapshot.Tree,
 ) (*State, error) {
 	if !settled.Executed() {
 		return nil, errSettledBlockNotExecuted
 	}
 
-	// TODO: Should we be providing snapshots here?
-	db, err := state.New(settled.PostExecutionStateRoot(), stateCache, nil)
+	db, err := state.New(settled.PostExecutionStateRoot(), stateCache, snaps)
 	if err != nil {
 		return nil, err
 	}

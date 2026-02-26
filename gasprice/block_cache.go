@@ -22,7 +22,7 @@ type transaction struct {
 }
 
 func newTx(tx *types.Transaction, baseFee *big.Int) transaction {
-	tip, _ := tx.EffectiveGasTip(baseFee)
+	tip := tx.EffectiveGasTipValue(baseFee)
 	return transaction{tx.Gas(), tip}
 }
 
@@ -115,7 +115,7 @@ func (b *blockCache) getBlock(ctx context.Context, n uint64) *block {
 		return blk
 	}
 
-	blk, err := b.backend.BlockByNumber(ctx, rpc.BlockNumber(n)) //nolint:gosec // block numbers were previously resolved
+	blk, err := b.backend.BlockByNumber(context.WithoutCancel(ctx), rpc.BlockNumber(n)) //nolint:gosec // block numbers were previously resolved
 	if err != nil {
 		b.log.Error("fetching BlockByNumber",
 			zap.Uint64("number", n),
