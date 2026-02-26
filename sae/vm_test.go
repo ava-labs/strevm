@@ -216,7 +216,7 @@ func marshalJSON(tb testing.TB, v any) []byte {
 // CallContext propagates its arguments to and from [SUT.rpcClient.CallContext].
 // Embedding both the [ethclient.Client] and the underlying [rpc.Client] isn't
 // possible due to a name conflict, so this method is manually exposed.
-func (s *SUT) CallContext(ctx context.Context, result any, method string, args ...any) error { //nolint:staticcheck
+func (s *SUT) CallContext(ctx context.Context, result any, method string, args ...any) error {
 	return s.rpcClient.CallContext(ctx, result, method, args...)
 }
 
