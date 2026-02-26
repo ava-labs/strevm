@@ -13,6 +13,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"runtime"
+	"sync"
 	"testing"
 	"time"
 
@@ -36,6 +37,7 @@ import (
 	"github.com/ava-labs/libevm/core/txpool"
 	"github.com/ava-labs/libevm/core/txpool/legacypool"
 	"github.com/ava-labs/libevm/core/types"
+	"github.com/ava-labs/libevm/core/vm"
 	"github.com/ava-labs/libevm/ethclient"
 	"github.com/ava-labs/libevm/ethdb"
 	"github.com/ava-labs/libevm/libevm"
@@ -100,10 +102,11 @@ type SUT struct {
 
 type (
 	sutConfig struct {
-		vmConfig Config
-		logLevel logging.Level
-		genesis  core.Genesis
-		db       database.Database
+		vmConfig           Config
+		logLevel           logging.Level
+		genesis            core.Genesis
+		db                 database.Database
+		blockingPrecompile common.Address
 	}
 	sutOption = options.Option[sutConfig]
 )
@@ -144,7 +147,6 @@ func newSUT(tb testing.TB, numAccounts uint, opts ...sutOption) (context.Context
 	snow := adaptor.Convert(vm)
 	tb.Cleanup(func() {
 		ctx := context.WithoutCancel(tb.Context())
-		require.NoError(tb, vm.last.accepted.Load().WaitUntilExecuted(ctx), "{last-accepted block}.WaitUntilExecuted()")
 		require.NoError(tb, snow.Shutdown(ctx), "Shutdown()")
 	})
 
@@ -169,6 +171,21 @@ func newSUT(tb testing.TB, numAccounts uint, opts ...sutOption) (context.Context
 		nil, // Fxs
 		sender,
 	), "Initialize()")
+
+	// For any precompile registrations
+	// 1. Must be registered after the VM is initialized.
+	// 2. Must be unregistered after all blocks are executed.
+	var unblock func()
+	if conf.blockingPrecompile != (common.Address{}) {
+		unblock = registerBlockingPrecompile(tb, conf.blockingPrecompile)
+	}
+	tb.Cleanup(func() {
+		ctx := context.WithoutCancel(tb.Context())
+		require.NoError(tb, vm.last.accepted.Load().WaitUntilExecuted(ctx), "{last-accepted block}.WaitUntilExecuted()")
+	})
+	if unblock != nil {
+		tb.Cleanup(unblock)
+	}
 
 	rpcClient, ethClient := dialRPC(ctx, tb, snow)
 
@@ -288,6 +305,32 @@ func withBloomSectionSize(size uint64) sutOption {
 	return options.Func[sutConfig](func(c *sutConfig) {
 		c.vmConfig.RPCConfig.BlocksPerBloomSection = size
 	})
+}
+
+func withBlockingPrecompile(addr common.Address) sutOption {
+	return options.Func[sutConfig](func(c *sutConfig) {
+		c.blockingPrecompile = addr
+	})
+}
+
+// registerBlockingPrecompile registers `addr` as a libevm precompile such that
+// any transactions sent to the precompile will block until the returned
+// function is called. It is safe to call the unblocker multiple times, which
+// will also be done during cleanup.
+func registerBlockingPrecompile(tb testing.TB, addr common.Address) func() {
+	tb.Helper()
+	unblock := make(chan struct{})
+	libevmHooks := &libevmhookstest.Stub{
+		PrecompileOverrides: map[common.Address]libevm.PrecompiledContract{
+			addr: vm.NewStatefulPrecompile(func(vm.PrecompileEnvironment, []byte) ([]byte, error) {
+				<-unblock
+				return nil, nil
+			}),
+		},
+	}
+	libevmHooks.Register(tb)
+
+	return sync.OnceFunc(func() { close(unblock) })
 }
 
 func (s *SUT) nodeID() ids.NodeID {
