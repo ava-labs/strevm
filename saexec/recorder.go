@@ -42,10 +42,9 @@ type stateRecorder struct {
 func newStateRecorder(db ethdb.Database, c *triedb.Config, lastExecuted common.Hash, log logging.Logger) (*stateRecorder, error) {
 	cache := state.NewDatabaseWithConfig(db, c)
 	q, err := buffer.NewBoundedQueue(StateHistory, func(root common.Hash) {
-		// This error doesn't need to be fatal, since all current state is likely still valid.
-		// However, it may cause a memory leak
+		// Error only occurs if it is not a the [triedb.Backend] is not a [triedb.HashDB]
 		if err := cache.TrieDB().Dereference(root); err != nil {
-			log.Error("Dereferencing old root from memory", zap.Stringer("root", root), zap.Error(err))
+			log.Error("(*triedb.Database).Dereference()", zap.Stringer("root", root), zap.Error(err))
 		}
 	})
 	if err != nil {
