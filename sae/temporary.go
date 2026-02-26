@@ -10,7 +10,6 @@ import (
 	"context"
 	"errors"
 
-	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core"
 	"github.com/ava-labs/libevm/core/state"
 	"github.com/ava-labs/libevm/core/types"
@@ -25,10 +24,6 @@ func (b *ethAPIBackend) ExtRPCEnabled() bool {
 }
 
 func (b *ethAPIBackend) PendingBlockAndReceipts() (*types.Block, types.Receipts) {
-	panic(errUnimplemented)
-}
-
-func (b *ethAPIBackend) GetPoolNonce(context.Context, common.Address) (uint64, error) {
 	panic(errUnimplemented)
 }
 
