@@ -8,21 +8,82 @@ import (
 	"testing"
 	"time"
 
+	"github.com/arr4n/shed/testerr"
 	ethereum "github.com/ava-labs/libevm"
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/crypto"
+	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/rpc"
 	"github.com/holiman/uint256"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/ava-labs/strevm/params"
+	"github.com/ava-labs/strevm/blocks"
+	saeparams "github.com/ava-labs/strevm/params"
 	"github.com/ava-labs/strevm/saetest/escrow"
 )
 
+func TestStateAtBlock(t *testing.T) {
+	opt, vmTime := withVMTime(t, time.Unix(saeparams.TauSeconds, 0))
+	ctx, sut := newSUT(t, 1, opt)
+
+	createTx := func(t *testing.T, to common.Address) *types.Transaction {
+		t.Helper()
+		return sut.wallet.SetNonceAndSign(t, 0, &types.DynamicFeeTx{
+			To:        &to,
+			Gas:       params.TxGas,
+			GasFeeCap: big.NewInt(1),
+		})
+	}
+
+	blockingPrecompile := common.Address{'b', 'l', 'o', 'c', 'k'}
+	registerBlockingPrecompile(t, blockingPrecompile)
+
+	genesis := sut.lastAcceptedBlock(t)
+
+	// Once a block is settled, its ancestors are only accessible from the database.
+	onDisk := sut.runConsensusLoop(t, createTx(t, zeroAddr))
+
+	settled := sut.runConsensusLoop(t, createTx(t, zeroAddr))
+	vmTime.advanceToSettle(ctx, t, settled)
+
+	executed := sut.runConsensusLoop(t, createTx(t, zeroAddr))
+	require.NoErrorf(t, executed.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", executed)
+
+	pending := sut.runConsensusLoop(t, createTx(t, blockingPrecompile))
+
+	tests := []struct {
+		name    string
+		block   *blocks.Block
+		wantErr testerr.Want
+	}{
+		{name: "genesis", block: genesis, wantErr: nil},
+		{name: "on_disk", block: onDisk, wantErr: nil},
+		{name: "settled", block: settled, wantErr: nil},
+		{name: "executed", block: executed, wantErr: nil},
+		{name: "unexecuted", block: pending, wantErr: testerr.Contains("execution results not yet available")},
+	}
+
+	be := sut.rawVM.apiBackend
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sdb, release, err := be.StateAtBlock(ctx, tt.block.EthBlock(), 0, nil, false, false)
+			t.Logf("%T.StateAtBlock(ctx, block %d)", be, tt.block.Height())
+			if diff := testerr.Diff(err, tt.wantErr); diff != "" {
+				t.Fatalf("StateAtBlock(...) %s", diff)
+			}
+			if tt.wantErr != nil {
+				return
+			}
+			defer release()
+			assert.NotNilf(t, sdb, "%T.StateAtBlock() returned nil StateDB", be)
+		})
+	}
+}
+
 func TestEthCall(t *testing.T) {
-	opt, vmTime := withVMTime(t, time.Unix(params.TauSeconds, 0))
+	opt, vmTime := withVMTime(t, time.Unix(saeparams.TauSeconds, 0))
 	ctx, sut := newSUT(t, 1, opt)
 
 	deploy := &types.LegacyTx{

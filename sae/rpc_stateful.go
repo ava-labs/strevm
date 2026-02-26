@@ -6,6 +6,7 @@ package sae
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/ava-labs/libevm/common"
@@ -15,6 +16,7 @@ import (
 	"github.com/ava-labs/libevm/core/state"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/core/vm"
+	"github.com/ava-labs/libevm/eth/tracers"
 	"github.com/ava-labs/libevm/rpc"
 
 	"github.com/ava-labs/strevm/blocks"
@@ -103,4 +105,34 @@ func (b *ethAPIBackend) StateAndHeaderByNumberOrHash(ctx context.Context, numOrH
 		return nil, nil, err
 	}
 	return sdb, hdr, nil
+}
+
+// StateAtBlock returns the state database after executing the given block. The
+// reexec, base, readOnly, and preferDisk parameters are ignored because SAE
+// stores post-execution state roots separately and does not need geth's
+// re-execution-from-archive strategy. For reference check:
+// https://geth.ethereum.org/docs/developers/evm-tracing#state-availability
+func (b *ethAPIBackend) StateAtBlock(_ context.Context, block *types.Block, _ uint64, _ *state.StateDB, _ bool, _ bool) (*state.StateDB, tracers.StateReleaseFunc, error) {
+	hash := block.Hash()
+	num := block.NumberU64()
+
+	var root common.Hash
+	if bl, ok := b.vm.blocks.Load(hash); ok {
+		if !bl.Executed() {
+			return nil, nil, fmt.Errorf("execution results not yet available for block %d", num)
+		}
+		root = bl.PostExecutionStateRoot()
+	} else {
+		var err error
+		root, err = blocks.PostExecutionStateRoot(b.vm.xdb, num)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+
+	sdb, err := state.New(root, b.exec.StateCache(), nil)
+	if err != nil {
+		return nil, nil, err
+	}
+	return sdb, func() {}, nil
 }

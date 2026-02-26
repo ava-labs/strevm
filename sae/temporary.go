@@ -34,10 +34,6 @@ func (b *ethAPIBackend) GetPoolNonce(context.Context, common.Address) (uint64, e
 	panic(errUnimplemented)
 }
 
-func (b *ethAPIBackend) StateAtBlock(ctx context.Context, block *types.Block, reexec uint64, base *state.StateDB, readOnly bool, preferDisk bool) (*state.StateDB, tracers.StateReleaseFunc, error) {
-	panic(errUnimplemented)
-}
-
 func (b *ethAPIBackend) StateAtTransaction(ctx context.Context, block *types.Block, txIndex int, reexec uint64) (*core.Message, vm.BlockContext, *state.StateDB, tracers.StateReleaseFunc, error) {
 	panic(errUnimplemented)
 }
