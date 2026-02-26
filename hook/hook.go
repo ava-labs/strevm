@@ -28,8 +28,6 @@ import (
 	"github.com/ava-labs/strevm/saedb"
 )
 
-var ErrInvalidAccountDebit = errors.New("invalid account debit")
-
 // Points define user-injected hook points.
 //
 // Directly using this interface as a [BlockBuilder] is indicative of this node
@@ -107,10 +105,12 @@ type AccountDebit struct {
 	MaxAmount uint256.Int
 }
 
+var errInvalidAccountDebit = errors.New("invalid account debit")
+
 // Validate checks that the debit fields are consistent.
 func (d AccountDebit) Validate() error {
 	if d.MaxAmount.Lt(&d.Amount) {
-		return ErrInvalidAccountDebit
+		return errInvalidAccountDebit
 	}
 	return nil
 }
@@ -136,7 +136,7 @@ type Op struct {
 // ApplyTo applies the operation to the statedb.
 //
 // If an account has insufficient funds, [core.ErrInsufficientFunds] is
-// returned. If an entry has malformed fields, [ErrInvalidAccountDebit] is returned.
+// returned. If an entry has malformed fields, [errInvalidAccountDebit] is returned.
 // In either case, the statedb is unchanged.
 func (o *Op) ApplyTo(stateDB *state.StateDB) error {
 	for from, acc := range o.Burn {
