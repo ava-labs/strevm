@@ -34,6 +34,10 @@ type blockBuilder struct {
 	mempool *txgossip.Set
 }
 
+func (b *blockBuilder) New(eth *types.Block, parent, lastSettled *blocks.Block) (*blocks.Block, error) {
+	return blocks.New(eth, parent, lastSettled, b.log)
+}
+
 // Build a new block on top of the provided parent. The block context MAY be
 // nil.
 func (b *blockBuilder) Build(
@@ -290,7 +294,7 @@ func (b *blockBuilder) build(
 		return nil, err
 	}
 
-	block, err := blocks.New(ethB, parent, lastSettled, b.log)
+	block, err := b.New(ethB, parent, lastSettled)
 	if err != nil {
 		return nil, err
 	}
