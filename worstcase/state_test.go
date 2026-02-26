@@ -5,6 +5,7 @@ package worstcase
 
 import (
 	"crypto/ecdsa"
+	"errors"
 	"math"
 	"math/big"
 	"testing"
@@ -17,11 +18,13 @@ import (
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/crypto"
 	"github.com/ava-labs/libevm/ethdb"
+	"github.com/ava-labs/libevm/libevm"
 	"github.com/ava-labs/libevm/libevm/ethtest"
 	"github.com/ava-labs/libevm/params"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/holiman/uint256"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/ava-labs/strevm/blocks"
@@ -614,4 +617,62 @@ func TestStartBlockQueueFullDueToTargetChanges(t *testing.T) {
 		Number:     big.NewInt(1),
 	})
 	require.ErrorIs(t, err, ErrQueueFull, "StartBlock() with full queue")
+}
+
+func TestCanExecuteTransactionHook(t *testing.T) {
+	config := saetest.ChainConfig()
+	signer := types.LatestSigner(config)
+	const (
+		blocked = iota
+		allowed
+
+		numAccounts
+	)
+	wallet := saetest.NewUNSAFEWallet(t, numAccounts, signer)
+	sut := newSUT(t, saetest.MaxAllocFor(wallet.Addresses()...))
+
+	errSenderBlocked := errors.New("sender blocked by allowlist")
+	sut.hooks.CanExecuteTransactionFn = func(from common.Address, _ *common.Address, _ libevm.StateReader) error {
+		if from == wallet.Addresses()[blocked] {
+			return errSenderBlocked
+		}
+		return nil
+	}
+
+	header := &types.Header{
+		ParentHash: sut.genesis.Hash(),
+		Number:     big.NewInt(1),
+	}
+	require.NoError(t, sut.StartBlock(header), "StartBlock()")
+
+	tests := []struct {
+		name           string
+		account        int
+		wantErr        error
+		wantNonceAfter uint64
+	}{
+		{
+			name:           "blocked_sender_rejected",
+			account:        blocked,
+			wantErr:        errSenderBlocked,
+			wantNonceAfter: 0,
+		},
+		{
+			name:           "allowed_sender_accepted",
+			account:        allowed,
+			wantErr:        nil,
+			wantNonceAfter: 1,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tx := wallet.SetNonceAndSign(t, tt.account, &types.DynamicFeeTx{
+				GasFeeCap: big.NewInt(1),
+				Gas:       params.TxGas,
+				To:        &common.Address{},
+			})
+			require.ErrorIsf(t, sut.ApplyTx(tx), tt.wantErr, "ApplyTx() error")
+			assert.Equalf(t, tt.wantNonceAfter, sut.State.db.GetNonce(wallet.Addresses()[tt.account]), "sender nonce after ApplyTx()")
+		})
+	}
 }

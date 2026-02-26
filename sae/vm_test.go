@@ -6,6 +6,7 @@ package sae
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"math/big"
 	"math/rand/v2"
@@ -37,6 +38,8 @@ import (
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/ethclient"
 	"github.com/ava-labs/libevm/ethdb"
+	"github.com/ava-labs/libevm/libevm"
+	libevmhookstest "github.com/ava-labs/libevm/libevm/hookstest"
 	"github.com/ava-labs/libevm/libevm/options"
 	"github.com/ava-labs/libevm/log"
 	"github.com/ava-labs/libevm/params"
@@ -577,6 +580,38 @@ func TestIntegration(t *testing.T) {
 	})
 }
 
+// TestCanCreateContractSoftError verifies that a CanCreateContract rejection
+// results in a failed receipt, not a fatal execution error.
+func TestCanCreateContractSoftError(t *testing.T) {
+	ctx, sut := newSUT(t, 1)
+
+	stub := &libevmhookstest.Stub{
+		CanCreateContractFn: func(*libevm.AddressContext, uint64, libevm.StateReader) (uint64, error) {
+			return 0, errors.New("contract creation blocked")
+		},
+	}
+	stub.Register(t)
+
+	const gasLimit uint64 = 100_000
+	tx := sut.wallet.SetNonceAndSign(t, 0, &types.DynamicFeeTx{
+		To:        nil, // contract creation
+		Gas:       gasLimit,
+		GasFeeCap: big.NewInt(1),
+	})
+
+	b := sut.runConsensusLoop(t, tx)
+	require.NoErrorf(t, b.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", b)
+	require.Lenf(t, b.Receipts(), 1, "%T.Receipts()", b)
+
+	r := b.Receipts()[0]
+	assert.Equalf(t, types.ReceiptStatusFailed, r.Status, "%T.Status (contract creation should fail)", r)
+	assert.Equalf(t, gasLimit, r.GasUsed, "%T.GasUsed == limit because CanCreateContract returns 0 gas remaining", r)
+
+	// Verify the sender's nonce was incremented despite the failure.
+	sdb := sut.stateAt(t, b.PostExecutionStateRoot())
+	assert.Equalf(t, uint64(1), sdb.GetNonce(sut.wallet.Addresses()[0]), "%T.GetNonce([sender]) after blocked contract creation", sdb)
+}
+
 func TestEmptyChainConfig(t *testing.T) {
 	_, sut := newSUT(t, 1, options.Func[sutConfig](func(c *sutConfig) {
 		c.genesis.Config = &params.ChainConfig{
@@ -609,10 +644,17 @@ func TestSyntacticBlockChecks(t *testing.T) {
 			wantErr: errBlockHeightNotUint64,
 		},
 		{
-			name: "block_time_overflow_protection",
+			name: "block_time_at_maximum",
 			header: &types.Header{
 				Number: big.NewInt(1),
-				Time:   now + maxBlockFutureSeconds + 1,
+				Time:   now + maxFutureBlockSeconds,
+			},
+		},
+		{
+			name: "block_time_after_maximum",
+			header: &types.Header{
+				Number: big.NewInt(1),
+				Time:   now + maxFutureBlockSeconds + 1,
 			},
 			wantErr: errBlockTooFarInFuture,
 		},
@@ -719,7 +761,7 @@ func TestSemanticBlockChecks(t *testing.T) {
 		},
 		{
 			name:    "block_time_after_maximum",
-			time:    now + uint64(maxFutureBlockTime.Seconds()) + 1,
+			time:    now + maxFutureBlockSeconds + 1,
 			wantErr: errBlockTimeAfterMaximum,
 		},
 		{
@@ -756,9 +798,7 @@ func TestSemanticBlockChecks(t *testing.T) {
 				saetest.TrieHasher(),
 			)
 			b := blockstest.NewBlock(t, ethB, nil, nil)
-			snowB, err := sut.ParseBlock(ctx, b.Bytes())
-			require.NoErrorf(t, err, "ParseBlock(...)")
-			require.ErrorIs(t, snowB.Verify(ctx), tt.wantErr, "Verify()")
+			require.ErrorIs(t, sut.rawVM.VerifyBlock(ctx, nil, b), tt.wantErr, "VerifyBlock()")
 		})
 	}
 }
