@@ -164,6 +164,43 @@ func TestOp_ApplyTo(t *testing.T) {
 				},
 			},
 		},
+		{
+			name: "max_amount_unset_does_not_allow_underflow",
+			op: &Op{
+				Burn: map[common.Address]AccountDebit{
+					eoa: {
+						Amount: *uint256.NewInt(500),
+					},
+				},
+			},
+			wantErr: core.ErrInsufficientFunds,
+			wantAccounts: []account{
+				{
+					address: eoa,
+					nonce:   3,
+					balance: uint256.NewInt(400),
+				},
+			},
+		},
+		{
+			name: "max_amount_below_amount_does_not_allow_underflow",
+			op: &Op{
+				Burn: map[common.Address]AccountDebit{
+					eoa: {
+						Amount:    *uint256.NewInt(500),
+						MaxAmount: *uint256.NewInt(300),
+					},
+				},
+			},
+			wantErr: core.ErrInsufficientFunds,
+			wantAccounts: []account{
+				{
+					address: eoa,
+					nonce:   3,
+					balance: uint256.NewInt(400),
+				},
+			},
+		},
 	}
 	for _, tt := range steps {
 		require.ErrorIs(t, tt.op.ApplyTo(db), tt.wantErr, "ApplyTo %s", tt.name)

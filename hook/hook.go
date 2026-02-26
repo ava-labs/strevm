@@ -129,7 +129,7 @@ type Op struct {
 // and the statedb is unchanged.
 func (o *Op) ApplyTo(stateDB *state.StateDB) error {
 	for from, acc := range o.Burn {
-		if b := stateDB.GetBalance(from); b.Lt(&acc.MaxAmount) {
+		if b := stateDB.GetBalance(from); b.Lt(&acc.MaxAmount) || b.Lt(&acc.Amount) {
 			return core.ErrInsufficientFunds
 		}
 	}
