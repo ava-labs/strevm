@@ -48,6 +48,7 @@ type VM struct {
 	*p2p.Network
 	peers *p2p.Peers
 
+	hooks   hook.Points
 	config  Config
 	snowCtx *snow.Context
 	metrics *prometheus.Registry
@@ -76,7 +77,6 @@ type VM struct {
 
 // A Config configures construction of a new [VM].
 type Config struct {
-	Hooks         hook.Points
 	MempoolConfig legacypool.Config
 	RPCConfig     RPCConfig
 	TrieDBConfig  *triedb.Config
@@ -94,6 +94,7 @@ type RPCConfig struct {
 	DisableTracing        bool
 	EVMTimeout            time.Duration
 	GasCap                uint64
+	TxFeeCap              float64 // 0 = no cap
 }
 
 // NewVM returns a new [VM] that is ready for use immediately upon return.
@@ -104,6 +105,7 @@ type RPCConfig struct {
 // (the latter provided via the [Config]).
 func NewVM(
 	ctx context.Context,
+	hooks hook.Points,
 	cfg Config,
 	snowCtx *snow.Context,
 	chainConfig *params.ChainConfig,
@@ -115,6 +117,7 @@ func NewVM(
 		cfg.Now = time.Now
 	}
 	vm := &VM{
+		hooks:   hooks,
 		config:  cfg,
 		snowCtx: snowCtx,
 		metrics: prometheus.NewRegistry(),
@@ -131,11 +134,11 @@ func NewVM(
 		return nil, err
 	}
 
-	xdb, err := cfg.Hooks.ExecutionResultsDB(
+	xdb, err := hooks.ExecutionResultsDB(
 		filepath.Join(snowCtx.ChainDataDir, "sae_execution_results"),
 	)
 	if err != nil {
-		return nil, fmt.Errorf("%T.ExecutionResultsDB(%q): %v", cfg.Hooks, snowCtx.ChainDataDir, err)
+		return nil, fmt.Errorf("%T.ExecutionResultsDB(%q): %v", hooks, snowCtx.ChainDataDir, err)
 	}
 	vm.xdb = xdb
 	vm.toClose = append(vm.toClose, xdb.Close)
@@ -147,7 +150,7 @@ func NewVM(
 	vm.last.synchronous = lastSync.Height()
 
 	{ // ==========  Sync -> Async  ==========
-		if err := lastSync.MarkSynchronous(cfg.Hooks, db, xdb, cfg.ExcessAfterLastSynchronous); err != nil {
+		if err := lastSync.MarkSynchronous(hooks, db, xdb, cfg.ExcessAfterLastSynchronous); err != nil {
 			return nil, fmt.Errorf("%T{genesis}.MarkSynchronous(): %v", lastSync, err)
 		}
 		if err := canonicaliseLastSynchronous(db, lastSync); err != nil {
@@ -155,7 +158,7 @@ func NewVM(
 		}
 	}
 
-	rec := &recovery{db, xdb, chainConfig, snowCtx.Log, cfg, lastSync}
+	rec := &recovery{db, xdb, chainConfig, snowCtx.Log, hooks, cfg, lastSync}
 	{ // ==========  Executor  ==========
 		lastExecuted, unexecuted, err := rec.recoverFromDB()
 		if err != nil {
@@ -169,7 +172,7 @@ func NewVM(
 			db,
 			xdb,
 			cfg.TrieDBConfig,
-			vm.hooks(),
+			hooks,
 			snowCtx.Log,
 		)
 		if err != nil {
@@ -424,10 +427,6 @@ func (*VM) Version(context.Context) (string, error) {
 
 func (vm *VM) log() logging.Logger {
 	return vm.snowCtx.Log
-}
-
-func (vm *VM) hooks() hook.Points {
-	return vm.config.Hooks
 }
 
 func (vm *VM) signerForBlock(b *types.Block) types.Signer {
