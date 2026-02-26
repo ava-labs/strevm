@@ -202,7 +202,14 @@ func (b *blockBuilderG[T]) build(
 				return nil, fmt.Errorf("applying tx %#x in block %d to worst-case state: %v", tx.Hash(), blk.Height(), err)
 			}
 		}
-		for i, op := range b.hooks.EndOfBlockOps(blk.EthBlock()) {
+		ops, err := b.hooks.EndOfBlockOps(blk.EthBlock())
+		if err != nil {
+			log.Warn("Could not extra ops during historical worst-case calculation",
+				zap.Error(err),
+			)
+			return nil, fmt.Errorf("applying op at end of block %d to worst-case state: %v", blk.Height(), err)
+		}
+		for i, op := range ops {
 			if err := state.Apply(op); err != nil {
 				log.Warn("Could not apply op during historical worst-case calculation",
 					zap.Int("op_index", i),

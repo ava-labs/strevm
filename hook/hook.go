@@ -63,7 +63,7 @@ type Points interface {
 	// to perform while executing the block, after regular EVM transactions.
 	// These operations will be performed during both worst-case and actual
 	// execution.
-	EndOfBlockOps(*types.Block) []Op
+	EndOfBlockOps(*types.Block) ([]Op, error)
 	// CanExecuteTransaction mirrors [params.RulesAllowlistHooks.CanExecuteTransaction]
 	// so that consumers can use a single concrete type for both SAE and libevm hooks.
 	CanExecuteTransaction(common.Address, *common.Address, libevm.StateReader) error

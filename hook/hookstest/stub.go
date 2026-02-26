@@ -148,16 +148,16 @@ func (s *Stub) SubSecondBlockTime(hdr *types.Header) time.Duration {
 }
 
 // EndOfBlockOps return the ops included in the block from [BuildBlock].
-func (s *Stub) EndOfBlockOps(b *types.Block) []hook.Op {
-	canonicalExtra := extra{}
-	if err := canonicalExtra.UnmarshalCanoto(b.Extra()); err != nil {
-		panic(err)
+func (s *Stub) EndOfBlockOps(b *types.Block) ([]hook.Op, error) {
+	e := extra{}
+	if err := e.UnmarshalCanoto(b.Extra()); err != nil {
+		return nil, err
 	}
-	ops := make([]hook.Op, len(canonicalExtra.ops))
-	for i, op := range canonicalExtra.ops {
+	ops := make([]hook.Op, len(e.ops))
+	for i, op := range e.ops {
 		ops[i] = op.toHookOp()
 	}
-	return ops
+	return ops, nil
 }
 
 // CanExecuteTransaction proxies to [Stub.CanExecuteTransactionFn] if non-nil,
