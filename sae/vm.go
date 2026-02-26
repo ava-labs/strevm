@@ -150,6 +150,8 @@ func NewVM(
 		if err := lastSync.MarkSynchronous(cfg.Hooks, db, xdb, cfg.ExcessAfterLastSynchronous); err != nil {
 			return nil, fmt.Errorf("%T{genesis}.MarkSynchronous(): %v", lastSync, err)
 		}
+		// TODO(JonathanOppenheimer): canonicaliseLastSynchronous still rewrites identical
+		// data if the node restarts before any async blocks are accepted.
 		if err := canonicaliseLastSynchronous(db, lastSync); err != nil {
 			return nil, err
 		}

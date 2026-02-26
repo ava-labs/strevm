@@ -103,8 +103,18 @@ func (b *Block) MarkSynchronous(hooks hook.Points, db ethdb.Database, xdb saedb.
 	if err := e.setBaseFee(ethB.BaseFee()); err != nil {
 		return err
 	}
-	if err := b.markExecuted(db.NewBatch(), xdb, e, false, nil); err != nil {
+	onDisk, err := xdb.Has(b.NumberU64())
+	if err != nil {
 		return err
+	}
+	if onDisk {
+		if err := b.markExecutedAfterDiskArtefacts(e, nil); err != nil {
+			return err
+		}
+	} else {
+		if err := b.markExecuted(db.NewBatch(), xdb, e, false, nil); err != nil {
+			return err
+		}
 	}
 	b.synchronous = true
 	return b.markSettled(nil)
