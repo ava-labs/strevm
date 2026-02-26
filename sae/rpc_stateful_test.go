@@ -4,6 +4,7 @@
 package sae
 
 import (
+	"fmt"
 	"math/big"
 	"testing"
 	"time"
@@ -11,6 +12,7 @@ import (
 	"github.com/arr4n/shed/testerr"
 	ethereum "github.com/ava-labs/libevm"
 	"github.com/ava-labs/libevm/common"
+	"github.com/ava-labs/libevm/common/hexutil"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/crypto"
 	"github.com/ava-labs/libevm/params"
@@ -24,7 +26,30 @@ import (
 	"github.com/ava-labs/strevm/saetest/escrow"
 )
 
-func TestStateAtBlockAndTransaction(t *testing.T) {
+// traceResult mirrors the subset of [tracers/logger.ExecutionResult] fields
+// needed for assertions.
+type traceResult struct {
+	Gas         uint64           `json:"gas"`
+	Failed      bool             `json:"failed"`
+	ReturnValue string           `json:"returnValue"`
+	StructLogs  []structLogEntry `json:"structLogs"`
+}
+
+// structLogEntry mirrors the subset of [tracers/logger.StructLogRes] fields
+// needed for assertions.
+type structLogEntry struct {
+	Op string `json:"op"`
+}
+
+// txTraceResult mirrors the subset of [tracers.txTraceResult] fields needed
+// for assertions.
+type txTraceResult struct {
+	TxHash common.Hash  `json:"txHash"`
+	Result *traceResult `json:"result,omitempty"`
+	Error  string       `json:"error,omitempty"`
+}
+
+func TestStateTracing(t *testing.T) {
 	opt, vmTime := withVMTime(t, time.Unix(saeparams.TauSeconds, 0))
 	ctx, sut := newSUT(t, 1, opt)
 
@@ -39,9 +64,6 @@ func TestStateAtBlockAndTransaction(t *testing.T) {
 		})
 	}
 
-	blockingPrecompile := common.Address{'b', 'l', 'o', 'c', 'k'}
-	registerBlockingPrecompile(t, blockingPrecompile)
-
 	genesis := sut.lastAcceptedBlock(t)
 
 	// Once a block is settled, its ancestors are only accessible from the database.
@@ -54,87 +76,173 @@ func TestStateAtBlockAndTransaction(t *testing.T) {
 	executed := sut.runConsensusLoop(t, createTx(t, recv), createTx(t, recv))
 	require.NoErrorf(t, executed.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", executed)
 
-	pending := sut.runConsensusLoop(t, createTx(t, blockingPrecompile))
+	requireBlockTraces := func(t *testing.T, got []txTraceResult, block *blocks.Block) {
+		t.Helper()
+		require.Len(t, got, len(block.Transactions()), "trace result count")
+		for i, tr := range got {
+			assert.Equalf(t, block.Transactions()[i].Hash(), tr.TxHash, "txHash[%d]", i)
+			require.NotNilf(t, tr.Result, "trace result[%d]", i)
+			assert.Greaterf(t, tr.Result.Gas, uint64(0), "gas[%d]", i)
+			assert.Falsef(t, tr.Result.Failed, "failed[%d]", i)
+		}
+	}
 
-	be := sut.rawVM.apiBackend
-
-	// Verify that accepting `executed` settled its ancestors, evicting
-	// genesis and onDisk from the in-memory block map while retaining
-	// settled as the LastSettled reference.
-	_, inMem := sut.rawVM.blocks.Load(genesis.Hash())
-	require.False(t, inMem, "genesis should have been evicted from vm.blocks")
-	_, inMem = sut.rawVM.blocks.Load(onDisk.Hash())
-	require.False(t, inMem, "onDisk should have been evicted from vm.blocks")
-	_, inMem = sut.rawVM.blocks.Load(settled.Hash())
-	require.True(t, inMem, "settled should still be in vm.blocks as LastSettled reference")
-	_, inMem = sut.rawVM.blocks.Load(executed.Hash())
-	require.True(t, inMem, "executed should still be in vm.blocks")
-	_, inMem = sut.rawVM.blocks.Load(pending.Hash())
-	require.True(t, inMem, "pending should still be in vm.blocks")
-
-	t.Run("StateAtBlock", func(t *testing.T) {
+	t.Run("debug_traceBlockByNumber", func(t *testing.T) {
 		tests := []struct {
 			name    string
 			block   *blocks.Block
 			wantErr testerr.Want
 		}{
-			{name: "genesis", block: genesis},
 			{name: "on_disk", block: onDisk},
 			{name: "settled", block: settled},
 			{name: "executed", block: executed},
-			{name: "unexecuted", block: pending, wantErr: testerr.Contains("execution results not yet available")},
+			{name: "genesis", block: genesis, wantErr: testerr.Contains("genesis is not traceable")},
 		}
 
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
-				sdb, release, err := be.StateAtBlock(ctx, tt.block.EthBlock(), 0, nil, false, false)
-				t.Logf("%T.StateAtBlock(ctx, block %d)", be, tt.block.Height())
+				t.Logf("debug_traceBlockByNumber(%d)", tt.block.Height())
+				var got []txTraceResult
+				err := sut.CallContext(ctx, &got, "debug_traceBlockByNumber", hexutil.Uint64(tt.block.Height()))
 				if diff := testerr.Diff(err, tt.wantErr); diff != "" {
-					t.Fatalf("StateAtBlock(...) %s", diff)
+					t.Fatalf("debug_traceBlockByNumber(...) %s", diff)
 				}
 				if tt.wantErr != nil {
 					return
 				}
-				defer release()
-				assert.NotNilf(t, sdb, "%T.StateAtBlock() returned nil StateDB", be)
+				requireBlockTraces(t, got, tt.block)
 			})
 		}
 	})
 
-	t.Run("StateAtTransaction", func(t *testing.T) {
+	t.Run("debug_traceBlockByHash", func(t *testing.T) {
 		tests := []struct {
-			name    string
-			block   *blocks.Block
-			txIndex int
-			wantErr testerr.Want
+			name  string
+			block *blocks.Block
 		}{
-			{name: "first_tx_on_disk", block: onDisk, txIndex: 0},
-			{name: "second_tx_on_disk", block: onDisk, txIndex: 1},
-			{name: "first_tx_settled", block: settled, txIndex: 0},
-			{name: "second_tx_settled", block: settled, txIndex: 1},
-			{name: "first_tx_executed", block: executed, txIndex: 0},
-			{name: "second_tx_executed", block: executed, txIndex: 1},
-			{name: "genesis", block: genesis, txIndex: 0, wantErr: testerr.Contains("no transactions in genesis")},
-			{name: "out_of_range", block: executed, txIndex: 5, wantErr: testerr.Contains("out of range")},
-			{name: "negative_index", block: executed, txIndex: -1, wantErr: testerr.Contains("out of range")},
+			{name: "on_disk", block: onDisk},
+			{name: "settled", block: settled},
+			{name: "executed", block: executed},
 		}
 
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
-				msg, blockCtx, sdb, release, err := be.StateAtTransaction(ctx, tt.block.EthBlock(), tt.txIndex, 0)
-				t.Logf("%T.StateAtTransaction(ctx, block %d, txIndex %d)", be, tt.block.Height(), tt.txIndex)
-				if diff := testerr.Diff(err, tt.wantErr); diff != "" {
-					t.Fatalf("StateAtTransaction(...) %s", diff)
-				}
-				if tt.wantErr != nil {
-					return
-				}
-				defer release()
-				assert.NotNilf(t, msg, "%T.StateAtTransaction() returned nil Message", be)
-				assert.NotNilf(t, sdb, "%T.StateAtTransaction() returned nil StateDB", be)
-				assert.NotZerof(t, blockCtx.BlockNumber, "%T.StateAtTransaction() returned zero BlockNumber in context", be)
+				t.Logf("debug_traceBlockByHash(%#x)", tt.block.Hash())
+				var got []txTraceResult
+				err := sut.CallContext(ctx, &got, "debug_traceBlockByHash", tt.block.Hash())
+				require.NoError(t, err)
+				requireBlockTraces(t, got, tt.block)
 			})
 		}
+	})
+
+	t.Run("debug_traceTransaction", func(t *testing.T) {
+		tests := []struct {
+			name  string
+			block *blocks.Block
+		}{
+			{name: "on_disk", block: onDisk},
+			{name: "settled", block: settled},
+			{name: "executed", block: executed},
+		}
+
+		for _, tt := range tests {
+			for i, tx := range tt.block.Transactions() {
+				t.Run(fmt.Sprintf("%s/tx_%d", tt.name, i), func(t *testing.T) {
+					t.Logf("debug_traceTransaction(%#x)", tx.Hash())
+					var got traceResult
+					err := sut.CallContext(ctx, &got, "debug_traceTransaction", tx.Hash())
+					require.NoError(t, err)
+					assert.Greater(t, got.Gas, uint64(0), "gas")
+					assert.False(t, got.Failed, "failed")
+				})
+			}
+		}
+	})
+}
+
+// TestTraceContractInteraction complements [TestStateTracing] by tracing
+// contract deployment and a state-modifying deposit call, verifying that
+// the tracer produces correct EVM-level output (SSTORE, SLOAD, etc.).
+func TestTraceContractInteraction(t *testing.T) {
+	opt, vmTime := withVMTime(t, time.Unix(saeparams.TauSeconds, 0))
+	ctx, sut := newSUT(t, 1, opt)
+
+	escrowAddr := crypto.CreateAddress(sut.wallet.Addresses()[0], 0)
+	recv := common.Address{'r', 'e', 'c', 'v'}
+	const depositVal = 42
+
+	sign := sut.wallet.SetNonceAndSign
+	deployTx := sign(t, 0, &types.LegacyTx{
+		Gas:      1e6,
+		GasPrice: big.NewInt(1),
+		Data:     escrow.CreationCode(),
+	})
+	depositTx := sign(t, 0, &types.LegacyTx{
+		To:       &escrowAddr,
+		Gas:      1e6,
+		GasPrice: big.NewInt(1),
+		Data:     escrow.CallDataToDeposit(recv),
+		Value:    big.NewInt(depositVal),
+	})
+
+	b := sut.runConsensusLoop(t, deployTx, depositTx)
+	require.NoErrorf(t, b.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", b)
+	for _, r := range b.Receipts() {
+		require.Equalf(t, types.ReceiptStatusSuccessful, r.Status, "%T.Status", r)
+	}
+
+	// Settle and evict so the block is only accessible from disk.
+	vmTime.advanceToSettle(ctx, t, b)
+	for range 2 {
+		bb := sut.runConsensusLoop(t)
+		vmTime.advanceToSettle(ctx, t, bb)
+	}
+	hasOp := func(logs []structLogEntry, op string) bool {
+		for _, l := range logs {
+			if l.Op == op {
+				return true
+			}
+		}
+		return false
+	}
+
+	// Trace the deposit tx (txIndex=1). The tracer must replay the deploy
+	// tx first via StateAtTransaction, then trace the deposit which writes
+	// to contract storage (SSTORE) and emits the Deposit event (LOG1).
+	t.Run("debug_traceTransaction", func(t *testing.T) {
+		t.Logf("debug_traceTransaction(%#x) [deposit into escrow]", depositTx.Hash())
+		var got traceResult
+		err := sut.CallContext(ctx, &got, "debug_traceTransaction", depositTx.Hash())
+		require.NoError(t, err)
+		assert.False(t, got.Failed, "failed")
+		assert.Greater(t, got.Gas, params.TxGas, "gas must exceed simple transfer cost")
+		require.NotEmpty(t, got.StructLogs, "structLogs must not be empty for contract call")
+		assert.True(t, hasOp(got.StructLogs, "SSTORE"), "deposit must write to storage")
+		assert.True(t, hasOp(got.StructLogs, "SLOAD"), "deposit must read existing balance")
+	})
+
+	// Trace the full block. Both the deploy (tx 0) and deposit (tx 1)
+	// should produce non-trivial traces.
+	t.Run("debug_traceBlockByNumber", func(t *testing.T) {
+		t.Logf("debug_traceBlockByNumber(%d) [deploy + deposit]", b.Height())
+		var got []txTraceResult
+		err := sut.CallContext(ctx, &got, "debug_traceBlockByNumber", hexutil.Uint64(b.Height()))
+		require.NoError(t, err)
+		require.Len(t, got, 2, "trace result count")
+
+		deploy := got[0]
+		assert.Equal(t, deployTx.Hash(), deploy.TxHash, "deploy txHash")
+		require.NotNil(t, deploy.Result, "deploy trace result")
+		assert.False(t, deploy.Result.Failed, "deploy failed")
+		require.NotEmpty(t, deploy.Result.StructLogs, "deploy structLogs")
+
+		deposit := got[1]
+		assert.Equal(t, depositTx.Hash(), deposit.TxHash, "deposit txHash")
+		require.NotNil(t, deposit.Result, "deposit trace result")
+		assert.False(t, deposit.Result.Failed, "deposit failed")
+		require.NotEmpty(t, deposit.Result.StructLogs, "deposit structLogs")
+		assert.True(t, hasOp(deposit.Result.StructLogs, "SSTORE"), "deposit must write to storage")
 	})
 }
 
