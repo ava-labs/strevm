@@ -589,7 +589,6 @@ func TestCanCreateContractSoftError(t *testing.T) {
 		CanCreateContractFn: func(*libevm.AddressContext, uint64, libevm.StateReader) (uint64, error) {
 			return 0, errors.New("contract creation blocked")
 		},
-		MinimumGasConsumptionFn: hook.MinimumGasConsumption,
 	}
 	stub.Register(t)
 
