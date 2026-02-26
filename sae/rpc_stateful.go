@@ -109,9 +109,14 @@ func (b *ethAPIBackend) StateAndHeaderByNumberOrHash(ctx context.Context, numOrH
 
 // StateAtBlock returns the state database after executing the given block. The
 // reexec, base, readOnly, and preferDisk parameters are ignored because SAE
-// stores post-execution state roots separately and does not need geth's
-// re-execution-from-archive strategy. For reference check:
-// https://geth.ethereum.org/docs/developers/evm-tracing#state-availability
+// does not implement geth's re-execution-from-archive strategy.
+//
+// Like geth, SAE only stores historical state roots, not full historical state.
+// The underlying trie data must still be present in the state cache/DB for
+// [state.New] to succeed. This means tracing is limited to recent blocks whose
+// trie data has not been pruned (or requires an archival node for older blocks).
+//
+// Reference: https://geth.ethereum.org/docs/developers/evm-tracing#state-availability
 func (b *ethAPIBackend) StateAtBlock(_ context.Context, block *types.Block, _ uint64, _ *state.StateDB, _ bool, _ bool) (*state.StateDB, tracers.StateReleaseFunc, error) {
 	hash := block.Hash()
 	num := block.NumberU64()
