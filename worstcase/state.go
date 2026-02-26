@@ -17,6 +17,7 @@ import (
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core"
 	"github.com/ava-labs/libevm/core/state"
+	"github.com/ava-labs/libevm/core/state/snapshot"
 	"github.com/ava-labs/libevm/core/txpool"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/params"
@@ -55,7 +56,6 @@ type State struct {
 
 	baseFee             *uint256.Int
 	curr                *types.Header
-	rules               params.Rules
 	signer              types.Signer
 	minOpBurnerBalances []map[common.Address]*uint256.Int
 }
@@ -68,13 +68,13 @@ func NewState(
 	config *params.ChainConfig,
 	stateCache state.Database,
 	settled *blocks.Block,
+	snaps *snapshot.Tree,
 ) (*State, error) {
 	if !settled.Executed() {
 		return nil, errSettledBlockNotExecuted
 	}
 
-	// TODO: Should we be providing snapshots here?
-	db, err := state.New(settled.PostExecutionStateRoot(), stateCache, nil)
+	db, err := state.New(settled.PostExecutionStateRoot(), stateCache, snaps)
 	if err != nil {
 		return nil, err
 	}
@@ -141,9 +141,8 @@ func (s *State) StartBlock(h *types.Header) error {
 	s.curr.GasLimit = uint64(s.maxBlockSize)
 	s.curr.BaseFee = s.baseFee.ToBig()
 
-	// For both rules and signer, we MUST use the block's timestamp, not the
-	// execution clock's, otherwise we might enable an upgrade too early.
-	s.rules = s.config.Rules(h.Number, true /*merge*/, h.Time)
+	// We MUST use the block's timestamp, not the execution clock's, otherwise
+	// we might enable an upgrade too early.
 	s.signer = types.MakeSigner(s.config, h.Number, h.Time)
 	return nil
 }
@@ -211,6 +210,10 @@ func (s *State) ApplyTx(tx *types.Transaction) error {
 	// execution.
 	if codeHash := s.db.GetCodeHash(from); codeHash != (common.Hash{}) && codeHash != types.EmptyCodeHash {
 		return fmt.Errorf("%w: address %v, codehash: %s", core.ErrSenderNoEOA, from.Hex(), codeHash)
+	}
+
+	if err := s.hooks.CanExecuteTransaction(from, tx.To(), s.db); err != nil {
+		return fmt.Errorf("transaction blocked by CanExecuteTransaction hook: %w", err)
 	}
 
 	op, err := txToOp(from, tx)

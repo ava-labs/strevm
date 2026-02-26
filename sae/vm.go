@@ -60,6 +60,7 @@ type VM struct {
 	preference     atomic.Pointer[blocks.Block]
 	last           struct {
 		accepted, settled atomic.Pointer[blocks.Block]
+		synchronous       uint64
 	}
 
 	exec       *saexec.Executor
@@ -88,7 +89,9 @@ type Config struct {
 // RPCConfig provides options for initialization of RPCs for the node.
 type RPCConfig struct {
 	BlocksPerBloomSection uint64
+	EnableDBInspecting    bool
 	EnableProfiling       bool
+	DisableTracing        bool
 	EVMTimeout            time.Duration
 	GasCap                uint64
 }
@@ -141,9 +144,9 @@ func NewVM(
 	if err != nil {
 		return nil, fmt.Errorf("blocks.New([last synchronous], ...): %v", err)
 	}
+	vm.last.synchronous = lastSync.Height()
 
 	{ // ==========  Sync -> Async  ==========
-		// TODO(arr4n) refactor to avoid DB writes on every startup.
 		if err := lastSync.MarkSynchronous(cfg.Hooks, db, xdb, cfg.ExcessAfterLastSynchronous); err != nil {
 			return nil, fmt.Errorf("%T{genesis}.MarkSynchronous(): %v", lastSync, err)
 		}
@@ -152,7 +155,7 @@ func NewVM(
 		}
 	}
 
-	rec := &recovery{db, xdb, snowCtx.Log, cfg, lastSync}
+	rec := &recovery{db, xdb, chainConfig, snowCtx.Log, cfg, lastSync}
 	{ // ==========  Executor  ==========
 		lastExecuted, unexecuted, err := rec.recoverFromDB()
 		if err != nil {
@@ -161,7 +164,7 @@ func NewVM(
 
 		exec, err := saexec.New(
 			lastExecuted,
-			vm.blockSource,
+			vm.headerSource,
 			chainConfig,
 			db,
 			xdb,
@@ -205,7 +208,7 @@ func NewVM(
 	}
 
 	{ // ==========  Mempool  ==========
-		bc := txgossip.NewBlockChain(vm.exec, vm.blockSource)
+		bc := txgossip.NewBlockChain(vm.exec, vm.ethBlockSource)
 		pools := []txpool.SubPool{
 			legacypool.New(cfg.MempoolConfig, bc),
 		}
