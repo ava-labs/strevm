@@ -34,12 +34,18 @@ func (vm *VM) newBlock(eth *types.Block, parent, lastSettled *blocks.Block) (*bl
 	return blocks.New(eth, parent, lastSettled, vm.log())
 }
 
+// maxFutureBlockDuration is the maximum time from the current time allowed for
+// blocks before they're considered future blocks and fail parsing or
+// verification.
+const (
+	maxFutureBlockSeconds  uint64 = 10
+	maxFutureBlockDuration        = time.Duration(maxFutureBlockSeconds) * time.Second
+)
+
 var (
 	errBlockHeightNotUint64 = errors.New("block height not uint64")
 	errBlockTooFarInFuture  = errors.New("block too far in the future")
 )
-
-const maxBlockFutureSeconds = 3600
 
 // ParseBlock parses the buffer as [rlp] encoding of a [types.Block]. It does
 // NOT populate the block ancestry, which is done by [VM.VerifyBlock] i.f.f.
@@ -55,8 +61,8 @@ func (vm *VM) ParseBlock(ctx context.Context, buf []byte) (*blocks.Block, error)
 	}
 	// The uint64 timestamp can't underflow [time.Time] but it can overflow so
 	// make this some future engineer's problem in a few millennia.
-	if b.Time() > unix(vm.config.Now())+maxBlockFutureSeconds {
-		return nil, fmt.Errorf("%w: >%s", errBlockTooFarInFuture, maxBlockFutureSeconds*time.Second)
+	if b.Time() > unix(vm.config.Now())+maxFutureBlockSeconds {
+		return nil, fmt.Errorf("%w: >%s", errBlockTooFarInFuture, maxFutureBlockDuration)
 	}
 
 	return vm.newBlock(b, nil, nil)
@@ -70,13 +76,9 @@ func (vm *VM) BuildBlock(ctx context.Context, bCtx *block.Context) (*blocks.Bloc
 		bCtx,
 		vm.preference.Load(),
 		vm.mempool.TransactionsByPriority,
-		vm.hooks(),
+		vm.hooks,
 	)
 }
-
-// Max time from current time allowed for blocks, before they're considered
-// future blocks and fail verification.
-const maxFutureBlockTime = 10 * time.Second
 
 var (
 	errBlockTimeUnderMinimum = errors.New("block time under minimum allowed time")
@@ -109,8 +111,8 @@ func (vm *VM) buildBlock(
 		)
 	}
 
-	bTime := blocks.PreciseTime(vm.hooks(), hdr)
-	pTime := blocks.PreciseTime(vm.hooks(), parent.Header())
+	bTime := blocks.PreciseTime(vm.hooks, hdr)
+	pTime := blocks.PreciseTime(vm.hooks, parent.Header())
 
 	// It is allowed for [hook.Points] to further constrain the allowed block
 	// times. However, every block MUST at least satisfy these basic sanity
@@ -121,13 +123,13 @@ func (vm *VM) buildBlock(
 	if bTime.Compare(pTime) < 0 {
 		return nil, fmt.Errorf("%w: %s < %s", errBlockTimeBeforeParent, bTime.String(), pTime.String())
 	}
-	maxTime := vm.config.Now().Add(maxBlockFutureSeconds)
+	maxTime := vm.config.Now().Add(maxFutureBlockDuration)
 	if bTime.Compare(maxTime) > 0 {
 		return nil, fmt.Errorf("%w: %s > %s", errBlockTimeAfterMaximum, bTime.String(), maxTime.String())
 	}
 
 	// Underflow of Add(-tau) is prevented by the above check.
-	lastSettled, ok, err := blocks.LastToSettleAt(vm.hooks(), bTime.Add(-saeparams.Tau), parent)
+	lastSettled, ok, err := blocks.LastToSettleAt(vm.hooks, bTime.Add(-saeparams.Tau), parent)
 	if err != nil {
 		return nil, err
 	}
@@ -141,7 +143,7 @@ func (vm *VM) buildBlock(
 		zap.Stringer("last_settled_hash", lastSettled.Hash()),
 	)
 
-	state, err := vm.exec.WorstCaseState(vm.hooks(), vm.exec.ChainConfig(), lastSettled)
+	state, err := vm.exec.WorstCaseState(vm.hooks, vm.exec.ChainConfig(), lastSettled)
 	if err != nil {
 		log.Warn("Worst-case state not able to be created",
 			zap.Error(err),
@@ -171,7 +173,7 @@ func (vm *VM) buildBlock(
 				return nil, fmt.Errorf("applying tx %#x in block %d to worst-case state: %v", tx.Hash(), b.Height(), err)
 			}
 		}
-		for i, op := range vm.hooks().EndOfBlockOps(b.EthBlock()) {
+		for i, op := range vm.hooks.EndOfBlockOps(b.EthBlock()) {
 			if err := state.Apply(op); err != nil {
 				log.Warn("Could not apply op during historical worst-case calculation",
 					zap.Int("op_index", i),
@@ -218,7 +220,7 @@ func (vm *VM) buildBlock(
 		if remainingGas := state.GasLimit() - state.GasUsed(); remainingGas < params.TxGas {
 			break
 		}
-		log = log.With(
+		txLog := log.With(
 			zap.Stringer("tx_hash", ltx.Hash),
 			zap.Int("tx_index", len(included)),
 			zap.Stringer("sender", ltx.Sender),
@@ -226,7 +228,7 @@ func (vm *VM) buildBlock(
 
 		tx, ok := ltx.Resolve()
 		if !ok {
-			log.Debug("Could not resolve lazy transaction")
+			txLog.Debug("Could not resolve lazy transaction")
 			continue
 		}
 
@@ -234,10 +236,10 @@ func (vm *VM) buildBlock(
 		// execution so we MUST record it at the equivalent point, before
 		// ApplyTx().
 		if err := state.ApplyTx(tx); err != nil {
-			log.Debug("Could not apply transaction", zap.Error(err))
+			txLog.Debug("Could not apply transaction", zap.Error(err))
 			continue
 		}
-		log.Trace("Including transaction")
+		txLog.Trace("Including transaction")
 		included = append(included, tx)
 	}
 
@@ -336,7 +338,7 @@ func (vm *VM) VerifyBlock(ctx context.Context, bCtx *block.Context, b *blocks.Bl
 		bCtx,
 		parent,
 		func(f txpool.PendingFilter) []*txgossip.LazyTransaction { return txs },
-		vm.hooks().BlockRebuilderFrom(b.EthBlock()),
+		vm.hooks.BlockRebuilderFrom(b.EthBlock()),
 	)
 	if err != nil {
 		return err
@@ -416,7 +418,7 @@ func (vm *VM) GetBlock(ctx context.Context, id ids.ID) (*blocks.Block, error) {
 			// Excess is only used for executing the next block, which can never
 			// be the case if `b` isn't actually the last synchronous block, so
 			// passing the same value for all is OK.
-			if err := b.MarkSynchronous(vm.hooks(), vm.db, vm.xdb, vm.config.ExcessAfterLastSynchronous); err != nil {
+			if err := b.MarkSynchronous(vm.hooks, vm.db, vm.xdb, vm.config.ExcessAfterLastSynchronous); err != nil {
 				return nil, err
 			}
 			return b, nil

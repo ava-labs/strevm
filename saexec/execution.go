@@ -26,6 +26,7 @@ var errExecutorClosed = errors.New("saexec.Executor closed")
 // before [blocks.Block.Executed] returns true then there is no guarantee that
 // the block will be executed.
 func (e *Executor) Enqueue(ctx context.Context, block *blocks.Block) error {
+	e.createReceiptBuffers(block)
 	select {
 	case e.queue <- block:
 		if n := len(e.queue); n == cap(e.queue) {
@@ -162,8 +163,13 @@ func (e *Executor) execute(b *blocks.Block, logger logging.Logger) error {
 		tip := tx.EffectiveGasTipValue(header.BaseFee)
 		receipt.EffectiveGasPrice = tip.Add(header.BaseFee, tip)
 
-		// TODO(arr4n) add a receipt cache to the [executor] to allow API calls
-		// to access them before the end of the block.
+		// Even though we populated the value ourselves and `ok == true` is
+		// guaranteed when using the [Executor] via the public API, it's clearer
+		// to check than to require the reader to reason about dropping the
+		// flag.
+		if ch, ok := e.receipts.Load(tx.Hash()); ok {
+			ch <- &Receipt{receipt, signer, tx}
+		}
 		receipts[ti] = receipt
 	}
 

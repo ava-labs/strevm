@@ -116,9 +116,21 @@ func (vm *VM) ethRPCServer() (*rpc.Server, error) {
 		// - eth_getRawTransactionByBlockNumberAndIndex
 		// - eth_getRawTransactionByHash
 		// - eth_pendingTransactions
-		{"eth", ethapi.NewTransactionAPI(b, new(ethapi.AddrLocker))},
+		{
+			"eth",
+			immediateReceipts{
+				vm.exec,
+				ethapi.NewTransactionAPI(b, new(ethapi.AddrLocker)),
+			},
+		},
 		// Standard Ethereum node APIS:
+		// - eth_getFilterChanges
+		// - eth_getFilterLogs
 		// - eth_getLogs
+		// - eth_newBlockFilter
+		// - eth_newFilter
+		// - eth_newPendingTransactionFilter
+		// - eth_uninstallFilter
 		//
 		// Geth-specific APIs:
 		// - eth_subscribe
@@ -321,11 +333,26 @@ func (b *ethAPIBackend) ChainConfig() *params.ChainConfig {
 }
 
 func (b *ethAPIBackend) RPCTxFeeCap() float64 {
-	return 0 // TODO(arr4n)
+	return b.vm.config.RPCConfig.TxFeeCap
 }
 
 func (b *ethAPIBackend) UnprotectedAllowed() bool {
 	return false
+}
+
+// ExtRPCEnabled reports that external RPC access is enabled. This adds an
+// additional security measure in case we add support for the personal API.
+func (*ethAPIBackend) ExtRPCEnabled() bool {
+	return true
+}
+
+// PendingBlockAndReceipts returns a nil block and receipts. Returning nil tells
+// geth that this backend does not support pending blocks. In SAE, the pending
+// block is defined as the most recently accepted block, but receipts are only
+// available after execution. Returning a non-nil block with incorrect or empty
+// receipts could cause geth to encounter errors.
+func (*ethAPIBackend) PendingBlockAndReceipts() (*types.Block, types.Receipts) {
+	return nil, nil
 }
 
 func (b *ethAPIBackend) AccountManager() *accounts.Manager {
@@ -336,8 +363,14 @@ func (b *ethAPIBackend) CurrentBlock() *types.Header {
 	return b.CurrentHeader()
 }
 
-func (b *ethAPIBackend) GetTd(context.Context, common.Hash) *big.Int {
-	return big.NewInt(0) // TODO(arr4n)
+// Total difficulty does not make sense in snowman consensus, as it is not PoW.
+// Ethereum, post merge (switch to PoS), sets the difficulty of each block to 0
+// (see: https://github.com/ethereum/go-ethereum/blob/be92f5487e67939b8dbbc9675d6c15be76ffd18d/consensus/beacon/consensus.go#L228-L231)
+// and no longer exposes the total difficulty of the chain at all via the API.
+//
+// TODO(JonathanOppenheimer): Once we update libevm, remove GetTd.
+func (b *ethAPIBackend) GetTd(ctx context.Context, hash common.Hash) *big.Int {
+	return common.Big0
 }
 
 func (b *ethAPIBackend) SyncProgress() ethereum.SyncProgress {

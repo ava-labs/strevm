@@ -6,6 +6,7 @@ package sae
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"math/big"
 	"math/rand/v2"
@@ -37,6 +38,8 @@ import (
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/ethclient"
 	"github.com/ava-labs/libevm/ethdb"
+	"github.com/ava-labs/libevm/libevm"
+	libevmhookstest "github.com/ava-labs/libevm/libevm/hookstest"
 	"github.com/ava-labs/libevm/libevm/options"
 	"github.com/ava-labs/libevm/log"
 	"github.com/ava-labs/libevm/params"
@@ -52,7 +55,6 @@ import (
 	"github.com/ava-labs/strevm/blocks"
 	"github.com/ava-labs/strevm/blocks/blockstest"
 	"github.com/ava-labs/strevm/cmputils"
-	"github.com/ava-labs/strevm/hook"
 	"github.com/ava-labs/strevm/hook/hookstest"
 	saeparams "github.com/ava-labs/strevm/params"
 	"github.com/ava-labs/strevm/saedb"
@@ -88,7 +90,7 @@ type SUT struct {
 	wallet  *saetest.Wallet
 	avaDB   database.Database
 	db      ethdb.Database
-	hooks   hook.Points
+	hooks   *hookstest.Stub
 	logger  *saetest.TBLogger
 
 	validators *validatorstest.State
@@ -97,6 +99,7 @@ type SUT struct {
 
 type (
 	sutConfig struct {
+		hooks    *hookstest.Stub
 		vmConfig Config
 		logLevel logging.Level
 		genesis  core.Genesis
@@ -118,14 +121,14 @@ func newSUT(tb testing.TB, numAccounts uint, opts ...sutOption) (context.Context
 
 	xdb := saetest.NewExecutionResultsDB()
 	conf := options.ApplyTo(&sutConfig{
+		hooks: &hookstest.Stub{
+			Target: 100e6,
+			ExecutionResultsDBFn: func(string) (saedb.ExecutionResults, error) {
+				return xdb, nil
+			},
+		},
 		vmConfig: Config{
 			MempoolConfig: mempoolConf,
-			Hooks: &hookstest.Stub{
-				Target: 100e6,
-				ExecutionResultsDBFn: func(string) (saedb.ExecutionResults, error) {
-					return xdb, nil
-				},
-			},
 		},
 		logLevel: logging.Debug,
 		genesis: core.Genesis{
@@ -137,7 +140,7 @@ func newSUT(tb testing.TB, numAccounts uint, opts ...sutOption) (context.Context
 		db: memdb.New(),
 	}, opts...)
 
-	vm := NewSinceGenesis(conf.vmConfig)
+	vm := NewSinceGenesis(conf.hooks, conf.vmConfig)
 	snow := adaptor.Convert(vm)
 	tb.Cleanup(func() {
 		ctx := context.WithoutCancel(tb.Context())
@@ -183,7 +186,7 @@ func newSUT(tb testing.TB, numAccounts uint, opts ...sutOption) (context.Context
 		),
 		avaDB:  conf.db,
 		db:     newEthDB(conf.db),
-		hooks:  conf.vmConfig.Hooks,
+		hooks:  conf.hooks,
 		logger: logger,
 
 		validators: validators,
@@ -258,24 +261,18 @@ func withVMTime(tb testing.TB, startTime time.Time) (sutOption, *vmTime) {
 	opt := options.Func[sutConfig](func(c *sutConfig) {
 		// TODO(StephenButtolph) unify the time functions provided in the config
 		// and the hooks.
+		c.hooks.Now = t.now
 		c.vmConfig.Now = t.now
-
-		h, ok := c.vmConfig.Hooks.(*hookstest.Stub)
-		require.Truef(tb, ok, "%T.vmConfig.Hooks of type %T is not %T", c, c.vmConfig.Hooks, h)
-		h.Now = t.now
 	})
 
 	return opt, t
 }
 
 // withExecResultsDB returns an option that replaces the default
-// execution-results database with the provided one. If an earlier option
-// replaces the [hook.Points] with a concrete type other that [hookstest.Stub]
-// then this option will panic.
+// execution-results database with the provided one.
 func withExecResultsDB(hdb database.HeightIndex) sutOption {
 	return options.Func[sutConfig](func(c *sutConfig) {
-		s := c.vmConfig.Hooks.(*hookstest.Stub) //nolint:forcetypeassert // Test-only and panic() scenario documented above
-		s.ExecutionResultsDBFn = func(string) (saedb.ExecutionResults, error) {
+		c.hooks.ExecutionResultsDBFn = func(string) (saedb.ExecutionResults, error) {
 			return saedb.ExecutionResults{HeightIndex: hdb}, nil
 		}
 	})
@@ -577,6 +574,38 @@ func TestIntegration(t *testing.T) {
 	})
 }
 
+// TestCanCreateContractSoftError verifies that a CanCreateContract rejection
+// results in a failed receipt, not a fatal execution error.
+func TestCanCreateContractSoftError(t *testing.T) {
+	ctx, sut := newSUT(t, 1)
+
+	stub := &libevmhookstest.Stub{
+		CanCreateContractFn: func(*libevm.AddressContext, uint64, libevm.StateReader) (uint64, error) {
+			return 0, errors.New("contract creation blocked")
+		},
+	}
+	stub.Register(t)
+
+	const gasLimit uint64 = 100_000
+	tx := sut.wallet.SetNonceAndSign(t, 0, &types.DynamicFeeTx{
+		To:        nil, // contract creation
+		Gas:       gasLimit,
+		GasFeeCap: big.NewInt(1),
+	})
+
+	b := sut.runConsensusLoop(t, tx)
+	require.NoErrorf(t, b.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", b)
+	require.Lenf(t, b.Receipts(), 1, "%T.Receipts()", b)
+
+	r := b.Receipts()[0]
+	assert.Equalf(t, types.ReceiptStatusFailed, r.Status, "%T.Status (contract creation should fail)", r)
+	assert.Equalf(t, gasLimit, r.GasUsed, "%T.GasUsed == limit because CanCreateContract returns 0 gas remaining", r)
+
+	// Verify the sender's nonce was incremented despite the failure.
+	sdb := sut.stateAt(t, b.PostExecutionStateRoot())
+	assert.Equalf(t, uint64(1), sdb.GetNonce(sut.wallet.Addresses()[0]), "%T.GetNonce([sender]) after blocked contract creation", sdb)
+}
+
 func TestEmptyChainConfig(t *testing.T) {
 	_, sut := newSUT(t, 1, options.Func[sutConfig](func(c *sutConfig) {
 		c.genesis.Config = &params.ChainConfig{
@@ -609,10 +638,17 @@ func TestSyntacticBlockChecks(t *testing.T) {
 			wantErr: errBlockHeightNotUint64,
 		},
 		{
-			name: "block_time_overflow_protection",
+			name: "block_time_at_maximum",
 			header: &types.Header{
 				Number: big.NewInt(1),
-				Time:   now + maxBlockFutureSeconds + 1,
+				Time:   now + maxFutureBlockSeconds,
+			},
+		},
+		{
+			name: "block_time_after_maximum",
+			header: &types.Header{
+				Number: big.NewInt(1),
+				Time:   now + maxFutureBlockSeconds + 1,
 			},
 			wantErr: errBlockTooFarInFuture,
 		},
@@ -719,7 +755,7 @@ func TestSemanticBlockChecks(t *testing.T) {
 		},
 		{
 			name:    "block_time_after_maximum",
-			time:    now + uint64(maxFutureBlockTime.Seconds()) + 1,
+			time:    now + maxFutureBlockSeconds + 1,
 			wantErr: errBlockTimeAfterMaximum,
 		},
 		{
@@ -756,9 +792,7 @@ func TestSemanticBlockChecks(t *testing.T) {
 				saetest.TrieHasher(),
 			)
 			b := blockstest.NewBlock(t, ethB, nil, nil)
-			snowB, err := sut.ParseBlock(ctx, b.Bytes())
-			require.NoErrorf(t, err, "ParseBlock(...)")
-			require.ErrorIs(t, snowB.Verify(ctx), tt.wantErr, "Verify()")
+			require.ErrorIs(t, sut.rawVM.VerifyBlock(ctx, nil, b), tt.wantErr, "VerifyBlock()")
 		})
 	}
 }
