@@ -17,6 +17,7 @@ import (
 	"github.com/ava-labs/libevm/core"
 	"github.com/ava-labs/libevm/core/state"
 	"github.com/ava-labs/libevm/core/types"
+	"github.com/ava-labs/libevm/libevm"
 	"github.com/ava-labs/libevm/params"
 	"github.com/holiman/uint256"
 
@@ -56,6 +57,9 @@ type Points interface {
 	// These operations will be performed during both worst-case and actual
 	// execution.
 	EndOfBlockOps(*types.Block) []Op
+	// CanExecuteTransaction mirrors [params.RulesAllowlistHooks.CanExecuteTransaction]
+	// so that consumers can use a single concrete type for both SAE and libevm hooks.
+	CanExecuteTransaction(common.Address, *common.Address, libevm.StateReader) error
 	// BeforeExecutingBlock is called immediately prior to executing the block.
 	BeforeExecutingBlock(params.Rules, *state.StateDB, *types.Block) error
 	// AfterExecutingBlock is called immediately after executing the block.
