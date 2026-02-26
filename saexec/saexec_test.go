@@ -32,7 +32,6 @@ import (
 	"github.com/holiman/uint256"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.uber.org/goleak"
 
 	"github.com/ava-labs/strevm/blocks"
 	"github.com/ava-labs/strevm/blocks/blockstest"
@@ -46,15 +45,7 @@ import (
 )
 
 func TestMain(m *testing.M) {
-	goleak.VerifyTestMain(
-		m,
-		goleak.IgnoreCurrent(),
-		// Despite the call to [snapshot.Tree.Disable] in [Executor.Close], this
-		// still leaks at shutdown. This is acceptable as we only ever have one
-		// [Executor], which we expect to be running for the entire life of the
-		// process.
-		goleak.IgnoreTopFunction("github.com/ava-labs/libevm/core/state/snapshot.(*diskLayer).generate"),
-	)
+	saetest.NoLeak(m)
 }
 
 // SUT is the system under test, primarily the [Executor].

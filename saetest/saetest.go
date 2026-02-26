@@ -12,6 +12,7 @@ import (
 	"math/big"
 	"slices"
 	"sync"
+	"testing"
 
 	"github.com/ava-labs/avalanchego/utils/lock"
 	"github.com/ava-labs/libevm/core/types"
@@ -19,7 +20,25 @@ import (
 	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/trie"
 	"github.com/google/go-cmp/cmp"
+	"go.uber.org/goleak"
 )
+
+// NoLeak calls [goleak.VerifyTestMain] with [goleak.IgnoreCurrent] and
+// [goleak.IgnoreTopFunction] for snapshot generation. Despite a call to disable
+// generation when closing `saexec.Executor`s, the goroutine still leaks. This
+// is acceptable as we only ever have `Executor“, which we expect to be running
+// for the entire life of the process.
+func NoLeak(m *testing.M) {
+	goleak.VerifyTestMain(
+		m,
+		goleak.IgnoreCurrent(),
+		// Despite the call to [snapshot.Tree.Disable] in [Executor.Close], this
+		// still leaks at shutdown. This is acceptable as we only ever have one
+		// [Executor], which we expect to be running for the entire life of the
+		// process.
+		goleak.IgnoreTopFunction("github.com/ava-labs/libevm/core/state/snapshot.(*diskLayer).generate"),
+	)
+}
 
 // TrieHasher returns an arbitrary trie hasher.
 func TrieHasher() types.TrieHasher {
