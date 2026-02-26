@@ -29,7 +29,6 @@ import (
 	libevmhookstest "github.com/ava-labs/libevm/libevm/hookstest"
 	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/trie"
-	"github.com/ava-labs/libevm/triedb"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/holiman/uint256"
@@ -85,12 +84,11 @@ func newSUT(tb testing.TB, hooks *saehookstest.Stub) (context.Context, *SUT) {
 
 	config := saetest.ChainConfig()
 	db := rawdb.NewMemoryDatabase()
-	tdbConfig := &triedb.Config{}
 	xdb := saetest.NewExecutionResultsDB()
 
 	wallet := saetest.NewUNSAFEWallet(tb, 1, types.LatestSigner(config))
 	alloc := saetest.MaxAllocFor(wallet.Addresses()...)
-	genesis := blockstest.NewGenesis(tb, db, xdb, config, alloc, blockstest.WithTrieDBConfig(tdbConfig), blockstest.WithGasTarget(hooks.Target))
+	genesis := blockstest.NewGenesis(tb, db, xdb, config, alloc, blockstest.WithGasTarget(hooks.Target))
 
 	opts := blockstest.WithBlockOptions(
 		blockstest.WithLogger(logger),
@@ -98,7 +96,7 @@ func newSUT(tb testing.TB, hooks *saehookstest.Stub) (context.Context, *SUT) {
 	chain := blockstest.NewChainBuilder(config, genesis, opts)
 	src := blocks.Source(chain.GetBlock)
 
-	e, err := New(genesis, src.AsHeaderSource(), config, db, xdb, tdbConfig, hooks, logger)
+	e, err := New(genesis, src.AsHeaderSource(), config, db, xdb, Config{}, hooks, logger)
 	require.NoError(tb, err, "New()")
 
 	closeOnce := sync.OnceValue(e.Close)
@@ -892,7 +890,7 @@ func TestSnapshotPersistence(t *testing.T) {
 	// The crux of the test is whether we can recover the EOA nonce using only a
 	// new set of snapshots, recovered from the databases.
 	conf := snapshot.Config{
-		CacheSize: SnapshotCacheSizeMB,
+		CacheSize: DefaultSnapshotCacheSizeMB,
 		NoBuild:   true, // i.e. MUST be loaded from disk
 	}
 	snaps, err := snapshot.New(conf, sut.db, e.stateRecorder.cache.TrieDB(), last.PostExecutionStateRoot())
@@ -959,7 +957,7 @@ func TestCloseRecoversHashDB(t *testing.T) {
 
 	t.Run("remove in memory state", func(t *testing.T) {
 		checkStates(t, e, func(height uint64) bool {
-			return height > numBlocks-StateHistory
+			return height > numBlocks-DefaultStateHistory
 		})
 	})
 
@@ -968,7 +966,7 @@ func TestCloseRecoversHashDB(t *testing.T) {
 	t.Run("recover", func(t *testing.T) {
 		// Restart the chain to remove the TrieDB cache.
 		src := blocks.Source(chain.GetBlock)
-		e, err := New(final, src.AsHeaderSource(), sut.chainConfig, sut.db, sut.xdb, &triedb.Config{}, defaultHooks(), sut.log)
+		e, err := New(final, src.AsHeaderSource(), sut.chainConfig, sut.db, sut.xdb, Config{}, defaultHooks(), sut.log)
 		require.NoError(t, err, "New()")
 		t.Cleanup(func() {
 			require.NoErrorf(t, e.Close(), "%T.Close()", e)
