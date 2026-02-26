@@ -91,10 +91,18 @@ type BlockBuilder interface {
 }
 
 // AccountDebit includes an amount that an account should have debited,
-// along with the nonce used to aut debit the account.
+// along with the nonce used to authorize the debit.
 type AccountDebit struct {
-	Nonce  uint64
+	Nonce uint64
+	// Amount is the effective cost to deduct from the account balance.
 	Amount uint256.Int
+	// MaxAmount is the maximum cost the account must be able to afford.
+	// This mirrors geth's balanceCheck in buyGas: the account is validated
+	// against MaxAmount (e.g. gasLimit * gasFeeCap + value) but only
+	// charged Amount (e.g. gasLimit * effectiveGasPrice + value).
+	//
+	// MaxAmount MUST be set and MUST be >= Amount.
+	MaxAmount uint256.Int
 }
 
 // Op is an operation that can be applied to state during the execution of a
@@ -121,7 +129,7 @@ type Op struct {
 // and the statedb is unchanged.
 func (o *Op) ApplyTo(stateDB *state.StateDB) error {
 	for from, acc := range o.Burn {
-		if b := stateDB.GetBalance(from); b.Lt(&acc.Amount) {
+		if b := stateDB.GetBalance(from); b.Lt(&acc.MaxAmount) {
 			return core.ErrInsufficientFunds
 		}
 	}

@@ -216,22 +216,35 @@ func (s *State) ApplyTx(tx *types.Transaction) error {
 		return fmt.Errorf("transaction blocked by CanExecuteTransaction hook: %w", err)
 	}
 
-	op, err := txToOp(from, tx)
+	op, err := txToOp(from, tx, s.baseFee)
 	if err != nil {
 		return fmt.Errorf("converting transaction to operation: %w", err)
 	}
 	return s.Apply(op)
 }
 
-func txToOp(from common.Address, tx *types.Transaction) (hook.Op, error) {
+func txToOp(from common.Address, tx *types.Transaction, baseFee *uint256.Int) (hook.Op, error) {
 	type Op = hook.Op // for convenience when returning zero value
 
 	var gasFeeCap uint256.Int
 	if overflow := gasFeeCap.SetFromBig(tx.GasFeeCap()); overflow {
 		return Op{}, core.ErrFeeCapVeryHigh
 	}
+
+	// maxAmount = gasLimit * gasFeeCap + value (worst-case affordability check)
+	var maxAmount uint256.Int
+	if overflow := maxAmount.SetFromBig(tx.Cost()); overflow {
+		return Op{}, errCostOverflow
+	}
+
+	// amount = gasLimit * effectiveGasPrice + value (actual deduction)
+	baseFeeBI := baseFee.ToBig()
+	effectiveGasPrice := new(big.Int).Add(baseFeeBI, tx.EffectiveGasTipValue(baseFeeBI))
+	cost := new(big.Int).Mul(new(big.Int).SetUint64(tx.Gas()), effectiveGasPrice)
+	cost.Add(cost, tx.Value())
+
 	var amount uint256.Int
-	if overflow := amount.SetFromBig(tx.Cost()); overflow {
+	if overflow := amount.SetFromBig(cost); overflow {
 		return Op{}, errCostOverflow
 	}
 	return Op{
@@ -239,8 +252,9 @@ func txToOp(from common.Address, tx *types.Transaction) (hook.Op, error) {
 		GasFeeCap: gasFeeCap,
 		Burn: map[common.Address]hook.AccountDebit{
 			from: {
-				Nonce:  tx.Nonce(),
-				Amount: amount,
+				Nonce:     tx.Nonce(),
+				Amount:    amount,
+				MaxAmount: maxAmount,
 			},
 		},
 		// Mint MUST NOT be populated here because this transaction may revert.
