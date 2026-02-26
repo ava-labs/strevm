@@ -6,11 +6,13 @@ package sae
 import (
 	"math/big"
 	"testing"
+	"time"
 
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/params"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestImmediateReceipts(t *testing.T) {
@@ -29,7 +31,7 @@ func TestImmediateReceipts(t *testing.T) {
 	}
 	notBlocked := txs[0]
 
-	b := sut.runConsensusLoop(t, txs[:]...)
+	b := sut.runConsensusLoop(t, txs...)
 	sut.testRPC(ctx, t, rpcTest{
 		method: "eth_getTransactionReceipt",
 		args:   []any{notBlocked.Hash()},
@@ -45,4 +47,31 @@ func TestImmediateReceipts(t *testing.T) {
 		},
 	})
 	assert.Falsef(t, b.Executed(), "%T.Executed()", b)
+}
+
+func TestCallGetReceiptBeforeAcceptance(t *testing.T) {
+	t.Parallel()
+
+	ctx, sut := newSUT(t, 1)
+
+	tx := sut.wallet.SetNonceAndSign(t, 0, &types.LegacyTx{
+		To:       &zeroAddr,
+		Gas:      params.TxGas,
+		GasPrice: big.NewInt(1),
+	})
+	sut.mustSendTx(t, tx)
+	sut.requireInMempool(t, tx.Hash())
+
+	t.Run("start_fetching_receipt_before_inclusion", func(t *testing.T) {
+		t.Parallel()
+		got, err := sut.TransactionReceipt(ctx, tx.Hash())
+		require.NoErrorf(t, err, "%T.TransactionReceipt()", sut.Client)
+		require.Equalf(t, tx.Hash(), got.TxHash, "%T.TxHash", got)
+	})
+
+	t.Run("accept_block_while_waiting_on_receipt", func(t *testing.T) {
+		t.Parallel()
+		time.Sleep(500 * time.Millisecond) // <------------- Noteworthy
+		sut.runConsensusLoop(t)
+	})
 }

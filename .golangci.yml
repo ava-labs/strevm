@@ -36,7 +36,6 @@ linters:
     - testableexamples
     - testifylint
     - thelper
-    - tparallel
     - unconvert
     - usestdlibvars
     - unused

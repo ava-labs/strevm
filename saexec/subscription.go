@@ -7,7 +7,15 @@ import (
 	"github.com/ava-labs/libevm/core"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/event"
+
+	"github.com/ava-labs/strevm/blocks"
 )
+
+// SubscribeEnqueueEvent returns a new subscription for each block for which
+// [Executor.Enqueue] returns successfully.
+func (e *Executor) SubscribeEnqueueEvent(ch chan<- *blocks.Block) event.Subscription {
+	return e.enqueueEvents.Subscribe(ch)
+}
 
 func (e *Executor) sendPostExecutionEvents(b *types.Block, receipts types.Receipts) {
 	e.headEvents.Send(core.ChainHeadEvent{Block: b})
