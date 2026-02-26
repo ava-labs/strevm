@@ -429,7 +429,3 @@ func (vm *VM) log() logging.Logger {
 func (vm *VM) hooks() hook.Points {
 	return vm.config.Hooks
 }
-
-func (vm *VM) signerForBlock(b *types.Block) types.Signer {
-	return types.MakeSigner(vm.exec.ChainConfig(), b.Number(), b.Time())
-}

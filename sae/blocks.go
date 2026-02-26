@@ -292,7 +292,7 @@ func (vm *VM) VerifyBlock(ctx context.Context, bCtx *block.Context, b *blocks.Bl
 	// whereas [VM.VerifyBlock] is only called after verifying the current
 	// proposer's signature. While a malicious proposer could exist, their time
 	// window is limited.
-	signer := vm.signerForBlock(b.EthBlock())
+	signer := vm.exec.SignerForBlock(b)
 	core.SenderCacher.Recover(signer, b.Transactions()) // asynchronous
 
 	parent, err := vm.GetBlock(ctx, b.Parent())
