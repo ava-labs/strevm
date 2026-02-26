@@ -19,11 +19,11 @@ import (
 	"github.com/ava-labs/strevm/hook"
 )
 
-var _ adaptor.ChainVM[*blocks.Block] = (*SinceGenesis[any])(nil)
+var _ adaptor.ChainVM[*blocks.Block] = (*SinceGenesis[hook.Transaction])(nil)
 
 // SinceGenesis is a harness around a [VM], providing an `Initialize` method
 // that treats the chain as being asynchronous since genesis.
-type SinceGenesis[T any] struct {
+type SinceGenesis[T hook.Transaction] struct {
 	*VM // created by [SinceGenesis.Initialize]
 
 	hooks  hook.PointsG[T]
@@ -31,7 +31,7 @@ type SinceGenesis[T any] struct {
 }
 
 // NewSinceGenesis constructs a new [SinceGenesis].
-func NewSinceGenesis[T any](hooks hook.PointsG[T], c Config) *SinceGenesis[T] {
+func NewSinceGenesis[T hook.Transaction](hooks hook.PointsG[T], c Config) *SinceGenesis[T] {
 	return &SinceGenesis[T]{
 		hooks:  hooks,
 		config: c,

@@ -25,7 +25,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/ava-labs/strevm/blocks"
-	"github.com/ava-labs/strevm/hook"
 	"github.com/ava-labs/strevm/hook/hookstest"
 	"github.com/ava-labs/strevm/saedb"
 	"github.com/ava-labs/strevm/saetest"
@@ -55,7 +54,7 @@ func NewEthBlock(tb testing.TB, parent *types.Block, txs types.Transactions, opt
 type ethBlockProperties struct {
 	header   *types.Header
 	receipts types.Receipts
-	ops      []hook.Op
+	ops      []hookstest.Op
 }
 
 // ModifyHeader returns an option to modify the [types.Header] constructed by
@@ -77,7 +76,7 @@ func WithReceipts(rs types.Receipts) EthBlockOption {
 
 // WithOps returns an option to set the ops of a block constructed by
 // [NewEthBlock].
-func WithOps(ops []hook.Op) EthBlockOption {
+func WithOps(ops []hookstest.Op) EthBlockOption {
 	return options.Func[ethBlockProperties](func(p *ethBlockProperties) {
 		p.ops = slices.Clone(ops)
 	})

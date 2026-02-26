@@ -104,7 +104,7 @@ type RPCConfig struct {
 // The state root of the last synchronous block MUST be available when creating
 // a [triedb.Database] from the provided [ethdb.Database] and [triedb.Config]
 // (the latter provided via the [Config]).
-func NewVM[T any](
+func NewVM[T hook.Transaction](
 	ctx context.Context,
 	hooks hook.PointsG[T],
 	cfg Config,

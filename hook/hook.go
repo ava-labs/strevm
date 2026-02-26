@@ -33,7 +33,7 @@ import (
 // locally building a block. Calling [PointsG.BlockRebuilderFrom] with an
 // existing block is indicative of this node reconstructing a block built
 // elsewhere during verification.
-type PointsG[T any] interface {
+type PointsG[T Transaction] interface {
 	Points
 
 	BlockBuilder[T]
@@ -74,7 +74,7 @@ type Points interface {
 }
 
 // BlockBuilder constructs a block given its components.
-type BlockBuilder[T any] interface {
+type BlockBuilder[T Transaction] interface {
 	// BuildHeader constructs a header from the parent header.
 	//
 	// The returned header MUST have [types.Header.ParentHash],
@@ -97,6 +97,10 @@ type BlockBuilder[T any] interface {
 		receipts []*types.Receipt,
 		endOfBlockOps []T,
 	) (*types.Block, error)
+}
+
+type Transaction interface {
+	AsOp() Op
 }
 
 // AccountDebit includes an amount that an account should have debited,

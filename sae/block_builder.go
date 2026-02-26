@@ -49,7 +49,7 @@ type blockBuilder interface {
 	) (*blocks.Block, error)
 }
 
-type blockBuilderG[T any] struct {
+type blockBuilderG[T hook.Transaction] struct {
 	log     logging.Logger
 	now     func() time.Time
 	hooks   hook.PointsG[T]
@@ -279,7 +279,7 @@ func (b *blockBuilderG[T]) build(
 		included = append(included, tx)
 	}
 	var includedOps []T
-	for op := range builder.PotentialEndOfBlockOps() {
+	for tx := range builder.PotentialEndOfBlockOps() {
 		// If we don't have enough gas remaining in the block for the minimum
 		// gas amount, we are done including transactions.
 		if remainingGas := state.GasLimit() - state.GasUsed(); remainingGas < params.TxGas {
@@ -287,21 +287,21 @@ func (b *blockBuilderG[T]) build(
 		}
 
 		// TODO: FIXME
-		hookOp, _ := any(op).(hook.Op)
+		op := tx.AsOp()
 		log := log.With(
-			zap.Stringer("op_id", hookOp.ID),
+			zap.Stringer("op_id", op.ID),
 			zap.Int("op_index", len(includedOps)),
 		)
 
 		// The [saexec.Executor] checks the worst-case balance before tx
 		// execution so we MUST record it at the equivalent point, before
 		// ApplyTx().
-		if err := state.Apply(hookOp); err != nil {
+		if err := state.Apply(op); err != nil {
 			log.Debug("Could not apply op", zap.Error(err))
 			continue
 		}
 		log.Trace("Including op")
-		includedOps = append(includedOps, op)
+		includedOps = append(includedOps, tx)
 	}
 
 	hdr.GasUsed = state.GasUsed()

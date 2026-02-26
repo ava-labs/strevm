@@ -38,7 +38,7 @@ import (
 	"github.com/ava-labs/strevm/blocks/blockstest"
 	"github.com/ava-labs/strevm/cmputils"
 	"github.com/ava-labs/strevm/gastime"
-	"github.com/ava-labs/strevm/hook"
+	"github.com/ava-labs/strevm/hook/hookstest"
 	saehookstest "github.com/ava-labs/strevm/hook/hookstest"
 	"github.com/ava-labs/strevm/proxytime"
 	"github.com/ava-labs/strevm/saetest"
@@ -378,17 +378,23 @@ func TestEndOfBlockOps(t *testing.T) {
 
 	initialTime := sut.lastExecuted.Load().ExecutedByGasTime()
 
-	b := sut.chain.NewBlock(t, nil, blockstest.WithEthBlockOptions(blockstest.WithOps([]hook.Op{
+	b := sut.chain.NewBlock(t, nil, blockstest.WithEthBlockOptions(blockstest.WithOps([]hookstest.Op{
 		{
 			Gas: 100_000,
-			Burn: map[common.Address]hook.AccountDebit{
-				exportEOA: {Amount: *uint256.NewInt(10)},
+			Burn: []hookstest.AccountDebit{
+				{
+					Address: exportEOA,
+					Amount:  *uint256.NewInt(10),
+				},
 			},
 		},
 		{
 			Gas: 150_000,
-			Mint: map[common.Address]uint256.Int{
-				importEOA: *uint256.NewInt(100),
+			Mint: []hookstest.AccountCredit{
+				{
+					Address: importEOA,
+					Amount:  *uint256.NewInt(100),
+				},
 			},
 		},
 	})))

@@ -28,12 +28,12 @@ import (
 type Stub struct {
 	Now                     func() time.Time
 	Target                  gas.Gas
-	Ops                     []hook.Op
+	Ops                     []Op
 	ExecutionResultsDBFn    func(string) (saedb.ExecutionResults, error)
 	CanExecuteTransactionFn func(common.Address, *common.Address, libevm.StateReader) error
 }
 
-var _ hook.PointsG[hook.Op] = (*Stub)(nil)
+var _ hook.PointsG[Op] = (*Stub)(nil)
 
 // ExecutionResultsDB propagates arguments to and from
 // [Stub.ExecutionResultsDBFn] if non-nil, otherwise it returns a fresh
@@ -71,7 +71,7 @@ func (s *Stub) BuildHeader(parent *types.Header) *types.Header {
 }
 
 // PotentialEndOfBlockOps returns [Stub.Ops] as a sequence.
-func (s *Stub) PotentialEndOfBlockOps() iter.Seq[hook.Op] {
+func (s *Stub) PotentialEndOfBlockOps() iter.Seq[Op] {
 	return slices.Values(s.Ops)
 }
 
@@ -80,7 +80,7 @@ func (*Stub) BuildBlock(
 	header *types.Header,
 	txs []*types.Transaction,
 	receipts []*types.Receipt,
-	ops []hook.Op,
+	ops []Op,
 ) (*types.Block, error) {
 	return BuildBlock(header, txs, receipts, ops)
 }
@@ -91,7 +91,7 @@ func BuildBlock(
 	header *types.Header,
 	txs []*types.Transaction,
 	receipts []*types.Receipt,
-	ops []hook.Op,
+	ops []Op,
 ) (*types.Block, error) {
 	e := extra{}
 	// If the header originally had fractional seconds set, we should keep them
@@ -100,27 +100,19 @@ func BuildBlock(
 		return nil, err
 	}
 
-	e.ops = make([]op, len(ops))
-	for i, hookOp := range ops {
-		e.ops[i] = opFromHookOp(hookOp)
-	}
-
+	e.ops = ops
 	header.Extra = e.MarshalCanoto()
 	return types.NewBlock(header, txs, nil, receipts, saetest.TrieHasher()), nil
 }
 
 // BlockRebuilderFrom returns a block builder that uses the provided block as a
 // source of time.
-func (s *Stub) BlockRebuilderFrom(b *types.Block) hook.BlockBuilder[hook.Op] {
+func (s *Stub) BlockRebuilderFrom(b *types.Block) hook.BlockBuilder[Op] {
 	e := extra{}
 	if err := e.UnmarshalCanoto(b.Extra()); err != nil {
 		panic(err)
 	}
 
-	ops := make([]hook.Op, len(e.ops))
-	for i, op := range e.ops {
-		ops[i] = op.toHookOp()
-	}
 	return &Stub{
 		Now: func() time.Time {
 			return time.Unix(
@@ -128,7 +120,7 @@ func (s *Stub) BlockRebuilderFrom(b *types.Block) hook.BlockBuilder[hook.Op] {
 				int64(e.nanoseconds),
 			)
 		},
-		Ops: ops,
+		Ops: e.ops,
 	}
 }
 
@@ -156,7 +148,7 @@ func (s *Stub) EndOfBlockOps(b *types.Block) ([]hook.Op, error) {
 	}
 	ops := make([]hook.Op, len(e.ops))
 	for i, op := range e.ops {
-		ops[i] = op.toHookOp()
+		ops[i] = op.AsOp()
 	}
 	return ops, nil
 }
@@ -182,86 +174,86 @@ func (*Stub) AfterExecutingBlock(*state.StateDB, *types.Block, types.Receipts) {
 
 type extra struct {
 	nanoseconds time.Duration `canoto:"int,1"`
-	ops         []op          `canoto:"repeated value,2"`
+	ops         []Op          `canoto:"repeated value,2"`
 
 	canotoData canotoData_extra
 }
 
-type op struct {
-	op        ids.ID      `canoto:"fixed bytes,1"`
-	gas       gas.Gas     `canoto:"uint,2"`
-	gasFeeCap uint256.Int `canoto:"fixed repeated uint,3"`
-	burn      []burn      `canoto:"repeated value,4"`
-	mint      []mint      `canoto:"repeated value,5"`
+type Op struct {
+	ID        ids.ID          `canoto:"fixed bytes,1"`
+	Gas       gas.Gas         `canoto:"uint,2"`
+	GasFeeCap uint256.Int     `canoto:"fixed repeated uint,3"`
+	Burn      []AccountDebit  `canoto:"repeated value,4"`
+	Mint      []AccountCredit `canoto:"repeated value,5"`
 
 	canotoData canotoData_op
 }
 
-func opFromHookOp(o hook.Op) op {
-	op := op{
-		op:        o.ID,
-		gas:       o.Gas,
-		gasFeeCap: o.GasFeeCap,
-		burn:      make([]burn, 0, len(o.Burn)),
-		mint:      make([]mint, 0, len(o.Mint)),
+func NewOp(o hook.Op) Op {
+	op := Op{
+		ID:        o.ID,
+		Gas:       o.Gas,
+		GasFeeCap: o.GasFeeCap,
+		Burn:      make([]AccountDebit, 0, len(o.Burn)),
+		Mint:      make([]AccountCredit, 0, len(o.Mint)),
 	}
 	for addr, b := range o.Burn {
-		op.burn = append(op.burn, burn{
-			address: addr,
-			nonce:   b.Nonce,
-			amount:  b.Amount,
+		op.Burn = append(op.Burn, AccountDebit{
+			Address: addr,
+			Nonce:   b.Nonce,
+			Amount:  b.Amount,
 		})
 	}
 	for addr, amount := range o.Mint {
-		op.mint = append(op.mint, mint{
-			address: addr,
-			amount:  amount,
+		op.Mint = append(op.Mint, AccountCredit{
+			Address: addr,
+			Amount:  amount,
 		})
 	}
-	slices.SortFunc(op.burn, burn.Compare)
-	slices.SortFunc(op.mint, mint.Compare)
+	slices.SortFunc(op.Burn, AccountDebit.Compare)
+	slices.SortFunc(op.Mint, AccountCredit.Compare)
 	return op
 }
 
-func (o op) toHookOp() hook.Op {
+func (o Op) AsOp() hook.Op {
 	hookOp := hook.Op{
-		ID:        o.op,
-		Gas:       o.gas,
-		GasFeeCap: o.gasFeeCap,
-		Burn:      make(map[common.Address]hook.AccountDebit, len(o.burn)),
-		Mint:      make(map[common.Address]uint256.Int, len(o.mint)),
+		ID:        o.ID,
+		Gas:       o.Gas,
+		GasFeeCap: o.GasFeeCap,
+		Burn:      make(map[common.Address]hook.AccountDebit, len(o.Burn)),
+		Mint:      make(map[common.Address]uint256.Int, len(o.Mint)),
 	}
-	for _, b := range o.burn {
-		hookOp.Burn[b.address] = hook.AccountDebit{
-			Nonce:  b.nonce,
-			Amount: b.amount,
+	for _, b := range o.Burn {
+		hookOp.Burn[b.Address] = hook.AccountDebit{
+			Nonce:  b.Nonce,
+			Amount: b.Amount,
 		}
 	}
-	for _, m := range o.mint {
-		hookOp.Mint[m.address] = m.amount
+	for _, m := range o.Mint {
+		hookOp.Mint[m.Address] = m.Amount
 	}
 	return hookOp
 }
 
-type burn struct {
-	address common.Address `canoto:"fixed bytes,1"`
-	nonce   uint64         `canoto:"uint,2"`
-	amount  uint256.Int    `canoto:"fixed repeated uint,3"`
+type AccountDebit struct {
+	Address common.Address `canoto:"fixed bytes,1"`
+	Nonce   uint64         `canoto:"uint,2"`
+	Amount  uint256.Int    `canoto:"fixed repeated uint,3"`
 
 	canotoData canotoData_burn
 }
 
-func (b burn) Compare(o burn) int {
-	return b.address.Cmp(o.address)
+func (b AccountDebit) Compare(o AccountDebit) int {
+	return b.Address.Cmp(o.Address)
 }
 
-type mint struct {
-	address common.Address `canoto:"fixed bytes,1"`
-	amount  uint256.Int    `canoto:"fixed repeated uint,3"`
+type AccountCredit struct {
+	Address common.Address `canoto:"fixed bytes,1"`
+	Amount  uint256.Int    `canoto:"fixed repeated uint,3"`
 
 	canotoData canotoData_mint
 }
 
-func (m mint) Compare(o mint) int {
-	return m.address.Cmp(o.address)
+func (m AccountCredit) Compare(o AccountCredit) int {
+	return m.Address.Cmp(o.Address)
 }
