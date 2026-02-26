@@ -37,6 +37,7 @@ type EthBlockOption = options.Option[ethBlockProperties]
 
 // NewEthBlock constructs a raw Ethereum block with the given arguments.
 func NewEthBlock(tb testing.TB, parent *types.Block, txs types.Transactions, opts ...EthBlockOption) *types.Block {
+	tb.Helper()
 	props := &ethBlockProperties{
 		header: &types.Header{
 			Number:        new(big.Int).Add(parent.Number(), big.NewInt(1)),
@@ -74,7 +75,7 @@ func WithReceipts(rs types.Receipts) EthBlockOption {
 	})
 }
 
-// WithReceipts returns an option to set the receipts of a block constructed by
+// WithOps returns an option to set the ops of a block constructed by
 // [NewEthBlock].
 func WithOps(ops []hook.Op) EthBlockOption {
 	return options.Func[ethBlockProperties](func(p *ethBlockProperties) {

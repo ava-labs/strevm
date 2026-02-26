@@ -49,7 +49,7 @@ func (*extra) CanotoSpec(types ...reflect.Type) *canoto.Spec {
 				FieldNumber: canoto__extra__nanoseconds,
 				Name:        "nanoseconds",
 				OneOf:       "",
-				TypeUint:    canoto.SizeOf(zero.nanoseconds),
+				TypeInt:     canoto.SizeOf(zero.nanoseconds),
 			},
 			canoto.FieldTypeFromField(
 				/*type inference:*/ (canoto.MakeEntryNilPointer(zero.ops)),
@@ -108,7 +108,7 @@ func (c *extra) UnmarshalCanotoFrom(r canoto.Reader) error {
 				return canoto.ErrUnexpectedWireType
 			}
 
-			if err := canoto.ReadUint(&r, &c.nanoseconds); err != nil {
+			if err := canoto.ReadInt(&r, &c.nanoseconds); err != nil {
 				return err
 			}
 			if canoto.IsZero(c.nanoseconds) {
@@ -207,7 +207,7 @@ func (c *extra) CalculateCanotoCache() {
 	}
 	var size uint64
 	if !canoto.IsZero(c.nanoseconds) {
-		size += uint64(len(canoto__extra__nanoseconds__tag)) + canoto.SizeUint(c.nanoseconds)
+		size += uint64(len(canoto__extra__nanoseconds__tag)) + canoto.SizeInt(c.nanoseconds)
 	}
 	{
 		field := c.ops
@@ -263,7 +263,7 @@ func (c *extra) MarshalCanotoInto(w canoto.Writer) canoto.Writer {
 	}
 	if !canoto.IsZero(c.nanoseconds) {
 		canoto.Append(&w, canoto__extra__nanoseconds__tag)
-		canoto.AppendUint(&w, c.nanoseconds)
+		canoto.AppendInt(&w, c.nanoseconds)
 	}
 	{
 		field := c.ops
