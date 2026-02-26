@@ -667,7 +667,6 @@ func TestCanExecuteTransactionHook(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			tx := wallet.SetNonceAndSign(t, tt.account, &types.DynamicFeeTx{
-				GasTipCap: big.NewInt(0),
 				GasFeeCap: big.NewInt(1),
 				Gas:       params.TxGas,
 				To:        &common.Address{},
