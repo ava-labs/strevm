@@ -172,20 +172,22 @@ func newSUT(tb testing.TB, numAccounts uint, opts ...sutOption) (context.Context
 		sender,
 	), "Initialize()")
 
-	// For any precompile registrations
-	// 1. Must be registered after the VM is initialized.
-	// 2. Must be unregistered after all blocks are executed.
+	// All precompile registrations must be registered after the VM is
+	// initialized, to avoid needing to populate all the different hooks
+	// However, it must occur before the cleanup  ensuring that all blocks
+	// are executed, since registering the precompile also adds a cleanup to
+	// remove the libevm registration.
 	var unblock func()
 	if conf.blockingPrecompile != (common.Address{}) {
 		unblock = registerBlockingPrecompile(tb, conf.blockingPrecompile)
 	}
 	tb.Cleanup(func() {
+		if unblock != nil {
+			unblock()
+		}
 		ctx := context.WithoutCancel(tb.Context())
 		require.NoError(tb, vm.last.accepted.Load().WaitUntilExecuted(ctx), "{last-accepted block}.WaitUntilExecuted()")
 	})
-	if unblock != nil {
-		tb.Cleanup(unblock)
-	}
 
 	rpcClient, ethClient := dialRPC(ctx, tb, snow)
 
