@@ -281,7 +281,7 @@ func (b *blockBuilderG[T]) build(
 		// execution so we MUST record it at the equivalent point, before
 		// ApplyTx().
 		if err := state.ApplyTx(tx); err != nil {
-			log.Debug("Could not apply transaction", zap.Error(err))
+			txLog.Debug("Could not apply transaction", zap.Error(err))
 			continue
 		}
 		txLog.Trace("Including transaction")
