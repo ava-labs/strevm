@@ -113,8 +113,8 @@ var (
 	errExecutionLagging      = errors.New("execution lagging for settlement")
 )
 
-// buildBlock implements the block-building logic shared by [blockBuilder.Build]
-// and [blockBuilder.Rebuild].
+// build implements the block-building logic shared by [blockBuilder.Build] and
+// [blockBuilder.Rebuild]. The block context MAY be nil.
 func (b *blockBuilder) build(
 	ctx context.Context,
 	bCtx *block.Context,
