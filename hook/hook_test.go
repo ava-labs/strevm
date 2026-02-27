@@ -86,11 +86,11 @@ func TestOp_ApplyTo(t *testing.T) {
 				Burn: map[common.Address]AccountDebit{
 					eoa: {
 						Amount:    *uint256.NewInt(900_000),
-						MaxAmount: *uint256.NewInt(900_000),
+						MinBalance: *uint256.NewInt(900_000),
 					},
 					eoaMaxNonce: {
 						Amount:    *uint256.NewInt(100_000),
-						MaxAmount: *uint256.NewInt(100_000),
+						MinBalance: *uint256.NewInt(100_000),
 					},
 				},
 			},
@@ -113,14 +113,14 @@ func TestOp_ApplyTo(t *testing.T) {
 				Burn: map[common.Address]AccountDebit{
 					eoa: {
 						Amount:    *uint256.NewInt(1),
-						MaxAmount: *uint256.NewInt(1),
+						MinBalance: *uint256.NewInt(1),
 					},
 				},
 			},
 			wantErr: core.ErrInsufficientFunds,
 		},
 		{
-			name: "fund_eoa_for_max_amount_tests",
+			name: "fund_eoa_for_min_balance_tests",
 			op: &Op{
 				Mint: map[common.Address]uint256.Int{
 					eoa: *uint256.NewInt(500),
@@ -135,24 +135,24 @@ func TestOp_ApplyTo(t *testing.T) {
 			},
 		},
 		{
-			name: "balance_below_max_amount",
+			name: "balance_below_min_balance",
 			op: &Op{
 				Burn: map[common.Address]AccountDebit{
 					eoa: {
 						Amount:    *uint256.NewInt(100),
-						MaxAmount: *uint256.NewInt(1000),
+						MinBalance: *uint256.NewInt(1000),
 					},
 				},
 			},
 			wantErr: core.ErrInsufficientFunds,
 		},
 		{
-			name: "balance_covers_max_amount_debits_amount",
+			name: "balance_covers_min_balance_debits_amount",
 			op: &Op{
 				Burn: map[common.Address]AccountDebit{
 					eoa: {
 						Amount:    *uint256.NewInt(100),
-						MaxAmount: *uint256.NewInt(500),
+						MinBalance: *uint256.NewInt(500),
 					},
 				},
 			},
@@ -165,7 +165,7 @@ func TestOp_ApplyTo(t *testing.T) {
 			},
 		},
 		{
-			name: "max_amount_unset_does_not_allow_underflow",
+			name: "min_balance_unset_does_not_allow_underflow",
 			op: &Op{
 				Burn: map[common.Address]AccountDebit{
 					eoa: {
@@ -183,12 +183,12 @@ func TestOp_ApplyTo(t *testing.T) {
 			},
 		},
 		{
-			name: "max_amount_below_amount_does_not_allow_underflow",
+			name: "min_balance_below_amount_does_not_allow_underflow",
 			op: &Op{
 				Burn: map[common.Address]AccountDebit{
 					eoa: {
 						Amount:    *uint256.NewInt(500),
-						MaxAmount: *uint256.NewInt(300),
+						MinBalance: *uint256.NewInt(300),
 					},
 				},
 			},

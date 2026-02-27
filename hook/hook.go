@@ -105,14 +105,6 @@ type AccountDebit struct {
 
 var errInvalidAccountDebit = errors.New("invalid account debit")
 
-// Validate checks that the debit fields are consistent.
-func (d AccountDebit) Validate() error {
-	if d.MinBalance.Lt(&d.Amount) {
-		return errInvalidAccountDebit
-	}
-	return nil
-}
-
 // Op is an operation that can be applied to state during the execution of a
 // block.
 type Op struct {
@@ -134,12 +126,11 @@ type Op struct {
 // ApplyTo applies the operation to the statedb.
 //
 // If an account has insufficient funds, [core.ErrInsufficientFunds] is
-// returned. If an entry has malformed fields, [errInvalidAccountDebit] is returned.
-// In either case, the statedb is unchanged.
+// returned and the statedb is unchanged.
 func (o *Op) ApplyTo(stateDB *state.StateDB) error {
 	for from, acc := range o.Burn {
-		if err := acc.Validate(); err != nil {
-			return fmt.Errorf("%w: account %s", err, from)
+		if acc.MinBalance.Lt(&acc.Amount) {
+			return fmt.Errorf("%w: account %s", errInvalidAccountDebit, from)
 		}
 		if b := stateDB.GetBalance(from); b.Lt(&acc.MinBalance) {
 			return core.ErrInsufficientFunds
