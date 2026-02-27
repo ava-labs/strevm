@@ -302,3 +302,13 @@ func PostExecutionStateRoot(xdb saedb.ExecutionResults, blockNum uint64) (common
 func ExecutionBaseFee(xdb saedb.ExecutionResults, blockNum uint64) (*uint256.Int, error) {
 	return persistedExecutionArtefact(xdb, blockNum, (*executionResults).cloneBaseFee)
 }
+
+// StateRootAndBaseFee loads persisted execution results once and returns both
+// the post-execution state root and base fee.
+func StateRootAndBaseFee(xdb saedb.ExecutionResults, blockNum uint64) (common.Hash, *uint256.Int, error) {
+	e, err := loadExecutionResults(xdb, blockNum)
+	if err != nil {
+		return common.Hash{}, nil, err
+	}
+	return e.postExecutionStateRoot(), e.cloneBaseFee(), nil
+}
