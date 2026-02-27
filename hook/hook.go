@@ -107,7 +107,7 @@ var errInvalidAccountDebit = errors.New("invalid account debit")
 
 // Validate checks that the debit fields are consistent.
 func (d AccountDebit) Validate() error {
-	if d.MaxAmount.Lt(&d.Amount) {
+	if d.MinBalance.Lt(&d.Amount) {
 		return errInvalidAccountDebit
 	}
 	return nil
@@ -141,7 +141,7 @@ func (o *Op) ApplyTo(stateDB *state.StateDB) error {
 		if err := acc.Validate(); err != nil {
 			return fmt.Errorf("%w: account %s", err, from)
 		}
-		if b := stateDB.GetBalance(from); b.Lt(&acc.MaxAmount) {
+		if b := stateDB.GetBalance(from); b.Lt(&acc.MinBalance) {
 			return core.ErrInsufficientFunds
 		}
 	}

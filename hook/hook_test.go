@@ -59,8 +59,8 @@ func TestOp_ApplyTo(t *testing.T) {
 			op: &Op{
 				Burn: map[common.Address]AccountDebit{
 					eoa: {
-						Amount:    *uint256.NewInt(100_000),
-						MaxAmount: *uint256.NewInt(100_000),
+						Amount:     *uint256.NewInt(100_000),
+						MinBalance: *uint256.NewInt(100_000),
 					},
 				},
 				Mint: map[common.Address]uint256.Int{

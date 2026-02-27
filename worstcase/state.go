@@ -252,9 +252,9 @@ func txToOp(from common.Address, tx *types.Transaction, baseFee *uint256.Int) (h
 		GasFeeCap: gasFeeCap,
 		Burn: map[common.Address]hook.AccountDebit{
 			from: {
-				Nonce:     tx.Nonce(),
-				Amount:    amount,
-				MaxAmount: maxAmount,
+				Nonce:      tx.Nonce(),
+				Amount:     amount,
+				MinBalance: maxAmount,
 			},
 		},
 		// Mint MUST NOT be populated here because this transaction may revert.
