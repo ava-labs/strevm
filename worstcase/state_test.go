@@ -15,6 +15,7 @@ import (
 	"github.com/ava-labs/libevm/core"
 	"github.com/ava-labs/libevm/core/state"
 	"github.com/ava-labs/libevm/core/txpool"
+	"github.com/ava-labs/libevm/core/txpool/legacypool"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/crypto"
 	"github.com/ava-labs/libevm/ethdb"
@@ -501,6 +502,19 @@ func TestTransactionValidation(t *testing.T) {
 				Data: make([]byte, params.MaxInitCodeSize+1),
 			},
 			wantErr: core.ErrMaxInitCodeSizeExceeded,
+		},
+
+		// Transaction size limit
+		{
+			name:    "oversized_transaction",
+			balance: math.MaxUint64,
+			tx: &types.LegacyTx{
+				GasPrice: big.NewInt(1),
+				Gas:      initialMaxBlockSize,
+				To:       &common.Address{},
+				Data:     make([]byte, legacypool.TxMaxSize),
+			},
+			wantErr: txpool.ErrOversizedData,
 		},
 
 		// Unsupported transaction types
