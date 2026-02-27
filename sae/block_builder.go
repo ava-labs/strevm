@@ -286,11 +286,10 @@ func (b *blockBuilderG[T]) build(
 	}
 	var includedOps []T
 	for tx := range builder.PotentialEndOfBlockOps() {
-		// If we don't have enough gas remaining in the block for the minimum
-		// gas amount, we are done including transactions.
-		if remainingGas := state.GasLimit() - state.GasUsed(); remainingGas < params.TxGas {
-			break
-		}
+		// TODO(StephenButtolph): We could return additional information from
+		// [hook.PointsG.PotentialEndOfBlockOps] to terminate the the loop early
+		// when there is insufficient block space remaining for additional ops
+		// to be included.
 
 		op := tx.AsOp()
 		opLog := log.With(
