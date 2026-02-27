@@ -14,10 +14,8 @@ import (
 )
 
 func TestImmediateReceipts(t *testing.T) {
-	ctx, sut := newSUT(t, 1)
-
 	blocking := common.Address{'b', 'l', 'o', 'c', 'k'}
-	registerBlockingPrecompile(t, blocking)
+	ctx, sut := newSUT(t, 1, withBlockingPrecompile(blocking))
 
 	var txs []*types.Transaction
 	for _, to := range []*common.Address{&zeroAddr, &blocking} {
