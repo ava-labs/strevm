@@ -236,9 +236,9 @@ func TestWeb3Namespace(t *testing.T) {
 }
 
 func TestNetNamespace(t *testing.T) {
-	testRPCMethodsWithPeers := func(s *SUT, wantPeerCount hexutil.Uint) {
+	testRPCMethodsWithPeers := func(sut *SUT, wantPeerCount hexutil.Uint) {
 		t.Helper()
-		s.testRPC(s.context(t), t, []rpcTest{
+		sut.testRPC(sut.context(t), t, []rpcTest{
 			{
 				method: "net_listening",
 				want:   true,
