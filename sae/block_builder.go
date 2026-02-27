@@ -26,7 +26,7 @@ import (
 	"github.com/ava-labs/strevm/worstcase"
 )
 
-// blockBuilder hides blockBuilderG's generic type behind the non-generic
+// blockBuilder hides [blockBuilderG]'s generic type behind the non-generic
 // methods.
 type blockBuilder interface {
 	New(eth *types.Block, parent, lastSettled *blocks.Block) (*blocks.Block, error)
