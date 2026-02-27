@@ -76,7 +76,7 @@ func (vm *VM) BuildBlock(ctx context.Context, bCtx *block.Context) (*blocks.Bloc
 		bCtx,
 		vm.preference.Load(),
 		vm.mempool.TransactionsByPriority,
-		vm.hooks(),
+		vm.hooks,
 	)
 }
 
@@ -111,8 +111,8 @@ func (vm *VM) buildBlock(
 		)
 	}
 
-	bTime := blocks.PreciseTime(vm.hooks(), hdr)
-	pTime := blocks.PreciseTime(vm.hooks(), parent.Header())
+	bTime := blocks.PreciseTime(vm.hooks, hdr)
+	pTime := blocks.PreciseTime(vm.hooks, parent.Header())
 
 	// It is allowed for [hook.Points] to further constrain the allowed block
 	// times. However, every block MUST at least satisfy these basic sanity
@@ -129,7 +129,7 @@ func (vm *VM) buildBlock(
 	}
 
 	// Underflow of Add(-tau) is prevented by the above check.
-	lastSettled, ok, err := blocks.LastToSettleAt(vm.hooks(), bTime.Add(-saeparams.Tau), parent)
+	lastSettled, ok, err := blocks.LastToSettleAt(vm.hooks, bTime.Add(-saeparams.Tau), parent)
 	if err != nil {
 		return nil, err
 	}
@@ -143,7 +143,7 @@ func (vm *VM) buildBlock(
 		zap.Stringer("last_settled_hash", lastSettled.Hash()),
 	)
 
-	state, err := worstcase.NewState(vm.hooks(), vm.exec.ChainConfig(), vm.exec.StateCache(), lastSettled, vm.exec.SnapshotTree())
+	state, err := worstcase.NewState(vm.hooks, vm.exec.ChainConfig(), vm.exec.StateCache(), lastSettled, vm.exec.SnapshotTree())
 	if err != nil {
 		log.Warn("Worst-case state not able to be created",
 			zap.Error(err),
@@ -173,7 +173,7 @@ func (vm *VM) buildBlock(
 				return nil, fmt.Errorf("applying tx %#x in block %d to worst-case state: %v", tx.Hash(), b.Height(), err)
 			}
 		}
-		for i, op := range vm.hooks().EndOfBlockOps(b.EthBlock()) {
+		for i, op := range vm.hooks.EndOfBlockOps(b.EthBlock()) {
 			if err := state.Apply(op); err != nil {
 				log.Warn("Could not apply op during historical worst-case calculation",
 					zap.Int("op_index", i),
@@ -292,7 +292,7 @@ func (vm *VM) VerifyBlock(ctx context.Context, bCtx *block.Context, b *blocks.Bl
 	// whereas [VM.VerifyBlock] is only called after verifying the current
 	// proposer's signature. While a malicious proposer could exist, their time
 	// window is limited.
-	signer := vm.signerForBlock(b.EthBlock())
+	signer := vm.exec.SignerForBlock(b)
 	core.SenderCacher.Recover(signer, b.Transactions()) // asynchronous
 
 	parent, err := vm.GetBlock(ctx, b.Parent())
@@ -338,7 +338,7 @@ func (vm *VM) VerifyBlock(ctx context.Context, bCtx *block.Context, b *blocks.Bl
 		bCtx,
 		parent,
 		func(f txpool.PendingFilter) []*txgossip.LazyTransaction { return txs },
-		vm.hooks().BlockRebuilderFrom(b.EthBlock()),
+		vm.hooks.BlockRebuilderFrom(b.EthBlock()),
 	)
 	if err != nil {
 		return err
@@ -418,7 +418,7 @@ func (vm *VM) GetBlock(ctx context.Context, id ids.ID) (*blocks.Block, error) {
 			// Excess is only used for executing the next block, which can never
 			// be the case if `b` isn't actually the last synchronous block, so
 			// passing the same value for all is OK.
-			if err := b.MarkSynchronous(vm.hooks(), vm.db, vm.xdb, vm.config.ExcessAfterLastSynchronous); err != nil {
+			if err := b.MarkSynchronous(vm.hooks, vm.db, vm.xdb, vm.config.ExcessAfterLastSynchronous); err != nil {
 				return nil, err
 			}
 			return b, nil
