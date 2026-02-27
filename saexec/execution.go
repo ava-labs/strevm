@@ -13,13 +13,11 @@ import (
 	"github.com/ava-labs/avalanchego/utils/logging"
 	"github.com/ava-labs/avalanchego/vms/components/gas"
 	"github.com/ava-labs/libevm/core"
-	"github.com/ava-labs/libevm/core/state"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/core/vm"
 	"go.uber.org/zap"
 
 	"github.com/ava-labs/strevm/blocks"
-	"github.com/ava-labs/strevm/saedb"
 )
 
 var errExecutorClosed = errors.New("saexec.Executor closed")
@@ -92,7 +90,7 @@ func (e *Executor) execute(b *blocks.Block, logger logging.Logger) error {
 		return fmt.Errorf("executing block built on parent %#x when last executed %#x", parent.Hash(), last)
 	}
 
-	stateDB, err := state.New(parent.PostExecutionStateRoot(), e.stateCache, e.snaps)
+	stateDB, err := e.stateRecorder.StateDB(parent.PostExecutionStateRoot())
 	if err != nil {
 		return fmt.Errorf("state.New(%#x, ...): %v", parent.PostExecutionStateRoot(), err)
 	}
@@ -213,12 +211,10 @@ func (e *Executor) execute(b *blocks.Block, logger logging.Logger) error {
 	if err != nil {
 		return fmt.Errorf("%T.Commit() at end of block %d: %w", stateDB, b.NumberU64(), err)
 	}
-	if num := b.NumberU64(); saedb.ShouldCommitTrieDB(num) {
-		tdb := e.stateCache.TrieDB()
-		if err := tdb.Commit(root, false /* log */); err != nil {
-			return fmt.Errorf("%T.Commit(%#x) at end of block %d: %v", tdb, root, num, err)
-		}
+	if err := e.stateRecorder.record(root, b.NumberU64()); err != nil {
+		return err
 	}
+
 	// The strict ordering of the next 3 calls guarantees invariants that MUST
 	// NOT be broken:
 	//

@@ -67,8 +67,10 @@ func TestRecoverFromDatabase(t *testing.T) {
 			require.Len(t, b.Transactions(), 1, "transactions in block")
 		}
 		require.NoErrorf(t, b.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", b)
+		t.Log(b.NumberU64(), b.PostExecutionStateRoot())
 
 		if quick {
+			t.Log("quick, skipping test")
 			continue
 		}
 		t.Run("recover", func(t *testing.T) {

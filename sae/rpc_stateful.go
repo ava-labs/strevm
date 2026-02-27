@@ -98,7 +98,7 @@ func (b *ethAPIBackend) StateAndHeaderByNumberOrHash(ctx context.Context, numOrH
 		hdr.BaseFee = bf.ToBig()
 	}
 
-	sdb, err := state.New(hdr.Root, b.exec.StateCache(), nil)
+	sdb, err := b.exec.StateDB(hdr.Root)
 	if err != nil {
 		return nil, nil, err
 	}

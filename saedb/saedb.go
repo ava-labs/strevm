@@ -7,7 +7,9 @@
 // [Streaming Asynchronous Execution]: https://github.com/avalanche-foundation/ACPs/tree/main/ACPs/194-streaming-asynchronous-execution
 package saedb
 
-import "github.com/ava-labs/avalanchego/database"
+import (
+	"github.com/ava-labs/avalanchego/database"
+)
 
 const (
 	// CommitTrieDBEvery is the number of blocks between commits of the state
