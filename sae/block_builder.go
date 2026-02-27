@@ -216,7 +216,7 @@ func (b *blockBuilderG[T]) build(
 			log.Warn("Could not extract ops during historical worst-case calculation",
 				zap.Error(err),
 			)
-			return nil, fmt.Errorf("applying op at end of block %d to worst-case state: %v", block.Height(), err)
+			return nil, fmt.Errorf("extracting ops of block %d to worst-case state: %v", block.Height(), err)
 		}
 		for i, op := range ops {
 			if err := state.Apply(op); err != nil {
