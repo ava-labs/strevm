@@ -159,6 +159,11 @@ func (e *Executor) SnapshotTree() *snapshot.Tree {
 	return e.snaps
 }
 
+// Hooks returns the lifecycle hook points used during block execution.
+func (e *Executor) Hooks() hook.Points {
+	return e.hooks
+}
+
 // LastExecuted returns the last-executed block in a threadsafe manner.
 func (e *Executor) LastExecuted() *blocks.Block {
 	return e.lastExecuted.Load()
