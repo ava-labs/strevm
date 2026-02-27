@@ -191,7 +191,7 @@ func TestMultipleBlocks(t *testing.T) {
 						GasFeeCap: *uint256.NewInt(2),
 						Burn: map[common.Address]AccountDebit{
 							eoaNoBalance: {
-								Amount:    *uint256.NewInt(importedAmount + 1),
+								Amount:     *uint256.NewInt(importedAmount + 1),
 								MinBalance: *uint256.NewInt(importedAmount + 1),
 							},
 						},
@@ -205,7 +205,7 @@ func TestMultipleBlocks(t *testing.T) {
 						GasFeeCap: *uint256.NewInt(2),
 						Burn: map[common.Address]AccountDebit{
 							eoaNoBalance: {
-								Amount:    *uint256.NewInt(importedAmount),
+								Amount:     *uint256.NewInt(importedAmount),
 								MinBalance: *uint256.NewInt(importedAmount),
 							},
 						},
