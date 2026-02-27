@@ -223,28 +223,51 @@ func (s *State) ApplyTx(tx *types.Transaction) error {
 	return s.Apply(op)
 }
 
+func bigToUint256(v *big.Int) (_ uint256.Int, overflow bool) {
+	var x uint256.Int
+	overflow = x.SetFromBig(v)
+	return x, overflow
+}
+
+// addMul returns a*b + c and reports whether overflow occurred
+func addMul(a uint64, b, c *uint256.Int) (_ uint256.Int, overflow bool) {
+	var x uint256.Int
+	x.SetUint64(a)
+	if _, overflow := x.MulOverflow(&x, b); overflow {
+		return uint256.Int{}, true
+	}
+	_, overflow = x.AddOverflow(&x, c)
+	return x, overflow
+}
+
 func txToOp(from common.Address, tx *types.Transaction, baseFee *uint256.Int) (hook.Op, error) {
 	type Op = hook.Op // for convenience when returning zero value
 
-	var gasFeeCap uint256.Int
-	if overflow := gasFeeCap.SetFromBig(tx.GasFeeCap()); overflow {
+	gasFeeCap, overflow := bigToUint256(tx.GasFeeCap())
+	if overflow {
 		return Op{}, core.ErrFeeCapVeryHigh
 	}
-
-	// maxAmount = gasLimit * gasFeeCap + value (worst-case affordability check)
-	var maxAmount uint256.Int
-	if overflow := maxAmount.SetFromBig(tx.Cost()); overflow {
+	value, overflow := bigToUint256(tx.Value())
+	if overflow {
+		return Op{}, core.ErrInsufficientFundsForTransfer
+	}
+	minBalance, overflow := addMul(tx.Gas(), &gasFeeCap, &value)
+	if overflow {
 		return Op{}, errCostOverflow
 	}
 
-	// amount = gasLimit * effectiveGasPrice + value (actual deduction)
-	baseFeeBI := baseFee.ToBig()
-	effectiveGasPrice := new(big.Int).Add(baseFeeBI, tx.EffectiveGasTipValue(baseFeeBI))
-	cost := new(big.Int).Mul(new(big.Int).SetUint64(tx.Gas()), effectiveGasPrice)
-	cost.Add(cost, tx.Value())
+	// effectiveGasPrice = min(gasFeeCap, baseFee + gasTipCap)
+	gasTipCap, overflow := bigToUint256(tx.GasTipCap())
+	if overflow {
+		return Op{}, core.ErrTipVeryHigh
+	}
+	var effectiveGasPrice uint256.Int
+	if _, overflow := effectiveGasPrice.AddOverflow(baseFee, &gasTipCap); overflow || gasFeeCap.Lt(&effectiveGasPrice) {
+		effectiveGasPrice.Set(&gasFeeCap)
+	}
 
-	var amount uint256.Int
-	if overflow := amount.SetFromBig(cost); overflow {
+	amount, overflow := addMul(tx.Gas(), &effectiveGasPrice, &value)
+	if overflow {
 		return Op{}, errCostOverflow
 	}
 	return Op{
@@ -254,7 +277,7 @@ func txToOp(from common.Address, tx *types.Transaction, baseFee *uint256.Int) (h
 			from: {
 				Nonce:      tx.Nonce(),
 				Amount:     amount,
-				MinBalance: maxAmount,
+				MinBalance: minBalance,
 			},
 		},
 		// Mint MUST NOT be populated here because this transaction may revert.
