@@ -242,6 +242,7 @@ func TestMultipleBlocks(t *testing.T) {
 				wallet.SetNonceAndSign(t, 0, &types.DynamicFeeTx{
 					To:        &common.Address{},
 					Gas:       100_000,
+					GasTipCap: big.NewInt(1),
 					GasFeeCap: big.NewInt(100),
 				}),
 				wallet.SetNonceAndSign(t, 0, &types.LegacyTx{
@@ -259,7 +260,7 @@ func TestMultipleBlocks(t *testing.T) {
 				{eoaViaTx: startingBalance - 2*100_000},
 				{eoaViaTx: startingBalance - 2*100_000 - (2*200_000 + 123_456)},
 				{eoaViaTx: startingBalance - 2*100_000 - (2*200_000 + 123_456) - 10*100_000},             // non-dynamic fee
-				{eoaViaTx: startingBalance - 2*100_000 - (2*200_000 + 123_456) - 10*100_000 - 2*100_000}, // dynamic fee reduced to effective gas price
+				{eoaViaTx: startingBalance - 2*100_000 - (2*200_000 + 123_456) - 10*100_000 - 3*100_000}, // dynamic fee: effective gas price = baseFee + gasTipCap
 			},
 		},
 		{
