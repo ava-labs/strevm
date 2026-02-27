@@ -213,7 +213,7 @@ func (b *blockBuilderG[T]) build(
 		}
 		ops, err := b.hooks.EndOfBlockOps(block.EthBlock())
 		if err != nil {
-			log.Warn("Could not extra ops during historical worst-case calculation",
+			log.Warn("Could not extract ops during historical worst-case calculation",
 				zap.Error(err),
 			)
 			return nil, fmt.Errorf("applying op at end of block %d to worst-case state: %v", block.Height(), err)
