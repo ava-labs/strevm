@@ -22,10 +22,6 @@ import (
 	"github.com/ava-labs/strevm/blocks"
 )
 
-func (vm *VM) newBlock(eth *types.Block, parent, lastSettled *blocks.Block) (*blocks.Block, error) {
-	return blocks.New(eth, parent, lastSettled, vm.log())
-}
-
 // maxFutureBlockDuration is the maximum time from the current time allowed for
 // blocks before they're considered future blocks and fail parsing or
 // verification.
@@ -57,7 +53,7 @@ func (vm *VM) ParseBlock(ctx context.Context, buf []byte) (*blocks.Block, error)
 		return nil, fmt.Errorf("%w: >%s", errBlockTooFarInFuture, maxFutureBlockDuration)
 	}
 
-	return vm.newBlock(b, nil, nil)
+	return vm.blockBuilder.New(b, nil, nil)
 }
 
 // BuildBlock builds a new block, using the last block passed to
@@ -157,7 +153,7 @@ func (vm *VM) GetBlock(ctx context.Context, id ids.ID) (*blocks.Block, error) {
 				)
 			}
 
-			b, err := vm.newBlock(ethB, nil, nil)
+			b, err := vm.blockBuilder.New(ethB, nil, nil)
 			if err != nil {
 				return nil, err
 			}

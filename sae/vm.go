@@ -237,9 +237,9 @@ func NewVM[T hook.Transaction](
 
 	{ // ==========  Block Builder  ==========
 		vm.blockBuilder = &blockBuilderG[T]{
-			snowCtx.Log,
-			cfg.Now,
 			hooks,
+			cfg.Now,
+			snowCtx.Log,
 			vm.exec,
 			vm.mempool,
 		}

@@ -26,37 +26,28 @@ import (
 	"github.com/ava-labs/strevm/worstcase"
 )
 
-var (
-	errBlockTimeUnderMinimum = errors.New("block time under minimum allowed time")
-	errBlockTimeBeforeParent = errors.New("block time before parent time")
-	errBlockTimeAfterMaximum = errors.New("block time after maximum allowed time")
-	errExecutionLagging      = errors.New("execution lagging for settlement")
-)
-
 // blockBuilder hides blockBuilderG's generic type behind the non-generic
 // methods.
 type blockBuilder interface {
-	Build(
-		ctx context.Context,
-		bCtx *block.Context,
-		parent *blocks.Block,
-	) (*blocks.Block, error)
-	Rebuild(
-		ctx context.Context,
-		bCtx *block.Context,
-		parent *blocks.Block,
-		block *blocks.Block,
-	) (*blocks.Block, error)
+	New(eth *types.Block, parent, lastSettled *blocks.Block) (*blocks.Block, error)
+	Build(ctx context.Context, bCtx *block.Context, parent *blocks.Block) (*blocks.Block, error)
+	Rebuild(ctx context.Context, bCtx *block.Context, parent, block *blocks.Block) (*blocks.Block, error)
 }
 
 type blockBuilderG[T hook.Transaction] struct {
-	log     logging.Logger
-	now     func() time.Time
 	hooks   hook.PointsG[T]
+	now     func() time.Time
+	log     logging.Logger
 	exec    *saexec.Executor
 	mempool *txgossip.Set
 }
 
+func (b *blockBuilderG[_]) New(eth *types.Block, parent, lastSettled *blocks.Block) (*blocks.Block, error) {
+	return blocks.New(eth, parent, lastSettled, b.log)
+}
+
+// Build a new block on top of the provided parent. The block context MAY be
+// nil.
 func (b *blockBuilderG[_]) Build(
 	ctx context.Context,
 	bCtx *block.Context,
@@ -71,18 +62,23 @@ func (b *blockBuilderG[_]) Build(
 	)
 }
 
+// Rebuild attempts to build a block identical to the provided block. If the
+// provided block contains any invalid components, those components will be set
+// to their valid counterparts in the returned block. The block context MAY be
+// nil.
 func (b *blockBuilderG[_]) Rebuild(
 	ctx context.Context,
 	bCtx *block.Context,
 	parent *blocks.Block,
 	block *blocks.Block,
 ) (*blocks.Block, error) {
+	// Moving sender caching into [VM.ParseBlock] is not robust as there is
+	// insufficient spam protection, so it must be done here.
 	signer := b.exec.SignerForBlock(block)
-	txs := block.Transactions()
-	core.SenderCacher.Recover(signer, txs) // asynchronous
+	core.SenderCacher.Recover(signer, block.Transactions()) // asynchronous
 
-	lazyTxs := make([]*txgossip.LazyTransaction, len(txs))
-	for i, tx := range txs {
+	txs := make([]*txgossip.LazyTransaction, len(block.Transactions()))
+	for i, tx := range block.Transactions() {
 		s, err := types.Sender(signer, tx)
 		if err != nil {
 			return nil, fmt.Errorf("recovering sender of tx %#x: %v", tx.Hash(), err)
@@ -97,7 +93,7 @@ func (b *blockBuilderG[_]) Rebuild(
 			return nil, fmt.Errorf("tx %#x tip cap: %v", tx.Hash(), err)
 		}
 
-		lazyTxs[i] = &txgossip.LazyTransaction{
+		txs[i] = &txgossip.LazyTransaction{
 			LazyTransaction: &txpool.LazyTransaction{
 				Hash:      tx.Hash(),
 				Tx:        tx,
@@ -117,11 +113,20 @@ func (b *blockBuilderG[_]) Rebuild(
 		ctx,
 		bCtx,
 		parent,
-		func(f txpool.PendingFilter) []*txgossip.LazyTransaction { return lazyTxs },
+		func(f txpool.PendingFilter) []*txgossip.LazyTransaction { return txs },
 		rebuilder,
 	)
 }
 
+var (
+	errBlockTimeUnderMinimum = errors.New("block time under minimum allowed time")
+	errBlockTimeBeforeParent = errors.New("block time before parent time")
+	errBlockTimeAfterMaximum = errors.New("block time after maximum allowed time")
+	errExecutionLagging      = errors.New("execution lagging for settlement")
+)
+
+// buildBlock implements the block-building logic shared by [blockBuilder.Build]
+// and [blockBuilder.Rebuild].
 func (b *blockBuilderG[T]) build(
 	ctx context.Context,
 	bCtx *block.Context,
@@ -185,33 +190,33 @@ func (b *blockBuilderG[T]) build(
 	}
 
 	unsettled := blocks.Range(lastSettled, parent)
-	for _, blk := range unsettled {
+	for _, block := range unsettled {
 		log := log.With(
-			zap.Uint64("block_height", blk.Height()),
-			zap.Stringer("block_hash", blk.Hash()),
+			zap.Uint64("block_height", block.Height()),
+			zap.Stringer("block_hash", block.Hash()),
 		)
-		if err := state.StartBlock(blk.Header()); err != nil {
+		if err := state.StartBlock(block.Header()); err != nil {
 			log.Warn("Could not start historical worst-case calculation",
 				zap.Error(err),
 			)
-			return nil, fmt.Errorf("starting worst-case state for block %d: %v", blk.Height(), err)
+			return nil, fmt.Errorf("starting worst-case state for block %d: %v", block.Height(), err)
 		}
-		for i, tx := range blk.Transactions() {
+		for i, tx := range block.Transactions() {
 			if err := state.ApplyTx(tx); err != nil {
 				log.Warn("Could not apply tx during historical worst-case calculation",
 					zap.Int("tx_index", i),
 					zap.Stringer("tx_hash", tx.Hash()),
 					zap.Error(err),
 				)
-				return nil, fmt.Errorf("applying tx %#x in block %d to worst-case state: %v", tx.Hash(), blk.Height(), err)
+				return nil, fmt.Errorf("applying tx %#x in block %d to worst-case state: %v", tx.Hash(), block.Height(), err)
 			}
 		}
-		ops, err := b.hooks.EndOfBlockOps(blk.EthBlock())
+		ops, err := b.hooks.EndOfBlockOps(block.EthBlock())
 		if err != nil {
 			log.Warn("Could not extra ops during historical worst-case calculation",
 				zap.Error(err),
 			)
-			return nil, fmt.Errorf("applying op at end of block %d to worst-case state: %v", blk.Height(), err)
+			return nil, fmt.Errorf("applying op at end of block %d to worst-case state: %v", block.Height(), err)
 		}
 		for i, op := range ops {
 			if err := state.Apply(op); err != nil {
@@ -220,14 +225,14 @@ func (b *blockBuilderG[T]) build(
 					zap.Stringer("op_id", op.ID),
 					zap.Error(err),
 				)
-				return nil, fmt.Errorf("applying op at end of block %d to worst-case state: %v", blk.Height(), err)
+				return nil, fmt.Errorf("applying op at end of block %d to worst-case state: %v", block.Height(), err)
 			}
 		}
 		if _, err := state.FinishBlock(); err != nil {
 			log.Warn("Could not finish historical worst-case calculation",
 				zap.Error(err),
 			)
-			return nil, fmt.Errorf("finishing worst-case state for block %d: %v", blk.Height(), err)
+			return nil, fmt.Errorf("finishing worst-case state for block %d: %v", block.Height(), err)
 		}
 	}
 
@@ -260,7 +265,7 @@ func (b *blockBuilderG[T]) build(
 		if remainingGas := state.GasLimit() - state.GasUsed(); remainingGas < params.TxGas {
 			break
 		}
-		log := log.With(
+		txLog := log.With(
 			zap.Stringer("tx_hash", ltx.Hash),
 			zap.Int("tx_index", len(included)),
 			zap.Stringer("sender", ltx.Sender),
@@ -268,7 +273,7 @@ func (b *blockBuilderG[T]) build(
 
 		tx, ok := ltx.Resolve()
 		if !ok {
-			log.Debug("Could not resolve lazy transaction")
+			txLog.Debug("Could not resolve lazy transaction")
 			continue
 		}
 
@@ -279,7 +284,7 @@ func (b *blockBuilderG[T]) build(
 			log.Debug("Could not apply transaction", zap.Error(err))
 			continue
 		}
-		log.Trace("Including transaction")
+		txLog.Trace("Including transaction")
 		included = append(included, tx)
 	}
 	var includedOps []T
@@ -290,9 +295,8 @@ func (b *blockBuilderG[T]) build(
 			break
 		}
 
-		// TODO: FIXME
 		op := tx.AsOp()
-		log := log.With(
+		opLog := log.With(
 			zap.Stringer("op_id", op.ID),
 			zap.Int("op_index", len(includedOps)),
 		)
@@ -301,10 +305,10 @@ func (b *blockBuilderG[T]) build(
 		// execution so we MUST record it at the equivalent point, before
 		// ApplyTx().
 		if err := state.Apply(op); err != nil {
-			log.Debug("Could not apply op", zap.Error(err))
+			opLog.Debug("Could not apply op", zap.Error(err))
 			continue
 		}
-		log.Trace("Including op")
+		opLog.Trace("Including op")
 		includedOps = append(includedOps, tx)
 	}
 
@@ -333,10 +337,10 @@ func (b *blockBuilderG[T]) build(
 		return nil, err
 	}
 
-	newB, err := blocks.New(ethB, parent, lastSettled, b.log)
+	block, err := b.New(ethB, parent, lastSettled)
 	if err != nil {
 		return nil, err
 	}
-	newB.SetWorstCaseBounds(bounds)
-	return newB, nil
+	block.SetWorstCaseBounds(bounds)
+	return block, nil
 }
