@@ -24,7 +24,7 @@ import (
 	"github.com/ava-labs/strevm/saetest"
 )
 
-// Stub implements [hook.PointsG].
+// Stub implements [hook.PointsG] parameterized by [Op].
 type Stub struct {
 	Now                     func() time.Time
 	Target                  gas.Gas
