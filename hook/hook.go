@@ -96,13 +96,11 @@ type BlockBuilder interface {
 // along with the nonce used to authorize the debit.
 type AccountDebit struct {
 	Nonce uint64
-	// Amount is the effective cost to deduct from the account balance.
+	// Amount to deduct from the account balance.
 	Amount uint256.Int
-	// MaxAmount is the maximum cost the account must be able to afford.
-	// This mirrors geth's balanceCheck in buyGas: the account is validated
-	// against MaxAmount (e.g. gasLimit * gasFeeCap + value) but only
-	// charged Amount (e.g. gasLimit * effectiveGasPrice + value).
-	MaxAmount uint256.Int
+	// MinBalance is the minimum balance the account must have for the operation
+	// to be valid. It must be at least [AccountDebit.Amount].
+	MinBalance uint256.Int
 }
 
 var errInvalidAccountDebit = errors.New("invalid account debit")
