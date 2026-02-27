@@ -66,6 +66,14 @@ type Points interface {
 	AfterExecutingBlock(*state.StateDB, *types.Block, types.Receipts)
 }
 
+// State provides worst-case gas accounting for end-of-block operations.
+// [BlockBuilder.BuildBlock] implementations use it to apply [Op]s and query
+// cumulative gas.
+type State interface {
+	Apply(Op) error
+	GasUsed() uint64
+}
+
 // BlockBuilder constructs a block given its components.
 type BlockBuilder interface {
 	// BuildHeader constructs a header from the parent header.
@@ -81,10 +89,14 @@ type BlockBuilder interface {
 	BuildHeader(parent *types.Header) *types.Header
 	// BuildBlock constructs a block with the given components.
 	//
+	// BuildBlock MUST apply all end-of-block [Op]s via [State.Apply] and
+	// populate [types.Header.GasUsed] from [State.GasUsed].
+	//
 	// SAE always uses this method instead of [types.NewBlock], to ensure any
 	// libevm block extras are properly populated.
 	BuildBlock(
 		header *types.Header,
+		state State,
 		txs []*types.Transaction,
 		receipts []*types.Receipt,
 	) (*types.Block, error)

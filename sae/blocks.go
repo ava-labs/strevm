@@ -243,18 +243,6 @@ func (vm *VM) buildBlock(
 		included = append(included, tx)
 	}
 
-	// TODO: Should the [hook.BlockBuilder] populate [types.Header.GasUsed] so
-	// that [hook.Op.Gas] can be included?
-	hdr.GasUsed = state.GasUsed()
-
-	bounds, err := state.FinishBlock()
-	if err != nil {
-		log.Warn("Could not finish worst-case block calculation",
-			zap.Error(err),
-		)
-		return nil, fmt.Errorf("finishing worst-case state for new block: %v", err)
-	}
-
 	var receipts types.Receipts
 	settling := blocks.Range(parent.LastSettled(), lastSettled)
 	for _, b := range settling {
@@ -263,11 +251,20 @@ func (vm *VM) buildBlock(
 
 	ethB, err := builder.BuildBlock(
 		hdr,
+		state,
 		included,
 		receipts,
 	)
 	if err != nil {
 		return nil, err
+	}
+
+	bounds, err := state.FinishBlock()
+	if err != nil {
+		log.Warn("Could not finish worst-case block calculation",
+			zap.Error(err),
+		)
+		return nil, fmt.Errorf("finishing worst-case state for new block: %v", err)
 	}
 
 	b, err := vm.newBlock(ethB, parent, lastSettled)
