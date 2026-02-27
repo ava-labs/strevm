@@ -8,6 +8,8 @@
 package hook
 
 import (
+	"errors"
+	"fmt"
 	"math"
 	"time"
 
@@ -91,11 +93,17 @@ type BlockBuilder interface {
 }
 
 // AccountDebit includes an amount that an account should have debited,
-// along with the nonce used to aut debit the account.
+// along with the nonce used to authorize the debit.
 type AccountDebit struct {
-	Nonce  uint64
+	Nonce uint64
+	// Amount to deduct from the account balance.
 	Amount uint256.Int
+	// MinBalance is the minimum balance the account must have for the operation
+	// to be valid. It must be at least [AccountDebit.Amount].
+	MinBalance uint256.Int
 }
+
+var errInvalidAccountDebit = errors.New("invalid account debit")
 
 // Op is an operation that can be applied to state during the execution of a
 // block.
@@ -117,11 +125,14 @@ type Op struct {
 
 // ApplyTo applies the operation to the statedb.
 //
-// If an account has insufficient funds, [core.ErrInsufficientFunds] is returned
-// and the statedb is unchanged.
+// If an account has insufficient funds, [core.ErrInsufficientFunds] is
+// returned and the statedb is unchanged.
 func (o *Op) ApplyTo(stateDB *state.StateDB) error {
 	for from, acc := range o.Burn {
-		if b := stateDB.GetBalance(from); b.Lt(&acc.Amount) {
+		if acc.MinBalance.Lt(&acc.Amount) {
+			return fmt.Errorf("%w: account %s", errInvalidAccountDebit, from)
+		}
+		if b := stateDB.GetBalance(from); b.Lt(&acc.MinBalance) {
 			return core.ErrInsufficientFunds
 		}
 	}
