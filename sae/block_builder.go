@@ -277,9 +277,6 @@ func (b *blockBuilderG[T]) build(
 			continue
 		}
 
-		// The [saexec.Executor] checks the worst-case balance before tx
-		// execution so we MUST record it at the equivalent point, before
-		// ApplyTx().
 		if err := state.ApplyTx(tx); err != nil {
 			txLog.Debug("Could not apply transaction", zap.Error(err))
 			continue
@@ -301,9 +298,6 @@ func (b *blockBuilderG[T]) build(
 			zap.Int("op_index", len(includedOps)),
 		)
 
-		// The [saexec.Executor] checks the worst-case balance before tx
-		// execution so we MUST record it at the equivalent point, before
-		// ApplyTx().
 		if err := state.Apply(op); err != nil {
 			opLog.Debug("Could not apply op", zap.Error(err))
 			continue
