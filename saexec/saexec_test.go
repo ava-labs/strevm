@@ -72,6 +72,8 @@ type SUT struct {
 func newSUT(tb testing.TB, hooks *saehookstest.Stub) (context.Context, SUT) {
 	tb.Helper()
 
+	saetest.EnableLibEVMTBLogger(tb)
+
 	logger := saetest.NewTBLogger(tb, logging.Warn)
 	ctx := logger.CancelOnError(tb.Context())
 
@@ -95,8 +97,6 @@ func newSUT(tb testing.TB, hooks *saehookstest.Stub) (context.Context, SUT) {
 	tb.Cleanup(func() {
 		require.NoErrorf(tb, e.Close(), "%T.Close()", e)
 	})
-
-	saetest.EnableLibEVMTBLogger(tb)
 
 	return ctx, SUT{
 		Executor: e,

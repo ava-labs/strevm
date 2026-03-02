@@ -111,6 +111,8 @@ var chainID = ids.GenerateTestID()
 func newSUT(tb testing.TB, numAccounts uint, opts ...sutOption) (context.Context, *SUT) {
 	tb.Helper()
 
+	saetest.EnableLibEVMTBLogger(tb)
+
 	mempoolConf := legacypool.DefaultConfig // copies
 	mempoolConf.Journal = filepath.Join(tb.TempDir(), "transactions.rlp")
 
@@ -166,8 +168,6 @@ func newSUT(tb testing.TB, numAccounts uint, opts ...sutOption) (context.Context
 		nil, // Fxs
 		sender,
 	), "Initialize()")
-
-	saetest.EnableLibEVMTBLogger(tb)
 
 	rpcClient, ethClient := dialRPC(ctx, tb, snow)
 

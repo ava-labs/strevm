@@ -168,9 +168,10 @@ func (l *TBLogger) log(lvl logging.Level, msg string, fields ...zap.Field) {
 	to("[Log@%s] %s %v - %s:%d", lvl, msg, enc.Fields, file, line)
 }
 
-// EnableLibEVMTBLogger sets an [ethtest.NewTBLogHandler] as the default libevm
-// logger until tb cleanup occurs. This causes libevm errors (and above) to fail
-// the test.
+// EnableLibEVMTBLogger redirects all libevm logs to tb, failing the test on
+// errors and above. The original logger is restored during tb cleanup.
+//
+// WARNING: sets a global logger so it must NOT be used in parallel tests.
 func EnableLibEVMTBLogger(tb testing.TB) {
 	tb.Helper()
 	old := log.Root()
