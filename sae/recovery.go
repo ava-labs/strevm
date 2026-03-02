@@ -15,9 +15,11 @@ import (
 	"github.com/ava-labs/libevm/core/rawdb"
 	"github.com/ava-labs/libevm/core/state"
 	"github.com/ava-labs/libevm/ethdb"
+	"github.com/ava-labs/libevm/params"
 
 	"github.com/ava-labs/strevm/blocks"
-	"github.com/ava-labs/strevm/params"
+	"github.com/ava-labs/strevm/hook"
+	saeparams "github.com/ava-labs/strevm/params"
 	"github.com/ava-labs/strevm/proxytime"
 	"github.com/ava-labs/strevm/saedb"
 	"github.com/ava-labs/strevm/saexec"
@@ -26,7 +28,9 @@ import (
 type recovery struct {
 	db              ethdb.Database
 	xdb             saedb.ExecutionResults
+	chainConfig     *params.ChainConfig
 	log             logging.Logger
+	hooks           hook.Points
 	config          Config
 	lastSynchronous *blocks.Block
 }
@@ -51,7 +55,7 @@ func (rec *recovery) lastBlockWithStateRootAvailable() (*blocks.Block, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := b.RestoreExecutionArtefacts(rec.db, rec.xdb); err != nil {
+	if err := b.RestoreExecutionArtefacts(rec.db, rec.xdb, rec.chainConfig); err != nil {
 		return nil, err
 	}
 	{
@@ -109,7 +113,7 @@ func (rec *recovery) rebuildBlocksInMemory(lastExecuted *blocks.Block) (_ *syncM
 	// extend appends to the chain all the blocks in settler's ancestry up to
 	// and including the block that it settled.
 	extend := func(settler *blocks.Block) error {
-		settleAt := blocks.PreciseTime(rec.config.Hooks, settler.Header()).Add(-params.Tau)
+		settleAt := blocks.PreciseTime(rec.hooks, settler.Header()).Add(-saeparams.Tau)
 		tm := proxytime.Of[gas.Gas](settleAt)
 
 		for {
@@ -131,7 +135,7 @@ func (rec *recovery) rebuildBlocksInMemory(lastExecuted *blocks.Block) (_ *syncM
 				if err != nil {
 					return err
 				}
-				if err := parent.RestoreExecutionArtefacts(rec.db, rec.xdb); err != nil {
+				if err := parent.RestoreExecutionArtefacts(rec.db, rec.xdb, rec.chainConfig); err != nil {
 					return err
 				}
 				chain = append(chain, parent)
@@ -160,6 +164,15 @@ func (rec *recovery) rebuildBlocksInMemory(lastExecuted *blocks.Block) (_ *syncM
 			return nil, nil, err
 		}
 		if err := b.SetAncestors(chain[i+1], lastOf(chain)); err != nil {
+			return nil, nil, err
+		}
+	}
+	for _, b := range bMap.m {
+		stage := blocks.Executed
+		if b.Hash() == lastSettled.Hash() {
+			stage = blocks.Settled
+		}
+		if err := b.CheckInvariants(stage); err != nil {
 			return nil, nil, err
 		}
 	}

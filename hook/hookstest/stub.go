@@ -13,6 +13,7 @@ import (
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core/state"
 	"github.com/ava-labs/libevm/core/types"
+	"github.com/ava-labs/libevm/libevm"
 	"github.com/ava-labs/libevm/libevm/options"
 	"github.com/ava-labs/libevm/params"
 
@@ -31,11 +32,12 @@ var defaultGasPriceConfig = hook.GasPriceConfig{
 
 // Stub implements [hook.Points].
 type Stub struct {
-	Now                  func() time.Time
-	Target               gas.Gas
-	GasPriceConfig       hook.GasPriceConfig
-	Ops                  []hook.Op
-	ExecutionResultsDBFn func(string) (saedb.ExecutionResults, error)
+	Now                     func() time.Time
+	Target                  gas.Gas
+	Ops                     []hook.Op
+	ExecutionResultsDBFn    func(string) (saedb.ExecutionResults, error)
+	CanExecuteTransactionFn func(common.Address, *common.Address, libevm.StateReader) error
+	GasPriceConfig          hook.GasPriceConfig
 }
 
 var _ hook.Points = (*Stub)(nil)
@@ -149,6 +151,15 @@ func (s *Stub) SubSecondBlockTime(hdr *types.Header) time.Duration {
 // EndOfBlockOps ignores its argument and always returns [Stub.Ops].
 func (s *Stub) EndOfBlockOps(*types.Block) []hook.Op {
 	return s.Ops
+}
+
+// CanExecuteTransaction proxies to [Stub.CanExecuteTransactionFn] if non-nil,
+// otherwise it allows all transactions.
+func (s *Stub) CanExecuteTransaction(from common.Address, to *common.Address, sr libevm.StateReader) error {
+	if fn := s.CanExecuteTransactionFn; fn != nil {
+		return fn(from, to, sr)
+	}
+	return nil
 }
 
 // BeforeExecutingBlock is a no-op that always returns nil.

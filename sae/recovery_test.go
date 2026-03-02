@@ -62,7 +62,7 @@ func TestRecoverFromDatabase(t *testing.T) {
 		}
 
 		vmTime.advance(850 * time.Millisecond)
-		b := src.runConsensusLoop(t, src.lastAcceptedBlock(t))
+		b := src.runConsensusLoop(t)
 		if !quick {
 			require.Len(t, b.Transactions(), 1, "transactions in block")
 		}
@@ -113,7 +113,7 @@ func TestRecoverFromDatabase(t *testing.T) {
 					} {
 						t.Run(sys.name, func(t *testing.T) {
 							sys.mustSendTx(t, tx)
-							b := sys.runConsensusLoop(t, sys.lastAcceptedBlock(t))
+							b := sys.runConsensusLoop(t)
 							require.Len(t, b.Transactions(), 1)
 							require.NoError(t, b.WaitUntilExecuted(sys.ctx))
 						})
