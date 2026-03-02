@@ -80,10 +80,7 @@ func newSUT(t *testing.T, numAccounts uint) SUT {
 	genesis := blockstest.NewGenesis(t, db, xdb, config, saetest.MaxAllocFor(wallet.Addresses()...))
 	chain := blockstest.NewChainBuilder(config, genesis)
 
-	hooks := &hookstest.Stub{
-		Target:         1e6,
-		GasPriceConfig: gastime.DefaultGasPriceConfig(),
-	}
+	hooks := hookstest.NewStub(1e6)
 	exec, err := saexec.New(genesis, chain.GetBlock, config, db, xdb, nil, hooks, logger)
 	require.NoError(t, err, "saexec.New()")
 	t.Cleanup(func() {

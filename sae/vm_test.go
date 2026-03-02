@@ -48,7 +48,6 @@ import (
 	"github.com/ava-labs/strevm/adaptor"
 	"github.com/ava-labs/strevm/blocks"
 	"github.com/ava-labs/strevm/blocks/blockstest"
-	"github.com/ava-labs/strevm/gastime"
 	"github.com/ava-labs/strevm/hook"
 	"github.com/ava-labs/strevm/hook/hookstest"
 	saeparams "github.com/ava-labs/strevm/params"
@@ -117,13 +116,9 @@ func newSUT(tb testing.TB, numAccounts uint, opts ...sutOption) (context.Context
 	conf := options.ApplyTo(&sutConfig{
 		vmConfig: Config{
 			MempoolConfig: mempoolConf,
-			Hooks: &hookstest.Stub{
-				Target: 100e6,
-				ExecutionResultsDBFn: func(string) (saedb.ExecutionResults, error) {
-					return xdb, nil
-				},
-				GasPriceConfig: gastime.DefaultGasPriceConfig(),
-			},
+			Hooks: hookstest.NewStub(100e6, hookstest.WithExecutionResultsDBFn(func(string) (saedb.ExecutionResults, error) {
+				return xdb, nil
+			})),
 		},
 		logLevel: logging.Debug,
 		genesis: core.Genesis{

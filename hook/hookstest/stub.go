@@ -13,12 +13,21 @@ import (
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core/state"
 	"github.com/ava-labs/libevm/core/types"
+	"github.com/ava-labs/libevm/libevm/options"
 	"github.com/ava-labs/libevm/params"
 
 	"github.com/ava-labs/strevm/hook"
 	"github.com/ava-labs/strevm/saedb"
 	"github.com/ava-labs/strevm/saetest"
 )
+
+// defaultGasPriceConfig is the same as [gastime.DefaultGasPriceConfig]. It is defined
+// here to avoid a circular dependency between [gastime] and [hookstest].
+var defaultGasPriceConfig = hook.GasPriceConfig{
+	TargetToExcessScaling: 87,
+	MinPrice:              1,
+	StaticPricing:         false,
+}
 
 // Stub implements [hook.Points].
 type Stub struct {
@@ -30,6 +39,46 @@ type Stub struct {
 }
 
 var _ hook.Points = (*Stub)(nil)
+
+// HookOption applies a configuration to [Stub].
+type HookOption = options.Option[Stub]
+
+// WithGasPriceConfig overrides the default gas config.
+func WithGasPriceConfig(cfg hook.GasPriceConfig) HookOption {
+	return options.Func[Stub](func(s *Stub) {
+		s.GasPriceConfig = cfg
+	})
+}
+
+// WithNow overrides the default time source.
+func WithNow(now func() time.Time) HookOption {
+	return options.Func[Stub](func(s *Stub) {
+		s.Now = now
+	})
+}
+
+// WithOps overrides the default end-of-block ops.
+func WithOps(ops []hook.Op) HookOption {
+	return options.Func[Stub](func(s *Stub) {
+		s.Ops = ops
+	})
+}
+
+// WithExecutionResultsDBFn overrides the default ExecutionResultsDB function.
+func WithExecutionResultsDBFn(fn func(string) (saedb.ExecutionResults, error)) HookOption {
+	return options.Func[Stub](func(s *Stub) {
+		s.ExecutionResultsDBFn = fn
+	})
+}
+
+// NewStub returns a stub with defaults applied.
+// It uses [defaultGasPriceConfig] unless overridden by [WithGasPriceConfig].
+func NewStub(target gas.Gas, opts ...HookOption) *Stub {
+	return options.ApplyTo(&Stub{
+		Target:         target,
+		GasPriceConfig: defaultGasPriceConfig,
+	}, opts...)
+}
 
 // ExecutionResultsDB propagates arguments to and from
 // [Stub.ExecutionResultsDBFn] if non-nil, otherwise it returns a fresh
@@ -74,14 +123,12 @@ func (*Stub) BuildBlock(
 // BlockRebuilderFrom returns a block builder that uses the provided block as a
 // source of time.
 func (s *Stub) BlockRebuilderFrom(b *types.Block) hook.BlockBuilder {
-	return &Stub{
-		Now: func() time.Time {
-			return time.Unix(
-				int64(b.Time()), //nolint:gosec // Won't overflow for a few millennia
-				s.SubSecondBlockTime(b.Header()).Nanoseconds(),
-			)
-		},
-	}
+	return NewStub(0, WithNow(func() time.Time {
+		return time.Unix(
+			int64(b.Time()), //nolint:gosec // Won't overflow for a few millennia
+			s.SubSecondBlockTime(b.Header()).Nanoseconds(),
+		)
+	}))
 }
 
 // GasConfigAfter ignores its argument and always returns [Stub.Target] and [Stub.GasPriceConfig].

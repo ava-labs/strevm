@@ -56,10 +56,7 @@ func newSUT(tb testing.TB, alloc types.GenesisAlloc) SUT {
 		blockstest.WithGasTarget(initialGasTarget),
 		blockstest.WithGasExcess(initialExcess),
 	)
-	hooks := &hookstest.Stub{
-		Target:         initialGasTarget,
-		GasPriceConfig: gastime.DefaultGasPriceConfig(),
-	}
+	hooks := hookstest.NewStub(initialGasTarget)
 	s, err := NewState(hooks, config, cache, genesis)
 	require.NoError(tb, err, "NewState()")
 
@@ -116,10 +113,7 @@ func TestMultipleBlocks(t *testing.T) {
 		wantMinSenderBalances []map[common.Address]uint64 // transformed to uint256.Int
 	}{
 		{
-			hooks: &hookstest.Stub{
-				Target:         2 * initialGasTarget, // Will double the target _after_ this block.
-				GasPriceConfig: gastime.DefaultGasPriceConfig(),
-			},
+			hooks:        hookstest.NewStub(2 * initialGasTarget), // Will double the target _after_ this block.
 			wantGasLimit: initialMaxBlockSize,
 			wantBaseFee:  uint256.NewInt(1),
 			ops: []op{
@@ -158,10 +152,7 @@ func TestMultipleBlocks(t *testing.T) {
 			},
 		},
 		{
-			hooks: &hookstest.Stub{
-				Target:         initialGasTarget, // Restore the target _after_ this block.
-				GasPriceConfig: gastime.DefaultGasPriceConfig(),
-			},
+			hooks:        hookstest.NewStub(initialGasTarget), // Restore the target _after_ this block.
 			wantGasLimit: 2 * initialMaxBlockSize,
 			wantBaseFee:  uint256.NewInt(2),
 			ops: []op{

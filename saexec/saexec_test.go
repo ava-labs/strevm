@@ -104,7 +104,7 @@ func newSUT(tb testing.TB, hooks *saehookstest.Stub) (context.Context, SUT) {
 }
 
 func defaultHooks() *saehookstest.Stub {
-	return &saehookstest.Stub{Target: 1e6, GasPriceConfig: gastime.DefaultGasPriceConfig()}
+	return saehookstest.NewStub(1e6)
 }
 
 func TestImmediateShutdownNonBlocking(t *testing.T) {
@@ -396,10 +396,7 @@ func TestEndOfBlockOps(t *testing.T) {
 
 func TestGasAccounting(t *testing.T) {
 	const gasPerTx = gas.Gas(params.TxGas)
-	hooks := &saehookstest.Stub{
-		Target:         5 * gasPerTx,
-		GasPriceConfig: gastime.DefaultGasPriceConfig(),
-	}
+	hooks := saehookstest.NewStub(5 * gasPerTx)
 	ctx, sut := newSUT(t, hooks)
 
 	at := func(blockTime, txs uint64, rate gas.Gas) *proxytime.Time[gas.Gas] {
