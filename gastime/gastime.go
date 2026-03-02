@@ -71,8 +71,7 @@ func DefaultGasPriceConfig() hook.GasPriceConfig {
 
 // New returns a new [Time], derived from a [time.Time]. The consumption of
 // `target` * [TargetToRate] units of [gas.Gas] is equivalent to a tick of 1
-// second. Targets are clamped to [MaxTarget]. The gasPriceConfig parameter
-// specifies the gas pricing configurations.
+// second.
 func New(at time.Time, target, startingExcess gas.Gas, gasPriceConfig hook.GasPriceConfig) (*Time, error) {
 	cfg, err := newConfig(gasPriceConfig)
 	if err != nil {
