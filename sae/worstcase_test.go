@@ -175,7 +175,7 @@ func TestWorstCase(t *testing.T) {
 			}))
 		}
 
-		b := sut.runConsensusLoop(t, sut.genesis)
+		b := sut.runConsensusLoop(t)
 		require.NoError(t, b.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", b)
 		require.Lenf(t, b.Receipts(), len(precompileTests), "%T.Receipts()", b)
 		for i, r := range b.Receipts() {
@@ -217,15 +217,6 @@ func TestWorstCase(t *testing.T) {
 				for range rng.UintN(flags.maxNewTxsPerBlock) {
 					from := rng.IntN(numEOAs)
 					to := rng.IntN(numEOAs + 1)
-					// TODO(arr4n) why does increasing maxGasLimit slow
-					// everything down? Without parallel tests:
-					//
-					//   10e6 : 2.2s
-					//   60e6 : 3.5s
-					//  100e6 : 6.0s
-					//
-					// It's not only due to having to retry blocks after
-					// fast-forwarding.
 					gasLim := params.TxGas + rng.Uint64N(flags.maxGasLimit)
 					var data []byte
 					if to == guzzlerIdx {

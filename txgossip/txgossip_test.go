@@ -35,6 +35,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
 
+	"github.com/ava-labs/strevm/blocks"
 	"github.com/ava-labs/strevm/blocks/blockstest"
 	"github.com/ava-labs/strevm/cmputils"
 	"github.com/ava-labs/strevm/hook/hookstest"
@@ -78,14 +79,15 @@ func newSUT(t *testing.T, numAccounts uint) SUT {
 	xdb := saetest.NewExecutionResultsDB()
 	genesis := blockstest.NewGenesis(t, db, xdb, config, saetest.MaxAllocFor(wallet.Addresses()...))
 	chain := blockstest.NewChainBuilder(config, genesis)
+	src := blocks.Source(chain.GetBlock)
 
-	exec, err := saexec.New(genesis, chain.GetBlock, config, db, xdb, nil, &hookstest.Stub{Target: 1e6}, logger)
+	exec, err := saexec.New(genesis, src.AsHeaderSource(), config, db, xdb, nil, &hookstest.Stub{Target: 1e6}, logger)
 	require.NoError(t, err, "saexec.New()")
 	t.Cleanup(func() {
 		require.NoErrorf(t, exec.Close(), "%T.Close()", exec)
 	})
 
-	bc := NewBlockChain(exec, chain.GetBlock)
+	bc := NewBlockChain(exec, src.AsEthBlockSource())
 	pool := newTxPool(t, bc)
 	set, err := NewSet(logger, pool, gossip.BloomSetConfig{})
 	require.NoError(t, err, "NewSet()")

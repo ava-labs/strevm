@@ -34,6 +34,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
 
+	"github.com/ava-labs/strevm/blocks"
 	"github.com/ava-labs/strevm/blocks/blockstest"
 	"github.com/ava-labs/strevm/cmputils"
 	"github.com/ava-labs/strevm/gastime"
@@ -87,8 +88,9 @@ func newSUT(tb testing.TB, hooks *saehookstest.Stub) (context.Context, SUT) {
 		blockstest.WithLogger(logger),
 	)
 	chain := blockstest.NewChainBuilder(config, genesis, opts)
+	src := blocks.Source(chain.GetBlock)
 
-	e, err := New(genesis, chain.GetBlock, config, db, xdb, tdbConfig, hooks, logger)
+	e, err := New(genesis, src.AsHeaderSource(), config, db, xdb, tdbConfig, hooks, logger)
 	require.NoError(tb, err, "New()")
 	tb.Cleanup(func() {
 		require.NoErrorf(tb, e.Close(), "%T.Close()", e)
@@ -162,6 +164,23 @@ func TestReceiptPropagation(t *testing.T) {
 	if diff := cmp.Diff(want, got, cmputils.ReceiptsByTxHash()); diff != "" {
 		t.Errorf("%T diff (-want +got):\n%s", got, diff)
 	}
+
+	t.Run("RecentReceipt", func(t *testing.T) {
+		for _, rs := range want {
+			for _, r := range rs {
+				t.Run(r.TxHash.String(), func(t *testing.T) {
+					// We call the function twice to ensure that the value is
+					// returned to the buffered channel, ready for the next one.
+					for range 2 {
+						got, gotOK, err := sut.RecentReceipt(ctx, r.TxHash)
+						require.NoError(t, err)
+						assert.True(t, gotOK)
+						assert.Equalf(t, r.TxHash, got.TxHash, "%T.TxHash", r)
+					}
+				})
+			}
+		}
+	})
 }
 
 func TestSubscriptions(t *testing.T) {
@@ -492,7 +511,7 @@ func TestGasAccounting(t *testing.T) {
 			wantExecutedBy:  at(21, 30*gastime.TargetToExcessScaling, 10*gasPerTx),
 			wantExcessAfter: 3 * ((5 * gasPerTx /*T*/) * gastime.TargetToExcessScaling /* == K */),
 			// Excess is now 3·K so the price is e^3
-			wantPriceAfter: gas.Price(math.Floor(math.Pow(math.E, 3 /* <----- NB */))),
+			wantPriceAfter: gas.Price(math.Floor(math.Exp(3 /* <----- NB */))),
 		},
 		{
 			blockTime:       22, // no fast-forward
@@ -501,7 +520,7 @@ func TestGasAccounting(t *testing.T) {
 			targetAfter:     5 * gasPerTx,
 			wantExecutedBy:  at(21, 40*gastime.TargetToExcessScaling, 10*gasPerTx),
 			wantExcessAfter: 4 * ((5 * gasPerTx /*T*/) * gastime.TargetToExcessScaling /* == K */),
-			wantPriceAfter:  gas.Price(math.Floor(math.Pow(math.E, 4 /* <----- NB */))),
+			wantPriceAfter:  gas.Price(math.Floor(math.Exp(4 /* <----- NB */))),
 		},
 	}
 
@@ -633,6 +652,7 @@ func FuzzOpCodes(f *testing.F) {
 
 		// Ensure that the SUT [logging.Logger] remains of this type so >=WARN
 		// logs become failures.
+		//nolint:staticcheck
 		var logger *saetest.TBLogger = sut.logger
 		// Errors in execution (i.e. reverts) are fine, but we don't want them
 		// bubbling up any further.
@@ -858,7 +878,7 @@ func TestSnapshotPersistence(t *testing.T) {
 	// The crux of the test is whether we can recover the EOA nonce using only a
 	// new set of snapshots, recovered from the databases.
 	conf := snapshot.Config{
-		CacheSize: 128,
+		CacheSize: SnapshotCacheSizeMB,
 		NoBuild:   true, // i.e. MUST be loaded from disk
 	}
 	snaps, err := snapshot.New(conf, sut.db, e.StateCache().TrieDB(), last.PostExecutionStateRoot())
