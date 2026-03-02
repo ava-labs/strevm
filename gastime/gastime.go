@@ -5,7 +5,6 @@
 package gastime
 
 import (
-	"errors"
 	"math"
 	"time"
 
@@ -133,32 +132,18 @@ func (tm *Time) Excess() gas.Gas {
 	return tm.excess
 }
 
-var (
-	errTargetToExcessScalingZero = errors.New("targetToExcessScaling must be non-zero")
-	errMinPriceZero              = errors.New("minPrice must be non-zero")
-)
-
 // newConfig builds and validates an internal config from [hook.GasPriceConfig].
 func newConfig(from hook.GasPriceConfig) (config, error) {
-	c := config{
+	// Although `from` should be validated by the caller, we validate it again here
+	// to ensure that the config is valid and to avoid any potential panics (div-by-zero).
+	if err := from.Validate(); err != nil {
+		return config{}, err
+	}
+	return config{
 		targetToExcessScaling: from.TargetToExcessScaling,
 		minPrice:              from.MinPrice,
 		staticPricing:         from.StaticPricing,
-	}
-	if err := c.validate(); err != nil {
-		return config{}, err
-	}
-	return c, nil
-}
-
-func (c *config) validate() error {
-	if c.targetToExcessScaling == 0 {
-		return errTargetToExcessScalingZero
-	}
-	if c.minPrice == 0 {
-		return errMinPriceZero
-	}
-	return nil
+	}, nil
 }
 
 // Equal returns true if the logical fields of c and other are equal.

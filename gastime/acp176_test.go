@@ -31,12 +31,12 @@ func TestInvalidConfigRejected(t *testing.T) {
 		{
 			"zero_scaling",
 			hook.GasPriceConfig{TargetToExcessScaling: 0, MinPrice: DefaultGasPriceConfig().MinPrice},
-			errTargetToExcessScalingZero,
+			hook.ErrTargetToExcessScalingZero,
 		},
 		{
 			"zero_min_price",
 			hook.GasPriceConfig{TargetToExcessScaling: DefaultGasPriceConfig().TargetToExcessScaling, MinPrice: 0},
-			errMinPriceZero,
+			hook.ErrMinPriceZero,
 		},
 	}
 

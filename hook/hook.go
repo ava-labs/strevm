@@ -8,6 +8,7 @@
 package hook
 
 import (
+	"errors"
 	"math"
 	"time"
 
@@ -153,6 +154,22 @@ type GasPriceConfig struct {
 	// StaticPricing is a flag indicating whether the gas price should be static
 	// at the minimum price.
 	StaticPricing bool
+}
+
+var (
+	ErrTargetToExcessScalingZero = errors.New("targetToExcessScaling must be non-zero")
+	ErrMinPriceZero              = errors.New("minPrice must be non-zero")
+)
+
+// Validate checks that the GasPriceConfig fields are valid.
+func (c *GasPriceConfig) Validate() error {
+	if c.TargetToExcessScaling == 0 {
+		return ErrTargetToExcessScalingZero
+	}
+	if c.MinPrice == 0 {
+		return ErrMinPriceZero
+	}
+	return nil
 }
 
 // MinimumGasConsumption MUST be used as the implementation for the respective

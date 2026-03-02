@@ -48,8 +48,7 @@ func (tm *Time) UnmarshalCanoto(bytes []byte) error {
 }
 
 // UnmarshalCanotoFrom populates the [TimeMarshaler] from the reader and then
-// reestablishes invariants. If config fields are zero (e.g., old serialized
-// data without config), defaults are applied for backward compatibility.
+// reestablishes invariants.
 func (tm *Time) UnmarshalCanotoFrom(r canoto.Reader) error {
 	if err := tm.TimeMarshaler.UnmarshalCanotoFrom(r); err != nil {
 		return err
