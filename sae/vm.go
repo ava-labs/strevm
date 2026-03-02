@@ -428,7 +428,3 @@ func (*VM) Version(context.Context) (string, error) {
 func (vm *VM) log() logging.Logger {
 	return vm.snowCtx.Log
 }
-
-func (vm *VM) signerForBlock(b *types.Block) types.Signer {
-	return types.MakeSigner(vm.exec.ChainConfig(), b.Number(), b.Time())
-}

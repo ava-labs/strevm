@@ -1127,11 +1127,11 @@ func TestDebugGetRawTransaction(t *testing.T) {
 	}...)
 }
 
-func (sut *SUT) testGetByHash(ctx context.Context, t *testing.T, want *types.Block) {
+func (s *SUT) testGetByHash(ctx context.Context, t *testing.T, want *types.Block) {
 	t.Helper()
 
-	testRPCGetter(ctx, t, "eth_getBlockByHash", sut.BlockByHash, want.Hash(), want)
-	sut.testRPC(ctx, t, []rpcTest{
+	testRPCGetter(ctx, t, "eth_getBlockByHash", s.BlockByHash, want.Hash(), want)
+	s.testRPC(ctx, t, []rpcTest{
 		{
 			method: "eth_getBlockByHash",
 			args:   []any{want.Hash(), false},
@@ -1159,7 +1159,7 @@ func (sut *SUT) testGetByHash(ctx context.Context, t *testing.T, want *types.Blo
 		marshaled, err := wantTx.MarshalBinary()
 		require.NoErrorf(t, err, "%T.MarshalBinary()", wantTx)
 
-		sut.testRPC(ctx, t, []rpcTest{
+		s.testRPC(ctx, t, []rpcTest{
 			{
 				method: "eth_getTransactionByHash",
 				args:   []any{wantTx.Hash()},
@@ -1184,7 +1184,7 @@ func (sut *SUT) testGetByHash(ctx context.Context, t *testing.T, want *types.Blo
 	}
 
 	outOfBoundsIndex := hexutil.Uint(len(want.Transactions()) + 1) //nolint:gosec // Known to not overflow
-	sut.testRPC(ctx, t, []rpcTest{
+	s.testRPC(ctx, t, []rpcTest{
 		{
 			method: "eth_getTransactionByBlockHashAndIndex",
 			args:   []any{want.Hash(), outOfBoundsIndex},
@@ -1198,10 +1198,10 @@ func (sut *SUT) testGetByHash(ctx context.Context, t *testing.T, want *types.Blo
 	}...)
 }
 
-func (sut *SUT) testGetByUnknownHash(ctx context.Context, t *testing.T) {
+func (s *SUT) testGetByUnknownHash(ctx context.Context, t *testing.T) {
 	t.Helper()
 
-	sut.testRPC(ctx, t, []rpcTest{
+	s.testRPC(ctx, t, []rpcTest{
 		{
 			method: "eth_getBlockByHash",
 			args:   []any{common.Hash{}, true},
@@ -1243,11 +1243,11 @@ func (sut *SUT) testGetByUnknownHash(ctx context.Context, t *testing.T) {
 // testGetByNumber accepts a block-number override to allow testing via named
 // blocks, e.g. [rpc.LatestBlockNumber], not only via the specific number
 // carried by the [types.Block].
-func (sut *SUT) testGetByNumber(ctx context.Context, t *testing.T, want *types.Block, n rpc.BlockNumber) {
+func (s *SUT) testGetByNumber(ctx context.Context, t *testing.T, want *types.Block, n rpc.BlockNumber) {
 	t.Helper()
-	testRPCGetter(ctx, t, "eth_getBlockByNumber", sut.BlockByNumber, big.NewInt(n.Int64()), want)
+	testRPCGetter(ctx, t, "eth_getBlockByNumber", s.BlockByNumber, big.NewInt(n.Int64()), want)
 
-	sut.testRPC(ctx, t, []rpcTest{
+	s.testRPC(ctx, t, []rpcTest{
 		{
 			method: "eth_getBlockByNumber",
 			args:   []any{n, false},
@@ -1275,7 +1275,7 @@ func (sut *SUT) testGetByNumber(ctx context.Context, t *testing.T, want *types.B
 		marshaled, err := wantTx.MarshalBinary()
 		require.NoErrorf(t, err, "%T.MarshalBinary()", wantTx)
 
-		sut.testRPC(ctx, t, []rpcTest{
+		s.testRPC(ctx, t, []rpcTest{
 			{
 				method: "eth_getTransactionByBlockNumberAndIndex",
 				args:   []any{n, txIdx},
@@ -1290,7 +1290,7 @@ func (sut *SUT) testGetByNumber(ctx context.Context, t *testing.T, want *types.B
 	}
 
 	outOfBoundsIndex := hexutil.Uint(len(want.Transactions()) + 1) //nolint:gosec // Known to not overflow
-	sut.testRPC(ctx, t, []rpcTest{
+	s.testRPC(ctx, t, []rpcTest{
 		{
 			method: "eth_getTransactionByBlockNumberAndIndex",
 			args:   []any{n, outOfBoundsIndex},
@@ -1304,11 +1304,11 @@ func (sut *SUT) testGetByNumber(ctx context.Context, t *testing.T, want *types.B
 	}...)
 }
 
-func (sut *SUT) testGetByUnknownNumber(ctx context.Context, t *testing.T) {
+func (s *SUT) testGetByUnknownNumber(ctx context.Context, t *testing.T) {
 	t.Helper()
 
 	const n rpc.BlockNumber = math.MaxInt64
-	sut.testRPC(ctx, t, []rpcTest{
+	s.testRPC(ctx, t, []rpcTest{
 		{
 			method: "eth_getBlockByNumber",
 			args:   []any{n, true},
