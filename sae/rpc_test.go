@@ -600,27 +600,22 @@ func TestEthGetters(t *testing.T) {
 func TestGetLogs(t *testing.T) {
 	// We shorten section size to reduce number of required blocks in the test.
 	const bloomSectionSize = 8
+
 	timeOpt, vmTime := withVMTime(t, time.Unix(saeparams.TauSeconds, 0))
-
-	ctx, sut := newSUT(t, 1, timeOpt, withBloomSectionSize(bloomSectionSize))
-	genesis := sut.lastAcceptedBlock(t)
-
-	emitter := common.Address{'l', 'o', 'g'}
 	rng := crypto.NewKeccakState()
-	stub := &hookstest.Stub{
-		PrecompileOverrides: map[common.Address]libevm.PrecompiledContract{
-			emitter: vm.NewStatefulPrecompile(func(env vm.PrecompileEnvironment, _ []byte) ([]byte, error) {
-				data := make([]byte, 8)
-				rng.Read(data) //nolint:gosec,errcheck // Never returns an error; signature only to implement io.Reader
-				env.StateDB().AddLog(&types.Log{
-					Address: env.Addresses().EVMSemantic.Self,
-					Data:    data, // Guarantee uniqueness as this is the data under test
-				})
-				return nil, nil
-			}),
-		},
-	}
-	stub.Register(t)
+	emitter := common.Address{'l', 'o', 'g'}
+	precompile := vm.NewStatefulPrecompile(func(env vm.PrecompileEnvironment, _ []byte) ([]byte, error) {
+		data := make([]byte, 8)
+		rng.Read(data) //nolint:gosec,errcheck // Never returns an error; signature only to implement io.Reader
+		env.StateDB().AddLog(&types.Log{
+			Address: env.Addresses().EVMSemantic.Self,
+			Data:    data, // Guarantee uniqueness as this is the data under test
+		})
+		return nil, nil
+	})
+
+	ctx, sut := newSUT(t, 1, timeOpt, withBloomSectionSize(bloomSectionSize), withPrecompile(emitter, precompile))
+	genesis := sut.lastAcceptedBlock(t)
 
 	txWithLog := func(t *testing.T) *types.Transaction {
 		t.Helper()

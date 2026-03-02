@@ -323,6 +323,16 @@ func withBlockingPrecompile(addr common.Address) (sutOption, func()) {
 	}), releaser
 }
 
+// withPrecompile adds any precompile at the specified address.
+func withPrecompile(addr common.Address, precompile libevm.PrecompiledContract) sutOption {
+	return options.Func[sutConfig](func(c *sutConfig) {
+		if c.precompiles == nil {
+			c.precompiles = make(map[common.Address]libevm.PrecompiledContract)
+		}
+		c.precompiles[addr] = precompile
+	})
+}
+
 // registerPrecompiles registers all `precompiles` as a libevm precompile.
 // As a side effect, a [testing.TB.Cleanup] will also be added, removing
 // the registration. This cleanup must run AFTER all transactions are
