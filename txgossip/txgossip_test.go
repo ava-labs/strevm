@@ -71,6 +71,8 @@ func newWallet(tb testing.TB, numAccounts uint) *saetest.Wallet {
 func newSUT(t *testing.T, numAccounts uint) SUT {
 	t.Helper()
 
+	saetest.EnableLibEVMTBLogger(t)
+
 	logger := saetest.NewTBLogger(t, logging.Warn)
 
 	wallet := newWallet(t, numAccounts)
@@ -95,8 +97,6 @@ func newSUT(t *testing.T, numAccounts uint) SUT {
 	t.Cleanup(func() {
 		assert.NoErrorf(t, pool.Close(), "%T.Close()", pool)
 	})
-
-	saetest.EnableLibEVMTBLogger(t)
 
 	return SUT{
 		Set:    set,

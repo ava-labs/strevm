@@ -43,10 +43,7 @@ func TestIntegration(t *testing.T) {
 	// tested with the builder, then we would have a circular argument for
 	// correctness.
 	bc, err := core.NewBlockChain(
-		db,
-		&core.CacheConfig{
-			SnapshotNoBuild: true, // Disable snapshot to avoid warning in tests
-		},
+		db, nil,
 		&core.Genesis{
 			Config: config,
 			Alloc:  alloc,

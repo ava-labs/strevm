@@ -254,10 +254,8 @@ func TestNetNamespace(t *testing.T) {
 		}...)
 	}
 
-	t.Run("without_peers", func(t *testing.T) {
-		_, sut := newSUT(t, 1) // No peers
-		testRPCMethodsWithPeers(sut, 0)
-	})
+	_, sut := newSUT(t, 1) // No peers
+	testRPCMethodsWithPeers(sut, 0)
 
 	const (
 		numValidators    = 1
