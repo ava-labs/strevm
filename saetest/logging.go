@@ -143,7 +143,7 @@ func (l *TBLogger) CancelOnError(ctx context.Context) context.Context {
 func (l *TBLogger) log(lvl logging.Level, msg string, fields ...zap.Field) {
 	var to func(string, ...any)
 	switch {
-	case lvl == logging.Error:
+	case lvl == logging.Warn || lvl == logging.Error: // because @ARR4N says warnings in tests are errors
 		to = l.tb.Errorf
 	case lvl >= logging.Fatal:
 		to = l.tb.Fatalf
