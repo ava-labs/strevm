@@ -63,7 +63,8 @@ func NewExecutor[CommonData, Prefetch any, R parallel.PrecompileResult, Aggregat
 	}
 	stub.Register(tb)
 
-	exec, err := saexec.New(gen, chain.GetBlock, config, db, xdb, &triedb.Config{}, &hooks{par: par}, logger)
+	src := blocks.Source(chain.GetBlock)
+	exec, err := saexec.New(gen, src.AsHeaderSource(), config, db, xdb, &triedb.Config{}, &hooks{par: par}, logger)
 	require.NoError(tb, err, "saexec.New()")
 	tb.Cleanup(func() {
 		ctx := context.WithoutCancel(tb.Context())

@@ -20,6 +20,7 @@ import (
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/stretchr/testify/require"
 
+	"github.com/ava-labs/strevm/cmputils"
 	"github.com/ava-labs/strevm/saetest"
 )
 
@@ -152,7 +153,8 @@ func TestNewExecutor(t *testing.T) {
 			),
 		}
 		want := &types.Receipt{
-			TxHash: txs[i],
+			TxHash:            txs[i],
+			EffectiveGasPrice: big.NewInt(1),
 		}
 		if shouldRevert(want.TxHash) {
 			want.Status = types.ReceiptStatusFailed
@@ -161,7 +163,7 @@ func TestNewExecutor(t *testing.T) {
 			want.Logs = logs(precompileAddr, txs[i])
 		}
 
-		if diff := cmp.Diff(want, b.Receipts()[0], ignore); diff != "" {
+		if diff := cmp.Diff(want, b.Receipts()[0], ignore, cmputils.BigInts()); diff != "" {
 			t.Errorf("%T diff (-want +got):\n%s", b.Receipts()[0], diff)
 		}
 	}
