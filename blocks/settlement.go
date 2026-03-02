@@ -102,7 +102,7 @@ func (b *Block) MarkSynchronous(hooks hook.Points, db ethdb.Database, xdb saedb.
 		return err
 	}
 	e := &executionResults{
-		byGas:         *execTime, //nolint:govet  // freshly created; no concurrent access to the atomic
+		byGas:         *execTime.Clone(),
 		receiptRoot:   ethB.ReceiptHash(),
 		stateRootPost: ethB.Root(),
 	}
