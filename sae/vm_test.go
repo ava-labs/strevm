@@ -101,12 +101,12 @@ type SUT struct {
 
 type (
 	sutConfig struct {
-		hooks              *hookstest.Stub
-		vmConfig           Config
-		logLevel           logging.Level
-		genesis            core.Genesis
-		db                 database.Database
-		blockingPrecompile common.Address
+		hooks       *hookstest.Stub
+		vmConfig    Config
+		logLevel    logging.Level
+		genesis     core.Genesis
+		db          database.Database
+		precompiles map[common.Address]libevm.PrecompiledContract
 	}
 	sutOption = options.Option[sutConfig]
 )
@@ -172,19 +172,15 @@ func newSUT(tb testing.TB, numAccounts uint, opts ...sutOption) (context.Context
 		sender,
 	), "Initialize()")
 
-	// All precompile registrations must be registered after the VM is
-	// initialized, to avoid needing to populate all the different hooks
-	// However, it must occur before the cleanup  ensuring that all blocks
-	// are executed, since registering the precompile also adds a cleanup to
-	// remove the libevm registration.
-	var unblock func()
-	if conf.blockingPrecompile != (common.Address{}) {
-		unblock = registerBlockingPrecompile(tb, conf.blockingPrecompile)
+	if len(conf.precompiles) > 0 {
+		// All precompile registrations must occur after the VM is initialized,
+		// since [libevmhookstest.Stub] doesn't support JSON round-tripping,
+		// However, it must occur before the cleanup ensuring that all blocks
+		// are executed, since registering the precompile also adds a cleanup to
+		// remove the libevm registration.
+		registerPrecompiles(tb, conf.precompiles)
 	}
 	tb.Cleanup(func() {
-		if unblock != nil {
-			unblock()
-		}
 		ctx := context.WithoutCancel(tb.Context())
 		require.NoError(tb, vm.last.accepted.Load().WaitUntilExecuted(ctx), "{last-accepted block}.WaitUntilExecuted()")
 	})
@@ -303,30 +299,40 @@ func withBloomSectionSize(size uint64) sutOption {
 	})
 }
 
-func withBlockingPrecompile(addr common.Address) sutOption {
+// withBlockingPrecompile adds a precompile that will block
+// all execution until the releasing function returned is called.
+// This should be called prior to closing the VM to prevent goroutine
+// leaks. The releaser can be called multiple times.
+func withBlockingPrecompile(addr common.Address) (sutOption, func()) {
+	var closeOnce sync.Once
+	unblock := make(chan struct{})
+	releaser := func() {
+		closeOnce.Do(func() {
+			close(unblock)
+		})
+	}
+
 	return options.Func[sutConfig](func(c *sutConfig) {
-		c.blockingPrecompile = addr
-	})
+		if c.precompiles == nil {
+			c.precompiles = make(map[common.Address]libevm.PrecompiledContract)
+		}
+		c.precompiles[addr] = vm.NewStatefulPrecompile(func(vm.PrecompileEnvironment, []byte) ([]byte, error) {
+			<-unblock
+			return nil, nil
+		})
+	}), releaser
 }
 
-// registerBlockingPrecompile registers `addr` as a libevm precompile such that
-// any transactions sent to the precompile will block until the returned
-// function is called. It is safe to call the unblocker multiple times, which
-// will also be done during cleanup.
-func registerBlockingPrecompile(tb testing.TB, addr common.Address) func() {
+// registerPrecompiles registers all `precompiles` as a libevm precompile.
+// As a side effect, a [testing.TB.Cleanup] will also be added, removing
+// the registration. This cleanup must run AFTER all transactions are
+// executed.
+func registerPrecompiles(tb testing.TB, precompiles map[common.Address]libevm.PrecompiledContract) {
 	tb.Helper()
-	unblock := make(chan struct{})
 	libevmHooks := &libevmhookstest.Stub{
-		PrecompileOverrides: map[common.Address]libevm.PrecompiledContract{
-			addr: vm.NewStatefulPrecompile(func(vm.PrecompileEnvironment, []byte) ([]byte, error) {
-				<-unblock
-				return nil, nil
-			}),
-		},
+		PrecompileOverrides: precompiles,
 	}
 	libevmHooks.Register(tb)
-
-	return sync.OnceFunc(func() { close(unblock) })
 }
 
 func (s *SUT) nodeID() ids.NodeID {

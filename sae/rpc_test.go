@@ -519,9 +519,11 @@ func TestChainID(t *testing.T) {
 }
 
 func TestEthGetters(t *testing.T) {
-	opt, vmTime := withVMTime(t, time.Unix(saeparams.TauSeconds, 0))
+	timeOpt, vmTime := withVMTime(t, time.Unix(saeparams.TauSeconds, 0))
 	blockingPrecompile := common.Address{'b', 'l', 'o', 'c', 'k'}
-	ctx, sut := newSUT(t, 1, opt, withBlockingPrecompile(blockingPrecompile))
+	precompileOpt, unblock := withBlockingPrecompile(blockingPrecompile)
+	ctx, sut := newSUT(t, 1, timeOpt, precompileOpt)
+	t.Cleanup(unblock)
 
 	t.Run("unknown_hashes", func(t *testing.T) {
 		sut.testGetByUnknownHash(ctx, t)
@@ -783,7 +785,9 @@ func TestGetReceipts(t *testing.T) {
 	blockingPrecompile := common.Address{'b', 'l', 'o', 'c', 'k'}
 
 	timeOpt, vmTime := withVMTime(t, time.Unix(saeparams.TauSeconds, 0))
-	ctx, sut := newSUT(t, 1, timeOpt, withBlockingPrecompile(blockingPrecompile))
+	precompileOpt, unblock := withBlockingPrecompile(blockingPrecompile)
+	ctx, sut := newSUT(t, 1, timeOpt, precompileOpt)
+	t.Cleanup(unblock)
 
 	var (
 		txs  []*types.Transaction
