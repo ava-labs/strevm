@@ -19,7 +19,6 @@ import (
 	"github.com/ava-labs/libevm/core/state"
 	"github.com/ava-labs/libevm/core/state/snapshot"
 	"github.com/ava-labs/libevm/core/txpool"
-	"github.com/ava-labs/libevm/core/txpool/legacypool"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/params"
 	"github.com/holiman/uint256"
@@ -192,7 +191,10 @@ func (s *State) ApplyTx(tx *types.Transaction) error {
 			1<<types.LegacyTxType |
 			1<<types.AccessListTxType |
 			1<<types.DynamicFeeTxType,
-		MaxSize: legacypool.TxMaxSize,
+		// No byte-size limit needed: gas validation (intrinsic gas ≤
+		// tx gas ≤ block gas limit) already enforces an implicit size
+		// bound on transactions.
+		MaxSize: math.MaxUint,
 		MinTip:  big.NewInt(0),
 	}
 	if err := txpool.ValidateTransaction(tx, s.curr, s.signer, opts); err != nil {
