@@ -16,6 +16,7 @@ import (
 
 	"github.com/ava-labs/strevm/adaptor"
 	"github.com/ava-labs/strevm/blocks"
+	"github.com/ava-labs/strevm/hook"
 )
 
 var _ adaptor.ChainVM[*blocks.Block] = (*SinceGenesis)(nil)
@@ -25,12 +26,16 @@ var _ adaptor.ChainVM[*blocks.Block] = (*SinceGenesis)(nil)
 type SinceGenesis struct {
 	*VM // created by [SinceGenesis.Initialize]
 
+	hooks  hook.Points
 	config Config
 }
 
 // NewSinceGenesis constructs a new [SinceGenesis].
-func NewSinceGenesis(c Config) *SinceGenesis {
-	return &SinceGenesis{config: c}
+func NewSinceGenesis(hooks hook.Points, c Config) *SinceGenesis {
+	return &SinceGenesis{
+		hooks:  hooks,
+		config: c,
+	}
 }
 
 // Initialize initializes the VM.
@@ -56,15 +61,7 @@ func (vm *SinceGenesis) Initialize(
 		return fmt.Errorf("core.SetupGenesisBlock(...): %v", err)
 	}
 
-	genBlock, err := blocks.New(genesis.ToBlock(), nil, nil, snowCtx.Log)
-	if err != nil {
-		return fmt.Errorf("blocks.New(%T.ToBlock(), ...): %v", genesis, err)
-	}
-	if err := genBlock.MarkSynchronous(vm.config.Hooks, db, 0 /*gas excess*/); err != nil {
-		return fmt.Errorf("%T{genesis}.MarkSynchronous(): %v", genBlock, err)
-	}
-
-	inner, err := NewVM(vm.config, snowCtx, config, db, genBlock, appSender)
+	inner, err := NewVM(ctx, vm.hooks, vm.config, snowCtx, config, db, genesis.ToBlock(), appSender)
 	if err != nil {
 		return err
 	}

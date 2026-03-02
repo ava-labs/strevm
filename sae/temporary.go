@@ -9,14 +9,35 @@ package sae
 import (
 	"context"
 	"errors"
+	"math/big"
 
+	"github.com/ava-labs/libevm/common"
+	"github.com/ava-labs/libevm/core"
+	"github.com/ava-labs/libevm/core/state"
 	"github.com/ava-labs/libevm/core/types"
+	"github.com/ava-labs/libevm/core/vm"
+	"github.com/ava-labs/libevm/eth/tracers"
+	"github.com/ava-labs/libevm/rpc"
 )
 
 var errUnimplemented = errors.New("unimplemented")
 
-// TODO(arr4n) remove this method once no longer embedding [ethapi.Backend] in
-// [ethAPIBackend] as it's only required for disambiguation.
-func (b *ethAPIBackend) SendTx(ctx context.Context, tx *types.Transaction) error {
-	return b.Set.SendTx(ctx, tx)
+func (b *ethAPIBackend) SuggestGasTipCap(context.Context) (*big.Int, error) {
+	panic(errUnimplemented)
+}
+
+func (b *ethAPIBackend) FeeHistory(context.Context, uint64, rpc.BlockNumber, []float64) (*big.Int, [][]*big.Int, []*big.Int, []float64, error) {
+	panic(errUnimplemented)
+}
+
+func (b *ethAPIBackend) GetPoolNonce(context.Context, common.Address) (uint64, error) {
+	panic(errUnimplemented)
+}
+
+func (b *ethAPIBackend) StateAtBlock(ctx context.Context, block *types.Block, reexec uint64, base *state.StateDB, readOnly bool, preferDisk bool) (*state.StateDB, tracers.StateReleaseFunc, error) {
+	panic(errUnimplemented)
+}
+
+func (b *ethAPIBackend) StateAtTransaction(ctx context.Context, block *types.Block, txIndex int, reexec uint64) (*core.Message, vm.BlockContext, *state.StateDB, tracers.StateReleaseFunc, error) {
+	panic(errUnimplemented)
 }

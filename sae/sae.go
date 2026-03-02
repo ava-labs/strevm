@@ -34,31 +34,31 @@ func uint256FromBig(b *big.Int) (*uint256.Int, error) {
 	return u, nil
 }
 
-type sMap[K comparable, V any] struct {
+type syncMap[K comparable, V any] struct {
 	m  map[K]V
 	mu sync.RWMutex
 }
 
-func newSMap[K comparable, V any]() *sMap[K, V] {
-	return &sMap[K, V]{
+func newSyncMap[K comparable, V any]() *syncMap[K, V] {
+	return &syncMap[K, V]{
 		m: make(map[K]V),
 	}
 }
 
-func (m *sMap[K, V]) Load(k K) (V, bool) {
+func (m *syncMap[K, V]) Load(k K) (V, bool) {
 	m.mu.RLock()
 	v, ok := m.m[k]
 	m.mu.RUnlock()
 	return v, ok
 }
 
-func (m *sMap[K, V]) Store(k K, v V) {
+func (m *syncMap[K, V]) Store(k K, v V) {
 	m.mu.Lock()
 	m.m[k] = v
 	m.mu.Unlock()
 }
 
-func (m *sMap[K, V]) Delete(k K) {
+func (m *syncMap[K, V]) Delete(k K) {
 	m.mu.Lock()
 	delete(m.m, k)
 	m.mu.Unlock()

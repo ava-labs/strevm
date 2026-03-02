@@ -11,11 +11,14 @@ import (
 
 	"github.com/ava-labs/avalanchego/database"
 	"github.com/ava-labs/avalanchego/ids"
+	"github.com/ava-labs/avalanchego/snow/consensus/snowman"
 	"github.com/ava-labs/avalanchego/snow/engine/snowman/block"
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core"
+	"github.com/ava-labs/libevm/core/rawdb"
 	"github.com/ava-labs/libevm/core/txpool"
 	"github.com/ava-labs/libevm/core/types"
+	"github.com/ava-labs/libevm/ethdb"
 	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/rlp"
 	"go.uber.org/zap"
@@ -31,12 +34,18 @@ func (vm *VM) newBlock(eth *types.Block, parent, lastSettled *blocks.Block) (*bl
 	return blocks.New(eth, parent, lastSettled, vm.log())
 }
 
+// maxFutureBlockDuration is the maximum time from the current time allowed for
+// blocks before they're considered future blocks and fail parsing or
+// verification.
+const (
+	maxFutureBlockSeconds  uint64 = 10
+	maxFutureBlockDuration        = time.Duration(maxFutureBlockSeconds) * time.Second
+)
+
 var (
 	errBlockHeightNotUint64 = errors.New("block height not uint64")
 	errBlockTooFarInFuture  = errors.New("block too far in the future")
 )
-
-const maxBlockFutureSeconds = 3600
 
 // ParseBlock parses the buffer as [rlp] encoding of a [types.Block]. It does
 // NOT populate the block ancestry, which is done by [VM.VerifyBlock] i.f.f.
@@ -52,8 +61,8 @@ func (vm *VM) ParseBlock(ctx context.Context, buf []byte) (*blocks.Block, error)
 	}
 	// The uint64 timestamp can't underflow [time.Time] but it can overflow so
 	// make this some future engineer's problem in a few millennia.
-	if b.Time() > unix(vm.config.Now())+maxBlockFutureSeconds {
-		return nil, fmt.Errorf("%w: >%s", errBlockTooFarInFuture, maxBlockFutureSeconds*time.Second)
+	if b.Time() > unix(vm.config.Now())+maxFutureBlockSeconds {
+		return nil, fmt.Errorf("%w: >%s", errBlockTooFarInFuture, maxFutureBlockDuration)
 	}
 
 	return vm.newBlock(b, nil, nil)
@@ -67,13 +76,9 @@ func (vm *VM) BuildBlock(ctx context.Context, bCtx *block.Context) (*blocks.Bloc
 		bCtx,
 		vm.preference.Load(),
 		vm.mempool.TransactionsByPriority,
-		vm.hooks(),
+		vm.hooks,
 	)
 }
-
-// Max time from current time allowed for blocks, before they're considered
-// future blocks and fail verification.
-const maxFutureBlockTime = 10 * time.Second
 
 var (
 	errBlockTimeUnderMinimum = errors.New("block time under minimum allowed time")
@@ -106,8 +111,8 @@ func (vm *VM) buildBlock(
 		)
 	}
 
-	bTime := blocks.PreciseTime(vm.hooks(), hdr)
-	pTime := blocks.PreciseTime(vm.hooks(), parent.Header())
+	bTime := blocks.PreciseTime(vm.hooks, hdr)
+	pTime := blocks.PreciseTime(vm.hooks, parent.Header())
 
 	// It is allowed for [hook.Points] to further constrain the allowed block
 	// times. However, every block MUST at least satisfy these basic sanity
@@ -118,13 +123,13 @@ func (vm *VM) buildBlock(
 	if bTime.Compare(pTime) < 0 {
 		return nil, fmt.Errorf("%w: %s < %s", errBlockTimeBeforeParent, bTime.String(), pTime.String())
 	}
-	maxTime := vm.config.Now().Add(maxBlockFutureSeconds)
+	maxTime := vm.config.Now().Add(maxFutureBlockDuration)
 	if bTime.Compare(maxTime) > 0 {
 		return nil, fmt.Errorf("%w: %s > %s", errBlockTimeAfterMaximum, bTime.String(), maxTime.String())
 	}
 
 	// Underflow of Add(-tau) is prevented by the above check.
-	lastSettled, ok, err := blocks.LastToSettleAt(vm.hooks(), bTime.Add(-saeparams.Tau), parent)
+	lastSettled, ok, err := blocks.LastToSettleAt(vm.hooks, bTime.Add(-saeparams.Tau), parent)
 	if err != nil {
 		return nil, err
 	}
@@ -138,7 +143,7 @@ func (vm *VM) buildBlock(
 		zap.Stringer("last_settled_hash", lastSettled.Hash()),
 	)
 
-	state, err := worstcase.NewState(vm.hooks(), vm.exec.ChainConfig(), vm.exec.StateCache(), lastSettled)
+	state, err := worstcase.NewState(vm.hooks, vm.exec.ChainConfig(), vm.exec.StateCache(), lastSettled, vm.exec.SnapshotTree())
 	if err != nil {
 		log.Warn("Worst-case state not able to be created",
 			zap.Error(err),
@@ -168,7 +173,7 @@ func (vm *VM) buildBlock(
 				return nil, fmt.Errorf("applying tx %#x in block %d to worst-case state: %v", tx.Hash(), b.Height(), err)
 			}
 		}
-		for i, op := range vm.hooks().EndOfBlockOps(b.EthBlock()) {
+		for i, op := range vm.hooks.EndOfBlockOps(b.EthBlock()) {
 			if err := state.Apply(op); err != nil {
 				log.Warn("Could not apply op during historical worst-case calculation",
 					zap.Int("op_index", i),
@@ -215,7 +220,7 @@ func (vm *VM) buildBlock(
 		if remainingGas := state.GasLimit() - state.GasUsed(); remainingGas < params.TxGas {
 			break
 		}
-		log = log.With(
+		txLog := log.With(
 			zap.Stringer("tx_hash", ltx.Hash),
 			zap.Int("tx_index", len(included)),
 			zap.Stringer("sender", ltx.Sender),
@@ -223,7 +228,7 @@ func (vm *VM) buildBlock(
 
 		tx, ok := ltx.Resolve()
 		if !ok {
-			log.Debug("Could not resolve lazy transaction")
+			txLog.Debug("Could not resolve lazy transaction")
 			continue
 		}
 
@@ -231,10 +236,10 @@ func (vm *VM) buildBlock(
 		// execution so we MUST record it at the equivalent point, before
 		// ApplyTx().
 		if err := state.ApplyTx(tx); err != nil {
-			log.Debug("Could not apply transaction", zap.Error(err))
+			txLog.Debug("Could not apply transaction", zap.Error(err))
 			continue
 		}
-		log.Trace("Including transaction")
+		txLog.Trace("Including transaction")
 		included = append(included, tx)
 	}
 
@@ -256,11 +261,15 @@ func (vm *VM) buildBlock(
 		receipts = append(receipts, b.Receipts()...)
 	}
 
-	ethB := builder.BuildBlock(
+	ethB, err := builder.BuildBlock(
 		hdr,
 		included,
 		receipts,
 	)
+	if err != nil {
+		return nil, err
+	}
+
 	b, err := vm.newBlock(ethB, parent, lastSettled)
 	if err != nil {
 		return nil, err
@@ -283,7 +292,7 @@ func (vm *VM) VerifyBlock(ctx context.Context, bCtx *block.Context, b *blocks.Bl
 	// whereas [VM.VerifyBlock] is only called after verifying the current
 	// proposer's signature. While a malicious proposer could exist, their time
 	// window is limited.
-	signer := vm.signerForBlock(b.EthBlock())
+	signer := vm.exec.SignerForBlock(b)
 	core.SenderCacher.Recover(signer, b.Transactions()) // asynchronous
 
 	parent, err := vm.GetBlock(ctx, b.Parent())
@@ -329,7 +338,7 @@ func (vm *VM) VerifyBlock(ctx context.Context, bCtx *block.Context, b *blocks.Bl
 		bCtx,
 		parent,
 		func(f txpool.PendingFilter) []*txgossip.LazyTransaction { return txs },
-		vm.hooks().BlockRebuilderFrom(b.EthBlock()),
+		vm.hooks.BlockRebuilderFrom(b.EthBlock()),
 	)
 	if err != nil {
 		return err
@@ -349,27 +358,105 @@ func (vm *VM) VerifyBlock(ctx context.Context, bCtx *block.Context, b *blocks.Bl
 	return nil
 }
 
-// GetBlock returns the block with the given ID, or [database.ErrNotFound].
-func (vm *VM) GetBlock(ctx context.Context, id ids.ID) (*blocks.Block, error) {
-	b, ok := vm.blocks.Load(common.Hash(id))
-	if !ok {
-		return nil, database.ErrNotFound
+func canonicalBlock(db ethdb.Database, num uint64) (*types.Block, error) {
+	b := rawdb.ReadBlock(db, rawdb.ReadCanonicalHash(db, num), num)
+	if b == nil {
+		return nil, fmt.Errorf("no canonical block at height %d", num)
 	}
 	return b, nil
 }
 
-// GetBlockIDAtHeight returns the accepted block at the given height, or
-// [database.ErrNotFound].
-func (vm *VM) GetBlockIDAtHeight(context.Context, uint64) (ids.ID, error) {
-	return ids.Empty, errUnimplemented
+// GetBlock returns the block with the given ID, or [database.ErrNotFound].
+//
+// It is expected that blocks that have been successfully verified should be
+// returned correctly. It is also expected that blocks that have been
+// accepted by the consensus engine should be able to be fetched. It is not
+// required for blocks that have been rejected by the consensus engine to be
+// able to be fetched.
+func (vm *VM) GetBlock(ctx context.Context, id ids.ID) (*blocks.Block, error) {
+	var _ snowman.Block // protect the input to allow comment linking
+
+	return readByHash(
+		vm,
+		common.Hash(id),
+		func(b *blocks.Block) *blocks.Block {
+			return b
+		},
+		func(db ethdb.Reader, hash common.Hash, num uint64) (*blocks.Block, error) {
+			// A block that's not in memory has either been rejected, not yet
+			// verified, or settled. Of these, only the latter would be in the
+			// database.
+			//
+			// There is, however, a negligible (read: near impossible) but
+			// non-zero chance that [VM.VerifyBlock] and [VM.AcceptBlock] were
+			// *both* called between [readByHash] checking the in-memory block
+			// store and loading the canonical number from the database. That
+			// could result in an unexecuted block, which would cause an error
+			// when restoring it.
+			//
+			// TODO(arr4n) I think [readHash] should be providing this guarantee
+			// as it has access to the [syncMap] and its lock.
+			if vm.last.settled.Load().Height() < num {
+				return nil, database.ErrNotFound
+			}
+
+			ethB := rawdb.ReadBlock(db, hash, num)
+			if num > vm.last.synchronous {
+				return blocks.RestoreSettledBlock(
+					ethB,
+					vm.log(),
+					vm.db,
+					vm.xdb,
+					vm.exec.ChainConfig(),
+				)
+			}
+
+			b, err := vm.newBlock(ethB, nil, nil)
+			if err != nil {
+				return nil, err
+			}
+			// Excess is only used for executing the next block, which can never
+			// be the case if `b` isn't actually the last synchronous block, so
+			// passing the same value for all is OK.
+			if err := b.MarkSynchronous(vm.hooks, vm.db, vm.xdb, vm.config.ExcessAfterLastSynchronous); err != nil {
+				return nil, err
+			}
+			return b, nil
+		},
+		database.ErrNotFound,
+	)
 }
 
-var _ blocks.Source = (*VM)(nil).blockSource
-
-func (vm *VM) blockSource(hash common.Hash, num uint64) (*blocks.Block, bool) {
-	b, ok := vm.blocks.Load(hash)
-	if !ok || b.NumberU64() != num {
-		return nil, false
+// GetBlockIDAtHeight returns the accepted block at the given height, or
+// [database.ErrNotFound].
+func (vm *VM) GetBlockIDAtHeight(ctx context.Context, height uint64) (ids.ID, error) {
+	id := ids.ID(rawdb.ReadCanonicalHash(vm.db, height))
+	if id == ids.Empty {
+		return id, database.ErrNotFound
 	}
-	return b, true
+	return id, nil
+}
+
+var (
+	_ blocks.EthBlockSource = (*VM)(nil).ethBlockSource
+	_ blocks.HeaderSource   = (*VM)(nil).headerSource
+)
+
+func (vm *VM) ethBlockSource(hash common.Hash, num uint64) (*types.Block, bool) {
+	return source(vm, hash, num, (*blocks.Block).EthBlock, rawdb.ReadBlock)
+}
+
+func (vm *VM) headerSource(hash common.Hash, num uint64) (*types.Header, bool) {
+	return source(vm, hash, num, (*blocks.Block).Header, rawdb.ReadHeader)
+}
+
+func source[T any](vm *VM, hash common.Hash, num uint64, fromMem blockAccessor[T], fromDB canonicalReader[T]) (*T, bool) {
+	if b, ok := vm.blocks.Load(hash); ok {
+		if b.NumberU64() != num {
+			return nil, false
+		}
+		return fromMem(b), true
+	}
+	x := fromDB(vm.db, hash, num)
+	return x, x != nil
 }

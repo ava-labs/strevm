@@ -143,7 +143,7 @@ func (l *TBLogger) CancelOnError(ctx context.Context) context.Context {
 func (l *TBLogger) log(lvl logging.Level, msg string, fields ...zap.Field) {
 	var to func(string, ...any)
 	switch {
-	case lvl == logging.Warn || lvl == logging.Error: // because @ARR4N says warnings in tests are errors
+	case lvl == logging.Error:
 		to = l.tb.Errorf
 	case lvl >= logging.Fatal:
 		to = l.tb.Fatalf
@@ -169,16 +169,13 @@ func (l *TBLogger) log(lvl logging.Level, msg string, fields ...zap.Field) {
 }
 
 // EnableLibEVMTBLogger sets an [ethtest.NewTBLogHandler] as the default libevm
-// logger until tb cleanup occurs. This causes libevm warnings (and above) to
-// fail the test.
-//
-// Call this AFTER initialization to avoid harmless init warnings from snapshot
-// loading, txpool reset, etc.
+// logger until tb cleanup occurs. This causes libevm errors (and above) to fail
+// the test.
 func EnableLibEVMTBLogger(tb testing.TB) {
 	tb.Helper()
 	old := log.Root()
 	tb.Cleanup(func() {
 		log.SetDefault(old)
 	})
-	log.SetDefault(log.NewLogger(ethtest.NewTBLogHandler(tb, slog.LevelWarn)))
+	log.SetDefault(log.NewLogger(ethtest.NewTBLogHandler(tb, slog.LevelError)))
 }

@@ -19,6 +19,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/ava-labs/strevm/blocks"
+	"github.com/ava-labs/strevm/saedb"
 )
 
 var errExecutorClosed = errors.New("saexec.Executor closed")
@@ -27,23 +28,19 @@ var errExecutorClosed = errors.New("saexec.Executor closed")
 // before [blocks.Block.Executed] returns true then there is no guarantee that
 // the block will be executed.
 func (e *Executor) Enqueue(ctx context.Context, block *blocks.Block) error {
+	e.createReceiptBuffers(block)
 	select {
 	case e.queue <- block:
-		e.lastEnqueued.Store(block)
-		e.enqueueEvents.Send(block.EthBlock())
-
-		size := cap(e.queue)
-		warningThreshold := size - size/16
-		if n := len(e.queue); n >= warningThreshold {
+		if n := len(e.queue); n == cap(e.queue) {
 			// If this happens then increase the channel's buffer size.
 			e.log.Warn(
-				"Execution queue buffer too small",
+				"Execution queue buffer full",
 				zap.Uint64("block_height", block.Height()),
-				zap.Int("queue_length", n),
-				zap.Int("queue_capacity", size),
+				zap.Int("queue_capacity", n),
 			)
 		}
 		return nil
+
 	case <-ctx.Done():
 		return ctx.Err()
 	case <-e.quit:
@@ -117,7 +114,7 @@ func (e *Executor) execute(b *blocks.Block, logger logging.Logger) error {
 	gasPool := core.GasPool(math.MaxUint64) // required by geth but irrelevant so max it out
 	var blockGasConsumed gas.Gas
 
-	signer := types.MakeSigner(e.chainConfig, b.Number(), b.BuildTime())
+	signer := e.SignerForBlock(b)
 	receipts := make(types.Receipts, len(b.Transactions()))
 	for ti, tx := range b.Transactions() {
 		stateDB.SetTxContext(tx.Hash(), ti)
@@ -158,13 +155,23 @@ func (e *Executor) execute(b *blocks.Block, logger logging.Logger) error {
 		// modified to reduce gas price from the worst-case value agreed by
 		// consensus. This changes the hash, which is what is copied to receipts
 		// and logs.
+		//
+		// [core.ApplyTransaction] also doesn't set [types.Receipt.EffectiveGasPrice].
+		// Fixing both here avoids needing to call [types.Receipt.DeriveFields].
 		receipt.BlockHash = b.Hash()
 		for _, l := range receipt.Logs {
 			l.BlockHash = b.Hash()
 		}
+		tip := tx.EffectiveGasTipValue(header.BaseFee)
+		receipt.EffectiveGasPrice = tip.Add(header.BaseFee, tip)
 
-		// TODO(arr4n) add a receipt cache to the [executor] to allow API calls
-		// to access them before the end of the block.
+		// Even though we populated the value ourselves and `ok == true` is
+		// guaranteed when using the [Executor] via the public API, it's clearer
+		// to check than to require the reader to reason about dropping the
+		// flag.
+		if ch, ok := e.receipts.Load(tx.Hash()); ok {
+			ch <- &Receipt{receipt, signer, tx}
+		}
 		receipts[ti] = receipt
 	}
 
@@ -200,9 +207,17 @@ func (e *Executor) execute(b *blocks.Block, logger logging.Logger) error {
 		zap.Time("wall_time", endTime),
 	)
 
+	e.chainContext.recent.Put(b.NumberU64(), b.Header())
+
 	root, err := stateDB.Commit(b.NumberU64(), true)
 	if err != nil {
 		return fmt.Errorf("%T.Commit() at end of block %d: %w", stateDB, b.NumberU64(), err)
+	}
+	if num := b.NumberU64(); saedb.ShouldCommitTrieDB(num) {
+		tdb := e.stateCache.TrieDB()
+		if err := tdb.Commit(root, false /* log */); err != nil {
+			return fmt.Errorf("%T.Commit(%#x) at end of block %d: %v", tdb, root, num, err)
+		}
 	}
 	// The strict ordering of the next 3 calls guarantees invariants that MUST
 	// NOT be broken:
@@ -210,7 +225,7 @@ func (e *Executor) execute(b *blocks.Block, logger logging.Logger) error {
 	// 1. [blocks.Block.MarkExecuted] guarantees disk then in-memory changes.
 	// 2. Internal indicator of last executed MUST follow in-memory change.
 	// 3. External indicator of last executed MUST follow internal indicator.
-	if err := b.MarkExecuted(e.db, gasClock.Clone(), endTime, header.BaseFee, receipts, root, &e.lastExecuted /* (2) */); err != nil {
+	if err := b.MarkExecuted(e.db, e.xdb, gasClock.Clone(), endTime, header.BaseFee, receipts, root, &e.lastExecuted /* (2) */); err != nil {
 		return err
 	}
 	e.sendPostExecutionEvents(b.EthBlock(), receipts) // (3)

@@ -13,20 +13,36 @@ import (
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core/state"
 	"github.com/ava-labs/libevm/core/types"
+	"github.com/ava-labs/libevm/libevm"
 	"github.com/ava-labs/libevm/params"
 
 	"github.com/ava-labs/strevm/hook"
+	"github.com/ava-labs/strevm/saedb"
 	"github.com/ava-labs/strevm/saetest"
 )
 
 // Stub implements [hook.Points].
 type Stub struct {
-	Now    func() time.Time
-	Target gas.Gas
-	Ops    []hook.Op
+	Now                     func() time.Time
+	Target                  gas.Gas
+	Ops                     []hook.Op
+	ExecutionResultsDBFn    func(string) (saedb.ExecutionResults, error)
+	CanExecuteTransactionFn func(common.Address, *common.Address, libevm.StateReader) error
 }
 
 var _ hook.Points = (*Stub)(nil)
+
+// ExecutionResultsDB propagates arguments to and from
+// [Stub.ExecutionResultsDBFn] if non-nil, otherwise it returns a fresh
+// [saetest.NewHeightIndexDB] on every call.
+func (s *Stub) ExecutionResultsDB(dataDir string) (saedb.ExecutionResults, error) {
+	if fn := s.ExecutionResultsDBFn; fn != nil {
+		return fn(dataDir)
+	}
+	return saedb.ExecutionResults{
+		HeightIndex: saetest.NewHeightIndexDB(),
+	}, nil
+}
 
 // BuildHeader constructs a header that builds on top of the parent header. The
 // `Extra` field SHOULD NOT be modified as it encodes sub-second block time.
@@ -52,8 +68,8 @@ func (*Stub) BuildBlock(
 	header *types.Header,
 	txs []*types.Transaction,
 	receipts []*types.Receipt,
-) *types.Block {
-	return types.NewBlock(header, txs, nil, receipts, saetest.TrieHasher())
+) (*types.Block, error) {
+	return types.NewBlock(header, txs, nil, receipts, saetest.TrieHasher()), nil
 }
 
 // BlockRebuilderFrom returns a block builder that uses the provided block as a
@@ -87,6 +103,15 @@ func (s *Stub) SubSecondBlockTime(hdr *types.Header) time.Duration {
 // EndOfBlockOps ignores its argument and always returns [Stub.Ops].
 func (s *Stub) EndOfBlockOps(*types.Block) []hook.Op {
 	return s.Ops
+}
+
+// CanExecuteTransaction proxies to [Stub.CanExecuteTransactionFn] if non-nil,
+// otherwise it allows all transactions.
+func (s *Stub) CanExecuteTransaction(from common.Address, to *common.Address, sr libevm.StateReader) error {
+	if fn := s.CanExecuteTransactionFn; fn != nil {
+		return fn(from, to, sr)
+	}
+	return nil
 }
 
 // BeforeExecutingBlock is a no-op that always returns nil.

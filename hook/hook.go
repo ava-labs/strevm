@@ -17,11 +17,13 @@ import (
 	"github.com/ava-labs/libevm/core"
 	"github.com/ava-labs/libevm/core/state"
 	"github.com/ava-labs/libevm/core/types"
+	"github.com/ava-labs/libevm/libevm"
 	"github.com/ava-labs/libevm/params"
 	"github.com/holiman/uint256"
 
 	"github.com/ava-labs/strevm/intmath"
 	saeparams "github.com/ava-labs/strevm/params"
+	"github.com/ava-labs/strevm/saedb"
 )
 
 // Points define user-injected hook points.
@@ -31,6 +33,11 @@ import (
 // existing block is indicative of this node reconstructing a block built
 // elsewhere during verification.
 type Points interface {
+	// ExecutionResultsDB opens and returns a height-indexed database, which
+	// will be closed by the VM when no longer needed. It MAY use the provided
+	// directory for persistence and MUST NOT write data outside of it.
+	ExecutionResultsDB(dataDir string) (saedb.ExecutionResults, error)
+
 	BlockBuilder
 	// BlockRebuilderFrom returns a [BlockBuilder] that will attempt to
 	// reconstruct the provided block. If the provided block is valid for
@@ -50,6 +57,9 @@ type Points interface {
 	// These operations will be performed during both worst-case and actual
 	// execution.
 	EndOfBlockOps(*types.Block) []Op
+	// CanExecuteTransaction mirrors [params.RulesAllowlistHooks.CanExecuteTransaction]
+	// so that consumers can use a single concrete type for both SAE and libevm hooks.
+	CanExecuteTransaction(common.Address, *common.Address, libevm.StateReader) error
 	// BeforeExecutingBlock is called immediately prior to executing the block.
 	BeforeExecutingBlock(params.Rules, *state.StateDB, *types.Block) error
 	// AfterExecutingBlock is called immediately after executing the block.
@@ -77,7 +87,7 @@ type BlockBuilder interface {
 		header *types.Header,
 		txs []*types.Transaction,
 		receipts []*types.Receipt,
-	) *types.Block
+	) (*types.Block, error)
 }
 
 // AccountDebit includes an amount that an account should have debited,
