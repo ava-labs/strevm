@@ -260,18 +260,18 @@ type blockChainAPI struct {
 // We override [ethapi.BlockChainAPI.GetBlockReceipts] so that we do not return
 // an error when a user queries a known, but not yet executed, block.
 func (b *blockChainAPI) GetBlockReceipts(ctx context.Context, blockNrOrHash rpc.BlockNumberOrHash) ([]map[string]any, error) {
-	blk, err := b.b.getBlock(blockNrOrHash)
-	if err != nil || !blk.Executed() {
+	receipts, ethBlk, err := b.b.getReceipts(blockNrOrHash)
+	if err != nil || receipts == nil {
 		return nil, nil //nolint:nilerr // This follows Geth behavior for [ethapi.BlockChainAPI.GetBlockReceipts]
 	}
 
-	signer := b.b.vm.exec.SignerForBlock(blk)
-	hash := blk.Hash()
-	num := blk.NumberU64()
-	txs := blk.Transactions()
+	hash := ethBlk.Hash()
+	num := ethBlk.NumberU64()
+	signer := types.MakeSigner(b.b.vm.exec.ChainConfig(), ethBlk.Number(), ethBlk.Time())
+	txs := ethBlk.Transactions()
 
 	result := make([]map[string]any, len(txs))
-	for i, receipt := range blk.Receipts() {
+	for i, receipt := range receipts {
 		result[i] = ethapi.MarshalReceipt(receipt, hash, num, signer, txs[i], i)
 	}
 	return result, nil
@@ -628,37 +628,41 @@ func (b *ethAPIBackend) SetHead(uint64) {
 }
 
 func (b *ethAPIBackend) GetReceipts(ctx context.Context, hash common.Hash) (types.Receipts, error) {
-	blk, err := b.getBlock(rpc.BlockNumberOrHashWithHash(hash, false))
-	if err != nil || !blk.Executed() {
-		return nil, nil //nolint:nilerr // This follows Geth behavior for [ethapi.Backend.GetReceipts]
-	}
-	return blk.Receipts(), nil
+	receipts, _, err := b.getReceipts(rpc.BlockNumberOrHashWithHash(hash, false))
+	return receipts, err
 }
 
-// TODO(arr4n) this returns settled blocks in an invalid state. Use
-// [VM.GetBlock] in or after PR 183.
-func (b *ethAPIBackend) getBlock(numOrHash rpc.BlockNumberOrHash) (*blocks.Block, error) {
+// getReceipts resolves receipts and the underlying [types.Block] by number or
+// hash, checking in-memory blocks first then falling back to the database.
+// Returns nils for blocks that are not found or not yet executed.
+func (b *ethAPIBackend) getReceipts(numOrHash rpc.BlockNumberOrHash) (types.Receipts, *types.Block, error) {
 	n, hash, err := b.resolveBlockNumberOrHash(numOrHash)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if blk, ok := b.vm.blocks.Load(hash); ok {
-		return blk, nil
+		if !blk.Executed() {
+			return nil, nil, nil
+		}
+		return blk.Receipts(), blk.EthBlock(), nil
 	}
 
 	ethBlock := rawdb.ReadBlock(b.vm.db, hash, n)
 	if ethBlock == nil {
-		return nil, nil
+		return nil, nil, nil
 	}
 
 	blk, err := b.vm.blockBuilder.new(ethBlock, nil, nil)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if err := blk.RestoreExecutionArtefacts(b.vm.db, b.vm.xdb, b.vm.exec.ChainConfig()); err != nil {
-		return nil, fmt.Errorf("restoring execution artefacts: %w", err)
+		return nil, nil, fmt.Errorf("restoring execution artefacts: %v", err)
 	}
-	return blk, nil
+	if !blk.Executed() {
+		return nil, nil, nil
+	}
+	return blk.Receipts(), ethBlock, nil
 }
 
 type noopSubscription struct {
