@@ -11,7 +11,6 @@ import (
 	"math/big"
 	"reflect"
 	"runtime/debug"
-	"sync"
 	"testing"
 	"time"
 
@@ -519,32 +518,12 @@ func TestChainID(t *testing.T) {
 	}
 }
 
-// registerBlockingPrecompile registers `addr` as a libevm precompile such that
-// any transactions sent to the precompile will block until the returned
-// function is called. It is safe to call the unblocker multiple times, which
-// will also be done during cleanup.
-func registerBlockingPrecompile(tb testing.TB, addr common.Address) func() {
-	tb.Helper()
-	unblock := make(chan struct{})
-	libevmHooks := &hookstest.Stub{
-		PrecompileOverrides: map[common.Address]libevm.PrecompiledContract{
-			addr: vm.NewStatefulPrecompile(func(vm.PrecompileEnvironment, []byte) ([]byte, error) {
-				<-unblock
-				return nil, nil
-			}),
-		},
-	}
-	libevmHooks.Register(tb)
-
-	fn := sync.OnceFunc(func() { close(unblock) })
-	tb.Cleanup(fn)
-	return fn
-}
-
 func TestEthGetters(t *testing.T) {
-	opt, vmTime := withVMTime(t, time.Unix(saeparams.TauSeconds, 0))
-
-	ctx, sut := newSUT(t, 1, opt)
+	timeOpt, vmTime := withVMTime(t, time.Unix(saeparams.TauSeconds, 0))
+	blockingPrecompile := common.Address{'b', 'l', 'o', 'c', 'k'}
+	precompileOpt, unblock := withBlockingPrecompile(blockingPrecompile)
+	ctx, sut := newSUT(t, 1, timeOpt, precompileOpt)
+	t.Cleanup(unblock)
 
 	t.Run("unknown_hashes", func(t *testing.T) {
 		sut.testGetByUnknownHash(ctx, t)
@@ -552,12 +531,6 @@ func TestEthGetters(t *testing.T) {
 	t.Run("unknown_numbers", func(t *testing.T) {
 		sut.testGetByUnknownNumber(ctx, t)
 	})
-
-	// The named block "pending" is the last to be enqueued but yet to be
-	// executed. Although unlikely to be useful in practice, it still needs to
-	// be tested.
-	blockingPrecompile := common.Address{'b', 'l', 'o', 'c', 'k'}
-	registerBlockingPrecompile(t, blockingPrecompile)
 
 	genesis := sut.lastAcceptedBlock(t)
 
@@ -627,27 +600,22 @@ func TestEthGetters(t *testing.T) {
 func TestGetLogs(t *testing.T) {
 	// We shorten section size to reduce number of required blocks in the test.
 	const bloomSectionSize = 8
+
 	timeOpt, vmTime := withVMTime(t, time.Unix(saeparams.TauSeconds, 0))
-
-	ctx, sut := newSUT(t, 1, timeOpt, withBloomSectionSize(bloomSectionSize))
-	genesis := sut.lastAcceptedBlock(t)
-
-	emitter := common.Address{'l', 'o', 'g'}
 	rng := crypto.NewKeccakState()
-	stub := &hookstest.Stub{
-		PrecompileOverrides: map[common.Address]libevm.PrecompiledContract{
-			emitter: vm.NewStatefulPrecompile(func(env vm.PrecompileEnvironment, _ []byte) ([]byte, error) {
-				data := make([]byte, 8)
-				rng.Read(data) //nolint:gosec,errcheck // Never returns an error; signature only to implement io.Reader
-				env.StateDB().AddLog(&types.Log{
-					Address: env.Addresses().EVMSemantic.Self,
-					Data:    data, // Guarantee uniqueness as this is the data under test
-				})
-				return nil, nil
-			}),
-		},
-	}
-	stub.Register(t)
+	emitter := common.Address{'l', 'o', 'g'}
+	precompile := vm.NewStatefulPrecompile(func(env vm.PrecompileEnvironment, _ []byte) ([]byte, error) {
+		data := make([]byte, 8)
+		rng.Read(data) //nolint:gosec,errcheck // Never returns an error; signature only to implement io.Reader
+		env.StateDB().AddLog(&types.Log{
+			Address: env.Addresses().EVMSemantic.Self,
+			Data:    data, // Guarantee uniqueness as this is the data under test
+		})
+		return nil, nil
+	})
+
+	ctx, sut := newSUT(t, 1, timeOpt, withBloomSectionSize(bloomSectionSize), withPrecompile(emitter, precompile))
+	genesis := sut.lastAcceptedBlock(t)
 
 	txWithLog := func(t *testing.T) *types.Transaction {
 		t.Helper()
@@ -808,12 +776,13 @@ func TestEthPendingTransactions(t *testing.T) {
 }
 
 func TestGetReceipts(t *testing.T) {
-	timeOpt, vmTime := withVMTime(t, time.Unix(saeparams.TauSeconds, 0))
-	ctx, sut := newSUT(t, 1, timeOpt)
-
 	// Blocking precompile creates accepted-but-not-executed blocks
 	blockingPrecompile := common.Address{'b', 'l', 'o', 'c', 'k'}
-	registerBlockingPrecompile(t, blockingPrecompile)
+
+	timeOpt, vmTime := withVMTime(t, time.Unix(saeparams.TauSeconds, 0))
+	precompileOpt, unblock := withBlockingPrecompile(blockingPrecompile)
+	ctx, sut := newSUT(t, 1, timeOpt, precompileOpt)
+	t.Cleanup(unblock)
 
 	var (
 		txs  []*types.Transaction
@@ -1127,11 +1096,11 @@ func TestDebugGetRawTransaction(t *testing.T) {
 	}...)
 }
 
-func (sut *SUT) testGetByHash(ctx context.Context, t *testing.T, want *types.Block) {
+func (s *SUT) testGetByHash(ctx context.Context, t *testing.T, want *types.Block) {
 	t.Helper()
 
-	testRPCGetter(ctx, t, "eth_getBlockByHash", sut.BlockByHash, want.Hash(), want)
-	sut.testRPC(ctx, t, []rpcTest{
+	testRPCGetter(ctx, t, "eth_getBlockByHash", s.BlockByHash, want.Hash(), want)
+	s.testRPC(ctx, t, []rpcTest{
 		{
 			method: "eth_getBlockByHash",
 			args:   []any{want.Hash(), false},
@@ -1159,7 +1128,7 @@ func (sut *SUT) testGetByHash(ctx context.Context, t *testing.T, want *types.Blo
 		marshaled, err := wantTx.MarshalBinary()
 		require.NoErrorf(t, err, "%T.MarshalBinary()", wantTx)
 
-		sut.testRPC(ctx, t, []rpcTest{
+		s.testRPC(ctx, t, []rpcTest{
 			{
 				method: "eth_getTransactionByHash",
 				args:   []any{wantTx.Hash()},
@@ -1184,7 +1153,7 @@ func (sut *SUT) testGetByHash(ctx context.Context, t *testing.T, want *types.Blo
 	}
 
 	outOfBoundsIndex := hexutil.Uint(len(want.Transactions()) + 1) //nolint:gosec // Known to not overflow
-	sut.testRPC(ctx, t, []rpcTest{
+	s.testRPC(ctx, t, []rpcTest{
 		{
 			method: "eth_getTransactionByBlockHashAndIndex",
 			args:   []any{want.Hash(), outOfBoundsIndex},
@@ -1198,10 +1167,10 @@ func (sut *SUT) testGetByHash(ctx context.Context, t *testing.T, want *types.Blo
 	}...)
 }
 
-func (sut *SUT) testGetByUnknownHash(ctx context.Context, t *testing.T) {
+func (s *SUT) testGetByUnknownHash(ctx context.Context, t *testing.T) {
 	t.Helper()
 
-	sut.testRPC(ctx, t, []rpcTest{
+	s.testRPC(ctx, t, []rpcTest{
 		{
 			method: "eth_getBlockByHash",
 			args:   []any{common.Hash{}, true},
@@ -1243,11 +1212,11 @@ func (sut *SUT) testGetByUnknownHash(ctx context.Context, t *testing.T) {
 // testGetByNumber accepts a block-number override to allow testing via named
 // blocks, e.g. [rpc.LatestBlockNumber], not only via the specific number
 // carried by the [types.Block].
-func (sut *SUT) testGetByNumber(ctx context.Context, t *testing.T, want *types.Block, n rpc.BlockNumber) {
+func (s *SUT) testGetByNumber(ctx context.Context, t *testing.T, want *types.Block, n rpc.BlockNumber) {
 	t.Helper()
-	testRPCGetter(ctx, t, "eth_getBlockByNumber", sut.BlockByNumber, big.NewInt(n.Int64()), want)
+	testRPCGetter(ctx, t, "eth_getBlockByNumber", s.BlockByNumber, big.NewInt(n.Int64()), want)
 
-	sut.testRPC(ctx, t, []rpcTest{
+	s.testRPC(ctx, t, []rpcTest{
 		{
 			method: "eth_getBlockByNumber",
 			args:   []any{n, false},
@@ -1275,7 +1244,7 @@ func (sut *SUT) testGetByNumber(ctx context.Context, t *testing.T, want *types.B
 		marshaled, err := wantTx.MarshalBinary()
 		require.NoErrorf(t, err, "%T.MarshalBinary()", wantTx)
 
-		sut.testRPC(ctx, t, []rpcTest{
+		s.testRPC(ctx, t, []rpcTest{
 			{
 				method: "eth_getTransactionByBlockNumberAndIndex",
 				args:   []any{n, txIdx},
@@ -1290,7 +1259,7 @@ func (sut *SUT) testGetByNumber(ctx context.Context, t *testing.T, want *types.B
 	}
 
 	outOfBoundsIndex := hexutil.Uint(len(want.Transactions()) + 1) //nolint:gosec // Known to not overflow
-	sut.testRPC(ctx, t, []rpcTest{
+	s.testRPC(ctx, t, []rpcTest{
 		{
 			method: "eth_getTransactionByBlockNumberAndIndex",
 			args:   []any{n, outOfBoundsIndex},
@@ -1304,11 +1273,11 @@ func (sut *SUT) testGetByNumber(ctx context.Context, t *testing.T, want *types.B
 	}...)
 }
 
-func (sut *SUT) testGetByUnknownNumber(ctx context.Context, t *testing.T) {
+func (s *SUT) testGetByUnknownNumber(ctx context.Context, t *testing.T) {
 	t.Helper()
 
 	const n rpc.BlockNumber = math.MaxInt64
-	sut.testRPC(ctx, t, []rpcTest{
+	s.testRPC(ctx, t, []rpcTest{
 		{
 			method: "eth_getBlockByNumber",
 			args:   []any{n, true},

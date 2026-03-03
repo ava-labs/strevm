@@ -397,7 +397,10 @@ func TestEndOfBlockOps(t *testing.T) {
 		{
 			Gas: 100_000,
 			Burn: map[common.Address]hook.AccountDebit{
-				exportEOA: {Amount: *uint256.NewInt(10)},
+				exportEOA: {
+					Amount:     *uint256.NewInt(10),
+					MinBalance: *uint256.NewInt(10),
+				},
 			},
 		},
 		{
@@ -526,7 +529,7 @@ func TestGasAccounting(t *testing.T) {
 			wantExecutedBy:  at(21, 30*gastime.TargetToExcessScaling, 10*gasPerTx),
 			wantExcessAfter: 3 * ((5 * gasPerTx /*T*/) * gastime.TargetToExcessScaling /* == K */),
 			// Excess is now 3·K so the price is e^3
-			wantPriceAfter: gas.Price(math.Floor(math.Pow(math.E, 3 /* <----- NB */))),
+			wantPriceAfter: gas.Price(math.Floor(math.Exp(3 /* <----- NB */))),
 		},
 		{
 			blockTime:       22, // no fast-forward
@@ -535,7 +538,7 @@ func TestGasAccounting(t *testing.T) {
 			targetAfter:     5 * gasPerTx,
 			wantExecutedBy:  at(21, 40*gastime.TargetToExcessScaling, 10*gasPerTx),
 			wantExcessAfter: 4 * ((5 * gasPerTx /*T*/) * gastime.TargetToExcessScaling /* == K */),
-			wantPriceAfter:  gas.Price(math.Floor(math.Pow(math.E, 4 /* <----- NB */))),
+			wantPriceAfter:  gas.Price(math.Floor(math.Exp(4 /* <----- NB */))),
 		},
 	}
 
@@ -667,6 +670,7 @@ func FuzzOpCodes(f *testing.F) {
 
 		// Ensure that the SUT [logging.Logger] remains of this type so >=WARN
 		// logs become failures.
+		//nolint:staticcheck
 		var logger *saetest.TBLogger = sut.logger
 		// Errors in execution (i.e. reverts) are fine, but we don't want them
 		// bubbling up any further.

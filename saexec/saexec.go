@@ -102,6 +102,11 @@ func (e *Executor) Close() error {
 	return e.stateRecorder.close()
 }
 
+// SignerForBlock returns the transaction signer for the block.
+func (e *Executor) SignerForBlock(b *blocks.Block) types.Signer {
+	return types.MakeSigner(e.chainConfig, b.Number(), b.BuildTime())
+}
+
 // ChainConfig returns the config originally passed to [New].
 func (e *Executor) ChainConfig() *params.ChainConfig {
 	return e.chainConfig
