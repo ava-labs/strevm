@@ -286,7 +286,7 @@ type chainIndexer struct {
 var _ core.ChainIndexerChain = chainIndexer{}
 
 func (c chainIndexer) CurrentHeader() *types.Header {
-	return types.CopyHeader(c.exec.LastExecuted().Header())
+	return c.exec.LastExecuted().Header()
 }
 
 func (c chainIndexer) SubscribeChainHeadEvent(ch chan<- core.ChainHeadEvent) event.Subscription {

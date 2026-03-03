@@ -108,7 +108,7 @@ func (e *Executor) execute(b *blocks.Block, logger logging.Logger) error {
 
 	baseFee := gasClock.BaseFee()
 	b.CheckBaseFeeBound(baseFee)
-	header := types.CopyHeader(b.Header())
+	header := b.Header()
 	header.BaseFee = baseFee.ToBig()
 
 	gasPool := core.GasPool(math.MaxUint64) // required by geth but irrelevant so max it out
