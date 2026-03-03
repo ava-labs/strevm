@@ -261,7 +261,7 @@ type blockChainAPI struct {
 // an error when a user queries a known, but not yet executed, block.
 func (b *blockChainAPI) GetBlockReceipts(ctx context.Context, blockNrOrHash rpc.BlockNumberOrHash) ([]map[string]any, error) {
 	receipts, blk, err := b.b.getReceipts(blockNrOrHash)
-	if err != nil || receipts == nil {
+	if err != nil || blk == nil {
 		return nil, nil //nolint:nilerr // This follows Geth behavior for [ethapi.BlockChainAPI.GetBlockReceipts]
 	}
 
@@ -637,7 +637,7 @@ func (b *ethAPIBackend) GetReceipts(ctx context.Context, hash common.Hash) (type
 
 // getReceipts resolves receipts and the underlying [types.Block] by number or
 // hash, checking in-memory blocks first then falling back to the database.
-// Returns nils for blocks that are not found or not yet executed.
+// Returns nils for blocks that are not yet executed.
 func (b *ethAPIBackend) getReceipts(numOrHash rpc.BlockNumberOrHash) (types.Receipts, *types.Block, error) {
 	blk, err := readByNumberOrHash(
 		b,
