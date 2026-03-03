@@ -292,7 +292,7 @@ func (b *blockBuilderG[T]) buildWithTxs(
 	var includedOps []T
 	for tx := range builder.PotentialEndOfBlockOps() {
 		// TODO(StephenButtolph): Return additional information from
-		// [hook.PointsG.PotentialEndOfBlockOps] to terminate the the loop early
+		// [hook.PointsG.PotentialEndOfBlockOps] to terminate the loop early
 		// when there is insufficient block space remaining.
 
 		op := tx.AsOp()
