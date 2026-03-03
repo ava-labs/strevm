@@ -66,8 +66,13 @@ func TestConfigValidate(t *testing.T) {
 			wantErr: errNilMaxSuggestedTip,
 		},
 		{
-			name:    "SuggestedTipPercentile_above_one",
-			config:  modifyDefaultConfig(func(c *Config) { c.SuggestedTipPercentile = 1.1 }),
+			name:    "SuggestedTipPercentile_zero",
+			config:  modifyDefaultConfig(func(c *Config) { c.SuggestedTipPercentile = 0 }),
+			wantErr: errBadTipPercentile,
+		},
+		{
+			name:    "SuggestedTipPercentile_above_100",
+			config:  modifyDefaultConfig(func(c *Config) { c.SuggestedTipPercentile = 101 }),
 			wantErr: errBadTipPercentile,
 		},
 		{
@@ -370,7 +375,7 @@ func TestSuggestTipCap(t *testing.T) {
 
 func TestFeeHistory(t *testing.T) {
 	cfg := DefaultConfig()
-	cfg.HistoryMaxBlocksFromTip = 1
+	cfg.HistoryMaxBlocksFromHead = 1
 	cfg.HistoryMaxBlocks = 2
 	bounds := &blocks.WorstCaseBounds{
 		LatestEndTime: gastime.New(time.Now(), 1, math.MaxUint64),

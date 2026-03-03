@@ -10,7 +10,6 @@ import (
 
 	"github.com/ava-labs/avalanchego/cache/lru"
 	"github.com/ava-labs/avalanchego/utils/logging"
-	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/rpc"
 	"go.uber.org/zap"
@@ -22,8 +21,10 @@ type transaction struct {
 }
 
 func newTx(tx *types.Transaction, baseFee *big.Int) transaction {
-	tip := tx.EffectiveGasTipValue(baseFee)
-	return transaction{tx.Gas(), tip}
+	return transaction{
+		tx.Gas(),
+		tx.EffectiveGasTipValue(baseFee),
+	}
 }
 
 func (t transaction) Compare(o transaction) int {
@@ -58,6 +59,7 @@ func newBlock(blk *types.Block) *block {
 }
 
 // tipPercentiles computes the gas-weighted tip at each requested percentile.
+// all of which MUST be sorted in ascending order.
 //
 // Because block builders sequence transactions without executing them in SAE,
 // we accumulate gas limits, not the gas charged.
@@ -65,7 +67,7 @@ func (b *block) tipPercentiles(percentiles []float64) []*big.Int {
 	out := make([]*big.Int, len(percentiles))
 	if len(b.txs) == 0 {
 		for i := range out {
-			out[i] = common.Big0
+			out[i] = new(big.Int)
 		}
 		return out
 	}
@@ -96,11 +98,7 @@ type blockCache struct {
 	cache *lru.Cache[uint64, *block]
 }
 
-func newBlockCache(
-	log logging.Logger,
-	backend Backend,
-	size int,
-) *blockCache {
+func newBlockCache(log logging.Logger, backend Backend, size int) *blockCache {
 	// Additional slots in the cache allows processing queries for previous
 	// blocks while new blocks are added concurrently.
 	const extraSlots = 5
@@ -118,6 +116,8 @@ func (b *blockCache) getBlock(ctx context.Context, n uint64) *block {
 		return blk
 	}
 
+	// `WithoutCancel` is used here because we want to continue fetching the block and caching it.
+	// Also this should not return an error if the context is cancelled.
 	blk, err := b.backend.BlockByNumber(context.WithoutCancel(ctx), rpc.BlockNumber(n)) //nolint:gosec // block numbers were previously resolved
 	if err != nil {
 		b.log.Error("fetching BlockByNumber",

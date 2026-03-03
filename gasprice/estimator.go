@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"math/big"
 	"slices"
 	"sync"
@@ -27,14 +28,6 @@ import (
 	"github.com/ava-labs/strevm/intmath"
 )
 
-var (
-	errNilNow             = errors.New("config Now must be non-nil")
-	errNilMinSuggestedTip = errors.New("config MinSuggestedTip must be non-nil")
-	errNilMaxSuggestedTip = errors.New("config MaxSuggestedTip must be non-nil")
-	errBadTipPercentile   = errors.New("config SuggestedTipPercentile must be in (0, 1]")
-	errMinTipExceedsMax   = errors.New("config MinSuggestedTip must be <= MaxSuggestedTip")
-)
-
 // Backend that the [Estimator] depends on for chain data.
 type Backend interface {
 	ResolveBlockNumber(bn rpc.BlockNumber) (uint64, error)
@@ -45,27 +38,27 @@ type Backend interface {
 
 // Config allows parameterizing an [Estimator].
 type Config struct {
-	// Now returns the current time. If nil, defaults to [time.Now]
+	// Now returns the current time.
 	Now func() time.Time
 
 	// MinSuggestedTip is the minimum suggested tip and the default tip if no
 	// better estimate can be made.
 	MinSuggestedTip *big.Int
-	// SuggestedTipPercentile, in the range (0, 1], specifies what percentile of
-	// recent tips.
-	SuggestedTipPercentile float64
+	// SuggestedTipPercentile, in the range (0, 100], specifies what percentile of
+	// tips is used when suggesting based on recent transactions.
+	SuggestedTipPercentile uint64
 	MaxSuggestedTip        *big.Int
 
 	// SuggestedTipMaxBlocks specifies the maximum number of recent blocks to fetch
 	// for [Estimator.SuggestTipCap].
 	SuggestedTipMaxBlocks uint64
 	// SuggestedTipMaxDuration specifies how long a block is considered recent
-	// for [Estimator.SuggestTipCap].
+	// for [Estimator.SuggestGasTipCap].
 	SuggestedTipMaxDuration time.Duration
 
-	// HistoryMaxBlocksFromTip specifies the furthest lastBlock behind the last
+	// HistoryMaxBlocksFromHead specifies the furthest lastBlock behind the last
 	// accepted block that can be requested by [Estimator.FeeHistory].
-	HistoryMaxBlocksFromTip uint64
+	HistoryMaxBlocksFromHead uint64
 	// HistoryMaxBlocks specifies the maximum number of blocks that can be
 	// fetched in a single call to [Estimator.FeeHistory].
 	HistoryMaxBlocks uint64
@@ -74,17 +67,27 @@ type Config struct {
 // DefaultConfig returns a [Config] with all fields set to their default values.
 func DefaultConfig() Config {
 	return Config{
-		Now:                     time.Now,
-		MinSuggestedTip:         big.NewInt(1 * params.Wei),
-		SuggestedTipPercentile:  .4,
+		Now:             time.Now,
+		MinSuggestedTip: big.NewInt(1 * params.Wei),
+		// SuggestedTipPercentile is chosen to be a value that is lower than the median of the tips in the recent blocks.
+		// This is to prevent suggesting a tip that could cause a self-induced fee spiral.
+		SuggestedTipPercentile:  40,
 		MaxSuggestedTip:         big.NewInt(150 * params.Wei),
 		SuggestedTipMaxBlocks:   20,
 		SuggestedTipMaxDuration: time.Minute,
 		// Chosen to be larger than the fee lookback window that MetaMask uses (20k blocks).
-		HistoryMaxBlocksFromTip: 25_000,
-		HistoryMaxBlocks:        2048,
+		HistoryMaxBlocksFromHead: 25_000,
+		HistoryMaxBlocks:         2048,
 	}
 }
+
+var (
+	errNilNow             = errors.New("config Now must be non-nil")
+	errNilMinSuggestedTip = errors.New("config MinSuggestedTip must be non-nil")
+	errNilMaxSuggestedTip = errors.New("config MaxSuggestedTip must be non-nil")
+	errBadTipPercentile   = errors.New("config SuggestedTipPercentile must be in (0, 100]")
+	errMinTipExceedsMax   = errors.New("config MinSuggestedTip must be <= MaxSuggestedTip")
+)
 
 // validate returns an error if the config is invalid.
 func (c *Config) validate() error {
@@ -95,12 +98,20 @@ func (c *Config) validate() error {
 		return errNilMinSuggestedTip
 	case c.MaxSuggestedTip == nil:
 		return errNilMaxSuggestedTip
-	case c.SuggestedTipPercentile < 0 || c.SuggestedTipPercentile > 1:
+	case c.SuggestedTipPercentile == 0 || c.SuggestedTipPercentile > 100:
 		return errBadTipPercentile
 	case c.MinSuggestedTip.Cmp(c.MaxSuggestedTip) > 0:
 		return errMinTipExceedsMax
 	}
 	return nil
+}
+
+var _ io.Closer = (*Estimator)(nil)
+
+type last struct {
+	lock   sync.RWMutex
+	number uint64
+	price  *big.Int
 }
 
 // Estimator provides gas-price suggestions and fee-history data for SAE by
@@ -109,11 +120,9 @@ type Estimator struct {
 	backend Backend
 	c       Config
 
-	lastLock   sync.RWMutex
-	lastNumber uint64
-	lastPrice  *big.Int
+	last last
 
-	sub        event.Subscription
+	chainHead  event.Subscription
 	blockCache *blockCache
 }
 
@@ -135,11 +144,11 @@ func NewEstimator(backend Backend, log logging.Logger, c Config) (*Estimator, er
 		backend,
 		int(max( //nolint:gosec // Overflow would require misconfiguration
 			c.SuggestedTipMaxBlocks,
-			c.HistoryMaxBlocksFromTip+c.HistoryMaxBlocks,
+			c.HistoryMaxBlocksFromHead+c.HistoryMaxBlocks,
 		)),
 	)
 	go func() {
-		defer sub.Unsubscribe() // This can fire twice on Close(), but it's fine.
+		defer sub.Unsubscribe() // `Unsubscribe` can fire twice on Close(), but it's safe to call multiple times.
 		for {
 			select {
 			case e := <-events:
@@ -151,10 +160,12 @@ func NewEstimator(backend Backend, log logging.Logger, c Config) (*Estimator, er
 	}()
 
 	return &Estimator{
-		backend:    backend,
-		c:          c,
-		lastPrice:  c.MinSuggestedTip,
-		sub:        sub,
+		backend: backend,
+		c:       c,
+		last: last{
+			price: c.MinSuggestedTip,
+		},
+		chainHead:  sub,
 		blockCache: cache,
 	}, nil
 }
@@ -172,17 +183,18 @@ func (e *Estimator) SuggestGasTipCap(ctx context.Context) (tip *big.Int, _ error
 
 	headNumber := e.backend.LastAcceptedBlock().NumberU64()
 
-	e.lastLock.RLock()
-	lastNumber, lastPrice := e.lastNumber, e.lastPrice
-	e.lastLock.RUnlock()
+	e.last.lock.RLock()
+	lastNumber, lastPrice := e.last.number, e.last.price
+	e.last.lock.RUnlock()
 	if headNumber <= lastNumber {
 		return lastPrice, nil
 	}
 
-	e.lastLock.Lock()
-	defer e.lastLock.Unlock()
+	e.last.lock.Lock()
+	defer e.last.lock.Unlock()
 
-	lastNumber, lastPrice = e.lastNumber, e.lastPrice
+	// A different goroutine might have beaten us when upgrading to a write lock.
+	lastNumber, lastPrice = e.last.number, e.last.price
 	if headNumber <= lastNumber {
 		return lastPrice, nil
 	}
@@ -190,10 +202,13 @@ func (e *Estimator) SuggestGasTipCap(ctx context.Context) (tip *big.Int, _ error
 	var (
 		newest     = headNumber
 		tooOld     = intmath.BoundedSubtract(newest, e.c.SuggestedTipMaxBlocks, 0)
-		recentUnix = uint64(e.c.Now().Add(-e.c.SuggestedTipMaxDuration).Unix()) //nolint:gosec // Won't overflow for a long time
+		recentUnix = uint64(e.c.Now().Add(-e.c.SuggestedTipMaxDuration).Unix()) //nolint:gosec // Known non-negative
 		tips       []transaction
 	)
 	for n := newest; n > tooOld; n-- {
+		// getBlock does not return an error if the context is cancelled.
+		// We don't want to early return from `SuggestGasTipCap` if the context is cancelled.
+		// Instead we continue to fetch the blocks and cache them.
 		b := e.blockCache.getBlock(ctx, n)
 		if b == nil || b.timestamp < recentUnix {
 			break
@@ -205,14 +220,14 @@ func (e *Estimator) SuggestGasTipCap(ctx context.Context) (tip *big.Int, _ error
 	if n := len(tips); n > 0 {
 		slices.SortFunc(tips, transaction.Compare)
 
-		i := int(float64(n-1) * e.c.SuggestedTipPercentile) // ∈ [0, n)
+		i := (n - 1) * int(e.c.SuggestedTipPercentile) / 100 // ∈ [0, n)
 		price = tips[i].tip
 		price = math.BigMax(price, e.c.MinSuggestedTip)
 		price = math.BigMin(price, e.c.MaxSuggestedTip)
 	}
 
-	e.lastNumber = headNumber
-	e.lastPrice = price
+	e.last.number = headNumber
+	e.last.price = price
 	return price, nil
 }
 
@@ -238,10 +253,10 @@ var (
 func (e *Estimator) FeeHistory(
 	ctx context.Context,
 	blocks uint64,
-	unresolvedLastBlock rpc.BlockNumber,
+	lastBlock rpc.BlockNumber,
 	rewardPercentiles []float64,
 ) (
-	height *big.Int,
+	lowestHeight *big.Int,
 	rewards [][]*big.Int,
 	baseFees []*big.Int,
 	portionFull []float64,
@@ -250,18 +265,18 @@ func (e *Estimator) FeeHistory(
 	if err := validatePercentiles(rewardPercentiles); err != nil {
 		return nil, nil, nil, nil, err
 	}
-	last, err := e.backend.ResolveBlockNumber(unresolvedLastBlock)
+	last, err := e.backend.ResolveBlockNumber(lastBlock)
 	if err != nil {
 		return nil, nil, nil, nil, err
 	}
 	headBlock := e.backend.LastAcceptedBlock()
 	head := headBlock.NumberU64()
-	if minLast := intmath.BoundedSubtract(head, e.c.HistoryMaxBlocksFromTip, 0); last < minLast {
+	if minLast := intmath.BoundedSubtract(head, e.c.HistoryMaxBlocksFromHead, 0); last < minLast {
 		return nil, nil, nil, nil, fmt.Errorf("%w: block %d requested, accepted head is %d (max depth %d)",
 			errHistoryDepthExhausted,
 			last,
 			head,
-			e.c.HistoryMaxBlocksFromTip,
+			e.c.HistoryMaxBlocksFromHead,
 		)
 	}
 	blocks = min(
@@ -313,7 +328,7 @@ func (e *Estimator) FeeHistory(
 
 // Close releases allocated resources.
 func (e *Estimator) Close() error {
-	e.sub.Unsubscribe()
+	e.chainHead.Unsubscribe()
 	return nil
 }
 
