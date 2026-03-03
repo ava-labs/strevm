@@ -1,10 +1,6 @@
 // Copyright (C) 2025-2026, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
-// Package blockstest provides test helpers for constructing [Streaming
-// Asynchronous Execution] (SAE) blocks.
-//
-// [Streaming Asynchronous Execution]: https://github.com/avalanche-foundation/ACPs/tree/main/ACPs/194-streaming-asynchronous-execution
 package blockstest
 
 import (

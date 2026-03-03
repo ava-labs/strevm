@@ -265,7 +265,7 @@ func (b *blockChainAPI) GetBlockReceipts(ctx context.Context, blockNrOrHash rpc.
 		return nil, nil //nolint:nilerr // This follows Geth behavior for [ethapi.BlockChainAPI.GetBlockReceipts]
 	}
 
-	signer := b.b.vm.signerForBlock(blk.EthBlock())
+	signer := b.b.vm.exec.SignerForBlock(blk)
 	hash := blk.Hash()
 	num := blk.NumberU64()
 	txs := blk.Transactions()
@@ -324,7 +324,7 @@ type ethAPIBackend struct {
 
 var _ APIBackend = (*ethAPIBackend)(nil)
 
-func (b *ethAPIBackend) ChainDb() ethdb.Database {
+func (b *ethAPIBackend) ChainDb() ethdb.Database { //nolint:staticcheck // this name required by ethapi.Backend interface
 	return b.vm.db
 }
 
@@ -651,7 +651,7 @@ func (b *ethAPIBackend) getBlock(numOrHash rpc.BlockNumberOrHash) (*blocks.Block
 		return nil, nil
 	}
 
-	blk, err := b.vm.newBlock(ethBlock, nil, nil)
+	blk, err := b.vm.blockBuilder.new(ethBlock, nil, nil)
 	if err != nil {
 		return nil, err
 	}

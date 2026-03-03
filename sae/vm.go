@@ -64,10 +64,11 @@ type VM struct {
 		synchronous       uint64
 	}
 
-	exec       *saexec.Executor
-	mempool    *txgossip.Set
-	apiBackend *ethAPIBackend
-	newTxs     chan struct{}
+	exec         *saexec.Executor
+	mempool      *txgossip.Set
+	blockBuilder *blockBuilder
+	apiBackend   *ethAPIBackend
+	newTxs       chan struct{}
 
 	// toClose are closed in reverse order during [VM.Shutdown]. If a resource
 	// depends on another resource, it MUST be added AFTER the resource it
@@ -232,6 +233,16 @@ func NewVM(
 		}
 		vm.mempool = pool
 		vm.signalNewTxsToEngine()
+	}
+
+	{ // ==========  Block Builder  ==========
+		vm.blockBuilder = &blockBuilder{
+			hooks,
+			cfg.Now,
+			snowCtx.Log,
+			vm.exec,
+			vm.mempool,
+		}
 	}
 
 	{ // ==========  P2P Gossip  ==========
@@ -427,8 +438,4 @@ func (*VM) Version(context.Context) (string, error) {
 
 func (vm *VM) log() logging.Logger {
 	return vm.snowCtx.Log
-}
-
-func (vm *VM) signerForBlock(b *types.Block) types.Signer {
-	return types.MakeSigner(vm.exec.ChainConfig(), b.Number(), b.Time())
 }
