@@ -636,30 +636,21 @@ func (b *ethAPIBackend) GetReceipts(ctx context.Context, hash common.Hash) (type
 // hash, checking in-memory blocks first then falling back to the database.
 // Returns nils for blocks that are not found or not yet executed.
 func (b *ethAPIBackend) getReceipts(numOrHash rpc.BlockNumberOrHash) (types.Receipts, *types.Block, error) {
-	n, hash, err := b.resolveBlockNumberOrHash(numOrHash)
+	blk, err := readByNumberOrHash(
+		b,
+		numOrHash,
+		func(b *blocks.Block) *blocks.Block {
+			return b
+		},
+		b.vm.settledBlockFromDB,
+	)
 	if err != nil {
 		return nil, nil, err
 	}
-	if blk, ok := b.vm.blocks.Load(hash); ok {
-		if !blk.Executed() {
-			return nil, nil, nil
-		}
-		return blk.Receipts(), blk.EthBlock(), nil
-	}
-
-	ethBlock := rawdb.ReadBlock(b.vm.db, hash, n)
-	if ethBlock == nil {
+	if !blk.Executed() {
 		return nil, nil, nil
 	}
-
-	blk, err := b.vm.blockBuilder.new(ethBlock, nil, nil)
-	if err != nil {
-		return nil, nil, err
-	}
-	if err := blk.RestoreExecutionArtefacts(b.vm.db, b.vm.xdb, b.vm.exec.ChainConfig()); err != nil {
-		return nil, nil, fmt.Errorf("restoring execution artefacts: %v", err)
-	}
-	return blk.Receipts(), ethBlock, nil
+	return blk.Receipts(), blk.EthBlock(), nil
 }
 
 type noopSubscription struct {
