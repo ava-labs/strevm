@@ -99,7 +99,7 @@ type AccountDebit struct {
 	// Amount to deduct from the account balance.
 	Amount uint256.Int
 	// MinBalance is the minimum balance the account must have for the operation
-	// to be valid. It must be at least [AccountDebit.Amount].
+	// to be valid. It MUST be at least [AccountDebit.Amount].
 	MinBalance uint256.Int
 }
 
