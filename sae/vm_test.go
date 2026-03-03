@@ -304,23 +304,13 @@ func withBloomSectionSize(size uint64) sutOption {
 // This should be called prior to closing the VM to prevent goroutine
 // leaks. The releaser can be called multiple times.
 func withBlockingPrecompile(addr common.Address) (sutOption, func()) {
-	var closeOnce sync.Once
 	unblock := make(chan struct{})
-	releaser := func() {
-		closeOnce.Do(func() {
-			close(unblock)
-		})
-	}
+	p := vm.NewStatefulPrecompile(func(vm.PrecompileEnvironment, []byte) ([]byte, error) {
+		<-unblock
+		return nil, nil
+	})
+	return withPrecompile(addr, p), sync.OnceFunc(func() { close(unblock) })
 
-	return options.Func[sutConfig](func(c *sutConfig) {
-		if c.precompiles == nil {
-			c.precompiles = make(map[common.Address]libevm.PrecompiledContract)
-		}
-		c.precompiles[addr] = vm.NewStatefulPrecompile(func(vm.PrecompileEnvironment, []byte) ([]byte, error) {
-			<-unblock
-			return nil, nil
-		})
-	}), releaser
 }
 
 // withPrecompile adds any precompile at the specified address.
