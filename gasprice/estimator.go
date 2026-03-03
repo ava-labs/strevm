@@ -220,7 +220,7 @@ func (e *Estimator) SuggestGasTipCap(ctx context.Context) (tip *big.Int, _ error
 	if n := len(tips); n > 0 {
 		slices.SortFunc(tips, transaction.Compare)
 
-		i := (n - 1) * int(e.c.SuggestedTipPercentile) / 100 // nolint:gosec // Known to be between (0, 100]
+		i := (n - 1) * int(e.c.SuggestedTipPercentile) / 100 //nolint:gosec // Known to be between (0, 100]
 		price = tips[i].tip
 		price = math.BigMax(price, e.c.MinSuggestedTip)
 		price = math.BigMin(price, e.c.MaxSuggestedTip)
