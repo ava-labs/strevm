@@ -4,20 +4,15 @@
 package gasprice
 
 import (
-	"context"
-	"fmt"
 	"math/big"
-	"sync"
 	"testing"
 	"time"
 
 	"github.com/ava-labs/avalanchego/utils/logging"
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/common/math"
-	"github.com/ava-labs/libevm/core"
 	"github.com/ava-labs/libevm/core/rawdb"
 	"github.com/ava-labs/libevm/core/types"
-	"github.com/ava-labs/libevm/event"
 	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/rpc"
 	"github.com/stretchr/testify/assert"
@@ -91,76 +86,12 @@ func TestConfigValidate(t *testing.T) {
 	}
 }
 
-type backend struct {
-	lock   sync.RWMutex
-	blocks []*blocks.Block // blocks[i] is block with number i
-
-	headEvents event.FeedOf[core.ChainHeadEvent]
-}
-
-func newBackend(genesis *blocks.Block) *backend {
-	return &backend{
-		blocks: []*blocks.Block{genesis},
-	}
-}
-
-func (b *backend) accept(blk *blocks.Block) {
-	b.lock.Lock()
-	b.blocks = append(b.blocks, blk)
-	b.lock.Unlock()
-
-	b.headEvents.Send(core.ChainHeadEvent{Block: blk.EthBlock()})
-}
-
-func (b *backend) ResolveBlockNumber(bn rpc.BlockNumber) (uint64, error) {
-	head := b.LastAcceptedBlock().NumberU64()
-	switch bn {
-	case rpc.EarliestBlockNumber:
-		return 0, nil
-	case rpc.FinalizedBlockNumber, rpc.SafeBlockNumber, rpc.LatestBlockNumber, rpc.PendingBlockNumber:
-		return head, nil
-	default:
-		if bn < 0 {
-			return 0, fmt.Errorf("%s block unsupported", bn)
-		}
-		n := uint64(bn) //nolint:gosec // Non-negative checked above
-		if n > head {
-			return 0, fmt.Errorf("%w: block %d", errMissingBlock, n)
-		}
-		return n, nil
-	}
-}
-
-func (b *backend) BlockByNumber(ctx context.Context, bn rpc.BlockNumber) (*types.Block, error) {
-	n, err := b.ResolveBlockNumber(bn)
-	if err != nil {
-		return nil, err
-	}
-
-	b.lock.RLock()
-	defer b.lock.RUnlock()
-
-	return b.blocks[n].EthBlock(), nil
-}
-
-func (b *backend) SubscribeChainHeadEvent(ch chan<- core.ChainHeadEvent) event.Subscription {
-	return b.headEvents.Subscribe(ch)
-}
-
-func (b *backend) LastAcceptedBlock() *blocks.Block {
-	b.lock.RLock()
-	defer b.lock.RUnlock()
-
-	return b.blocks[len(b.blocks)-1]
-}
-
 type SUT struct {
 	*Estimator
 
 	signer  types.Signer
 	wallet  *saetest.Wallet
 	builder *blockstest.ChainBuilder
-	backend *backend
 }
 
 func newSUT(tb testing.TB, c Config) *SUT {
@@ -174,13 +105,12 @@ func newSUT(tb testing.TB, c Config) *SUT {
 	alloc := saetest.MaxAllocFor(wallet.Addresses()...)
 	genesis := blockstest.NewGenesis(tb, db, xdb, config, alloc)
 	builder := blockstest.NewChainBuilder(config, genesis)
-	backend := newBackend(genesis)
 
 	c.Now = func() time.Time {
-		return backend.LastAcceptedBlock().Timestamp()
+		return builder.LastAcceptedBlock().Timestamp()
 	}
 	log := saetest.NewTBLogger(tb, logging.Debug)
-	e, err := NewEstimator(backend, log, c)
+	e, err := NewEstimator(builder, log, c)
 	require.NoError(tb, err)
 	tb.Cleanup(func() {
 		require.NoError(tb, e.Close())
@@ -191,12 +121,7 @@ func newSUT(tb testing.TB, c Config) *SUT {
 		signer:    signer,
 		wallet:    wallet,
 		builder:   builder,
-		backend:   backend,
 	}
-}
-
-func (s *SUT) acceptBlock(b *blocks.Block) {
-	s.backend.accept(b)
 }
 
 const gasLimit = 1_000_000
@@ -363,7 +288,7 @@ func TestSuggestTipCap(t *testing.T) {
 				for i, price := range spec.txTips {
 					txs[i] = sut.newTx(t, 1, price)
 				}
-				sut.acceptBlock(sut.newBlock(t, spec.time, nil, txs...))
+				sut.newBlock(t, spec.time, nil, txs...)
 			}
 
 			got, err := sut.SuggestGasTipCap(t.Context())
@@ -442,7 +367,7 @@ func TestFeeHistory(t *testing.T) {
 			},
 			want: results{
 				height: nil,
-				err:    errMissingBlock,
+				err:    blockstest.ErrBlockNotFound,
 			},
 		},
 		{
@@ -576,7 +501,7 @@ func TestFeeHistory(t *testing.T) {
 				for i, tx := range txSpecs {
 					txs[i] = sut.newTx(t, tx.gas, tx.price)
 				}
-				sut.acceptBlock(sut.newBlock(t, 0, bounds, txs...))
+				sut.newBlock(t, 0, bounds, txs...)
 			}
 
 			a := tt.args
