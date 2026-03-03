@@ -1128,7 +1128,6 @@ func TestDebugRPCs(t *testing.T) {
 	})
 }
 
-
 func (s *SUT) testGetByHash(ctx context.Context, t *testing.T, want *types.Block) {
 	t.Helper()
 
