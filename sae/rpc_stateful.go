@@ -24,7 +24,12 @@ import (
 	"github.com/ava-labs/strevm/saexec"
 )
 
-var noopRelease tracers.StateReleaseFunc = func() {}
+var (
+	noopRelease tracers.StateReleaseFunc = func() {}
+
+	errPendingStateUnavailable = errors.New("state not available for pending block")
+	errNoGenesisTransactions   = errors.New("no transactions in genesis")
+)
 
 func (b *ethAPIBackend) RPCEVMTimeout() time.Duration {
 	return b.vm.config.RPCConfig.EVMTimeout
@@ -66,7 +71,7 @@ func (b *ethAPIBackend) StateAndHeaderByNumber(ctx context.Context, num rpc.Bloc
 // opened at the post-execution root, as carried by the faked header.
 func (b *ethAPIBackend) StateAndHeaderByNumberOrHash(ctx context.Context, numOrHash rpc.BlockNumberOrHash) (*state.StateDB, *types.Header, error) {
 	if n, ok := numOrHash.Number(); ok && n == rpc.PendingBlockNumber {
-		return nil, nil, errors.New("state not available for pending block")
+		return nil, nil, errPendingStateUnavailable
 	}
 
 	num, hash, err := b.resolveBlockNumberOrHash(numOrHash)
@@ -151,7 +156,7 @@ func (b *ethAPIBackend) StateAtBlock(_ context.Context, block *types.Block, reex
 // created by [hook.Points.BeforeExecutingBlock].
 func (b *ethAPIBackend) StateAtTransaction(ctx context.Context, block *types.Block, txIndex int, reexec uint64) (*core.Message, vm.BlockContext, *state.StateDB, tracers.StateReleaseFunc, error) {
 	if block.NumberU64() == 0 {
-		return nil, vm.BlockContext{}, nil, nil, errors.New("no transactions in genesis")
+		return nil, vm.BlockContext{}, nil, nil, errNoGenesisTransactions
 	}
 	txs := block.Transactions()
 	if txIndex < 0 || txIndex >= len(txs) {
