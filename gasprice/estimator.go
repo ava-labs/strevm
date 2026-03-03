@@ -302,7 +302,7 @@ func (e *Estimator) FeeHistory(
 		if bounds == nil {
 			return nil, nil, nil, nil, errMissingWorstCaseBounds
 		}
-		baseFee = append(baseFee, bounds.NextGasTime.BaseFee().ToBig())
+		baseFee = append(baseFee, bounds.LatestEndTime.BaseFee().ToBig())
 	} else if b := e.blockCache.getBlock(ctx, last+1); b != nil {
 		baseFee = append(baseFee, b.baseFee)
 	} else {

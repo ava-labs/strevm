@@ -24,11 +24,11 @@ import (
 // builder, that a [Block] will encounter when eventually executed.
 type WorstCaseBounds struct {
 	MaxBaseFee *uint256.Int
-	// NextGasTime is the worst-case [gastime.Time] after this block's gas has been
+	// LatestEndTime is the worst-case [gastime.Time] after this block's gas has been
 	// consumed and the target updated. Its [gastime.Time.BaseFee] is an upper
 	// bound on the next block's base fee because the next block's
 	// [gastime.Time.BeforeBlock] can only reduce the excess.
-	NextGasTime *gastime.Time
+	LatestEndTime *gastime.Time
 	// Invariant: keys of individual maps MUST be identical to those of the
 	// respective [hook.Op.Burn] map. For transaction-derived Ops, there is
 	// always 1 entry.

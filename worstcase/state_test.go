@@ -297,8 +297,8 @@ func TestMultipleBlocks(t *testing.T) {
 		require.NoError(t, expectedNextGasTime.AfterBlock(gas.Gas(state.GasUsed()), sut.hooks, header), "AfterBlock()")
 
 		want := &blocks.WorstCaseBounds{
-			MaxBaseFee:  block.wantBaseFee,
-			NextGasTime: expectedNextGasTime.Clone(),
+			MaxBaseFee:    block.wantBaseFee,
+			LatestEndTime: expectedNextGasTime.Clone(),
 		}
 		for _, bals := range block.wantMinSenderBalances {
 			uBals := make(map[common.Address]*uint256.Int)

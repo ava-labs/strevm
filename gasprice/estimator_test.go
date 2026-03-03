@@ -373,7 +373,7 @@ func TestFeeHistory(t *testing.T) {
 	cfg.HistoryMaxBlocksFromTip = 1
 	cfg.HistoryMaxBlocks = 2
 	bounds := &blocks.WorstCaseBounds{
-		NextGasTime: gastime.New(time.Now(), 1, math.MaxUint64),
+		LatestEndTime: gastime.New(time.Now(), 1, math.MaxUint64),
 	}
 	type (
 		txSpec struct {
@@ -497,7 +497,7 @@ func TestFeeHistory(t *testing.T) {
 				height: common.Big1,
 				baseFees: []*big.Int{
 					big.NewInt(1),
-					bounds.NextGasTime.BaseFee().ToBig(),
+					bounds.LatestEndTime.BaseFee().ToBig(),
 				},
 				portionFull: []float64{
 					21_000. / gasLimit,
@@ -554,7 +554,7 @@ func TestFeeHistory(t *testing.T) {
 				baseFees: []*big.Int{
 					big.NewInt(1),
 					big.NewInt(2),
-					bounds.NextGasTime.BaseFee().ToBig(),
+					bounds.LatestEndTime.BaseFee().ToBig(),
 				},
 				portionFull: []float64{
 					21_000. / gasLimit,
