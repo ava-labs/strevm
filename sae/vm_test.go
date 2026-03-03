@@ -310,7 +310,6 @@ func withBlockingPrecompile(addr common.Address) (sutOption, func()) {
 		return nil, nil
 	})
 	return withPrecompile(addr, p), sync.OnceFunc(func() { close(unblock) })
-
 }
 
 // withPrecompile adds any precompile at the specified address.
@@ -329,10 +328,10 @@ func withPrecompile(addr common.Address, precompile libevm.PrecompiledContract) 
 // executed.
 func registerPrecompiles(tb testing.TB, precompiles map[common.Address]libevm.PrecompiledContract) {
 	tb.Helper()
-	libevmHooks := &libevmhookstest.Stub{
+	h := &libevmhookstest.Stub{
 		PrecompileOverrides: precompiles,
 	}
-	libevmHooks.Register(tb)
+	h.Register(tb)
 }
 
 func (s *SUT) nodeID() ids.NodeID {
