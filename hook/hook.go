@@ -130,7 +130,7 @@ type Op struct {
 func (o *Op) ApplyTo(stateDB *state.StateDB) error {
 	for from, acc := range o.Burn {
 		if acc.MinBalance.Lt(&acc.Amount) {
-			return fmt.Errorf("%w: account %s", errInvalidAccountDebit, from)
+			return fmt.Errorf("%w: account %s minimum balance %v < amount to debit %v", errInvalidAccountDebit, from, acc.MinBalance, acc.Amount)
 		}
 		if b := stateDB.GetBalance(from); b.Lt(&acc.MinBalance) {
 			return core.ErrInsufficientFunds
