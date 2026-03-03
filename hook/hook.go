@@ -103,7 +103,7 @@ type AccountDebit struct {
 	MinBalance uint256.Int
 }
 
-var errInvalidAccountDebit = errors.New("invalid account debit")
+var errMinBalanceBelowAmount = errors.New("minimum balance below amount to debit")
 
 // Op is an operation that can be applied to state during the execution of a
 // block.
@@ -130,7 +130,7 @@ type Op struct {
 func (o *Op) ApplyTo(stateDB *state.StateDB) error {
 	for from, acc := range o.Burn {
 		if acc.MinBalance.Lt(&acc.Amount) {
-			return fmt.Errorf("%w: account %s minimum balance %v < amount to debit %v", errInvalidAccountDebit, from, acc.MinBalance, acc.Amount)
+			return fmt.Errorf("%w: account %s minimum balance %v < amount to debit %v", errMinBalanceBelowAmount, from, acc.MinBalance, acc.Amount)
 		}
 		if b := stateDB.GetBalance(from); b.Lt(&acc.MinBalance) {
 			return core.ErrInsufficientFunds

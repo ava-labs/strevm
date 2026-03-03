@@ -229,8 +229,8 @@ func bigToUint256(v *big.Int) (_ uint256.Int, overflow bool) {
 	return x, overflow
 }
 
-// addMul returns a*b + c and reports whether overflow occurred
-func addMul(a uint64, b, c *uint256.Int) (_ uint256.Int, overflow bool) {
+// mulAdd returns a*b + c and reports whether overflow occurred.
+func mulAdd(a uint64, b, c *uint256.Int) (_ uint256.Int, overflow bool) {
 	var x uint256.Int
 	x.SetUint64(a)
 	if _, overflow := x.MulOverflow(&x, b); overflow {
@@ -251,7 +251,7 @@ func txToOp(from common.Address, tx *types.Transaction, baseFee *uint256.Int) (h
 	if overflow {
 		return Op{}, core.ErrInsufficientFundsForTransfer
 	}
-	minBalance, overflow := addMul(tx.Gas(), &gasFeeCap, &value)
+	minBalance, overflow := mulAdd(tx.Gas(), &gasFeeCap, &value)
 	if overflow {
 		return Op{}, errCostOverflow
 	}
@@ -266,7 +266,7 @@ func txToOp(from common.Address, tx *types.Transaction, baseFee *uint256.Int) (h
 		effectiveGasPrice.Set(&gasFeeCap)
 	}
 
-	amount, overflow := addMul(tx.Gas(), &effectiveGasPrice, &value)
+	amount, overflow := mulAdd(tx.Gas(), &effectiveGasPrice, &value)
 	if overflow {
 		return Op{}, errCostOverflow
 	}

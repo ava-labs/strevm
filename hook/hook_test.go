@@ -173,7 +173,7 @@ func TestOp_ApplyTo(t *testing.T) {
 					},
 				},
 			},
-			wantErr: errInvalidAccountDebit,
+			wantErr: errMinBalanceBelowAmount,
 			wantAccounts: []account{
 				{
 					address: eoa,
@@ -192,7 +192,7 @@ func TestOp_ApplyTo(t *testing.T) {
 					},
 				},
 			},
-			wantErr: errInvalidAccountDebit,
+			wantErr: errMinBalanceBelowAmount,
 			wantAccounts: []account{
 				{
 					address: eoa,
