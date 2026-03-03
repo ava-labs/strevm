@@ -7,7 +7,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math"
 	"math/big"
 	"time"
 
@@ -22,6 +21,7 @@ import (
 	"github.com/ava-labs/libevm/rpc"
 
 	"github.com/ava-labs/strevm/blocks"
+	"github.com/ava-labs/strevm/saexec"
 )
 
 var noopRelease tracers.StateReleaseFunc = func() {}
@@ -91,11 +91,11 @@ func (b *ethAPIBackend) StateAndHeaderByNumberOrHash(ctx context.Context, numOrH
 		// TODO(arr4n) export [blocks.executionResults] to avoid multiple
 		// database reads and canoto unmarshallings here.
 		var err error
-		hdr.Root, err = b.postExecutionStateRoot(hash, num)
+		hdr.Root, err = b.vm.postExecutionStateRoot(hash, num)
 		if err != nil {
 			return nil, nil, err
 		}
-		hdr.BaseFee, err = b.executionBaseFee(hash, num)
+		hdr.BaseFee, err = b.vm.executionBaseFee(hash, num)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -119,15 +119,12 @@ func (b *ethAPIBackend) StateAndHeaderByNumberOrHash(ctx context.Context, numOrH
 //
 // Reference: https://geth.ethereum.org/docs/developers/evm-tracing#state-availability
 func (b *ethAPIBackend) StateAtBlock(_ context.Context, block *types.Block, reexec uint64, base *state.StateDB, readOnly bool, preferDisk bool) (*state.StateDB, tracers.StateReleaseFunc, error) {
-	hash := block.Hash()
-	num := block.NumberU64()
-
 	// Guard against in-memory blocks that haven't been executed yet.
-	if bl, ok := b.vm.blocks.Load(hash); ok && !bl.Executed() {
-		return nil, nil, fmt.Errorf("execution results not yet available for block %d", num)
+	if bl, ok := b.vm.blocks.Load(block.Hash()); ok && !bl.Executed() {
+		return nil, nil, fmt.Errorf("execution results not yet available for block %d", block.NumberU64())
 	}
 
-	root, err := b.postExecutionStateRoot(hash, num)
+	root, err := b.vm.postExecutionStateRoot(block.Hash(), block.NumberU64())
 	if err != nil {
 		return nil, nil, err
 	}
@@ -144,12 +141,14 @@ func (b *ethAPIBackend) StateAtBlock(_ context.Context, block *types.Block, reex
 // the state just before the target transaction, then returns the message and
 // block context needed for tracing.
 //
-// NOTE: The replay follows the same flow as [saexec.Executor.execute]: parent
-// state, BeforeExecutingBlock hook, execution base fee, then transaction
-// application. It omits execution-only concerns (gas clock, receipts, bound
-// checks, EndOfBlockOps, AfterExecutingBlock) that are irrelevant to state
-// tracing. If the execution pipeline in [saexec.Executor.execute] changes, this
-// method must be updated accordingly.
+// Replay uses [saexec.NewBlockExecution] and [saexec.BlockExecution.ExecuteBlock] to
+// guarantee identical pipeline ordering with [saexec.Executor.execute].
+// Execution-only concerns (gas clock, bound checks) are omitted via nil
+// callbacks. End-of-block operations are suppressed by passing nil Hooks.
+//
+// The returned release function calls
+// [saexec.BlockExecution.AfterExecutingBlock] to clean up any resources
+// created by [hook.Points.BeforeExecutingBlock].
 func (b *ethAPIBackend) StateAtTransaction(ctx context.Context, block *types.Block, txIndex int, reexec uint64) (*core.Message, vm.BlockContext, *state.StateDB, tracers.StateReleaseFunc, error) {
 	if block.NumberU64() == 0 {
 		return nil, vm.BlockContext{}, nil, nil, errors.New("no transactions in genesis")
@@ -175,68 +174,53 @@ func (b *ethAPIBackend) StateAtTransaction(ctx context.Context, block *types.Blo
 		return nil, vm.BlockContext{}, nil, nil, err
 	}
 
-	// Replicate the execution pipeline ordering from saexec/execution.go:
-	// hooks run before the header is modified with the execution base fee.
-	chainConfig := b.ChainConfig()
-	rules := chainConfig.Rules(block.Number(), true /*isMerge*/, block.Time())
-	if err := b.vm.exec.Hooks().BeforeExecutingBlock(rules, stateDB, block); err != nil {
-		return nil, vm.BlockContext{}, nil, nil, err
-	}
-
-	// Replace the worst-case consensus base fee in the header with the
-	// actual execution base fee, as done during block execution.
-	header := block.Header() // already returns a copy
-	header.BaseFee, err = b.executionBaseFee(block.Hash(), block.NumberU64())
+	baseFee, err := b.vm.executionBaseFee(block.Hash(), block.NumberU64())
 	if err != nil {
 		return nil, vm.BlockContext{}, nil, nil, err
 	}
 
-	signer := types.MakeSigner(chainConfig, block.Number(), block.Time())
-	blockCtx := core.NewEVMBlockContext(header, b.vm.exec.ChainContext(), &header.Coinbase)
-	gasPool := core.GasPool(math.MaxUint64)
+	prep, err := saexec.NewBlockExecution(stateDB, block, baseFee, b.vm.hooks, b.ChainConfig(), b.vm.exec.ChainContext())
+	if err != nil {
+		return nil, vm.BlockContext{}, nil, nil, err
+	}
 
 	// Replay transactions 0..txIndex-1 to produce the state just before the
 	// target transaction.
-	for i, tx := range txs[:txIndex] {
-		stateDB.SetTxContext(tx.Hash(), i)
-		msg, err := core.TransactionToMessage(tx, signer, header.BaseFee)
-		if err != nil {
-			return nil, vm.BlockContext{}, nil, nil, err
-		}
-		txCtx := core.NewEVMTxContext(msg)
-		evm := vm.NewEVM(blockCtx, txCtx, stateDB, chainConfig, vm.Config{})
-		if _, err := core.ApplyMessage(evm, msg, &gasPool); err != nil {
-			return nil, vm.BlockContext{}, nil, nil, fmt.Errorf("replaying tx %d: %v", i, err)
-		}
-		stateDB.Finalise(true) // always true for post-merge
+	if _, _, err := prep.ExecuteBlock(&saexec.ExecuteBlockConfig{
+		Transactions: txs[:txIndex],
+	}); err != nil {
+		return nil, vm.BlockContext{}, nil, nil, err
 	}
 
 	// Prepare the target transaction's message.
 	targetTx := txs[txIndex]
-	msg, err := core.TransactionToMessage(targetTx, signer, header.BaseFee)
+	msg, err := core.TransactionToMessage(targetTx, prep.Signer, prep.Header.BaseFee)
 	if err != nil {
 		return nil, vm.BlockContext{}, nil, nil, err
 	}
-	return msg, blockCtx, stateDB, noopRelease, nil
+	release := func() {
+		prep.AfterExecutingBlock(nil)
+	}
+	return msg, prep.BlockCtx, stateDB, release, nil
 }
 
 // postExecutionStateRoot returns the post-execution state root for the block
 // identified by hash and number, checking in-memory blocks first, then falling
 // back to disk.
-func (b *ethAPIBackend) postExecutionStateRoot(hash common.Hash, num uint64) (common.Hash, error) {
-	if bl, ok := b.vm.blocks.Load(hash); ok {
+func (vm *VM) postExecutionStateRoot(hash common.Hash, num uint64) (common.Hash, error) {
+	if bl, ok := vm.blocks.Load(hash); ok {
 		return bl.PostExecutionStateRoot(), nil
 	}
-	return blocks.PostExecutionStateRoot(b.vm.xdb, num)
+	return blocks.PostExecutionStateRoot(vm.xdb, num)
 }
 
 // executionBaseFee returns the execution base fee for the block identified by
 // hash and number, checking in-memory blocks first, then falling back to disk.
-func (b *ethAPIBackend) executionBaseFee(hash common.Hash, num uint64) (*big.Int, error) {
-	if bl, ok := b.vm.blocks.Load(hash); ok {
+func (vm *VM) executionBaseFee(hash common.Hash, num uint64) (*big.Int, error) {
+	if bl, ok := vm.blocks.Load(hash); ok {
 		return bl.BaseFee().ToBig(), nil
 	}
-	bf, err := blocks.ExecutionBaseFee(b.vm.xdb, num)
+	bf, err := blocks.ExecutionBaseFee(vm.xdb, num)
 	if err != nil {
 		return nil, err
 	}
