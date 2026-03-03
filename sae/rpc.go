@@ -260,15 +260,15 @@ type blockChainAPI struct {
 // We override [ethapi.BlockChainAPI.GetBlockReceipts] so that we do not return
 // an error when a user queries a known, but not yet executed, block.
 func (b *blockChainAPI) GetBlockReceipts(ctx context.Context, blockNrOrHash rpc.BlockNumberOrHash) ([]map[string]any, error) {
-	receipts, ethBlk, err := b.b.getReceipts(blockNrOrHash)
+	receipts, blk, err := b.b.getReceipts(blockNrOrHash)
 	if err != nil || receipts == nil {
 		return nil, nil //nolint:nilerr // This follows Geth behavior for [ethapi.BlockChainAPI.GetBlockReceipts]
 	}
 
-	hash := ethBlk.Hash()
-	num := ethBlk.NumberU64()
-	signer := types.MakeSigner(b.b.vm.exec.ChainConfig(), ethBlk.Number(), ethBlk.Time())
-	txs := ethBlk.Transactions()
+	signer := b.b.exec.SignerForBlock(blk)
+	hash := blk.Hash()
+	num := blk.NumberU64()
+	txs := blk.Transactions()
 
 	result := make([]map[string]any, len(txs))
 	for i, receipt := range receipts {
