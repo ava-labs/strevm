@@ -158,6 +158,14 @@ func TestStateTracing(t *testing.T) {
 				})
 			}
 		}
+
+		t.Run("nonexistent_tx", func(t *testing.T) {
+			bogus := common.Hash{'n', 'o', 't', 'f', 'o', 'u', 'n', 'd'}
+			t.Logf("debug_traceTransaction(%#x) [nonexistent]", bogus)
+			var got traceResult
+			err := sut.CallContext(ctx, &got, "debug_traceTransaction", bogus)
+			require.Error(t, err)
+		})
 	})
 }
 
@@ -197,14 +205,6 @@ func TestTraceContractInteraction(t *testing.T) {
 	for range 2 {
 		bb := sut.runConsensusLoop(t)
 		vmTime.advanceToSettle(ctx, t, bb)
-	}
-	hasOp := func(logs []structLogEntry, op string) bool {
-		for _, l := range logs {
-			if l.Op == op {
-				return true
-			}
-		}
-		return false
 	}
 
 	// Trace the deposit tx (txIndex=1). The tracer must replay the deploy
@@ -309,4 +309,14 @@ func TestEthCall(t *testing.T) {
 			assert.Equal(t, uint256.NewInt(val).PaddedBytes(32), got)
 		})
 	}
+}
+
+// hasOp reports whether any [structLogEntry] in logs has the given opcode.
+func hasOp(logs []structLogEntry, op string) bool {
+	for _, l := range logs {
+		if l.Op == op {
+			return true
+		}
+	}
+	return false
 }
