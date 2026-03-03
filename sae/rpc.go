@@ -659,9 +659,6 @@ func (b *ethAPIBackend) getReceipts(numOrHash rpc.BlockNumberOrHash) (types.Rece
 	if err := blk.RestoreExecutionArtefacts(b.vm.db, b.vm.xdb, b.vm.exec.ChainConfig()); err != nil {
 		return nil, nil, fmt.Errorf("restoring execution artefacts: %v", err)
 	}
-	if !blk.Executed() {
-		return nil, nil, nil
-	}
 	return blk.Receipts(), ethBlock, nil
 }
 
