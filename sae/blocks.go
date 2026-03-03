@@ -143,7 +143,7 @@ func (vm *VM) buildBlock(
 		zap.Stringer("last_settled_hash", lastSettled.Hash()),
 	)
 
-	state, err := vm.exec.WorstCaseState(vm.hooks, vm.exec.ChainConfig(), lastSettled)
+	state, err := worstcase.NewState(vm.hooks, vm.exec.ChainConfig(), lastSettled, vm.exec)
 	if err != nil {
 		log.Warn("Worst-case state not able to be created",
 			zap.Error(err),

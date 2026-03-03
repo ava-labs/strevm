@@ -913,7 +913,7 @@ func TestCloseRecoversHashDB(t *testing.T) {
 	ctx, sut := newSUT(t, defaultHooks())
 	e, chain := sut.Executor, sut.chain
 
-	numBlocks := uint64(saedb.CommitTrieDBEvery) + 10
+	const numBlocks = uint64(saedb.CommitTrieDBEvery) + 10
 	for range numBlocks {
 		b := chain.NewBlock(t, types.Transactions{
 			sut.wallet.SetNonceAndSign(t, 0, &types.LegacyTx{
@@ -952,7 +952,7 @@ func TestCloseRecoversHashDB(t *testing.T) {
 
 			_, err := e.StateDB(root)
 			if diff := testerr.Diff(err, want); diff != "" {
-				t.Errorf("%T.StateDB([post-exeuction root of block %d]) %s", e, b.NumberU64(), diff)
+				t.Errorf("%T.StateDB([post-execution root of block %d]) %s", e, b.NumberU64(), diff)
 			}
 		}
 	}
@@ -968,14 +968,14 @@ func TestCloseRecoversHashDB(t *testing.T) {
 	t.Run("recover", func(t *testing.T) {
 		// Restart the chain to remove the TrieDB cache.
 		src := blocks.Source(chain.GetBlock)
-		e, err := New(final, src.AsHeaderSource(), sut.chainConfig, sut.db, sut.xdb, &triedb.Config{}, defaultHooks(), sut.log)
+		e, err := New(chain.Last(), src.AsHeaderSource(), sut.chainConfig, sut.db, sut.xdb, &triedb.Config{}, defaultHooks(), sut.log)
 		require.NoError(t, err, "New()")
 		t.Cleanup(func() {
 			require.NoErrorf(t, e.Close(), "%T.Close()", e)
 		})
 
 		checkStates(t, e, func(height uint64) bool {
-			return height == final.NumberU64()
+			return height == chain.Last().NumberU64()
 		})
 	})
 }

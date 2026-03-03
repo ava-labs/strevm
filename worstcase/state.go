@@ -17,7 +17,6 @@ import (
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core"
 	"github.com/ava-labs/libevm/core/state"
-	"github.com/ava-labs/libevm/core/state/snapshot"
 	"github.com/ava-labs/libevm/core/txpool"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/params"
@@ -62,19 +61,23 @@ type State struct {
 
 var errSettledBlockNotExecuted = errors.New("block marked for settling has not finished execution yet")
 
+// StateDBOpener provies a [state.StateDB] for the [State] to read from.
+type StateDBOpener interface {
+	StateDB(root common.Hash) (*state.StateDB, error)
+}
+
 // NewState constructs a new worst-case state on top of the settled block.
 func NewState(
 	hooks hook.Points,
 	config *params.ChainConfig,
-	stateCache state.Database,
 	settled *blocks.Block,
-	snaps *snapshot.Tree,
+	opener StateDBOpener,
 ) (*State, error) {
 	if !settled.Executed() {
 		return nil, errSettledBlockNotExecuted
 	}
 
-	db, err := state.New(settled.PostExecutionStateRoot(), stateCache, snaps)
+	db, err := opener.StateDB(settled.PostExecutionStateRoot())
 	if err != nil {
 		return nil, err
 	}

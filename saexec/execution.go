@@ -90,7 +90,7 @@ func (e *Executor) execute(b *blocks.Block, logger logging.Logger) error {
 		return fmt.Errorf("executing block built on parent %#x when last executed %#x", parent.Hash(), last)
 	}
 
-	stateDB, err := e.stateRecorder.StateDB(parent.PostExecutionStateRoot())
+	stateDB, err := e.StateDB(parent.PostExecutionStateRoot())
 	if err != nil {
 		return fmt.Errorf("state.New(%#x, ...): %v", parent.PostExecutionStateRoot(), err)
 	}
