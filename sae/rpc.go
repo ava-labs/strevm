@@ -629,7 +629,10 @@ func (b *ethAPIBackend) SetHead(uint64) {
 
 func (b *ethAPIBackend) GetReceipts(ctx context.Context, hash common.Hash) (types.Receipts, error) {
 	receipts, _, err := b.getReceipts(rpc.BlockNumberOrHashWithHash(hash, false))
-	return receipts, err
+	if err != nil {
+		return nil, nil //nolint:nilerr // This follows Geth behavior for [ethapi.Backend.GetReceipts]
+	}
+	return receipts, nil
 }
 
 // getReceipts resolves receipts and the underlying [types.Block] by number or
