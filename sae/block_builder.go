@@ -34,18 +34,18 @@ type blockBuilder struct {
 	mempool *txgossip.Set
 }
 
-func (b *blockBuilder) New(eth *types.Block, parent, lastSettled *blocks.Block) (*blocks.Block, error) {
+func (b *blockBuilder) new(eth *types.Block, parent, lastSettled *blocks.Block) (*blocks.Block, error) {
 	return blocks.New(eth, parent, lastSettled, b.log)
 }
 
-// Build a new block on top of the provided parent. The block context MAY be
+// build a new block on top of the provided parent. The block context MAY be
 // nil.
-func (b *blockBuilder) Build(
+func (b *blockBuilder) build(
 	ctx context.Context,
 	bCtx *block.Context,
 	parent *blocks.Block,
 ) (*blocks.Block, error) {
-	return b.build(
+	return b.buildWithTxs(
 		ctx,
 		bCtx,
 		parent,
@@ -54,11 +54,11 @@ func (b *blockBuilder) Build(
 	)
 }
 
-// Rebuild attempts to build a block identical to the provided block. If the
+// rebuild attempts to build a block identical to the provided block. If the
 // provided block contains any invalid components, those components will be set
 // to their valid counterparts in the returned block. The block context MAY be
 // nil.
-func (b *blockBuilder) Rebuild(
+func (b *blockBuilder) rebuild(
 	ctx context.Context,
 	bCtx *block.Context,
 	parent *blocks.Block,
@@ -97,7 +97,7 @@ func (b *blockBuilder) Rebuild(
 		}
 	}
 
-	return b.build(
+	return b.buildWithTxs(
 		ctx,
 		bCtx,
 		parent,
@@ -113,9 +113,9 @@ var (
 	errExecutionLagging      = errors.New("execution lagging for settlement")
 )
 
-// build implements the block-building logic shared by [blockBuilder.Build] and
-// [blockBuilder.Rebuild]. The block context MAY be nil.
-func (b *blockBuilder) build(
+// buildWithTxs implements the block-building logic shared by [blockBuilder.Build]
+// and [blockBuilder.Rebuild]. The block context MAY be nil.
+func (b *blockBuilder) buildWithTxs(
 	ctx context.Context,
 	bCtx *block.Context,
 	parent *blocks.Block,
@@ -296,7 +296,7 @@ func (b *blockBuilder) build(
 		return nil, err
 	}
 
-	block, err := b.New(ethB, parent, lastSettled)
+	block, err := b.new(ethB, parent, lastSettled)
 	if err != nil {
 		return nil, err
 	}

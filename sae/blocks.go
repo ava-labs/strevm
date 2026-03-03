@@ -53,13 +53,13 @@ func (vm *VM) ParseBlock(ctx context.Context, buf []byte) (*blocks.Block, error)
 		return nil, fmt.Errorf("%w: >%s", errBlockTooFarInFuture, maxFutureBlockDuration)
 	}
 
-	return vm.blockBuilder.New(b, nil, nil)
+	return vm.blockBuilder.new(b, nil, nil)
 }
 
 // BuildBlock builds a new block, using the last block passed to
 // [VM.SetPreference] as the parent. The block context MAY be nil.
 func (vm *VM) BuildBlock(ctx context.Context, bCtx *block.Context) (*blocks.Block, error) {
-	return vm.blockBuilder.Build(ctx, bCtx, vm.preference.Load())
+	return vm.blockBuilder.build(ctx, bCtx, vm.preference.Load())
 }
 
 var (
@@ -81,7 +81,7 @@ func (vm *VM) VerifyBlock(ctx context.Context, bCtx *block.Context, b *blocks.Bl
 		return fmt.Errorf("%w at height %d <= last-accepted (%d)", errBlockHeightTooLow, height, accepted)
 	}
 
-	rebuilt, err := vm.blockBuilder.Rebuild(ctx, bCtx, parent, b)
+	rebuilt, err := vm.blockBuilder.rebuild(ctx, bCtx, parent, b)
 	if err != nil {
 		return err
 	}
@@ -153,7 +153,7 @@ func (vm *VM) GetBlock(ctx context.Context, id ids.ID) (*blocks.Block, error) {
 				)
 			}
 
-			b, err := vm.blockBuilder.New(ethB, nil, nil)
+			b, err := vm.blockBuilder.new(ethB, nil, nil)
 			if err != nil {
 				return nil, err
 			}
