@@ -249,19 +249,22 @@ func TestStatefulRPCs(t *testing.T) {
 				require.Zero(t, wantBig.Cmp(got.StorageProof[0].Value), "GetProof() storageProof[0].Value: want %d, got %s", val, got.StorageProof[0].Value)
 			})
 
-			t.Run("eth_estimateGas", func(t *testing.T) {
-				got, err := sut.EstimateGas(ctx, callMsg)
-				require.NoError(t, err, "EstimateGas()")
-				assert.Positive(t, got, "EstimateGas() result")
 			})
-
-			t.Run("eth_createAccessList", func(t *testing.T) {
-				al, gas, errMsg, err := gc.CreateAccessList(ctx, callMsg)
-				require.NoError(t, err, "CreateAccessList()")
-				assert.Empty(t, errMsg, "CreateAccessList() error message")
-				assert.NotNil(t, al, "CreateAccessList() access list")
-				assert.Positive(t, gas, "CreateAccessList() gasUsed")
-			})
-		})
 	}
+
+	// eth_estimateGas and eth_createAccessList don't accept a block number
+	// parameter via ethclient/gethclient, so they always run against latest.
+	t.Run("eth_estimateGas", func(t *testing.T) {
+		got, err := sut.EstimateGas(ctx, callMsg)
+		require.NoError(t, err, "EstimateGas()")
+		assert.Positive(t, got, "EstimateGas() result")
+	})
+
+	t.Run("eth_createAccessList", func(t *testing.T) {
+		al, gas, errMsg, err := gc.CreateAccessList(ctx, callMsg)
+		require.NoError(t, err, "CreateAccessList()")
+		assert.Empty(t, errMsg, "CreateAccessList() error message")
+		assert.NotNil(t, al, "CreateAccessList() access list")
+		assert.Positive(t, gas, "CreateAccessList() gasUsed")
+	})
 }
