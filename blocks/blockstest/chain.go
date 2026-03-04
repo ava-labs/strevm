@@ -8,7 +8,6 @@
 package blockstest
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"slices"
@@ -165,8 +164,8 @@ func (cb *ChainBuilder) ResolveBlockNumber(bn rpc.BlockNumber) (uint64, error) {
 	}
 }
 
-// BlockByNumber returns the block at the specified height.
-func (cb *ChainBuilder) BlockByNumber(_ context.Context, bn rpc.BlockNumber) (*types.Block, error) {
+// BlockByNumber returns the accepted block at the specified height.
+func (cb *ChainBuilder) BlockByNumber(bn rpc.BlockNumber) (*types.Block, error) {
 	n, err := cb.ResolveBlockNumber(bn)
 	if err != nil {
 		return nil, err

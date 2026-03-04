@@ -32,7 +32,6 @@ import (
 	"github.com/ava-labs/libevm/rpc"
 
 	"github.com/ava-labs/strevm/blocks"
-	"github.com/ava-labs/strevm/gasprice"
 	"github.com/ava-labs/strevm/saexec"
 	"github.com/ava-labs/strevm/txgossip"
 )
@@ -40,7 +39,7 @@ import (
 // APIBackend is the union of all interfaces required to implement the SAE APIs.
 type APIBackend interface {
 	ethapi.Backend
-	gasprice.Backend
+	// TODO(ceyonur): Add gasprice.Backend interface.
 	tracers.Backend
 	filters.BloomOverrider
 }

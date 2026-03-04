@@ -4,7 +4,6 @@
 package gasprice
 
 import (
-	"context"
 	"math/big"
 	"slices"
 
@@ -111,14 +110,12 @@ func newBlockCache(log logging.Logger, backend Backend, size int) *blockCache {
 
 // getBlock returns the block at height n. If the block does not exist, it will
 // return nil.
-func (b *blockCache) getBlock(ctx context.Context, n uint64) *block {
+func (b *blockCache) getBlock(n uint64) *block {
 	if blk, ok := b.cache.Get(n); ok {
 		return blk
 	}
 
-	// `WithoutCancel` is used here because we want to continue fetching the block and caching it.
-	// Also this should not return an error if the context is cancelled.
-	blk, err := b.backend.BlockByNumber(context.WithoutCancel(ctx), rpc.BlockNumber(n)) //nolint:gosec // block numbers were previously resolved
+	blk, err := b.backend.BlockByNumber(rpc.BlockNumber(n)) //nolint:gosec // block numbers were previously resolved
 	if err != nil {
 		b.log.Error("fetching BlockByNumber",
 			zap.Uint64("number", n),

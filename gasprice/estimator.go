@@ -31,7 +31,7 @@ import (
 // Backend that the [Estimator] depends on for chain data.
 type Backend interface {
 	ResolveBlockNumber(bn rpc.BlockNumber) (uint64, error)
-	BlockByNumber(ctx context.Context, number rpc.BlockNumber) (*types.Block, error)
+	BlockByNumber(number rpc.BlockNumber) (*types.Block, error)
 	SubscribeChainHeadEvent(ch chan<- core.ChainHeadEvent) event.Subscription
 	LastAcceptedBlock() *blocks.Block
 }
@@ -209,7 +209,7 @@ func (e *Estimator) SuggestGasTipCap(ctx context.Context) (tip *big.Int, _ error
 		// getBlock does not return an error if the context is cancelled.
 		// We don't want to early return from `SuggestGasTipCap` if the context is cancelled.
 		// Instead we continue to fetch the blocks and cache them.
-		b := e.blockCache.getBlock(ctx, n)
+		b := e.blockCache.getBlock(n)
 		if b == nil || b.timestamp < recentUnix {
 			break
 		}
@@ -301,7 +301,7 @@ func (e *Estimator) FeeHistory(
 		if err := ctx.Err(); err != nil {
 			return nil, nil, nil, nil, err
 		}
-		b := e.blockCache.getBlock(ctx, n)
+		b := e.blockCache.getBlock(n)
 		if b == nil {
 			return nil, nil, nil, nil, fmt.Errorf("%w: %d", errMissingBlock, n)
 		}
@@ -318,7 +318,7 @@ func (e *Estimator) FeeHistory(
 			return nil, nil, nil, nil, errMissingWorstCaseBounds
 		}
 		baseFee = append(baseFee, bounds.LatestEndTime.BaseFee().ToBig())
-	} else if b := e.blockCache.getBlock(ctx, last+1); b != nil {
+	} else if b := e.blockCache.getBlock(last + 1); b != nil {
 		baseFee = append(baseFee, b.baseFee)
 	} else {
 		return nil, nil, nil, nil, fmt.Errorf("%w: %d", errMissingBlock, last+1)
