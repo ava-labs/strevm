@@ -18,7 +18,7 @@ jobs:
   # what gates PRs.
   go:
     runs-on: ubuntu-latest
-    needs: [go_build_prod, go_test, go_test_race, go_generate, go_tidy, require_fuzz_corpus, go_fuzz]
+    needs: [go_build_prod, go_test, go_test_race, go_generate, go_tidy, go_fuzz]
     steps:
       - run: echo "Dependencies successful"
 
@@ -52,35 +52,6 @@ jobs:
         with:
           go-version-file: "go.mod"
       - run: go test ./... -race
-
-  go_fuzz:
-    needs: [find_fuzz_targets]
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        target: ${{fromJSON(needs.find_fuzz_targets.outputs.targets)}}
-    steps:
-      - name: Parse fuzz target
-        env:
-          TARGET: ${{ matrix.target }}
-        run: |
-          echo "$TARGET" | awk -F: '{print $1}' | xargs dirname | xargs -I{} echo "PACKAGE={}" >> "$GITHUB_ENV"
-          echo "$TARGET" | awk -F: '{print $2}' | xargs -I{} echo "FUNCTION={}" >> "$GITHUB_ENV"
-      - uses: actions/checkout@v4
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: "go.mod"
-      - name: Get Go cache directory
-        run: echo "GOCACHE=$(go env GOCACHE)" >> "$GITHUB_ENV"
-      - name: Restore fuzz corpus cache
-        uses: actions/cache@v4
-        with:
-          path: ${{ env.GOCACHE }}/fuzz
-          key: fuzz-corpus-${{ runner.os }}-${{ env.FUNCTION }}-${{ github.run_id }}
-          restore-keys: |
-            fuzz-corpus-${{env.PACKAGE}}-${{ env.FUNCTION }}
-      - run: go test ./${PACKAGE} -fuzz=${FUNCTION} -fuzztime=30s
 
   go_generate:
     env:
@@ -120,7 +91,7 @@ jobs:
         run: |
           echo "targets=$(grep --recursive --include '**_test.go' -oP "^func \KFuzz[^(]+" | xargs jq -c -n '$ARGS.positional' --args)" >> $GITHUB_OUTPUT
 
-  require_fuzz_corpus:
+  go_fuzz:
     needs: [find_fuzz_targets]
     runs-on: ubuntu-latest
     strategy:
@@ -145,3 +116,17 @@ jobs:
       - name: Require existing corpus of at least ${MIN_CORPUS_SIZE}
         run: | # Raw `go test` will be meaningful, and `-fuzz` won't start from nowhere
           [ -d "${CORPUS_DIR}" ] && [ $(ls "${CORPUS_DIR}" | wc -l) -gt ${MIN_CORPUS_SIZE} ]
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: "go.mod"
+      - name: Get Go cache directory
+        run: echo "GOCACHE=$(go env GOCACHE)" >> "$GITHUB_ENV"
+      - name: Restore fuzz corpus cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.GOCACHE }}/fuzz
+          key: fuzz-corpus-${{env.PACKAGE}}-${{ env.FUNCTION }}-${{ github.run_id }}
+          restore-keys: |
+            fuzz-corpus-${{env.PACKAGE}}-${{ env.FUNCTION }}-
+      - run: go test ./${PACKAGE} -fuzz=${FUNCTION} -fuzztime=30s
