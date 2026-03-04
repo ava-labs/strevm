@@ -142,7 +142,7 @@ func (s *Stub) SubSecondBlockTime(hdr *types.Header) time.Duration {
 	return e.subSec
 }
 
-// EndOfBlockOps return the ops included in the block from [BuildBlock].
+// EndOfBlockOps return the ops included in the block by [BuildBlock].
 func (s *Stub) EndOfBlockOps(b *types.Block) ([]hook.Op, error) {
 	e := extra{}
 	if err := e.UnmarshalCanoto(b.Extra()); err != nil {
