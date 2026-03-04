@@ -4,9 +4,12 @@
 package gastime
 
 import (
+	"errors"
+
 	"github.com/StephenButtolph/canoto"
 	"github.com/ava-labs/avalanchego/vms/components/gas"
 
+	"github.com/ava-labs/strevm/hook"
 	"github.com/ava-labs/strevm/proxytime"
 )
 
@@ -18,6 +21,42 @@ type config struct {
 	staticPricing         bool      `canoto:"bool,3"`
 
 	canotoData canotoData_config
+}
+
+// newConfig builds and validates an internal config from [hook.GasPriceConfig].
+func newConfig(from hook.GasPriceConfig) (config, error) {
+	c := config{
+		targetToExcessScaling: from.TargetToExcessScaling,
+		minPrice:              from.MinPrice,
+		staticPricing:         from.StaticPricing,
+	}
+	if err := c.validate(); err != nil {
+		return config{}, err
+	}
+	return c, nil
+}
+
+var (
+	errTargetToExcessScalingZero = errors.New("targetToExcessScaling must be non-zero")
+	errMinPriceZero              = errors.New("minPrice must be non-zero")
+)
+
+func (c *config) validate() error {
+	if c.targetToExcessScaling == 0 {
+		return errTargetToExcessScalingZero
+	}
+	if c.minPrice == 0 {
+		return errMinPriceZero
+	}
+	return nil
+}
+
+// equal returns true if the logical fields of c and other are equal.
+// It ignores canoto internal fields.
+func (c config) equals(other config) bool {
+	return c.targetToExcessScaling == other.targetToExcessScaling &&
+		c.minPrice == other.minPrice &&
+		c.staticPricing == other.staticPricing
 }
 
 // A TimeMarshaler can marshal a time to and from canoto. It is of limited use

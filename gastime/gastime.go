@@ -51,23 +51,6 @@ func (tm *Time) establishInvariants() {
 	tm.Time.SetRateInvariants(&tm.target, &tm.excess)
 }
 
-// DefaultTargetToExcessScaling is the default ratio between gas target and the
-// reciprocal of the excess coefficient used in price calculation (K variable in ACP-176).
-const DefaultTargetToExcessScaling = 87
-
-// DefaultMinPrice is the default minimum gas price (base fee), i.e. the M
-// parameter in ACP-176's price calculation.
-const DefaultMinPrice gas.Price = 1
-
-// DefaultGasPriceConfig returns the default [hook.GasPriceConfig] values.
-func DefaultGasPriceConfig() hook.GasPriceConfig {
-	return hook.GasPriceConfig{
-		TargetToExcessScaling: DefaultTargetToExcessScaling,
-		MinPrice:              DefaultMinPrice,
-		StaticPricing:         false,
-	}
-}
-
 // New returns a new [Time], derived from a [time.Time]. The consumption of
 // `target` * [TargetToRate] units of [gas.Gas] is equivalent to a tick of 1
 // second.
@@ -78,6 +61,8 @@ func New(at time.Time, target, startingExcess gas.Gas, gasPriceConfig hook.GasPr
 	}
 	target = clampTarget(target)
 	tm := proxytime.Of[gas.Gas](at)
+	// [proxytime.Time.SetRate] is documented as never returning an error when
+	// no invariants have been registered.
 	_ = tm.SetRate(rateOf(target))
 	return makeTime(tm, target, startingExcess, cfg), nil
 }
@@ -99,6 +84,23 @@ func SubSecond(hooks hook.Points, hdr *types.Header, rate gas.Gas) gas.Gas {
 
 // TargetToRate is the ratio between [Time.Target] and [proxytime.Time.Rate].
 const TargetToRate = 2
+
+// DefaultTargetToExcessScaling is the default ratio between gas target and the
+// reciprocal of the excess coefficient used in price calculation (K variable in ACP-176).
+const DefaultTargetToExcessScaling = 87
+
+// DefaultMinPrice is the default minimum gas price (base fee), i.e. the M
+// parameter in ACP-176's price calculation.
+const DefaultMinPrice gas.Price = 1
+
+// DefaultGasPriceConfig returns the default [hook.GasPriceConfig] values.
+func DefaultGasPriceConfig() hook.GasPriceConfig {
+	return hook.GasPriceConfig{
+		TargetToExcessScaling: DefaultTargetToExcessScaling,
+		MinPrice:              DefaultMinPrice,
+		StaticPricing:         false,
+	}
+}
 
 // MaxTarget is the maximum allowable [Time.Target] to avoid overflows of the
 // associated [proxytime.Time.Rate]. Values above this are silently clamped.
@@ -132,51 +134,6 @@ func (tm *Time) Excess() gas.Gas {
 	return tm.excess
 }
 
-// newConfig builds and validates an internal config from [hook.GasPriceConfig].
-func newConfig(from hook.GasPriceConfig) (config, error) {
-	// Although `from` should be validated by the caller, we validate it again here
-	// to ensure that the config is valid and to avoid any potential panics (div-by-zero).
-	if err := from.Validate(); err != nil {
-		return config{}, err
-	}
-	return config{
-		targetToExcessScaling: from.TargetToExcessScaling,
-		minPrice:              from.MinPrice,
-		staticPricing:         from.StaticPricing,
-	}, nil
-}
-
-// Equal returns true if the logical fields of c and other are equal.
-// It ignores canoto internal fields.
-func (c config) Equal(other config) bool {
-	return c.targetToExcessScaling == other.targetToExcessScaling &&
-		c.minPrice == other.minPrice &&
-		c.staticPricing == other.staticPricing
-}
-
-// SetConfig sets the full config with excess scaling to maintain price continuity.
-//
-// When config changes, excess is scaled to maintain price continuity:
-//   - K changes (via TargetToExcessScaling): Scale excess to maintain current price
-//   - StaticPricing is true: Set excess to 0, enable fixed price mode and update config.
-//   - M decreases: Scale excess to maintain current price
-//   - M increases AND current price >= new M: Scale excess to maintain current price
-//   - M increases AND current price < new M: Price bumps to new M (excess becomes 0)
-func (tm *Time) SetConfig(cfg hook.GasPriceConfig) error {
-	newCfg, err := newConfig(cfg)
-	if err != nil {
-		return err
-	}
-	if newCfg.Equal(tm.config) {
-		return nil
-	}
-
-	p := tm.Price()
-	tm.config = newCfg
-	tm.excess = tm.findExcessForPrice(p)
-	return nil
-}
-
 // Price returns the price of a unit of gas, i.e. the "base fee", determined by
 // [gas.CalculatePrice]. However, when [hook.GasPriceConfig.StaticPricing] is
 // true, Price always returns [hook.GasPriceConfig.MinPrice].
@@ -191,31 +148,6 @@ func (tm *Time) Price() gas.Price {
 // [config.targetToExcessScaling] * T, capped at [math.MaxUint64].
 func (tm *Time) excessScalingFactor() gas.Gas {
 	return intmath.BoundedMultiply(tm.config.targetToExcessScaling, tm.target, math.MaxUint64)
-}
-
-// findExcessForPrice uses binary search over uint64 to find the smallest excess
-// value that produces targetPrice with the current [config].
-func (tm *Time) findExcessForPrice(targetPrice gas.Price) gas.Gas {
-	// We return 0 in case targetPrice < minPrice because we should at least maintain the minimum price
-	// by setting the excess to 0. ( P = M * e^(0 / K) = M )
-	// Note: Even though we return 0 for excess it won't avoid accumulating excess in the long run.
-	if targetPrice <= tm.config.minPrice || tm.config.staticPricing {
-		return 0
-	}
-
-	k := tm.excessScalingFactor()
-
-	// The price function is monotonic non-decreasing so binary search is appropriate.
-	lo, hi := gas.Gas(0), gas.Gas(math.MaxUint64)
-	for lo < hi {
-		mid := lo + (hi-lo)/2
-		if gas.CalculatePrice(tm.config.minPrice, mid, k) >= targetPrice {
-			hi = mid
-		} else {
-			lo = mid + 1
-		}
-	}
-	return lo
 }
 
 // BaseFee is equivalent to [Time.Price], returning the result as a uint256 for
