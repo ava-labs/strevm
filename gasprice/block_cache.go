@@ -98,13 +98,10 @@ type blockCache struct {
 }
 
 func newBlockCache(log logging.Logger, backend Backend, size int) *blockCache {
-	// Additional slots in the cache allows processing queries for previous
-	// blocks while new blocks are added concurrently.
-	const extraSlots = 5
 	return &blockCache{
 		log:     log,
 		backend: backend,
-		cache:   lru.NewCache[uint64, *block](size + extraSlots),
+		cache:   lru.NewCache[uint64, *block](size),
 	}
 }
 

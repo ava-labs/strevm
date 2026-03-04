@@ -109,7 +109,7 @@ func TestMultipleBlocks(t *testing.T) {
 
 	state := sut.State
 	lastHash := sut.genesis.Hash()
-	wantNextGasTime := sut.genesis.ExecutedByGasTime().Clone()
+	wantLatestEndTime := sut.genesis.ExecutedByGasTime().Clone()
 
 	const importedAmount = 10
 	type op struct {
@@ -283,7 +283,7 @@ func TestMultipleBlocks(t *testing.T) {
 			Time:       block.time,
 		}
 
-		wantNextGasTime.BeforeBlock(sut.hooks, header)
+		wantLatestEndTime.BeforeBlock(sut.hooks, header)
 		require.NoErrorf(t, state.StartBlock(header), "StartBlock(%d)", i)
 		require.Equalf(t, block.wantBaseFee, state.BaseFee(), "base fee after StartBlock(%d)", i)
 		require.Equalf(t, block.wantGasLimit, state.GasLimit(), "gas limit after StartBlock(%d)", i)
@@ -298,11 +298,11 @@ func TestMultipleBlocks(t *testing.T) {
 
 		got, err := state.FinishBlock()
 		require.NoError(t, err, "FinishBlock()")
-		require.NoError(t, wantNextGasTime.AfterBlock(gas.Gas(state.GasUsed()), sut.hooks, header), "AfterBlock()")
+		require.NoError(t, wantLatestEndTime.AfterBlock(gas.Gas(state.GasUsed()), sut.hooks, header), "AfterBlock()")
 
 		want := &blocks.WorstCaseBounds{
 			MaxBaseFee:    block.wantBaseFee,
-			LatestEndTime: wantNextGasTime.Clone(),
+			LatestEndTime: wantLatestEndTime.Clone(),
 		}
 		for _, bals := range block.wantMinSenderBalances {
 			uBals := make(map[common.Address]*uint256.Int)

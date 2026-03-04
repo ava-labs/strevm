@@ -133,8 +133,7 @@ func (s *SUT) newBlock(tb testing.TB, time uint64, bounds *blocks.WorstCaseBound
 	return blk
 }
 
-func (s *SUT) newTx(tb testing.TB, gas, price uint64) *types.Transaction {
-	tb.Helper()
+func newDynamicFeeTx(gas, price uint64) *types.Transaction {
 	return types.NewTx(&types.DynamicFeeTx{
 		Gas:       gas,
 		GasTipCap: new(big.Int).SetUint64(price),
@@ -276,7 +275,7 @@ func TestSuggestTipCap(t *testing.T) {
 			for _, spec := range test.blocks {
 				txs := make([]*types.Transaction, len(spec.txTips))
 				for i, price := range spec.txTips {
-					txs[i] = sut.newTx(t, 1, price)
+					txs[i] = newDynamicFeeTx(1, price)
 				}
 				sut.newBlock(t, spec.time, nil, txs...)
 			}
@@ -296,11 +295,7 @@ func TestFeeHistory(t *testing.T) {
 		LatestEndTime: gastime.New(time.Now(), 1, math.MaxUint64),
 	}
 	type (
-		txSpec struct {
-			gas   uint64
-			price uint64
-		}
-		blockSpec []txSpec
+		blockSpec []*types.Transaction
 		args      struct {
 			numBlocks   uint64
 			lastBlock   rpc.BlockNumber
@@ -384,7 +379,7 @@ func TestFeeHistory(t *testing.T) {
 			name: "query_genesis",
 			blocks: []blockSpec{
 				{
-					{gas: 21_000, price: nAVAX},
+					newDynamicFeeTx(21_000, nAVAX),
 				},
 			},
 			args: args{
@@ -406,7 +401,7 @@ func TestFeeHistory(t *testing.T) {
 			name: "query_latest",
 			blocks: []blockSpec{
 				{
-					{gas: 21_000, price: nAVAX},
+					newDynamicFeeTx(21_000, nAVAX),
 				},
 			},
 			args: args{
@@ -428,10 +423,10 @@ func TestFeeHistory(t *testing.T) {
 			name: "query_too_old_block",
 			blocks: []blockSpec{
 				{
-					{gas: 21_000, price: nAVAX},
+					newDynamicFeeTx(21_000, nAVAX),
 				},
 				{
-					{gas: 100_000, price: nAVAX},
+					newDynamicFeeTx(100_000, nAVAX),
 				},
 			},
 			args: args{
@@ -446,14 +441,14 @@ func TestFeeHistory(t *testing.T) {
 			name: "query_max_blocks_with_percentiles",
 			blocks: []blockSpec{
 				{
-					{gas: 21_000, price: nAVAX},
+					newDynamicFeeTx(21_000, nAVAX),
 				},
 				{
-					{gas: 100_000, price: nAVAX},
-					{gas: 100_000, price: 2 * nAVAX},
-					{gas: 100_000, price: 3 * nAVAX},
-					{gas: 100_000, price: 4 * nAVAX},
-					{gas: 100_000, price: 5 * nAVAX},
+					newDynamicFeeTx(100_000, nAVAX),
+					newDynamicFeeTx(100_000, 2*nAVAX),
+					newDynamicFeeTx(100_000, 3*nAVAX),
+					newDynamicFeeTx(100_000, 4*nAVAX),
+					newDynamicFeeTx(100_000, 5*nAVAX),
 				},
 			},
 			args: args{
@@ -483,11 +478,7 @@ func TestFeeHistory(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			sut := newSUT(t, cfg)
 			for _, txSpecs := range tt.blocks {
-				txs := make([]*types.Transaction, len(txSpecs))
-				for i, tx := range txSpecs {
-					txs[i] = sut.newTx(t, tx.gas, tx.price)
-				}
-				sut.newBlock(t, 0, bounds, txs...)
+				sut.newBlock(t, 0, bounds, txSpecs...)
 			}
 
 			a := tt.args

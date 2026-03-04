@@ -16,7 +16,6 @@ import (
 	"time"
 
 	"github.com/ava-labs/avalanchego/utils/logging"
-	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/common/math"
 	"github.com/ava-labs/libevm/core"
 	"github.com/ava-labs/libevm/core/types"
@@ -31,7 +30,7 @@ import (
 // Backend that the [Estimator] depends on for chain data.
 type Backend interface {
 	ResolveBlockNumber(bn rpc.BlockNumber) (uint64, error)
-	BlockByNumber(number rpc.BlockNumber) (*types.Block, error)
+	BlockByNumber(bn rpc.BlockNumber) (*types.Block, error)
 	SubscribeChainHeadEvent(ch chan<- core.ChainHeadEvent) event.Subscription
 	LastAcceptedBlock() *blocks.Block
 }
@@ -139,14 +138,11 @@ func NewEstimator(backend Backend, log logging.Logger, c Config) (*Estimator, er
 	// TODO(StephenButtolph): Consider caching upon acceptance rather than execution.
 	events := make(chan core.ChainHeadEvent, 1)
 	sub := backend.SubscribeChainHeadEvent(events)
-	cache := newBlockCache(
-		log,
-		backend,
-		int(max( //nolint:gosec // Overflow would require misconfiguration
-			c.SuggestedTipMaxBlocks,
-			c.HistoryMaxBlocksFromHead+c.HistoryMaxBlocks,
-		)),
-	)
+	// Additional slots in the cache allows processing queries for previous
+	// blocks while new blocks are added concurrently.
+	const extraSlots = 5
+	size := max(c.SuggestedTipMaxBlocks, c.HistoryMaxBlocksFromHead+c.HistoryMaxBlocks) + extraSlots
+	cache := newBlockCache(log, backend, int(size)) //nolint:gosec // Overflow would require misconfiguration
 	go func() {
 		defer sub.Unsubscribe() // `Unsubscribe` can fire twice on Close(), but it's safe to call multiple times.
 		for {
@@ -285,7 +281,7 @@ func (e *Estimator) FeeHistory(
 		last+1,               // Underflow protection for "first" calculation
 	)
 	if blocks == 0 {
-		return common.Big0, nil, nil, nil, nil
+		return big.NewInt(0), nil, nil, nil, nil
 	}
 
 	first := last + 1 - blocks
