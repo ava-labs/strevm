@@ -89,9 +89,7 @@ func TestConfigValidate(t *testing.T) {
 type SUT struct {
 	*Estimator
 
-	signer types.Signer
-	wallet *saetest.Wallet
-	chain  *blockstest.ChainBuilder
+	chain *blockstest.ChainBuilder
 }
 
 func newSUT(tb testing.TB, c Config) *SUT {
