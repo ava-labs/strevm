@@ -126,7 +126,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ env.GOCACHE }}/fuzz
-          key: fuzz-corpus-${{env.PACKAGE}}-${{ env.FUNCTION }}-${{ hashFiles('**/testdata/fuzz/**') }}
+          key: fuzz-corpus-${{ env.PACKAGE }}-${{ env.FUNCTION }}-${{ hashFiles(format('{0}/testdata/fuzz/{1}/**', env.PACKAGE, env.FUNCTION)) }}
           restore-keys: |
-            fuzz-corpus-${{env.PACKAGE}}-${{ env.FUNCTION }}-
+            fuzz-corpus-${{ env.PACKAGE }}-${{ env.FUNCTION }}-
       - run: go test ./${PACKAGE} -fuzz=${FUNCTION} -fuzztime=30s
