@@ -102,17 +102,23 @@ func DefaultGasPriceConfig() hook.GasPriceConfig {
 	}
 }
 
+// MinTarget is the minimum allowable [Time.Target] to avoid division by zero.
+// Values below this are silently clamped.
+const MinTarget = gas.Gas(1)
+
 // MaxTarget is the maximum allowable [Time.Target] to avoid overflows of the
 // associated [proxytime.Time.Rate]. Values above this are silently clamped.
 const MaxTarget = gas.Gas(math.MaxUint64 / TargetToRate)
 
 func rateOf(target gas.Gas) gas.Gas { return target * TargetToRate }
-func clampTarget(t gas.Gas) gas.Gas { return min(t, MaxTarget) }
+func clampTarget(t gas.Gas) gas.Gas { return min(max(t, MinTarget), MaxTarget) }
 func roundRate(r gas.Gas) gas.Gas   { return (r / TargetToRate) * TargetToRate }
 
 // SafeRateOfTarget returns the corresponding rate for the given gas target,
-// protecting against overflow. It is equivalent to the product of
-// [TargetToRate] and the minimum of [MaxTarget] and the argument.
+// after clamping it to the allowable range.
+//
+// The argument is clamped to the range [[MinTarget], [MaxTarget]] and
+// multiplied by [TargetToRate].
 func SafeRateOfTarget(target gas.Gas) gas.Gas {
 	return rateOf(clampTarget(target))
 }
@@ -163,8 +169,8 @@ func (tm *Time) SetRate(r gas.Gas) error {
 }
 
 // SetTarget changes the target gas consumption per second, clamping the
-// argument to [MaxTarget]. It returns an error if the scaled [Time.Excess]
-// overflows as a result of the scaling.
+// argument to the range [[MinTarget], [MaxTarget]]. It returns an error if the
+// scaled [Time.Excess] overflows as a result of the scaling.
 func (tm *Time) SetTarget(t gas.Gas) error {
 	return tm.TimeMarshaler.SetRate(rateOf(clampTarget(t))) // also updates [Time.Target] as it was passed to [proxytime.Time.SetRateInvariants]
 }
