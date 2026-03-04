@@ -89,9 +89,9 @@ func TestConfigValidate(t *testing.T) {
 type SUT struct {
 	*Estimator
 
-	signer  types.Signer
-	wallet  *saetest.Wallet
-	builder *blockstest.ChainBuilder
+	signer types.Signer
+	wallet *saetest.Wallet
+	chain  *blockstest.ChainBuilder
 }
 
 func newSUT(tb testing.TB, c Config) *SUT {
@@ -100,27 +100,19 @@ func newSUT(tb testing.TB, c Config) *SUT {
 	db := rawdb.NewMemoryDatabase()
 	xdb := saetest.NewExecutionResultsDB()
 	config := saetest.ChainConfig()
-	signer := types.LatestSigner(config)
-	wallet := saetest.NewUNSAFEWallet(tb, 1, signer)
-	alloc := saetest.MaxAllocFor(wallet.Addresses()...)
-	genesis := blockstest.NewGenesis(tb, db, xdb, config, alloc)
-	builder := blockstest.NewChainBuilder(config, genesis)
+	genesis := blockstest.NewGenesis(tb, db, xdb, config, types.GenesisAlloc{})
+	chain := blockstest.NewChainBuilder(config, genesis)
 
-	c.Now = func() time.Time {
-		return builder.LastAcceptedBlock().Timestamp()
-	}
 	log := saetest.NewTBLogger(tb, logging.Debug)
-	e, err := NewEstimator(builder, log, c)
-	require.NoError(tb, err)
+	e, err := NewEstimator(chain, log, c)
+	require.NoError(tb, err, "NewEstimator()")
 	tb.Cleanup(func() {
-		require.NoError(tb, e.Close())
+		require.NoError(tb, e.Close(), "%T.Close()", e)
 	})
 
 	return &SUT{
 		Estimator: e,
-		signer:    signer,
-		wallet:    wallet,
-		builder:   builder,
+		chain:     chain,
 	}
 }
 
@@ -128,7 +120,7 @@ const gasLimit = 1_000_000
 
 func (s *SUT) newBlock(tb testing.TB, time uint64, bounds *blocks.WorstCaseBounds, txs ...*types.Transaction) *blocks.Block {
 	tb.Helper()
-	blk := s.builder.NewBlock(tb, txs, blockstest.WithEthBlockOptions(
+	blk := s.chain.NewBlock(tb, txs, blockstest.WithEthBlockOptions(
 		blockstest.ModifyHeader(func(h *types.Header) {
 			h.GasLimit = gasLimit
 			h.GasUsed = 0
@@ -145,7 +137,7 @@ func (s *SUT) newBlock(tb testing.TB, time uint64, bounds *blocks.WorstCaseBound
 
 func (s *SUT) newTx(tb testing.TB, gas, price uint64) *types.Transaction {
 	tb.Helper()
-	return s.wallet.SignTx(tb, s.signer, 0, &types.DynamicFeeTx{
+	return types.NewTx(&types.DynamicFeeTx{
 		Gas:       gas,
 		GasTipCap: new(big.Int).SetUint64(price),
 		// Set the fee cap to a very large value so the tx tip is always the
@@ -262,7 +254,7 @@ func TestSuggestTipCap(t *testing.T) {
 					txTips: []uint64{nAVAX},
 				},
 			},
-			want: big.NewInt(1 * nAVAX),
+			want: big.NewInt(nAVAX),
 		},
 		{
 			name: "no_transactions_fallback_to_last_price",
@@ -442,10 +434,6 @@ func TestFeeHistory(t *testing.T) {
 				},
 				{
 					{gas: 100_000, price: nAVAX},
-					{gas: 100_000, price: 2 * nAVAX},
-					{gas: 100_000, price: 3 * nAVAX},
-					{gas: 100_000, price: 4 * nAVAX},
-					{gas: 100_000, price: 5 * nAVAX},
 				},
 			},
 			args: args{

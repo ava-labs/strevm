@@ -248,7 +248,7 @@ var (
 //   - The first block of the actually processed range.
 //   - The tips paid for each percentile of the cumulative gas limits of the
 //     transactions in each block.
-//   - The baseFee of each block.
+//   - The baseFee of each block and the next block's upperbound baseFee.
 //   - The portion that each block was filled.
 func (e *Estimator) FeeHistory(
 	ctx context.Context,
