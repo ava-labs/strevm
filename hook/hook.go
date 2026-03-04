@@ -8,6 +8,8 @@
 package hook
 
 import (
+	"errors"
+	"fmt"
 	"math"
 	"time"
 
@@ -17,6 +19,7 @@ import (
 	"github.com/ava-labs/libevm/core"
 	"github.com/ava-labs/libevm/core/state"
 	"github.com/ava-labs/libevm/core/types"
+	"github.com/ava-labs/libevm/libevm"
 	"github.com/ava-labs/libevm/params"
 	"github.com/holiman/uint256"
 
@@ -56,6 +59,9 @@ type Points interface {
 	// These operations will be performed during both worst-case and actual
 	// execution.
 	EndOfBlockOps(*types.Block) []Op
+	// CanExecuteTransaction mirrors [params.RulesAllowlistHooks.CanExecuteTransaction]
+	// so that consumers can use a single concrete type for both SAE and libevm hooks.
+	CanExecuteTransaction(common.Address, *common.Address, libevm.StateReader) error
 	// BeforeExecutingBlock is called immediately prior to executing the block.
 	BeforeExecutingBlock(params.Rules, *state.StateDB, *types.Block) error
 	// AfterExecutingBlock is called immediately after executing the block.
@@ -87,11 +93,17 @@ type BlockBuilder interface {
 }
 
 // AccountDebit includes an amount that an account should have debited,
-// along with the nonce used to aut debit the account.
+// along with the nonce used to authorize the debit.
 type AccountDebit struct {
-	Nonce  uint64
+	Nonce uint64
+	// Amount to deduct from the account balance.
 	Amount uint256.Int
+	// MinBalance is the minimum balance the account must have for the operation
+	// to be valid. It MUST be at least [AccountDebit.Amount].
+	MinBalance uint256.Int
 }
+
+var errMinBalanceBelowAmount = errors.New("minimum balance below amount to debit")
 
 // Op is an operation that can be applied to state during the execution of a
 // block.
@@ -113,11 +125,14 @@ type Op struct {
 
 // ApplyTo applies the operation to the statedb.
 //
-// If an account has insufficient funds, [core.ErrInsufficientFunds] is returned
-// and the statedb is unchanged.
+// If an account has insufficient funds, [core.ErrInsufficientFunds] is
+// returned and the statedb is unchanged.
 func (o *Op) ApplyTo(stateDB *state.StateDB) error {
 	for from, acc := range o.Burn {
-		if b := stateDB.GetBalance(from); b.Lt(&acc.Amount) {
+		if acc.MinBalance.Lt(&acc.Amount) {
+			return fmt.Errorf("%w: account %s minimum balance %v < amount to debit %v", errMinBalanceBelowAmount, from, acc.MinBalance, acc.Amount)
+		}
+		if b := stateDB.GetBalance(from); b.Lt(&acc.MinBalance) {
 			return core.ErrInsufficientFunds
 		}
 	}

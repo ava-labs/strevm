@@ -30,14 +30,6 @@ func (b *ethAPIBackend) FeeHistory(context.Context, uint64, rpc.BlockNumber, []f
 	panic(errUnimplemented)
 }
 
-func (b *ethAPIBackend) ExtRPCEnabled() bool {
-	panic(errUnimplemented)
-}
-
-func (b *ethAPIBackend) PendingBlockAndReceipts() (*types.Block, types.Receipts) {
-	panic(errUnimplemented)
-}
-
 func (b *ethAPIBackend) GetPoolNonce(context.Context, common.Address) (uint64, error) {
 	panic(errUnimplemented)
 }

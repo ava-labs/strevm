@@ -5,6 +5,7 @@ package worstcase
 
 import (
 	"crypto/ecdsa"
+	"errors"
 	"math"
 	"math/big"
 	"testing"
@@ -17,11 +18,13 @@ import (
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/crypto"
 	"github.com/ava-labs/libevm/ethdb"
+	"github.com/ava-labs/libevm/libevm"
 	"github.com/ava-labs/libevm/libevm/ethtest"
 	"github.com/ava-labs/libevm/params"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/holiman/uint256"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/ava-labs/strevm/blocks"
@@ -189,7 +192,8 @@ func TestMultipleBlocks(t *testing.T) {
 						GasFeeCap: *uint256.NewInt(2),
 						Burn: map[common.Address]AccountDebit{
 							eoaNoBalance: {
-								Amount: *uint256.NewInt(importedAmount + 1),
+								Amount:     *uint256.NewInt(importedAmount + 1),
+								MinBalance: *uint256.NewInt(importedAmount + 1),
 							},
 						},
 					},
@@ -202,7 +206,8 @@ func TestMultipleBlocks(t *testing.T) {
 						GasFeeCap: *uint256.NewInt(2),
 						Burn: map[common.Address]AccountDebit{
 							eoaNoBalance: {
-								Amount: *uint256.NewInt(importedAmount),
+								Amount:     *uint256.NewInt(importedAmount),
+								MinBalance: *uint256.NewInt(importedAmount),
 							},
 						},
 					},
@@ -236,10 +241,9 @@ func TestMultipleBlocks(t *testing.T) {
 					GasPrice: big.NewInt(10), // charged in full
 				}),
 				wallet.SetNonceAndSign(t, 0, &types.DynamicFeeTx{
-					To:  &common.Address{},
-					Gas: 100_000,
-					// TODO(arr4n) do we want to be more lenient for dynamic-fee
-					// txs since we know the worst-case base fee?
+					To:        &common.Address{},
+					Gas:       100_000,
+					GasTipCap: big.NewInt(1),
 					GasFeeCap: big.NewInt(100),
 				}),
 				wallet.SetNonceAndSign(t, 0, &types.LegacyTx{
@@ -256,8 +260,8 @@ func TestMultipleBlocks(t *testing.T) {
 				{eoaViaTx: startingBalance},
 				{eoaViaTx: startingBalance - 2*100_000},
 				{eoaViaTx: startingBalance - 2*100_000 - (2*200_000 + 123_456)},
-				{eoaViaTx: startingBalance - 2*100_000 - (2*200_000 + 123_456) - 10*100_000},               // non-dynamic fee
-				{eoaViaTx: startingBalance - 2*100_000 - (2*200_000 + 123_456) - 10*100_000 - 100*100_000}, // dynamic fee _not_ reduced (https://github.com/ava-labs/strevm/issues/74)
+				{eoaViaTx: startingBalance - 2*100_000 - (2*200_000 + 123_456) - 10*100_000},             // non-dynamic fee
+				{eoaViaTx: startingBalance - 2*100_000 - (2*200_000 + 123_456) - 10*100_000 - 3*100_000}, // dynamic fee: effective gas price = baseFee + gasTipCap
 			},
 		},
 		{
@@ -481,6 +485,17 @@ func TestTransactionValidation(t *testing.T) {
 			},
 			wantErr: core.ErrFeeCapTooLow,
 		},
+		{
+			name:    "dynamic_fee_insufficient_for_fee_cap",
+			balance: 100_000, // enough for effectiveGasPrice (1) * gas (21000) but not gasFeeCap (100) * gas (21000) = 2_100_000
+			tx: &types.DynamicFeeTx{
+				GasTipCap: big.NewInt(0),
+				GasFeeCap: big.NewInt(100),
+				Gas:       params.TxGas,
+				To:        &common.Address{},
+			},
+			wantErr: core.ErrInsufficientFunds,
+		},
 
 		// EIP-3607: reject transactions from non-EOAs
 		{
@@ -619,4 +634,62 @@ func TestStartBlockQueueFullDueToTargetChanges(t *testing.T) {
 		Number:     big.NewInt(1),
 	})
 	require.ErrorIs(t, err, ErrQueueFull, "StartBlock() with full queue")
+}
+
+func TestCanExecuteTransactionHook(t *testing.T) {
+	config := saetest.ChainConfig()
+	signer := types.LatestSigner(config)
+	const (
+		blocked = iota
+		allowed
+
+		numAccounts
+	)
+	wallet := saetest.NewUNSAFEWallet(t, numAccounts, signer)
+	sut := newSUT(t, saetest.MaxAllocFor(wallet.Addresses()...))
+
+	errSenderBlocked := errors.New("sender blocked by allowlist")
+	sut.hooks.CanExecuteTransactionFn = func(from common.Address, _ *common.Address, _ libevm.StateReader) error {
+		if from == wallet.Addresses()[blocked] {
+			return errSenderBlocked
+		}
+		return nil
+	}
+
+	header := &types.Header{
+		ParentHash: sut.genesis.Hash(),
+		Number:     big.NewInt(1),
+	}
+	require.NoError(t, sut.StartBlock(header), "StartBlock()")
+
+	tests := []struct {
+		name           string
+		account        int
+		wantErr        error
+		wantNonceAfter uint64
+	}{
+		{
+			name:           "blocked_sender_rejected",
+			account:        blocked,
+			wantErr:        errSenderBlocked,
+			wantNonceAfter: 0,
+		},
+		{
+			name:           "allowed_sender_accepted",
+			account:        allowed,
+			wantErr:        nil,
+			wantNonceAfter: 1,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tx := wallet.SetNonceAndSign(t, tt.account, &types.DynamicFeeTx{
+				GasFeeCap: big.NewInt(1),
+				Gas:       params.TxGas,
+				To:        &common.Address{},
+			})
+			require.ErrorIsf(t, sut.ApplyTx(tx), tt.wantErr, "ApplyTx() error")
+			assert.Equalf(t, tt.wantNonceAfter, sut.State.db.GetNonce(wallet.Addresses()[tt.account]), "sender nonce after ApplyTx()")
+		})
+	}
 }

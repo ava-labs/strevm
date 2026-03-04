@@ -125,7 +125,13 @@ func (vm *VM) ethRPCServer() (*rpc.Server, error) {
 			},
 		},
 		// Standard Ethereum node APIS:
+		// - eth_getFilterChanges
+		// - eth_getFilterLogs
 		// - eth_getLogs
+		// - eth_newBlockFilter
+		// - eth_newFilter
+		// - eth_newPendingTransactionFilter
+		// - eth_uninstallFilter
 		//
 		// Geth-specific APIs:
 		// - eth_subscribe
@@ -255,18 +261,18 @@ type blockChainAPI struct {
 // We override [ethapi.BlockChainAPI.GetBlockReceipts] so that we do not return
 // an error when a user queries a known, but not yet executed, block.
 func (b *blockChainAPI) GetBlockReceipts(ctx context.Context, blockNrOrHash rpc.BlockNumberOrHash) ([]map[string]any, error) {
-	blk, err := b.b.getBlock(blockNrOrHash)
-	if err != nil || !blk.Executed() {
+	receipts, blk, err := b.b.getReceipts(blockNrOrHash)
+	if err != nil || blk == nil {
 		return nil, nil //nolint:nilerr // This follows Geth behavior for [ethapi.BlockChainAPI.GetBlockReceipts]
 	}
 
-	signer := b.b.vm.signerForBlock(blk.EthBlock())
 	hash := blk.Hash()
 	num := blk.NumberU64()
+	signer := b.b.vm.exec.SignerForBlock(blk)
 	txs := blk.Transactions()
 
 	result := make([]map[string]any, len(txs))
-	for i, receipt := range blk.Receipts() {
+	for i, receipt := range receipts {
 		result[i] = ethapi.MarshalReceipt(receipt, hash, num, signer, txs[i], i)
 	}
 	return result, nil
@@ -319,7 +325,7 @@ type ethAPIBackend struct {
 
 var _ APIBackend = (*ethAPIBackend)(nil)
 
-func (b *ethAPIBackend) ChainDb() ethdb.Database {
+func (b *ethAPIBackend) ChainDb() ethdb.Database { //nolint:staticcheck // this name required by ethapi.Backend interface
 	return b.vm.db
 }
 
@@ -328,11 +334,26 @@ func (b *ethAPIBackend) ChainConfig() *params.ChainConfig {
 }
 
 func (b *ethAPIBackend) RPCTxFeeCap() float64 {
-	return 0 // TODO(arr4n)
+	return b.vm.config.RPCConfig.TxFeeCap
 }
 
 func (b *ethAPIBackend) UnprotectedAllowed() bool {
 	return false
+}
+
+// ExtRPCEnabled reports that external RPC access is enabled. This adds an
+// additional security measure in case we add support for the personal API.
+func (*ethAPIBackend) ExtRPCEnabled() bool {
+	return true
+}
+
+// PendingBlockAndReceipts returns a nil block and receipts. Returning nil tells
+// geth that this backend does not support pending blocks. In SAE, the pending
+// block is defined as the most recently accepted block, but receipts are only
+// available after execution. Returning a non-nil block with incorrect or empty
+// receipts could cause geth to encounter errors.
+func (*ethAPIBackend) PendingBlockAndReceipts() (*types.Block, types.Receipts) {
+	return nil, nil
 }
 
 func (b *ethAPIBackend) AccountManager() *accounts.Manager {
@@ -343,8 +364,14 @@ func (b *ethAPIBackend) CurrentBlock() *types.Header {
 	return b.CurrentHeader()
 }
 
-func (b *ethAPIBackend) GetTd(context.Context, common.Hash) *big.Int {
-	return big.NewInt(0) // TODO(arr4n)
+// Total difficulty does not make sense in snowman consensus, as it is not PoW.
+// Ethereum, post merge (switch to PoS), sets the difficulty of each block to 0
+// (see: https://github.com/ethereum/go-ethereum/blob/be92f5487e67939b8dbbc9675d6c15be76ffd18d/consensus/beacon/consensus.go#L228-L231)
+// and no longer exposes the total difficulty of the chain at all via the API.
+//
+// TODO(JonathanOppenheimer): Once we update libevm, remove GetTd.
+func (b *ethAPIBackend) GetTd(ctx context.Context, hash common.Hash) *big.Int {
+	return common.Big0
 }
 
 func (b *ethAPIBackend) SyncProgress() ethereum.SyncProgress {
@@ -606,37 +633,32 @@ func (b *ethAPIBackend) SetHead(uint64) {
 }
 
 func (b *ethAPIBackend) GetReceipts(ctx context.Context, hash common.Hash) (types.Receipts, error) {
-	blk, err := b.getBlock(rpc.BlockNumberOrHashWithHash(hash, false))
-	if err != nil || !blk.Executed() {
+	receipts, _, err := b.getReceipts(rpc.BlockNumberOrHashWithHash(hash, false))
+	if err != nil {
 		return nil, nil //nolint:nilerr // This follows Geth behavior for [ethapi.Backend.GetReceipts]
 	}
-	return blk.Receipts(), nil
+	return receipts, nil
 }
 
-// TODO(arr4n) this returns settled blocks in an invalid state. Use
-// [VM.GetBlock] in or after PR 183.
-func (b *ethAPIBackend) getBlock(numOrHash rpc.BlockNumberOrHash) (*blocks.Block, error) {
-	n, hash, err := b.resolveBlockNumberOrHash(numOrHash)
+// getReceipts resolves receipts and the underlying [types.Block] by number or
+// hash, checking in-memory blocks first then falling back to the database.
+// Returns nils for blocks that are not yet executed.
+func (b *ethAPIBackend) getReceipts(numOrHash rpc.BlockNumberOrHash) (types.Receipts, *types.Block, error) {
+	blk, err := readByNumberOrHash(
+		b,
+		numOrHash,
+		func(b *blocks.Block) *blocks.Block {
+			return b
+		},
+		b.vm.settledBlockFromDB,
+	)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	if blk, ok := b.vm.blocks.Load(hash); ok {
-		return blk, nil
+	if !blk.Executed() {
+		return nil, nil, nil
 	}
-
-	ethBlock := rawdb.ReadBlock(b.vm.db, hash, n)
-	if ethBlock == nil {
-		return nil, nil
-	}
-
-	blk, err := b.vm.newBlock(ethBlock, nil, nil)
-	if err != nil {
-		return nil, err
-	}
-	if err := blk.RestoreExecutionArtefacts(b.vm.db, b.vm.xdb, b.vm.exec.ChainConfig()); err != nil {
-		return nil, fmt.Errorf("restoring execution artefacts: %w", err)
-	}
-	return blk, nil
+	return blk.Receipts(), blk.EthBlock(), nil
 }
 
 type noopSubscription struct {
