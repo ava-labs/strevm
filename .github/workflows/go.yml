@@ -89,29 +89,27 @@ jobs:
       - uses: actions/checkout@v4
       - id: find
         run: |
-          echo "targets=$(grep --recursive --include '**_test.go' -oP "^func \KFuzz[^(]+" | xargs jq -c -n '$ARGS.positional' --args)" >> $GITHUB_OUTPUT
+          targets=$(grep --recursive --include '**_test.go' -oP "^func \KFuzz[^(]+" | while IFS=: read -r file func; do
+            jq -c -n --arg p "$(dirname "$file")" --arg f "$func" '{package: $p, function: $f}'
+          done | jq -c -s '.')
+          echo "targets=${targets}" >> $GITHUB_OUTPUT
 
   go_fuzz:
     needs: [find_fuzz_targets]
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        target: ${{fromJSON(needs.find_fuzz_targets.outputs.targets)}}
+        include: ${{fromJSON(needs.find_fuzz_targets.outputs.targets)}}
     env:
+      PACKAGE: ${{ matrix.package }}
+      FUNCTION: ${{ matrix.function }}
+      CORPUS_DIR: ./${{ matrix.package }}/testdata/fuzz/${{ matrix.function }}
       # The actual corpus size is dependent on the test in question and how many
       # "interesting" cases can be found. This is an arbitrary lower bound,
       # chosen as approximately half the size of the very basic
       # `FuzzEffectiveGasTip`.
       MIN_CORPUS_SIZE: 20
     steps:
-      - name: Parse fuzz target
-        env:
-          TARGET: ${{ matrix.target }}
-        run: |
-          echo "$TARGET" | awk -F: '{print $1}' | xargs dirname | xargs -I{} echo "PACKAGE={}" >> "$GITHUB_ENV"
-          echo "$TARGET" | awk -F: '{print $2}' | xargs -I{} echo "FUNCTION={}" >> "$GITHUB_ENV"
-      - run: |
-          echo "CORPUS_DIR=./${PACKAGE}/testdata/fuzz/${FUNCTION}" >> "$GITHUB_ENV"
       - uses: actions/checkout@v4
       - name: Require existing corpus of at least ${MIN_CORPUS_SIZE}
         run: | # Raw `go test` will be meaningful, and `-fuzz` won't start from nowhere
@@ -126,7 +124,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ env.GOCACHE }}/fuzz
-          key: fuzz-corpus-${{ env.PACKAGE }}-${{ env.FUNCTION }}-${{ hashFiles(format('{0}/testdata/fuzz/{1}/**', env.PACKAGE, env.FUNCTION)) }}
+          key: fuzz-corpus-${{ matrix.package }}-${{ matrix.function }}-${{ hashFiles(format('{0}/testdata/fuzz/{1}/**', matrix.package, matrix.function)) }}
           restore-keys: |
-            fuzz-corpus-${{ env.PACKAGE }}-${{ env.FUNCTION }}-
+            fuzz-corpus-${{ matrix.package }}-${{ matrix.function }}-
       - run: go test ./${PACKAGE} -fuzz=${FUNCTION} -fuzztime=30s
