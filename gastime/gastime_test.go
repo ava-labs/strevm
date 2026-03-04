@@ -373,7 +373,7 @@ func TestMinAndStaticPrice(t *testing.T) {
 		{
 			name:     "zero_min_errors",
 			minPrice: 0,
-			wantErr:  testerr.Is(errMinPriceZero),
+			wantErr:  testerr.Is(errInvalidGasPriceConfig),
 		},
 		{
 			name:     "static_pricing_returns_min",

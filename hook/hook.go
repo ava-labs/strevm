@@ -161,17 +161,17 @@ type GasPriceConfig struct {
 }
 
 var (
-	ErrTargetToExcessScalingZero = errors.New("targetToExcessScaling must be non-zero")
-	ErrMinPriceZero              = errors.New("minPrice must be non-zero")
+	errTargetToExcessScalingZero = errors.New("targetToExcessScaling must be non-zero")
+	errMinPriceZero              = errors.New("minPrice must be non-zero")
 )
 
 // Validate checks that the GasPriceConfig fields are valid.
 func (c *GasPriceConfig) Validate() error {
 	if c.TargetToExcessScaling == 0 {
-		return ErrTargetToExcessScalingZero
+		return errTargetToExcessScalingZero
 	}
 	if c.MinPrice == 0 {
-		return ErrMinPriceZero
+		return errMinPriceZero
 	}
 	return nil
 }

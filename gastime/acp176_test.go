@@ -35,12 +35,12 @@ func TestInvalidConfigRejected(t *testing.T) {
 		{
 			"zero_scaling",
 			hook.GasPriceConfig{TargetToExcessScaling: 0, MinPrice: DefaultGasPriceConfig().MinPrice},
-			hook.ErrTargetToExcessScalingZero,
+			errInvalidGasPriceConfig,
 		},
 		{
 			"zero_min_price",
 			hook.GasPriceConfig{TargetToExcessScaling: DefaultGasPriceConfig().TargetToExcessScaling, MinPrice: 0},
-			hook.ErrMinPriceZero,
+			errInvalidGasPriceConfig,
 		},
 	}
 
@@ -353,10 +353,8 @@ func FuzzPriceInvarianceAfterBlock(f *testing.F) {
 
 		{
 			var wantErrIs error
-			if initScaling == 0 {
-				wantErrIs = errTargetToExcessScalingZero
-			} else if initMinPrice == 0 {
-				wantErrIs = errMinPriceZero
+			if initScaling == 0 || initMinPrice == 0 {
+				wantErrIs = errInvalidGasPriceConfig
 			}
 			require.ErrorIsf(t, err, wantErrIs, "New(... %+v)", initConfig)
 			if wantErrIs != nil {
@@ -368,20 +366,17 @@ func FuzzPriceInvarianceAfterBlock(f *testing.F) {
 		initPrice := tm.Price()
 
 		{
-			hooks := &hookstest.Stub{
-				Target: gas.Gas(newTarget),
-				GasPriceConfig: hook.GasPriceConfig{
+			hooks := hookstest.NewStub(
+				gas.Gas(newTarget),
+				hookstest.WithGasPriceConfig(hook.GasPriceConfig{
 					MinPrice:              gas.Price(newMinPrice),
 					TargetToExcessScaling: gas.Gas(newScaling),
 					StaticPricing:         newStaticPricing,
-				},
-			}
+				}))
 
 			var wantErrIs error
-			if newScaling == 0 {
-				wantErrIs = errTargetToExcessScalingZero
-			} else if newMinPrice == 0 {
-				wantErrIs = errMinPriceZero
+			if newScaling == 0 || newMinPrice == 0 {
+				wantErrIs = errInvalidGasPriceConfig
 			}
 
 			// Consuming gas increases the excess, which changes the price.

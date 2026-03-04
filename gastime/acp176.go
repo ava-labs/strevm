@@ -39,7 +39,7 @@ func (tm *Time) AfterBlock(used gas.Gas, hooks hook.Points, h *types.Header) err
 
 	cfg, err := newConfig(hookCfg)
 	if err != nil {
-		return err
+		return fmt.Errorf("%T.newConfig() after block: %w", tm, err)
 	}
 	if cfg.equals(tm.config) {
 		return nil

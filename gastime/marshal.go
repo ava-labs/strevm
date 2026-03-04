@@ -5,6 +5,7 @@ package gastime
 
 import (
 	"errors"
+	"fmt"
 
 	"github.com/StephenButtolph/canoto"
 	"github.com/ava-labs/avalanchego/vms/components/gas"
@@ -23,32 +24,19 @@ type config struct {
 	canotoData canotoData_config
 }
 
+var errInvalidGasPriceConfig = errors.New("invalid gas price config")
+
 // newConfig builds and validates an internal config from [hook.GasPriceConfig].
 func newConfig(from hook.GasPriceConfig) (config, error) {
+	if err := from.Validate(); err != nil {
+		return config{}, fmt.Errorf("%w: %w", errInvalidGasPriceConfig, err)
+	}
 	c := config{
 		targetToExcessScaling: from.TargetToExcessScaling,
 		minPrice:              from.MinPrice,
 		staticPricing:         from.StaticPricing,
 	}
-	if err := c.validate(); err != nil {
-		return config{}, err
-	}
 	return c, nil
-}
-
-var (
-	errTargetToExcessScalingZero = errors.New("targetToExcessScaling must be non-zero")
-	errMinPriceZero              = errors.New("minPrice must be non-zero")
-)
-
-func (c *config) validate() error {
-	if c.targetToExcessScaling == 0 {
-		return errTargetToExcessScalingZero
-	}
-	if c.minPrice == 0 {
-		return errMinPriceZero
-	}
-	return nil
 }
 
 // equal returns true if the logical fields of c and other are equal.
