@@ -93,7 +93,7 @@ func BuildBlock(
 	receipts []*types.Receipt,
 	ops []Op,
 ) (*types.Block, error) {
-	e := extra{}
+	var e extra
 	// If the header originally had fractional seconds set, we keep them in the
 	// built block.
 	if err := e.UnmarshalCanoto(header.Extra); err != nil {
@@ -108,7 +108,7 @@ func BuildBlock(
 // BlockRebuilderFrom returns a block builder that uses the provided block as a
 // source of time.
 func (s *Stub) BlockRebuilderFrom(b *types.Block) (hook.BlockBuilder[Op], error) {
-	e := extra{}
+	var e extra
 	if err := e.UnmarshalCanoto(b.Extra()); err != nil {
 		return nil, err
 	}
@@ -133,7 +133,7 @@ func (s *Stub) GasTargetAfter(*types.Header) gas.Gas {
 // [Stub.BuildHeader] in the header's `Extra` field. If said field is empty,
 // SubSecondBlockTime returns 0.
 func (s *Stub) SubSecondBlockTime(hdr *types.Header) time.Duration {
-	e := extra{}
+	var e extra
 	if err := e.UnmarshalCanoto(hdr.Extra); err != nil {
 		// This is left as a panic to avoid polluting various functions with
 		// error returns when no error is possible in production.
@@ -144,7 +144,7 @@ func (s *Stub) SubSecondBlockTime(hdr *types.Header) time.Duration {
 
 // EndOfBlockOps return the ops included in the block by [BuildBlock].
 func (s *Stub) EndOfBlockOps(b *types.Block) ([]hook.Op, error) {
-	e := extra{}
+	var e extra
 	if err := e.UnmarshalCanoto(b.Extra()); err != nil {
 		return nil, err
 	}

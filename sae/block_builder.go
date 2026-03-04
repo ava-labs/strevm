@@ -109,7 +109,7 @@ func (b *blockBuilderG[_]) rebuild(
 
 	rebuilder, err := b.hooks.BlockRebuilderFrom(block.EthBlock())
 	if err != nil {
-		return nil, fmt.Errorf("making rebuilder: %v", err)
+		return nil, fmt.Errorf("%T.BlockRebuilderFrom(%#x): %v", b.hooks, block.Hash(), err)
 	}
 	return b.buildWithTxs(
 		ctx,
