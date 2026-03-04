@@ -170,52 +170,6 @@ func (tm *Time) SetTarget(t gas.Gas) error {
 	return tm.TimeMarshaler.SetRate(rateOf(clampTarget(t))) // also updates [Time.Target] as it was passed to [proxytime.Time.SetRateInvariants]
 }
 
-// setConfig sets the full config with excess scaling to maintain price continuity.
-//
-// When config changes, excess is scaled to maintain price continuity:
-//   - K changes (via TargetToExcessScaling): Scale excess to maintain current price
-//   - StaticPricing is true: Set excess to 0, enable fixed price mode and update config.
-//   - M decreases: Scale excess to maintain current price
-//   - M increases AND current price >= new M: Scale excess to maintain current price
-//   - M increases AND current price < new M: Price bumps to new M (excess becomes 0)
-func (tm *Time) setConfig(cfg hook.GasPriceConfig, reinstateIfConfigChanges gas.Price) error {
-	newCfg, err := newConfig(cfg)
-	if err != nil {
-		return err
-	}
-	if newCfg.equals(tm.config) {
-		return nil
-	}
-	tm.config = newCfg
-	tm.excess = tm.findExcessForPrice(reinstateIfConfigChanges)
-	return nil
-}
-
-// findExcessForPrice uses binary search over uint64 to find the smallest excess
-// value that produces targetPrice with the current [config].
-func (tm *Time) findExcessForPrice(targetPrice gas.Price) gas.Gas {
-	// We return 0 in case targetPrice < minPrice because we should at least maintain the minimum price
-	// by setting the excess to 0. ( P = M * e^(0 / K) = M )
-	// Note: Even though we return 0 for excess it won't avoid accumulating excess in the long run.
-	if targetPrice <= tm.config.minPrice || tm.config.staticPricing {
-		return 0
-	}
-
-	k := tm.excessScalingFactor()
-
-	// The price function is monotonic non-decreasing so binary search is appropriate.
-	lo, hi := gas.Gas(0), gas.Gas(math.MaxUint64)
-	for lo < hi {
-		mid := lo + (hi-lo)/2
-		if gas.CalculatePrice(tm.config.minPrice, mid, k) >= targetPrice {
-			hi = mid
-		} else {
-			lo = mid + 1
-		}
-	}
-	return lo
-}
-
 // Tick is equivalent to [proxytime.Time.Tick] except that it also updates the
 // gas excess.
 func (tm *Time) Tick(g gas.Gas) {
