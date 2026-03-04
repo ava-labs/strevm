@@ -9,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/arr4n/shed/testerr"
 	"github.com/ava-labs/avalanchego/vms/components/gas"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/params"
@@ -362,16 +361,14 @@ func FuzzPriceInvarianceAfterBlock(f *testing.F) {
 		)
 
 		{
-			var wantErr testerr.Want
+			var wantErrIs error
 			if initScaling == 0 {
-				wantErr = testerr.Is(errTargetToExcessScalingZero)
+				wantErrIs = errTargetToExcessScalingZero
 			} else if initMinPrice == 0 {
-				wantErr = testerr.Is(errMinPriceZero)
+				wantErrIs = errMinPriceZero
 			}
-			if diff := testerr.Diff(err, wantErr); diff != "" {
-				t.Fatalf("New(... %+v) %s", initConfig, diff)
-			}
-			if wantErr != nil {
+			require.ErrorIsf(t, err, wantErrIs, "New(... %+v)", initConfig)
+			if wantErrIs != nil {
 				return
 			}
 		}
@@ -389,20 +386,19 @@ func FuzzPriceInvarianceAfterBlock(f *testing.F) {
 				},
 			}
 
-			var wantErr testerr.Want
+			var wantErrIs error
 			if newScaling == 0 {
-				wantErr = testerr.Is(errTargetToExcessScalingZero)
+				wantErrIs = errTargetToExcessScalingZero
 			} else if newMinPrice == 0 {
-				wantErr = testerr.Is(errMinPriceZero)
+				wantErrIs = errMinPriceZero
 			}
 
 			// Consuming gas increases the excess, which changes the price.
 			// We're only interested in invariance under changes in config.
 			const gasUsed = 0
-			if diff := testerr.Diff(tm.AfterBlock(gasUsed, hooks, nil), wantErr); diff != "" {
-				t.Fatalf("AfterBlock([%+v]) %s", hooks, diff)
-			}
-			if wantErr != nil {
+			err := tm.AfterBlock(gasUsed, hooks, nil)
+			require.ErrorIsf(t, err, wantErrIs, "AfterBlock([%+v])", hooks)
+			if wantErrIs != nil {
 				return
 			}
 		}
