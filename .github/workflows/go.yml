@@ -79,7 +79,7 @@ jobs:
           path: ${{ env.GOCACHE }}/fuzz
           key: fuzz-corpus-${{ runner.os }}-${{ env.FUNCTION }}-${{ github.run_id }}
           restore-keys: |
-            fuzz-corpus-${{ runner.os }}-${{ env.FUNCTION }}-
+            fuzz-corpus-${{env.PACKAGE}}-${{ env.FUNCTION }}
       - run: go test ./${PACKAGE} -fuzz=${FUNCTION} -fuzztime=30s
 
   go_generate:
