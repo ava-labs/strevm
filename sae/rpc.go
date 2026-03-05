@@ -322,9 +322,9 @@ type apiBackend struct {
 	accountManager *accounts.Manager
 
 	*gasprice.Estimator
-	chainIndexer
 	*resolver
 	*txgossip.Set
+	chainIndexer
 	bloomOverrider
 	*bloomIndexer
 }
