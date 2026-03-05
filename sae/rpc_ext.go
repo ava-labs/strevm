@@ -11,12 +11,13 @@ import (
 	"github.com/ava-labs/libevm/rpc"
 )
 
-// Avalanche-custom extensions to the eth namespace. These RPCs are not part of
-// the standard Ethereum JSON-RPC spec or geth, but are exposed by Avalanche
+// customAPI implements Avalanche-custom RPCs. These are not part of the
+// standard Ethereum JSON-RPC spec or in geth, but are exposed by Avalanche
 // nodes for compatibility with tooling that depends on them (e.g. Core).
 //
-// Reference implementations live in graft/coreth/internal/ethapi/api_extra.go
-// and graft/coreth/internal/ethapi/api.coreth.go.
+// Reference implementations live at:
+// - https://github.com/ava-labs/avalanchego/blob/v1.14.1/graft/coreth/internal/ethapi/api_extra.go
+// - https://github.com/ava-labs/avalanchego/blob/v1.14.1/graft/coreth/internal/ethapi/api.coreth.go
 type customAPI struct {
 	b *ethAPIBackend
 }
