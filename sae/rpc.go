@@ -140,11 +140,6 @@ func (vm *VM) ethRPCServer() (*rpc.Server, error) {
 		//  - logs
 		{"eth", filterAPI},
 		// Avalanche-custom eth extensions:
-		// - eth_getChainConfig
-		// - eth_baseFee
-		// - eth_suggestPriceOptions
-		// - eth_callDetailed
-		// - eth_newAcceptedTransactions (subscription)
 		{"eth", &ethExtAPI{b}},
 	}
 
