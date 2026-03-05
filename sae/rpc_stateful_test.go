@@ -248,8 +248,7 @@ func TestStatefulRPCs(t *testing.T) {
 				assert.NotEmpty(t, got.StorageProof[0].Proof, "GetProof() storageProof[0].Proof")
 				require.Zero(t, wantBig.Cmp(got.StorageProof[0].Value), "GetProof() storageProof[0].Value: want %d, got %s", val, got.StorageProof[0].Value)
 			})
-
-			})
+		})
 	}
 
 	// eth_estimateGas and eth_createAccessList don't accept a block number
