@@ -30,6 +30,7 @@ import (
 	"github.com/ava-labs/libevm/core/txpool/legacypool"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/ethdb"
+	"github.com/ava-labs/libevm/event"
 	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/triedb"
 	"github.com/prometheus/client_golang/prometheus"
@@ -64,6 +65,7 @@ type VM struct {
 		accepted, settled atomic.Pointer[blocks.Block]
 		synchronous       uint64
 	}
+	acceptedBlocks event.FeedOf[*types.Block]
 
 	exec         *saexec.Executor
 	mempool      *txgossip.Set
@@ -311,15 +313,15 @@ func NewVM(
 		// block available to the indexer via [core.ChainIndexer.AddCheckpoint].
 		bloomIdx := newBloomIndexer(vm.db, chainIdx, override, cfg.RPCConfig.BlocksPerBloomSection)
 		vm.toClose = append(vm.toClose, bloomIdx.Close)
-		numberResolver := &numberResolver{
+		numberResolver := &resolver{
 			lastAccepted: &vm.last.accepted,
 			lastSettled:  &vm.last.settled,
 			exec:         vm.exec,
 		}
 
 		estimatorBackend := &estimatorBackend{
-			chainIndexer:   chainIdx,
-			numberResolver: numberResolver,
+			resolver:       numberResolver,
+			acceptedBlocks: &vm.acceptedBlocks,
 			db:             vm.db,
 			lastAccepted:   &vm.last.accepted,
 		}
@@ -337,7 +339,7 @@ func NewVM(
 			Estimator:      estimator,
 			bloomIndexer:   bloomIdx,
 			bloomOverrider: override,
-			numberResolver: numberResolver,
+			resolver:       numberResolver,
 		}
 	}
 

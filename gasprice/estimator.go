@@ -17,7 +17,6 @@ import (
 
 	"github.com/ava-labs/avalanchego/utils/logging"
 	"github.com/ava-labs/libevm/common/math"
-	"github.com/ava-labs/libevm/core"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/event"
 	"github.com/ava-labs/libevm/params"
@@ -31,7 +30,7 @@ import (
 type Backend interface {
 	ResolveBlockNumber(bn rpc.BlockNumber) (uint64, error)
 	BlockByNumber(bn rpc.BlockNumber) (*types.Block, error)
-	SubscribeChainHeadEvent(ch chan<- core.ChainHeadEvent) event.Subscription
+	SubscribeAcceptedBlockEvent(ch chan<- *types.Block) event.Subscription
 	LastAcceptedBlock() *blocks.Block
 }
 
@@ -121,8 +120,8 @@ type Estimator struct {
 
 	last last
 
-	chainHead  event.Subscription
-	blockCache *blockCache
+	acceptedHead event.Subscription
+	blockCache   *blockCache
 }
 
 // NewEstimator creates an Estimator for gas tips and fee history.
@@ -131,11 +130,11 @@ func NewEstimator(backend Backend, log logging.Logger, c Config) (*Estimator, er
 		return nil, err
 	}
 
-	// New blocks are cached in the background to avoid slow responses after
-	// long periods of no requests to the estimator. This allows us to avoid
-	// parallelizing reads inside individual API calls.
-	events := make(chan core.ChainHeadEvent, 1)
-	sub := backend.SubscribeChainHeadEvent(events)
+	// New blocks are cached in the background upon acceptance to avoid slow
+	// responses after long periods of no requests to the estimator. This
+	// allows us to avoid parallelizing reads inside individual API calls.
+	events := make(chan *types.Block, 1)
+	sub := backend.SubscribeAcceptedBlockEvent(events)
 	// Additional slots in the cache allows processing queries for previous
 	// blocks while new blocks are added concurrently.
 	const extraSlots = 5
@@ -146,7 +145,7 @@ func NewEstimator(backend Backend, log logging.Logger, c Config) (*Estimator, er
 		for {
 			select {
 			case e := <-events:
-				cache.cacheBlock(e.Block)
+				cache.cacheBlock(e)
 			case <-sub.Err():
 				return
 			}
@@ -159,8 +158,8 @@ func NewEstimator(backend Backend, log logging.Logger, c Config) (*Estimator, er
 		last: last{
 			price: c.MinSuggestedTip,
 		},
-		chainHead:  sub,
-		blockCache: cache,
+		acceptedHead: sub,
+		blockCache:   cache,
 	}, nil
 }
 
@@ -322,7 +321,7 @@ func (e *Estimator) FeeHistory(
 
 // Close releases allocated resources.
 func (e *Estimator) Close() error {
-	e.chainHead.Unsubscribe()
+	e.acceptedHead.Unsubscribe()
 	return nil
 }
 

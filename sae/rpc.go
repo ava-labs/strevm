@@ -322,7 +322,7 @@ type ethAPIBackend struct {
 	accountManager *accounts.Manager
 	*gasprice.Estimator
 	chainIndexer
-	*numberResolver
+	*resolver
 
 	*txgossip.Set
 	bloomOverrider
@@ -475,13 +475,13 @@ func neverErrs[T any](fn func(ethdb.Reader, common.Hash, uint64) *T) canonicalRe
 	}
 }
 
-type NumberResolver interface {
+type numberResolver interface {
 	ResolveBlockNumber(rpc.BlockNumber) (uint64, error)
 }
 
-var _ NumberResolver = (*numberResolver)(nil)
+var _ numberResolver = (*resolver)(nil)
 
-type numberResolver struct {
+type resolver struct {
 	lastAccepted *atomic.Pointer[blocks.Block]
 	lastSettled  *atomic.Pointer[blocks.Block]
 	exec         *saexec.Executor
@@ -494,7 +494,7 @@ type numberResolver struct {
 // - SafeBlockNumber, FinalizedBlockNumber: the height of the last settled block
 // - Other block numbers: the height of the block with the given number
 // It returns an error if the block number is negative or greater than the height of the head block.
-func (r *numberResolver) ResolveBlockNumber(bn rpc.BlockNumber) (uint64, error) {
+func (r *resolver) ResolveBlockNumber(bn rpc.BlockNumber) (uint64, error) {
 	head := r.lastAccepted.Load().Height()
 
 	switch bn {
@@ -516,7 +516,7 @@ func (r *numberResolver) ResolveBlockNumber(bn rpc.BlockNumber) (uint64, error) 
 	return n, nil
 }
 
-func readByNumber[T any](r NumberResolver, db ethdb.Database, n rpc.BlockNumber, read canonicalReaderWithErr[T]) (*T, error) {
+func readByNumber[T any](r numberResolver, db ethdb.Database, n rpc.BlockNumber, read canonicalReaderWithErr[T]) (*T, error) {
 	num, err := r.ResolveBlockNumber(n)
 	if errors.Is(err, errFutureBlockNotResolved) {
 		return nil, nil

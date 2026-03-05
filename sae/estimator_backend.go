@@ -9,25 +9,30 @@ import (
 	"github.com/ava-labs/libevm/core/rawdb"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/ethdb"
+	"github.com/ava-labs/libevm/event"
 	"github.com/ava-labs/libevm/rpc"
 
 	"github.com/ava-labs/strevm/blocks"
 	"github.com/ava-labs/strevm/gasprice"
 )
 
-// estimatorBackend implements the subset of [ethapi.Backend] required to back a
-// [gasprice.Backend].
+// estimatorBackend implements [gasprice.Backend].
 type estimatorBackend struct {
-	chainIndexer
-	*numberResolver
-	db           ethdb.Database
-	lastAccepted *atomic.Pointer[blocks.Block]
+	*resolver
+
+	acceptedBlocks *event.FeedOf[*types.Block]
+	db             ethdb.Database
+	lastAccepted   *atomic.Pointer[blocks.Block]
 }
 
 var _ gasprice.Backend = (*estimatorBackend)(nil)
 
 func (e *estimatorBackend) BlockByNumber(n rpc.BlockNumber) (*types.Block, error) {
 	return readByNumber(e, e.db, n, neverErrs(rawdb.ReadBlock))
+}
+
+func (e *estimatorBackend) SubscribeAcceptedBlockEvent(ch chan<- *types.Block) event.Subscription {
+	return e.acceptedBlocks.Subscribe(ch)
 }
 
 func (e *estimatorBackend) LastAcceptedBlock() *blocks.Block {
