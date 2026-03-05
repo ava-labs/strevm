@@ -72,7 +72,7 @@ func (e *Executor) processQueue() {
 			err := e.execute(block, log)
 			switch {
 			case errors.Is(err, errFatal):
-				log.Fatal(
+				log.Fatal( //nolint:gocritic // False positive, will not os.Exit
 					"Block execution failed",
 					zap.String("playbook", emergencyPlaybookLink),
 					zap.Error(err),
