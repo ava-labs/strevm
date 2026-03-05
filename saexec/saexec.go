@@ -149,6 +149,11 @@ func (e *Executor) ChainContext() core.ChainContext {
 	return e.chainContext
 }
 
+// StateDB implements [StateDBOpener].
+func (e *Executor) StateDB(root common.Hash) (*state.StateDB, error) {
+	return state.New(root, e.stateCache, e.snaps)
+}
+
 // StateCache returns caching database underpinning execution.
 func (e *Executor) StateCache() state.Database {
 	return e.stateCache

@@ -146,14 +146,11 @@ func (b *ethAPIBackend) StateAtBlock(_ context.Context, block *types.Block, reex
 // the state just before the target transaction, then returns the message and
 // block context needed for tracing.
 //
-// Replay uses [saexec.NewBlockExecution] and [saexec.BlockExecution.ExecuteBlock] to
-// guarantee identical pipeline ordering with [saexec.Executor.execute].
-// Execution-only concerns (gas clock, bound checks) are omitted via nil
-// callbacks. End-of-block operations are suppressed by passing nil Hooks.
-//
-// The returned release function calls
-// [saexec.BlockExecution.AfterExecutingBlock] to clean up any resources
-// created by [hook.Points.BeforeExecutingBlock].
+// Replay calls [saexec.Execute] — the same pipeline used by
+// [saexec.Executor] — with [saexec.NoEndOfBlockOps] to suppress
+// end-of-block operations and [saexec.NullReceiptStore] to skip receipt
+// broadcasting. Bound checks are safe no-ops on restored settled blocks
+// (nil bounds).
 func (b *ethAPIBackend) StateAtTransaction(ctx context.Context, block *types.Block, txIndex int, reexec uint64) (*core.Message, vm.BlockContext, *state.StateDB, tracers.StateReleaseFunc, error) {
 	if block.NumberU64() == 0 {
 		return nil, vm.BlockContext{}, nil, nil, errNoGenesisTransactions
@@ -163,50 +160,71 @@ func (b *ethAPIBackend) StateAtTransaction(ctx context.Context, block *types.Blo
 		return nil, vm.BlockContext{}, nil, nil, fmt.Errorf("transaction index %d out of range [0, %d)", txIndex, len(txs))
 	}
 
-	// Look up the parent block to obtain its post-execution state.
-	var parentEthBlock *types.Block
-	if parentBl, ok := b.vm.blocks.Load(block.ParentHash()); ok {
-		parentEthBlock = parentBl.EthBlock()
-	} else {
-		parentEthBlock = rawdb.ReadBlock(b.db, block.ParentHash(), block.NumberU64()-1)
-	}
-	if parentEthBlock == nil {
-		return nil, vm.BlockContext{}, nil, nil, fmt.Errorf("parent block %#x not found", block.ParentHash())
-	}
-
-	stateDB, _, err := b.StateAtBlock(ctx, parentEthBlock, 0, nil, false, false)
+	// Resolve the target block as *blocks.Block so that Execute() can call
+	// bound checks and SetInterimExecutionTime (both safe no-ops on restored
+	// settled blocks with nil bounds).
+	targetBl, err := b.resolveBlock(block)
 	if err != nil {
 		return nil, vm.BlockContext{}, nil, nil, err
 	}
 
-	baseFee, err := b.vm.executionBaseFee(block.Hash(), block.NumberU64())
+	// Resolve the parent block for its post-execution state and gas time.
+	parentBl, err := b.resolveParentBlock(block)
 	if err != nil {
 		return nil, vm.BlockContext{}, nil, nil, err
 	}
 
-	prep, err := saexec.NewBlockExecution(stateDB, block, baseFee, b.vm.hooks, b.ChainConfig(), b.vm.exec.ChainContext())
+	stateDB, err := state.New(parentBl.PostExecutionStateRoot(), b.exec.StateCache(), nil)
 	if err != nil {
 		return nil, vm.BlockContext{}, nil, nil, err
 	}
 
 	// Replay transactions 0..txIndex-1 to produce the state just before the
 	// target transaction.
-	if _, _, err := prep.ExecuteBlock(&saexec.ExecuteBlockConfig{
-		Transactions: txs[:txIndex],
-	}); err != nil {
+	result, err := saexec.Execute(
+		targetBl,
+		stateDB,
+		parentBl.ExecutedByGasTime(),
+		txIndex,
+		saexec.NoEndOfBlockOps{Points: b.vm.hooks},
+		b.ChainConfig(),
+		b.vm.exec.ChainContext(),
+		&saexec.NullReceiptStore{},
+		b.vm.log(),
+	)
+	if err != nil {
 		return nil, vm.BlockContext{}, nil, nil, err
 	}
 
 	// Prepare the target transaction's message.
 	targetTx := txs[txIndex]
-	msg, err := core.TransactionToMessage(targetTx, prep.Signer, prep.Header.BaseFee)
+	msg, err := core.TransactionToMessage(targetTx, result.Signer, result.Header.BaseFee)
 	if err != nil {
 		return nil, vm.BlockContext{}, nil, nil, err
 	}
-	release := func() {
-		prep.AfterExecutingBlock(nil)
+	return msg, result.BlockCtx, stateDB, noopRelease, nil
+}
+
+// resolveBlock resolves a *types.Block to a *blocks.Block, checking in-memory
+// blocks first and falling back to [blocks.RestoreSettledBlock] for on-disk blocks.
+func (b *ethAPIBackend) resolveBlock(block *types.Block) (*blocks.Block, error) {
+	if bl, ok := b.vm.blocks.Load(block.Hash()); ok {
+		return bl, nil
 	}
-	return msg, prep.BlockCtx, stateDB, release, nil
+	return blocks.RestoreSettledBlock(block, b.vm.log(), b.vm.db, b.vm.xdb, b.ChainConfig())
+}
+
+// resolveParentBlock resolves the parent of a *types.Block as a *blocks.Block.
+func (b *ethAPIBackend) resolveParentBlock(block *types.Block) (*blocks.Block, error) {
+	if bl, ok := b.vm.blocks.Load(block.ParentHash()); ok {
+		return bl, nil
+	}
+	parentNum := block.NumberU64() - 1
+	parentEth := rawdb.ReadBlock(b.db, block.ParentHash(), parentNum)
+	if parentEth == nil {
+		return nil, fmt.Errorf("parent block %#x not found", block.ParentHash())
+	}
+	return blocks.RestoreSettledBlock(parentEth, b.vm.log(), b.vm.db, b.vm.xdb, b.ChainConfig())
 }
 
 // postExecutionStateRoot returns the post-execution state root for the block
