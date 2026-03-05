@@ -26,6 +26,7 @@ import (
 	"github.com/ava-labs/strevm/gastime"
 	"github.com/ava-labs/strevm/hook"
 	saeparams "github.com/ava-labs/strevm/params"
+	"github.com/ava-labs/strevm/saedb"
 )
 
 // State tracks the worst-case gas price and account state as operations are
@@ -61,17 +62,12 @@ type State struct {
 
 var errSettledBlockNotExecuted = errors.New("block marked for settling has not finished execution yet")
 
-// StateDBOpener provies a [state.StateDB] for the [State] to read from.
-type StateDBOpener interface {
-	StateDB(root common.Hash) (*state.StateDB, error)
-}
-
 // NewState constructs a new worst-case state on top of the settled block.
 func NewState(
 	hooks hook.Points,
 	config *params.ChainConfig,
 	settled *blocks.Block,
-	opener StateDBOpener,
+	opener saedb.StateDBOpener,
 ) (*State, error) {
 	if !settled.Executed() {
 		return nil, errSettledBlockNotExecuted

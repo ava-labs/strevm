@@ -25,6 +25,8 @@ import (
 	"github.com/ava-labs/strevm/saedb"
 )
 
+var _ saedb.StateDBOpener = (*Executor)(nil)
+
 // An Executor accepts and executes a [blocks.Block] FIFO queue.
 type Executor struct {
 	*stateRecorder

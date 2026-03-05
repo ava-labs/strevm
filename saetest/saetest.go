@@ -14,12 +14,34 @@ import (
 	"sync"
 
 	"github.com/ava-labs/avalanchego/utils/lock"
+	"github.com/ava-labs/libevm/common"
+	"github.com/ava-labs/libevm/core/state"
+	"github.com/ava-labs/libevm/core/state/snapshot"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/event"
 	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/trie"
+	"github.com/ava-labs/strevm/saedb"
 	"github.com/google/go-cmp/cmp"
 )
+
+var _ saedb.StateDBOpener = (*stateDBOpener)(nil)
+
+type stateDBOpener struct {
+	cache state.Database
+	snaps *snapshot.Tree
+}
+
+func NewStateDBOpener(cache state.Database, snaps *snapshot.Tree) saedb.StateDBOpener {
+	return &stateDBOpener{
+		cache: cache,
+		snaps: snaps,
+	}
+}
+
+func (o *stateDBOpener) StateDB(root common.Hash) (*state.StateDB, error) {
+	return state.New(root, o.cache, nil)
+}
 
 // TrieHasher returns an arbitrary trie hasher.
 func TrieHasher() types.TrieHasher {

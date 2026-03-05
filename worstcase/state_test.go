@@ -14,7 +14,6 @@ import (
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core"
 	"github.com/ava-labs/libevm/core/state"
-	"github.com/ava-labs/libevm/core/state/snapshot"
 	"github.com/ava-labs/libevm/core/txpool"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/crypto"
@@ -68,7 +67,7 @@ func newSUT(tb testing.TB, alloc types.GenesisAlloc) SUT {
 	hooks := &hookstest.Stub{
 		Target: initialGasTarget,
 	}
-	s, err := NewState(hooks, config, genesis, newStateDBOpener(cache, nil))
+	s, err := NewState(hooks, config, genesis, saetest.NewStateDBOpener(cache, nil))
 	require.NoError(tb, err, "NewState()")
 
 	return SUT{
@@ -79,24 +78,6 @@ func newSUT(tb testing.TB, alloc types.GenesisAlloc) SUT {
 		stateCache: cache,
 		db:         db,
 	}
-}
-
-var _ StateDBOpener = (*stateDBOpener)(nil)
-
-type stateDBOpener struct {
-	cache state.Database
-	snaps *snapshot.Tree
-}
-
-func newStateDBOpener(cache state.Database, snaps *snapshot.Tree) StateDBOpener {
-	return &stateDBOpener{
-		cache: cache,
-		snaps: snaps,
-	}
-}
-
-func (o *stateDBOpener) StateDB(root common.Hash) (*state.StateDB, error) {
-	return state.New(root, o.cache, nil)
 }
 
 const (

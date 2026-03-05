@@ -7,7 +7,11 @@
 // [Streaming Asynchronous Execution]: https://github.com/avalanche-foundation/ACPs/tree/main/ACPs/194-streaming-asynchronous-execution
 package saedb
 
-import "github.com/ava-labs/avalanchego/database"
+import (
+	"github.com/ava-labs/avalanchego/database"
+	"github.com/ava-labs/libevm/common"
+	"github.com/ava-labs/libevm/core/state"
+)
 
 const (
 	// CommitTrieDBEvery is the number of blocks between commits of the state
@@ -33,4 +37,9 @@ func LastCommittedTrieDBHeight(atOrBefore uint64) uint64 {
 // collision with `rawdb` keys.
 type ExecutionResults struct {
 	database.HeightIndex
+}
+
+// StateDBOpener provies a [state.StateDB] at a given root, if available.
+type StateDBOpener interface {
+	StateDB(root common.Hash) (*state.StateDB, error)
 }

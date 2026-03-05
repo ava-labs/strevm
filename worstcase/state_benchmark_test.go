@@ -56,7 +56,7 @@ func BenchmarkApplyTxWithSnapshot(b *testing.B) {
 				b.Run(tt.name, func(b *testing.B) {
 					b.StopTimer()
 					for range b.N {
-						opener := newStateDBOpener(sut.stateCache, tt.snaps)
+						opener := saetest.NewStateDBOpener(sut.stateCache, tt.snaps)
 						s, err := NewState(sut.hooks, sut.config, sut.genesis, opener)
 						require.NoError(b, err, "NewState()")
 						require.NoError(b, s.StartBlock(hdr), "StartBlock()")
