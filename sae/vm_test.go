@@ -61,6 +61,7 @@ import (
 	saeparams "github.com/ava-labs/strevm/params"
 	"github.com/ava-labs/strevm/saedb"
 	"github.com/ava-labs/strevm/saetest"
+	"github.com/ava-labs/strevm/saexec"
 )
 
 func TestMain(m *testing.M) {
@@ -953,5 +954,27 @@ func TestBlockSources(t *testing.T) {
 				}
 			})
 		})
+	}
+}
+
+func TestRegressionLoseStateBeforeSettlement(t *testing.T) {
+	opt, vmTime := withVMTime(t, time.Unix(saeparams.TauSeconds, 0))
+	ctx, sut := newSUT(t, 1, opt)
+
+	createTx := func(t *testing.T, to common.Address) *types.Transaction {
+		t.Helper()
+		return sut.wallet.SetNonceAndSign(t, 0, &types.DynamicFeeTx{
+			To:        &to,
+			Gas:       params.TxGas,
+			GasFeeCap: big.NewInt(1),
+		})
+	}
+
+	// settle one block
+	b := sut.runConsensusLoop(t, createTx(t, common.Address{}))
+	vmTime.advanceToSettle(ctx, t, b)
+
+	for range saexec.StateHistory + 10 {
+		sut.runConsensusLoop(t, createTx(t, common.Address{}))
 	}
 }
