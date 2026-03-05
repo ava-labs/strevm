@@ -18,23 +18,23 @@ import (
 	"github.com/ava-labs/libevm/rpc"
 )
 
-// ethExtAPI exposes Avalanche-custom extensions under the "eth" namespace:
+// customAPI exposes Avalanche-custom extensions under the "eth" namespace:
 //   - eth_getChainConfig
 //   - eth_baseFee
 //   - eth_suggestPriceOptions
 //   - eth_callDetailed
 //   - eth_newAcceptedTransactions (subscription)
-type ethExtAPI struct {
+type customAPI struct {
 	b *ethAPIBackend
 }
 
 // GetChainConfig returns the chain configuration.
-func (api *ethExtAPI) GetChainConfig(ctx context.Context) *params.ChainConfig {
+func (api *customAPI) GetChainConfig(ctx context.Context) *params.ChainConfig {
 	panic(errUnimplemented)
 }
 
 // BaseFee returns the base fee of the last executed block.
-func (api *ethExtAPI) BaseFee(ctx context.Context) (*hexutil.Big, error) {
+func (api *customAPI) BaseFee(ctx context.Context) (*hexutil.Big, error) {
 	panic(errUnimplemented)
 }
 
@@ -48,7 +48,7 @@ type DetailedExecutionResult struct {
 
 // CallDetailed performs the same call as eth_call, but returns gas usage and
 // error details instead of just the return data.
-func (api *ethExtAPI) CallDetailed(ctx context.Context, args any, blockNrOrHash rpc.BlockNumberOrHash, overrides any) (*DetailedExecutionResult, error) {
+func (api *customAPI) CallDetailed(ctx context.Context, args any, blockNrOrHash rpc.BlockNumberOrHash, overrides any) (*DetailedExecutionResult, error) {
 	panic(errUnimplemented)
 }
 
@@ -66,13 +66,13 @@ type PriceOptions struct {
 }
 
 // SuggestPriceOptions returns gas-price suggestions at three speed tiers.
-func (api *ethExtAPI) SuggestPriceOptions(ctx context.Context) (*PriceOptions, error) {
+func (api *customAPI) SuggestPriceOptions(ctx context.Context) (*PriceOptions, error) {
 	panic(errUnimplemented)
 }
 
 // NewAcceptedTransactions creates a subscription that is triggered each time a
 // transaction is accepted into consensus (prior to execution). If fullTx is
 // true the full tx is sent to the client, otherwise only the hash is sent.
-func (api *ethExtAPI) NewAcceptedTransactions(ctx context.Context, fullTx *bool) (*rpc.Subscription, error) {
+func (api *customAPI) NewAcceptedTransactions(ctx context.Context, fullTx *bool) (*rpc.Subscription, error) {
 	panic(errUnimplemented)
 }
