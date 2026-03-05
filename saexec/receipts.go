@@ -26,7 +26,7 @@ func (e *Executor) createReceiptBuffers(b *blocks.Block) {
 		txs[i] = tx.Hash()
 	}
 	e.receipts.StoreFromFunc(func(common.Hash) chan *Receipt {
-		return receiptChPool.Get().(chan *Receipt)
+		return receiptChPool.Get().(chan *Receipt) //nolint:forcetypeassert // New always returns chan *Receipt
 	}, txs...)
 	// This satisfies the minimum-lifespan guarantee of [Executor.RecentReceipt]
 	// but, in practice, will keep the receipts around until the block is an

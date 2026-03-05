@@ -40,7 +40,7 @@ func BenchmarkReceiptChannels(b *testing.B) {
 			m := newSyncMap[common.Hash, chan *Receipt]()
 			for range b.N {
 				m.StoreFromFunc(func(common.Hash) chan *Receipt {
-					return pool.Get().(chan *Receipt)
+					return pool.Get().(chan *Receipt) //nolint:forcetypeassert // New always returns chan *Receipt
 				}, txHashes...)
 				for _, h := range txHashes {
 					if ch, ok := m.Load(h); ok {
