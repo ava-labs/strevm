@@ -659,13 +659,10 @@ func TestCanCreateContractSoftError(t *testing.T) {
 // TestCustomTransactionInclusion verifies that block building includes custom
 // transactions.
 func TestCustomTransactionInclusion(t *testing.T) {
-	initialBalance := uint256.NewInt(params.Ether)
+	const initialBalance = params.Ether
 	ctx, sut := newSUT(t, 1, options.Func[sutConfig](func(c *sutConfig) {
 		for addr, acc := range c.genesis.Alloc {
-			if acc.Balance == nil {
-				continue
-			}
-			acc.Balance = initialBalance.ToBig()
+			acc.Balance = big.NewInt(initialBalance)
 			c.genesis.Alloc[addr] = acc
 		}
 	}))
@@ -723,25 +720,25 @@ func TestCustomTransactionInclusion(t *testing.T) {
 		name    string
 		address common.Address
 		nonce   uint64
-		balance *uint256.Int
+		balance uint64
 	}{
 		{
 			name:    "sender",
 			address: sender,
 			nonce:   1,
-			balance: new(uint256.Int).SubUint64(initialBalance, sent),
+			balance: initialBalance - sent,
 		},
 		{
 			name:    "receiver",
 			address: receiver,
-			nonce:   0,
-			balance: uint256.NewInt(received),
+			nonce:   0, // only burning increments the nonce
+			balance: received,
 		},
 	}
 	sdb := sut.stateAt(t, b.PostExecutionStateRoot())
 	for _, a := range accounts {
 		assert.Equalf(t, a.nonce, sdb.GetNonce(a.address), "%T.GetNonce([%s])", sdb, a.name)
-		assert.Equalf(t, a.balance, sdb.GetBalance(a.address), "%T.GetBalance([%s])", sdb, a.name)
+		assert.Equalf(t, uint256.NewInt(a.balance), sdb.GetBalance(a.address), "%T.GetBalance([%s])", sdb, a.name)
 	}
 }
 
