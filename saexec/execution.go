@@ -51,7 +51,7 @@ func (e *Executor) Enqueue(ctx context.Context, block *blocks.Block) error {
 	}
 }
 
-var emergencyPlaybookLink = zap.String("playbook", "https://github.com/ava-labs/strevm/issues/28")
+const emergencyPlaybookLink = "https://github.com/ava-labs/strevm/issues/28"
 
 func (e *Executor) processQueue() {
 	defer close(e.done)
@@ -69,17 +69,29 @@ func (e *Executor) processQueue() {
 				zap.Int("tx_count", len(block.Transactions())),
 			)
 
-			if err := e.execute(block, logger); err != nil {
+			err := e.execute(block, logger)
+			switch {
+			case errors.Is(err, errFatal):
 				logger.Fatal(
-					"Block execution failed; see emergency playbook",
-					emergencyPlaybookLink,
+					"Block execution failed",
+					zap.String("playbook", emergencyPlaybookLink),
 					zap.Error(err),
 				)
+			case err != nil:
+				logger.Error(
+					"Error of unknown severity in block execution",
+					zap.String("if_escalation_required", emergencyPlaybookLink),
+					zap.Error(err),
+				)
+			}
+			if err != nil {
 				return
 			}
 		}
 	}
 }
+
+var errFatal = errors.New("fatal execution error")
 
 func (e *Executor) execute(b *blocks.Block, logger logging.Logger) error {
 	logger.Debug("Executing block")
@@ -122,11 +134,6 @@ func (e *Executor) execute(b *blocks.Block, logger logging.Logger) error {
 		stateDB.SetTxContext(tx.Hash(), ti)
 		b.CheckSenderBalanceBound(stateDB, signer, tx)
 
-		logger = logger.With(
-			zap.Int("tx_index", ti),
-			zap.Stringer("tx_hash", tx.Hash()),
-		)
-
 		receipt, err := core.ApplyTransaction(
 			e.chainConfig,
 			e.chainContext,
@@ -139,12 +146,7 @@ func (e *Executor) execute(b *blocks.Block, logger logging.Logger) error {
 			vm.Config{},
 		)
 		if err != nil {
-			logger.Fatal(
-				"Transaction execution errored (not reverted); see emergency playbook",
-				emergencyPlaybookLink,
-				zap.Error(err),
-			)
-			return err
+			return fmt.Errorf("%w: transaction execution errored (not reverted): %v", errFatal, err)
 		}
 
 		perTxClock.Tick(gas.Gas(receipt.GasUsed))
@@ -180,12 +182,7 @@ func (e *Executor) execute(b *blocks.Block, logger logging.Logger) error {
 	numTxs := len(b.Transactions())
 	ops, err := e.hooks.EndOfBlockOps(b.EthBlock())
 	if err != nil {
-		logger.Fatal(
-			"Unable to extract extra block operations; see emergency playbook",
-			emergencyPlaybookLink,
-			zap.Error(err),
-		)
-		return err
+		return fmt.Errorf("%w: %T.EndOfBlockOps(%#x): %v", errFatal, e.hooks, b.Hash(), err)
 	}
 	for i, o := range ops {
 		b.CheckOpBurnerBalanceBounds(stateDB, numTxs+i, o)
@@ -194,14 +191,7 @@ func (e *Executor) execute(b *blocks.Block, logger logging.Logger) error {
 		b.SetInterimExecutionTime(perTxClock)
 
 		if err := o.ApplyTo(stateDB); err != nil {
-			logger.Fatal(
-				"Extra block operation errored; see emergency playbook",
-				zap.Int("op_index", i),
-				zap.Stringer("op_id", o.ID),
-				emergencyPlaybookLink,
-				zap.Error(err),
-			)
-			return err
+			return fmt.Errorf("%w: applying end-of-block operation [%d](%v): %v", errFatal, i, o.ID, err)
 		}
 	}
 
