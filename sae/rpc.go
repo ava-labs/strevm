@@ -320,10 +320,10 @@ func (b bloomOverrider) OverrideHeaderBloom(header *types.Header) types.Bloom {
 type ethAPIBackend struct {
 	vm             *VM
 	accountManager *accounts.Manager
+
 	*gasprice.Estimator
 	chainIndexer
 	*resolver
-
 	*txgossip.Set
 	bloomOverrider
 	*bloomIndexer
@@ -475,47 +475,6 @@ func neverErrs[T any](fn func(ethdb.Reader, common.Hash, uint64) *T) canonicalRe
 	}
 }
 
-type numberResolver interface {
-	ResolveBlockNumber(rpc.BlockNumber) (uint64, error)
-}
-
-var _ numberResolver = (*resolver)(nil)
-
-type resolver struct {
-	lastAccepted *atomic.Pointer[blocks.Block]
-	lastSettled  *atomic.Pointer[blocks.Block]
-	exec         *saexec.Executor
-}
-
-// ResolveBlockNumber resolves the block number for the given block number or hash.
-// It supports the following block numbers:
-// - PendingBlockNumber: the height of the last accepted (head) block
-// - LatestBlockNumber: the height of the last executed block
-// - SafeBlockNumber, FinalizedBlockNumber: the height of the last settled block
-// - Other block numbers: the height of the block with the given number
-// It returns an error if the block number is negative or greater than the height of the head block.
-func (r *resolver) ResolveBlockNumber(bn rpc.BlockNumber) (uint64, error) {
-	head := r.lastAccepted.Load().Height()
-
-	switch bn {
-	case rpc.PendingBlockNumber:
-		return head, nil
-	case rpc.LatestBlockNumber:
-		return r.exec.LastExecuted().Height(), nil
-	case rpc.SafeBlockNumber, rpc.FinalizedBlockNumber:
-		return r.lastSettled.Load().Height(), nil
-	}
-
-	if bn < 0 {
-		return 0, fmt.Errorf("%s block unsupported", bn.String())
-	}
-	n := uint64(bn) //nolint:gosec // Non-negative check performed above
-	if n > head {
-		return 0, fmt.Errorf("%w: block %d", errFutureBlockNotResolved, n)
-	}
-	return n, nil
-}
-
 func readByNumber[T any](r numberResolver, db ethdb.Database, n rpc.BlockNumber, read canonicalReaderWithErr[T]) (*T, error) {
 	num, err := r.ResolveBlockNumber(n)
 	if errors.Is(err, errFutureBlockNotResolved) {
@@ -607,6 +566,47 @@ func (b *ethAPIBackend) resolveBlockNumberOrHash(numOrHash rpc.BlockNumberOrHash
 }
 
 var errFutureBlockNotResolved = errors.New("not accepted yet")
+
+type numberResolver interface {
+	ResolveBlockNumber(rpc.BlockNumber) (uint64, error)
+}
+
+var _ numberResolver = (*resolver)(nil)
+
+type resolver struct {
+	lastAccepted *atomic.Pointer[blocks.Block]
+	lastSettled  *atomic.Pointer[blocks.Block]
+	exec         *saexec.Executor
+}
+
+// ResolveBlockNumber resolves the block number for the given block number or hash.
+// It supports the following block numbers:
+// - PendingBlockNumber: the height of the last accepted (head) block
+// - LatestBlockNumber: the height of the last executed block
+// - SafeBlockNumber, FinalizedBlockNumber: the height of the last settled block
+// - Other block numbers: the height of the block with the given number
+// It returns an error if the block number is negative or greater than the height of the head block.
+func (r *resolver) ResolveBlockNumber(bn rpc.BlockNumber) (uint64, error) {
+	head := r.lastAccepted.Load().Height()
+
+	switch bn {
+	case rpc.PendingBlockNumber:
+		return head, nil
+	case rpc.LatestBlockNumber:
+		return r.exec.LastExecuted().Height(), nil
+	case rpc.SafeBlockNumber, rpc.FinalizedBlockNumber:
+		return r.lastSettled.Load().Height(), nil
+	}
+
+	if bn < 0 {
+		return 0, fmt.Errorf("%s block unsupported", bn.String())
+	}
+	n := uint64(bn) //nolint:gosec // Non-negative check performed above
+	if n > head {
+		return 0, fmt.Errorf("%w: block %d", errFutureBlockNotResolved, n)
+	}
+	return n, nil
+}
 
 func (b *ethAPIBackend) Stats() (pending int, queued int) {
 	return b.Set.Pool.Stats()
