@@ -149,6 +149,14 @@ func (e *Executor) ChainContext() core.ChainContext {
 	return e.chainContext
 }
 
+func (e *Executor) StateDB(root common.Hash) (*state.StateDB, error) {
+	sdb, err := state.New(root, e.stateCache, e.snaps)
+	if err != nil {
+		return nil, fmt.Errorf("state.New(%#x, ...): %v", root, err)
+	}
+	return sdb, nil
+}
+
 // StateCache returns caching database underpinning execution.
 func (e *Executor) StateCache() state.Database {
 	return e.stateCache
