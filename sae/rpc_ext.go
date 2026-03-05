@@ -23,7 +23,7 @@ type customAPI struct {
 }
 
 // GetChainConfig returns the chain configuration.
-func (api *customAPI) GetChainConfig(ctx context.Context) *params.ChainConfig {
+func (c *customAPI) GetChainConfig(ctx context.Context) *params.ChainConfig {
 	panic(errUnimplemented)
 }
 
