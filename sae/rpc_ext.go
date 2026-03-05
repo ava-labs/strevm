@@ -3,13 +3,6 @@
 
 package sae
 
-// Avalanche-custom extensions to the eth namespace. These RPCs are not part of
-// the standard Ethereum JSON-RPC spec or geth, but are exposed by Avalanche
-// nodes for compatibility with tooling that depends on them (e.g. Core).
-//
-// Reference implementations live in graft/coreth/internal/ethapi/api_extra.go
-// and graft/coreth/internal/ethapi/api.coreth.go.
-
 import (
 	"context"
 
@@ -18,12 +11,12 @@ import (
 	"github.com/ava-labs/libevm/rpc"
 )
 
-// customAPI exposes Avalanche-custom extensions under the "eth" namespace:
-//   - eth_getChainConfig
-//   - eth_baseFee
-//   - eth_suggestPriceOptions
-//   - eth_callDetailed
-//   - eth_newAcceptedTransactions (subscription)
+// Avalanche-custom extensions to the eth namespace. These RPCs are not part of
+// the standard Ethereum JSON-RPC spec or geth, but are exposed by Avalanche
+// nodes for compatibility with tooling that depends on them (e.g. Core).
+//
+// Reference implementations live in graft/coreth/internal/ethapi/api_extra.go
+// and graft/coreth/internal/ethapi/api.coreth.go.
 type customAPI struct {
 	b *ethAPIBackend
 }
