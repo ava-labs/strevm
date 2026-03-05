@@ -22,6 +22,10 @@ func (vm *VM) CreateHandlers(ctx context.Context) (map[string]http.Handler, erro
 	if err != nil {
 		return nil, err
 	}
+	avax, err := newAvaxHandler()
+	if err != nil {
+		return nil, err
+	}
 	return map[string]http.Handler{
 		rpcHTTPExtensionPath: s,
 		// TODO(StephenButtolph) coreth and subnet-evm have modified the ws
@@ -29,6 +33,7 @@ func (vm *VM) CreateHandlers(ctx context.Context) (map[string]http.Handler, erro
 		// should either include those modifications into libevm, or determine
 		// that those restrictions were not required.
 		wsHTTPExtensionPath: s.WebsocketHandler([]string{"*"}),
+		avaxEndpoint:        avax,
 	}, nil
 }
 
