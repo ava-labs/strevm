@@ -21,8 +21,9 @@ import (
 	"github.com/ava-labs/libevm/event"
 	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/trie"
-	"github.com/ava-labs/strevm/saedb"
 	"github.com/google/go-cmp/cmp"
+
+	"github.com/ava-labs/strevm/saedb"
 )
 
 var _ saedb.StateDBOpener = (*stateDBOpener)(nil)
@@ -32,6 +33,8 @@ type stateDBOpener struct {
 	snaps *snapshot.Tree
 }
 
+// NewStateDBOpener provides an abstratction to create a `state.StateDB`.
+// `snaps` may be nil.
 func NewStateDBOpener(cache state.Database, snaps *snapshot.Tree) saedb.StateDBOpener {
 	return &stateDBOpener{
 		cache: cache,
@@ -40,7 +43,7 @@ func NewStateDBOpener(cache state.Database, snaps *snapshot.Tree) saedb.StateDBO
 }
 
 func (o *stateDBOpener) StateDB(root common.Hash) (*state.StateDB, error) {
-	return state.New(root, o.cache, nil)
+	return state.New(root, o.cache, o.snaps)
 }
 
 // TrieHasher returns an arbitrary trie hasher.
