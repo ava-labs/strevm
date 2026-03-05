@@ -10,7 +10,6 @@ import (
 	"math/big"
 	"strconv"
 	"sync"
-	"sync/atomic"
 
 	"github.com/ava-labs/avalanchego/network/p2p"
 	"github.com/ava-labs/avalanchego/version"
@@ -38,12 +37,11 @@ import (
 	"github.com/ava-labs/strevm/txgossip"
 )
 
-// APIBackend is the union of all interfaces required to implement the SAE APIs.
+// APIBackend is the union of all interfaces required to implement the Ethereum APIs.
 type APIBackend interface {
 	ethapi.Backend
-	// TODO(ceyonur): Add gasprice.Backend interface.
 	tracers.Backend
-	filters.BloomOverrider
+	filters.Backend
 }
 
 // APIBackend returns an API backend backed by the [VM].
@@ -316,54 +314,6 @@ func (b bloomOverrider) OverrideHeaderBloom(header *types.Header) types.Bloom {
 		header.Hash(),
 		header.Number.Uint64(),
 	))
-}
-
-// estimatorBackend implements the subset of [ethapi.Backend] required to back a
-// [gasprice.Backend].
-type estimatorBackend struct {
-	chainIndexer
-	db           ethdb.Database
-	lastAccepted *atomic.Pointer[blocks.Block]
-	lastSettled  *atomic.Pointer[blocks.Block]
-}
-
-var _ gasprice.Backend = (*estimatorBackend)(nil)
-
-// ResolveBlockNumber resolves the block number for the given block number or hash.
-// It supports the following block numbers:
-// - PendingBlockNumber: the height of the last accepted (head) block
-// - LatestBlockNumber: the height of the last executed block
-// - SafeBlockNumber, FinalizedBlockNumber: the height of the last settled block
-// - Other block numbers: the height of the block with the given number
-// It returns an error if the block number is negative or greater than the height of the head block.
-func (e *estimatorBackend) ResolveBlockNumber(bn rpc.BlockNumber) (uint64, error) {
-	head := e.lastAccepted.Load().Height()
-
-	switch bn {
-	case rpc.PendingBlockNumber:
-		return head, nil
-	case rpc.LatestBlockNumber:
-		return e.exec.LastExecuted().Height(), nil
-	case rpc.SafeBlockNumber, rpc.FinalizedBlockNumber:
-		return e.lastSettled.Load().Height(), nil
-	}
-
-	if bn < 0 {
-		return 0, fmt.Errorf("%s block unsupported", bn.String())
-	}
-	n := uint64(bn) //nolint:gosec // Non-negative check performed above
-	if n > head {
-		return 0, fmt.Errorf("%w: block %d", errFutureBlockNotResolved, n)
-	}
-	return n, nil
-}
-
-func (e *estimatorBackend) BlockByNumber(n rpc.BlockNumber) (*types.Block, error) {
-	return readByNumber(e, e.db, n, neverErrs(rawdb.ReadBlock))
-}
-
-func (b *estimatorBackend) LastAcceptedBlock() *blocks.Block {
-	return b.lastAccepted.Load()
 }
 
 type ethAPIBackend struct {
