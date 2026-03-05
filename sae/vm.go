@@ -311,12 +311,17 @@ func NewVM(
 		// block available to the indexer via [core.ChainIndexer.AddCheckpoint].
 		bloomIdx := newBloomIndexer(vm.db, chainIdx, override, cfg.RPCConfig.BlocksPerBloomSection)
 		vm.toClose = append(vm.toClose, bloomIdx.Close)
-
-		estimatorBackend := &estimatorBackend{
-			chainIndexer: chainIdx,
-			db:           vm.db,
+		numberResolver := &numberResolver{
 			lastAccepted: &vm.last.accepted,
 			lastSettled:  &vm.last.settled,
+			exec:         vm.exec,
+		}
+
+		estimatorBackend := &estimatorBackend{
+			chainIndexer:   chainIdx,
+			numberResolver: numberResolver,
+			db:             vm.db,
+			lastAccepted:   &vm.last.accepted,
 		}
 		estimator, err := gasprice.NewEstimator(estimatorBackend, snowCtx.Log, gasprice.DefaultConfig())
 		if err != nil {
@@ -328,9 +333,11 @@ func NewVM(
 			vm:             vm,
 			accountManager: accountManager,
 			Set:            vm.mempool,
+			chainIndexer:   chainIdx,
 			Estimator:      estimator,
 			bloomIndexer:   bloomIdx,
 			bloomOverrider: override,
+			numberResolver: numberResolver,
 		}
 	}
 

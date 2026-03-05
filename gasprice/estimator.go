@@ -134,8 +134,6 @@ func NewEstimator(backend Backend, log logging.Logger, c Config) (*Estimator, er
 	// New blocks are cached in the background to avoid slow responses after
 	// long periods of no requests to the estimator. This allows us to avoid
 	// parallelizing reads inside individual API calls.
-	//
-	// TODO(StephenButtolph): Consider caching upon acceptance rather than execution.
 	events := make(chan core.ChainHeadEvent, 1)
 	sub := backend.SubscribeChainHeadEvent(events)
 	// Additional slots in the cache allows processing queries for previous
@@ -177,12 +175,12 @@ func (e *Estimator) SuggestGasTipCap(ctx context.Context) (tip *big.Int, _ error
 		}
 	}()
 
-	headNumber := e.backend.LastAcceptedBlock().NumberU64()
+	lastAcceptedNumber := e.backend.LastAcceptedBlock().NumberU64()
 
 	e.last.lock.RLock()
 	lastNumber, lastPrice := e.last.number, e.last.price
 	e.last.lock.RUnlock()
-	if headNumber <= lastNumber {
+	if lastAcceptedNumber <= lastNumber {
 		return lastPrice, nil
 	}
 
@@ -191,12 +189,12 @@ func (e *Estimator) SuggestGasTipCap(ctx context.Context) (tip *big.Int, _ error
 
 	// A different goroutine might have beaten us when upgrading to a write lock.
 	lastNumber, lastPrice = e.last.number, e.last.price
-	if headNumber <= lastNumber {
+	if lastAcceptedNumber <= lastNumber {
 		return lastPrice, nil
 	}
 
 	var (
-		newest     = headNumber
+		newest     = lastAcceptedNumber
 		tooOld     = intmath.BoundedSubtract(newest, e.c.SuggestedTipMaxBlocks, 0)
 		recentUnix = uint64(e.c.Now().Add(-e.c.SuggestedTipMaxDuration).Unix()) //nolint:gosec // Known non-negative
 		tips       []transaction
@@ -222,7 +220,7 @@ func (e *Estimator) SuggestGasTipCap(ctx context.Context) (tip *big.Int, _ error
 		price = math.BigMin(price, e.c.MaxSuggestedTip)
 	}
 
-	e.last.number = headNumber
+	e.last.number = lastAcceptedNumber
 	e.last.price = price
 	return price, nil
 }
@@ -265,13 +263,13 @@ func (e *Estimator) FeeHistory(
 	if err != nil {
 		return nil, nil, nil, nil, err
 	}
-	headBlock := e.backend.LastAcceptedBlock()
-	head := headBlock.NumberU64()
-	if minLast := intmath.BoundedSubtract(head, e.c.HistoryMaxBlocksFromHead, 0); last < minLast {
+	lastAccepted := e.backend.LastAcceptedBlock()
+	lastAcceptedNumber := lastAccepted.NumberU64()
+	if minLast := intmath.BoundedSubtract(lastAcceptedNumber, e.c.HistoryMaxBlocksFromHead, 0); last < minLast {
 		return nil, nil, nil, nil, fmt.Errorf("%w: block %d requested, accepted head is %d (max depth %d)",
 			errHistoryDepthExhausted,
 			last,
-			head,
+			lastAcceptedNumber,
 			e.c.HistoryMaxBlocksFromHead,
 		)
 	}
@@ -308,8 +306,8 @@ func (e *Estimator) FeeHistory(
 		baseFee = append(baseFee, b.baseFee)
 		gasUsedRatio = append(gasUsedRatio, float64(b.gasUsed)/float64(b.gasLimit))
 	}
-	if last == head {
-		bounds := headBlock.WorstCaseBounds()
+	if last == lastAcceptedNumber {
+		bounds := lastAccepted.WorstCaseBounds()
 		if bounds == nil {
 			return nil, nil, nil, nil, errMissingWorstCaseBounds
 		}
