@@ -62,23 +62,23 @@ func (e *Executor) processQueue() {
 			return
 
 		case block := <-e.queue:
-			logger := e.log.With(
+			log := e.log.With(
 				zap.Uint64("block_height", block.Height()),
 				zap.Uint64("block_time", block.BuildTime()),
 				zap.Stringer("block_hash", block.Hash()),
 				zap.Int("tx_count", len(block.Transactions())),
 			)
 
-			err := e.execute(block, logger)
+			err := e.execute(block, log)
 			switch {
 			case errors.Is(err, errFatal):
-				logger.Fatal(
+				log.Fatal(
 					"Block execution failed",
 					zap.String("playbook", emergencyPlaybookLink),
 					zap.Error(err),
 				)
 			case err != nil:
-				logger.Error(
+				log.Error(
 					"Error of unknown severity in block execution",
 					zap.String("if_escalation_required", emergencyPlaybookLink),
 					zap.Error(err),
@@ -93,8 +93,8 @@ func (e *Executor) processQueue() {
 
 var errFatal = errors.New("fatal execution error")
 
-func (e *Executor) execute(b *blocks.Block, logger logging.Logger) error {
-	logger.Debug("Executing block")
+func (e *Executor) execute(b *blocks.Block, log logging.Logger) error {
+	log.Debug("Executing block")
 
 	// Since `b` hasn't been executed, it definitely hasn't been settled, so we
 	// are guaranteed to have a non-nil parent available.
@@ -201,7 +201,7 @@ func (e *Executor) execute(b *blocks.Block, logger logging.Logger) error {
 		return fmt.Errorf("after-block gas time update: %w", err)
 	}
 
-	logger.Debug(
+	log.Debug(
 		"Block execution complete",
 		zap.Uint64("gas_consumed", uint64(blockGasConsumed)),
 		zap.Time("gas_time", gasClock.AsTime()),
