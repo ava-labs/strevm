@@ -70,9 +70,9 @@ func (api *customAPI) SuggestPriceOptions(ctx context.Context) (*PriceOptions, e
 	panic(errUnimplemented)
 }
 
-// NewAcceptedTransactions creates a subscription that is triggered each time a
-// transaction is accepted into consensus (prior to execution). If fullTx is
-// true the full tx is sent to the client, otherwise only the hash is sent.
+// NewAcceptedTransactions creates a subscription that is notified each time a
+// transaction is accepted by consensus (prior to execution). If fullTx is true
+// the full tx is sent to the client, otherwise only the hash is sent.
 func (api *customAPI) NewAcceptedTransactions(ctx context.Context, fullTx *bool) (*rpc.Subscription, error) {
 	panic(errUnimplemented)
 }
