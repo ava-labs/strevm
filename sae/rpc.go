@@ -320,11 +320,11 @@ type ethAPIBackend struct {
 	vm             *VM
 	accountManager *accounts.Manager
 	*gasprice.Estimator
+	chainIndexer
 
 	*txgossip.Set
 	bloomOverrider
 	*bloomIndexer
-	*estimatorBackend
 }
 
 var _ APIBackend = (*ethAPIBackend)(nil)

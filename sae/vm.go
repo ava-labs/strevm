@@ -325,13 +325,12 @@ func NewVM(
 		vm.toClose = append(vm.toClose, estimator.Close)
 
 		vm.apiBackend = &ethAPIBackend{
-			vm:               vm,
-			accountManager:   accountManager,
-			Set:              vm.mempool,
-			Estimator:        estimator,
-			bloomIndexer:     bloomIdx,
-			bloomOverrider:   override,
-			estimatorBackend: estimatorBackend,
+			vm:             vm,
+			accountManager: accountManager,
+			Set:            vm.mempool,
+			Estimator:      estimator,
+			bloomIndexer:   bloomIdx,
+			bloomOverrider: override,
 		}
 	}
 
