@@ -33,6 +33,7 @@ import (
 	"github.com/ava-labs/libevm/rpc"
 
 	"github.com/ava-labs/strevm/blocks"
+	"github.com/ava-labs/strevm/gasprice"
 	"github.com/ava-labs/strevm/saexec"
 	"github.com/ava-labs/strevm/txgossip"
 )
@@ -328,6 +329,13 @@ type estimatorBackend struct {
 
 var _ gasprice.Backend = (*estimatorBackend)(nil)
 
+// ResolveBlockNumber resolves the block number for the given block number or hash.
+// It supports the following block numbers:
+// - PendingBlockNumber: the height of the last accepted (head) block
+// - LatestBlockNumber: the height of the last executed block
+// - SafeBlockNumber, FinalizedBlockNumber: the height of the last settled block
+// - Other block numbers: the height of the block with the given number
+// It returns an error if the block number is negative or greater than the height of the head block.
 func (e *estimatorBackend) ResolveBlockNumber(bn rpc.BlockNumber) (uint64, error) {
 	head := e.lastAccepted.Load().Height()
 
@@ -350,7 +358,7 @@ func (e *estimatorBackend) ResolveBlockNumber(bn rpc.BlockNumber) (uint64, error
 	return n, nil
 }
 
-func (e *estimatorBackend) BlockByNumber(_ context.Context, n rpc.BlockNumber) (*types.Block, error) {
+func (e *estimatorBackend) BlockByNumber(n rpc.BlockNumber) (*types.Block, error) {
 	return readByNumber(e, e.db, n, neverErrs(rawdb.ReadBlock))
 }
 
@@ -427,6 +435,10 @@ func (b *ethAPIBackend) SyncProgress() ethereum.SyncProgress {
 
 func (b *ethAPIBackend) HeaderByNumber(ctx context.Context, n rpc.BlockNumber) (*types.Header, error) {
 	return readByNumber(b, b.vm.db, n, neverErrs(rawdb.ReadHeader))
+}
+
+func (b *ethAPIBackend) BlockByNumber(ctx context.Context, n rpc.BlockNumber) (*types.Block, error) {
+	return readByNumber(b, b.vm.db, n, neverErrs(rawdb.ReadBlock))
 }
 
 func (b *ethAPIBackend) HeaderByHash(ctx context.Context, hash common.Hash) (*types.Header, error) {
