@@ -28,12 +28,12 @@ func (c *customAPI) GetChainConfig(ctx context.Context) *params.ChainConfig {
 }
 
 // BaseFee returns the worst-case base fee of the last accepted block.
-func (api *customAPI) BaseFee(ctx context.Context) (*hexutil.Big, error) {
+func (c *customAPI) BaseFee(ctx context.Context) (*hexutil.Big, error) {
 	panic(errUnimplemented)
 }
 
-// DetailedExecutionResult is the response for eth_callDetailed.
-type DetailedExecutionResult struct {
+// detailedExecutionResult is the response for eth_callDetailed.
+type detailedExecutionResult struct {
 	UsedGas    uint64        `json:"gas"`
 	ErrCode    int           `json:"errCode"`
 	Err        string        `json:"err"`
@@ -42,31 +42,31 @@ type DetailedExecutionResult struct {
 
 // CallDetailed performs the same call as eth_call, but returns gas usage and
 // error details instead of just the return data.
-func (api *customAPI) CallDetailed(ctx context.Context, args any, blockNrOrHash rpc.BlockNumberOrHash, overrides any) (*DetailedExecutionResult, error) {
+func (c *customAPI) CallDetailed(ctx context.Context, args any, blockNrOrHash rpc.BlockNumberOrHash, overrides any) (*detailedExecutionResult, error) {
 	panic(errUnimplemented)
 }
 
-// Price represents a single gas-price suggestion.
-type Price struct {
+// price represents a single gas-price suggestion.
+type price struct {
 	GasTip *hexutil.Big `json:"maxPriorityFeePerGas"`
 	GasFee *hexutil.Big `json:"maxFeePerGas"`
 }
 
-// PriceOptions groups slow/normal/fast gas-price suggestions.
-type PriceOptions struct {
-	Slow   *Price `json:"slow"`
-	Normal *Price `json:"normal"`
-	Fast   *Price `json:"fast"`
+// priceOptions groups slow/normal/fast gas-price suggestions.
+type priceOptions struct {
+	Slow   *price `json:"slow"`
+	Normal *price `json:"normal"`
+	Fast   *price `json:"fast"`
 }
 
 // SuggestPriceOptions returns gas-price suggestions at three speed tiers.
-func (api *customAPI) SuggestPriceOptions(ctx context.Context) (*PriceOptions, error) {
+func (c *customAPI) SuggestPriceOptions(ctx context.Context) (*priceOptions, error) {
 	panic(errUnimplemented)
 }
 
 // NewAcceptedTransactions creates a subscription that is notified each time a
 // transaction is accepted by consensus (prior to execution). If fullTx is true
 // the full tx is sent to the client, otherwise only the hash is sent.
-func (api *customAPI) NewAcceptedTransactions(ctx context.Context, fullTx *bool) (*rpc.Subscription, error) {
+func (c *customAPI) NewAcceptedTransactions(ctx context.Context, fullTx *bool) (*rpc.Subscription, error) {
 	panic(errUnimplemented)
 }
