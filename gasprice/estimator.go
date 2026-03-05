@@ -9,7 +9,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"math/big"
 	"slices"
 	"sync"
@@ -104,8 +103,6 @@ func (c *Config) validate() error {
 	}
 	return nil
 }
-
-var _ io.Closer = (*Estimator)(nil)
 
 type last struct {
 	lock   sync.RWMutex
