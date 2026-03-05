@@ -33,7 +33,7 @@ func (api *customAPI) GetChainConfig(ctx context.Context) *params.ChainConfig {
 	panic(errUnimplemented)
 }
 
-// BaseFee returns the base fee of the last executed block.
+// BaseFee returns the worst-case base fee of the last accepted block.
 func (api *customAPI) BaseFee(ctx context.Context) (*hexutil.Big, error) {
 	panic(errUnimplemented)
 }
