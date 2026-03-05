@@ -146,7 +146,7 @@ func (e *Executor) execute(b *blocks.Block, log logging.Logger) error {
 			vm.Config{},
 		)
 		if err != nil {
-			return fmt.Errorf("%w: transaction execution errored (not reverted): %v", errFatal, err)
+			return fmt.Errorf("%w: transaction execution errored (not reverted) [%d](%#x): %v", errFatal, ti, tx.Hash(), err)
 		}
 
 		perTxClock.Tick(gas.Gas(receipt.GasUsed))
