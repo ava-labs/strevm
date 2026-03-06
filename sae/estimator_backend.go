@@ -4,8 +4,6 @@
 package sae
 
 import (
-	"sync/atomic"
-
 	"github.com/ava-labs/libevm/core/rawdb"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/ethdb"
@@ -16,13 +14,11 @@ import (
 	"github.com/ava-labs/strevm/gasprice"
 )
 
-// estimatorBackend implements [gasprice.Backend].
 type estimatorBackend struct {
 	*resolver
 
 	acceptedBlocks *event.FeedOf[*types.Block]
 	db             ethdb.Database
-	lastAccepted   *atomic.Pointer[blocks.Block]
 }
 
 var _ gasprice.Backend = (*estimatorBackend)(nil)

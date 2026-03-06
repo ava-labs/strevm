@@ -42,6 +42,7 @@ import (
 type APIBackend interface {
 	ethapi.Backend
 	tracers.Backend
+	filters.BloomOverrider
 	filters.Backend
 }
 
@@ -579,7 +580,7 @@ type resolver struct {
 	exec         *saexec.Executor
 }
 
-// ResolveBlockNumber resolves the block number for the given block number or hash.
+// ResolveBlockNumber resolves the block number for the given block number.
 // It supports the following block numbers:
 // - PendingBlockNumber: the height of the last accepted (head) block
 // - LatestBlockNumber: the height of the last executed block
