@@ -27,6 +27,7 @@ import (
 	"github.com/ava-labs/libevm/ethdb"
 	"github.com/ava-labs/libevm/libevm"
 	libevmhookstest "github.com/ava-labs/libevm/libevm/hookstest"
+	"github.com/ava-labs/libevm/libevm/options"
 	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/trie"
 	"github.com/ava-labs/libevm/triedb"
@@ -73,15 +74,26 @@ type SUT struct {
 	closeOnce func() error
 }
 
+type (
+	sutConfig struct {
+		hooks    *saehookstest.Stub
+		archival bool
+	}
+	sutOption = options.Option[sutConfig]
+)
+
 // newSUT returns a new SUT. Any >= [logging.Error] on the logger will also
 // cancel the returned context, which is useful when waiting for blocks that
 // can never finish execution because of an error.
-func newSUT(tb testing.TB, hooks *saehookstest.Stub) (context.Context, *SUT) {
+func newSUT(tb testing.TB, opts ...sutOption) (context.Context, *SUT) {
 	tb.Helper()
 
 	logger := saetest.NewTBLogger(tb, logging.Warn)
 	ctx := logger.CancelOnError(tb.Context())
 
+	sutCfg := options.ApplyTo(&sutConfig{
+		hooks: defaultHooks(),
+	}, opts...)
 	config := saetest.ChainConfig()
 	db := rawdb.NewMemoryDatabase()
 	tdbConfig := &triedb.Config{}
@@ -89,15 +101,19 @@ func newSUT(tb testing.TB, hooks *saehookstest.Stub) (context.Context, *SUT) {
 
 	wallet := saetest.NewUNSAFEWallet(tb, 1, types.LatestSigner(config))
 	alloc := saetest.MaxAllocFor(wallet.Addresses()...)
-	genesis := blockstest.NewGenesis(tb, db, xdb, config, alloc, blockstest.WithTrieDBConfig(tdbConfig), blockstest.WithGasTarget(hooks.Target))
+	genesis := blockstest.NewGenesis(tb, db, xdb, config, alloc, blockstest.WithTrieDBConfig(tdbConfig), blockstest.WithGasTarget(sutCfg.hooks.Target))
 
-	opts := blockstest.WithBlockOptions(
+	blockOpts := blockstest.WithBlockOptions(
 		blockstest.WithLogger(logger),
 	)
-	chain := blockstest.NewChainBuilder(config, genesis, opts)
+	chain := blockstest.NewChainBuilder(config, genesis, blockOpts)
 	src := blocks.Source(chain.GetBlock)
 
-	e, err := New(genesis, src.AsHeaderSource(), config, db, xdb, tdbConfig, hooks, logger)
+	saedbConfig := saedb.Config{
+		TrieDBConfig: tdbConfig,
+		Archival:     sutCfg.archival,
+	}
+	e, err := New(genesis, src.AsHeaderSource(), config, db, xdb, saedbConfig, sutCfg.hooks, logger)
 	require.NoError(tb, err, "New()")
 
 	closeOnce := sync.OnceValue(e.Close)
@@ -123,12 +139,24 @@ func defaultHooks() *saehookstest.Stub {
 	return saehookstest.NewStub(1e6)
 }
 
+func withHooks(h *saehookstest.Stub) sutOption {
+	return options.Func[sutConfig](func(c *sutConfig) {
+		c.hooks = h
+	})
+}
+
+func withArchival() sutOption {
+	return options.Func[sutConfig](func(c *sutConfig) {
+		c.archival = true
+	})
+}
+
 func TestImmediateShutdownNonBlocking(t *testing.T) {
-	newSUT(t, defaultHooks()) // calls [Executor.Close] in test cleanup
+	newSUT(t) // calls [Executor.Close] in test cleanup
 }
 
 func TestExecutionSynchronisation(t *testing.T) {
-	ctx, sut := newSUT(t, defaultHooks())
+	ctx, sut := newSUT(t)
 	e, chain := sut.Executor, sut.chain
 
 	for range 10 {
@@ -146,7 +174,7 @@ func TestExecutionSynchronisation(t *testing.T) {
 }
 
 func TestReceiptPropagation(t *testing.T) {
-	ctx, sut := newSUT(t, defaultHooks())
+	ctx, sut := newSUT(t)
 	e, chain, wallet := sut.Executor, sut.chain, sut.wallet
 
 	var want [][]*types.Receipt
@@ -198,7 +226,7 @@ func TestReceiptPropagation(t *testing.T) {
 }
 
 func TestSubscriptions(t *testing.T) {
-	ctx, sut := newSUT(t, defaultHooks())
+	ctx, sut := newSUT(t)
 	e, chain, wallet := sut.Executor, sut.chain, sut.wallet
 
 	precompile := common.Address{'p', 'r', 'e'}
@@ -276,7 +304,7 @@ func testEvents[T any](ctx context.Context, tb testing.TB, got *saetest.EventCol
 }
 
 func TestExecution(t *testing.T) {
-	ctx, sut := newSUT(t, defaultHooks())
+	ctx, sut := newSUT(t)
 	wallet := sut.wallet
 	eoa := wallet.Addresses()[0]
 
@@ -382,8 +410,7 @@ func TestExecution(t *testing.T) {
 }
 
 func TestEndOfBlockOps(t *testing.T) {
-	hooks := defaultHooks()
-	ctx, sut := newSUT(t, hooks)
+	ctx, sut := newSUT(t)
 	wallet := sut.wallet
 	exportEOA := wallet.Addresses()[0]
 	// The import EOA is deliberately not from [newSUT] to ensure that it's got
@@ -437,7 +464,7 @@ func TestEndOfBlockOps(t *testing.T) {
 func TestGasAccounting(t *testing.T) {
 	const gasPerTx = gas.Gas(params.TxGas)
 	hooks := saehookstest.NewStub(5 * gasPerTx)
-	ctx, sut := newSUT(t, hooks)
+	ctx, sut := newSUT(t, withHooks(hooks))
 
 	at := func(blockTime, txs uint64, rate gas.Gas) *proxytime.Time[gas.Gas] {
 		tm := proxytime.New[gas.Gas](blockTime, rate)
@@ -658,7 +685,7 @@ func FuzzOpCodes(f *testing.F) {
 	f.Fuzz(func(t *testing.T, code []byte) {
 		t.Parallel() // for corpus in ./testdata/
 
-		_, sut := newSUT(t, defaultHooks())
+		_, sut := newSUT(t)
 		tx := sut.wallet.SetNonceAndSign(t, 0, &types.LegacyTx{
 			To:       nil, // i.e. contract creation, resulting in `code` being executed
 			GasPrice: big.NewInt(1),
@@ -678,7 +705,7 @@ func FuzzOpCodes(f *testing.F) {
 }
 
 func TestContextualOpCodes(t *testing.T) {
-	ctx, sut := newSUT(t, defaultHooks())
+	ctx, sut := newSUT(t)
 
 	chain := sut.chain
 	for range 5 {
@@ -868,7 +895,7 @@ func (e *blockNumSaver) store(h *types.Header) {
 }
 
 func TestSnapshotPersistence(t *testing.T) {
-	ctx, sut := newSUT(t, defaultHooks())
+	ctx, sut := newSUT(t)
 
 	e, chain, wallet := sut.Executor, sut.chain, sut.wallet
 
@@ -913,7 +940,7 @@ func TestSnapshotPersistence(t *testing.T) {
 }
 
 func TestCloseRecoversHashDB(t *testing.T) {
-	ctx, sut := newSUT(t, defaultHooks())
+	ctx, sut := newSUT(t)
 	e, chain := sut.Executor, sut.chain
 
 	const numBlocks = uint64(saedb.CommitTrieDBEvery) + 10
@@ -983,7 +1010,7 @@ func TestCloseRecoversHashDB(t *testing.T) {
 	t.Run("recover", func(t *testing.T) {
 		// Restart the chain to remove the TrieDB cache.
 		src := blocks.Source(chain.GetBlock)
-		e, err := New(chain.Last(), src.AsHeaderSource(), sut.chainConfig, sut.db, sut.xdb, &triedb.Config{}, defaultHooks(), sut.log)
+		e, err := New(chain.Last(), src.AsHeaderSource(), sut.chainConfig, sut.db, sut.xdb, saedb.Config{}, defaultHooks(), sut.log)
 		require.NoError(t, err, "New()")
 		t.Cleanup(func() {
 			require.NoErrorf(t, e.Close(), "%T.Close()", e)
@@ -992,5 +1019,46 @@ func TestCloseRecoversHashDB(t *testing.T) {
 		checkStates(t, e, func(height uint64) bool {
 			return height == chain.Last().NumberU64()
 		})
+	})
+}
+
+func TestArchivalStoresAll(t *testing.T) {
+	ctx, sut := newSUT(t, withArchival())
+	e, chain := sut.Executor, sut.chain
+
+	const numBlocks = uint64(saedb.CommitTrieDBEvery) + 10
+	for range numBlocks {
+		b := chain.NewBlock(t, types.Transactions{
+			sut.wallet.SetNonceAndSign(t, 0, &types.LegacyTx{
+				To:       &common.Address{},
+				Gas:      params.TxGas,
+				GasPrice: big.NewInt(1),
+			}),
+		})
+		require.NoError(t, e.Enqueue(ctx, b), "%T.Enqueue()", e)
+	}
+
+	final := chain.Last()
+	require.NoErrorf(t, final.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted() on last-enqueued block", final)
+
+	// Dereferencing doesn't do anything
+	for _, b := range chain.AllBlocks() {
+		e.ReleaseInMemory(b.PostExecutionStateRoot())
+	}
+	require.NoErrorf(t, sut.Close(), "%T.Close()", e)
+
+	t.Run("recover", func(t *testing.T) {
+		// Restart the chain to remove the TrieDB cache.
+		src := blocks.Source(chain.GetBlock)
+		e, err := New(chain.Last(), src.AsHeaderSource(), sut.chainConfig, sut.db, sut.xdb, saedb.Config{Archival: true}, defaultHooks(), sut.log)
+		require.NoError(t, err, "New()")
+		t.Cleanup(func() {
+			require.NoErrorf(t, e.Close(), "%T.Close()", e)
+		})
+
+		for _, b := range chain.AllBlocks() {
+			_, err := e.StateDB(b.PostExecutionStateRoot())
+			require.NoErrorf(t, err, "%T.StateDB()", e)
+		}
 	})
 }

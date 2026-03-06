@@ -17,7 +17,16 @@ import (
 	"go.uber.org/zap"
 )
 
+// Config allows parameterization of the TrieDB and when
+// state is committed.
+type Config struct {
+	// TODO(alarso16): move minimal elements to config and construct in method.
+	TrieDBConfig *triedb.Config
+	Archival     bool // if true, will store every state on disk
+}
+
 // SnapshotCacheSizeMB is the snapshot cache size used by the executor.
+// TODO(alarso16): move to config
 const SnapshotCacheSizeMB = 128
 
 var _ StateDBOpener = (*Recorder)(nil)
@@ -31,15 +40,14 @@ type Recorder struct {
 	snaps       *snapshot.Tree
 	cache       state.Database
 	isHashDB    bool
+	isArchival  bool
 	log         logging.Logger
 	currentRoot common.Hash
 }
 
 // NewRecorder provides a new [Recorder] on the underlying database
-//
-// TODO(alarso16): Provide a custom config to generate the [triedb.Config].
-func NewRecorder(db ethdb.Database, c *triedb.Config, lastExecuted common.Hash, log logging.Logger) (*Recorder, error) {
-	cache := state.NewDatabaseWithConfig(db, c)
+func NewRecorder(db ethdb.Database, c Config, lastExecuted common.Hash, log logging.Logger) (*Recorder, error) {
+	cache := state.NewDatabaseWithConfig(db, c.TrieDBConfig)
 	_, isHashDB := cache.TrieDB().Backend().(triedb.HashDB)
 	snapConf := snapshot.Config{
 		CacheSize:  SnapshotCacheSizeMB,
@@ -54,16 +62,17 @@ func NewRecorder(db ethdb.Database, c *triedb.Config, lastExecuted common.Hash, 
 		cache:       cache,
 		currentRoot: lastExecuted,
 		isHashDB:    isHashDB,
+		isArchival:  c.Archival,
 		log:         log,
 	}, nil
 }
 
 // OnExecution tracks the root and may commit the trie associated with the root
-// to the database if [ShouldCommitTrieDB] returns true.
+// to the database if [ShouldCommitTrieDB] returns true, or the [Config]
+// specifies that the node is archival.
 //
-// This state will be available until OnExecution has been called at least [StateHistory]
-// times and [Recorder.ReleaseInMemory] has been called for the root as many times
-// as it has been referenced.
+// This state will be available until [Recorder.ReleaseInMemory] has been called
+// or the root as many times as it has been referenced.
 //
 // Note: Snapshot memory leaks are avoided internally by [state.StateDB.Commit].
 func (r *Recorder) OnExecution(root common.Hash, height uint64) error {
@@ -72,7 +81,7 @@ func (r *Recorder) OnExecution(root common.Hash, height uint64) error {
 	r.reference(root) // keepalive until dereference
 	r.currentRoot = root
 
-	if !ShouldCommitTrieDB(height) {
+	if !r.isArchival && !ShouldCommitTrieDB(height) {
 		return nil
 	}
 

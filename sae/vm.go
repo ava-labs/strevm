@@ -32,7 +32,6 @@ import (
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/ethdb"
 	"github.com/ava-labs/libevm/params"
-	"github.com/ava-labs/libevm/triedb"
 	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/ava-labs/strevm/blocks"
@@ -88,7 +87,7 @@ func (f closerFunc) Close() error { return f() }
 type Config struct {
 	MempoolConfig legacypool.Config
 	RPCConfig     RPCConfig
-	TrieDBConfig  *triedb.Config
+	DBConfig      saedb.Config
 
 	ExcessAfterLastSynchronous gas.Gas
 
@@ -180,7 +179,7 @@ func NewVM[T hook.Transaction](
 			chainConfig,
 			db,
 			xdb,
-			cfg.TrieDBConfig,
+			cfg.DBConfig,
 			hooks,
 			snowCtx.Log,
 		)
