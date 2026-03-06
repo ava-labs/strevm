@@ -5,8 +5,10 @@ package rpc
 
 import (
 	"context"
+	"math/big"
 
 	"github.com/ava-labs/libevm/common/hexutil"
+	"github.com/ava-labs/libevm/common/math"
 	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/rpc"
 )
@@ -24,12 +26,17 @@ type customAPI struct {
 
 // GetChainConfig returns the chain configuration.
 func (c *customAPI) GetChainConfig(ctx context.Context) *params.ChainConfig {
-	panic(errUnimplemented)
+	return c.b.ChainConfig()
 }
 
-// BaseFee returns the worst-case base fee of the last accepted block.
+// BaseFee returns an upper-bound estimate of the base fee for the next block.
+// It returns nil if the estimate is unavailable, matching coreth's behaviour.
 func (c *customAPI) BaseFee(ctx context.Context) (*hexutil.Big, error) {
-	panic(errUnimplemented)
+	baseFee := c.b.EstimateNextBaseFee()
+	if baseFee == nil {
+		return nil, nil
+	}
+	return (*hexutil.Big)(baseFee), nil
 }
 
 // detailedExecutionResult is the response for eth_callDetailed.
@@ -59,9 +66,54 @@ type priceOptions struct {
 	Fast   *price `json:"fast"`
 }
 
+// Tip-speed scaling constants, matching coreth's defaults.
+// See: github.com/ava-labs/avalanchego/blob/v1.14.1/graft/coreth/plugin/evm/config/config.go
+const (
+	slowTipPct = 95
+	fastTipPct = 105
+)
+
+var (
+	minGasTip  = big.NewInt(1) // 1 Wei floor for the slow tier, matching coreth.
+	bigHundred = big.NewInt(100)
+)
+
 // SuggestPriceOptions returns gas-price suggestions at three speed tiers.
+// Each tier contains a tip and a total fee cap (2*baseFee + tip), following
+// the same approach as the coreth reference implementation.
 func (c *customAPI) SuggestPriceOptions(ctx context.Context) (*priceOptions, error) {
-	panic(errUnimplemented)
+	baseFee := c.b.EstimateNextBaseFee()
+	if baseFee == nil {
+		return nil, nil
+	}
+
+	tip, err := c.b.SuggestGasTipCap(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	slowTip := math.BigMax(scaleTip(tip, slowTipPct), minGasTip) // Floor matching coreth's minGasTip.
+	fastTip := scaleTip(tip, fastTipPct)
+
+	doubleBaseFee := baseFee.Lsh(baseFee, 1)
+	return &priceOptions{
+		Slow:   newPrice(slowTip, doubleBaseFee),
+		Normal: newPrice(tip, doubleBaseFee),
+		Fast:   newPrice(fastTip, doubleBaseFee),
+	}, nil
+}
+
+// scaleTip returns tip * pct / 100.
+func scaleTip(tip *big.Int, pct uint64) *big.Int {
+	n := new(big.Int).Mul(tip, new(big.Int).SetUint64(pct))
+	return n.Div(n, bigHundred)
+}
+
+func newPrice(tip, doubleBaseFee *big.Int) *price {
+	return &price{
+		GasTip: (*hexutil.Big)(tip),
+		GasFee: (*hexutil.Big)(new(big.Int).Add(doubleBaseFee, tip)),
+	}
 }
 
 // NewAcceptedTransactions creates a subscription that is notified each time a
