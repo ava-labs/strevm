@@ -22,14 +22,6 @@ import (
 	"github.com/ava-labs/strevm/saetest"
 )
 
-// defaultGasPriceConfig is the same as [gastime.DefaultGasPriceConfig]. It is defined
-// here to avoid a circular dependency between [gastime] and [hookstest].
-var defaultGasPriceConfig = hook.GasPriceConfig{
-	TargetToExcessScaling: 87,
-	MinPrice:              1,
-	StaticPricing:         false,
-}
-
 // Stub implements [hook.Points].
 type Stub struct {
 	Now                     func() time.Time
@@ -74,8 +66,15 @@ func WithExecutionResultsDBFn(fn func(string) (saedb.ExecutionResults, error)) H
 }
 
 // NewStub returns a stub with defaults applied.
-// It uses [defaultGasPriceConfig] unless overridden by [WithGasPriceConfig].
+// It uses [gastime.DefaultGasPriceConfig] unless overridden by [WithGasPriceConfig].
 func NewStub(target gas.Gas, opts ...HookOption) *Stub {
+	// defaultGasPriceConfig is the same as [gastime.DefaultGasPriceConfig]. It is defined
+	// here to avoid a circular dependency between [gastime] and [hookstest].
+	defaultGasPriceConfig := hook.GasPriceConfig{
+		TargetToExcessScaling: 87,
+		MinPrice:              1,
+		StaticPricing:         false,
+	}
 	return options.ApplyTo(&Stub{
 		Target:         target,
 		GasPriceConfig: defaultGasPriceConfig,

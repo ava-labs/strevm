@@ -36,7 +36,7 @@ func (tm *Time) cloneViaCanotoRoundTrip(tb testing.TB) *Time {
 }
 
 func TestClone(t *testing.T) {
-	tm := mustNew(t, time.Unix(42, 0), 1e6, 1e5, hook.GasPriceConfig{TargetToExcessScaling: 100, MinPrice: 100})
+	tm := mustNew(t, time.Unix(42, 1), 1e6, 1e5, hook.GasPriceConfig{TargetToExcessScaling: 100, MinPrice: 200})
 
 	if diff := cmp.Diff(tm, tm.Clone(), CmpOpt()); diff != "" {
 		t.Errorf("%T.Clone() diff (-want +got):\n%s", tm, diff)

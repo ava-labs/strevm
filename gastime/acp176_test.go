@@ -52,7 +52,7 @@ func TestInvalidConfigRejected(t *testing.T) {
 			initialMinPrice := tm.config.minPrice
 			hooks := hookstest.NewStub(target, hookstest.WithGasPriceConfig(tt.config))
 			err := tm.AfterBlock(0, hooks, &types.Header{Time: 42})
-			require.ErrorIs(t, err, tt.expected)
+			require.ErrorIs(t, err, tt.expected, "AfterBlock()")
 
 			// Config unchanged after rejected update
 			assert.Equal(t, initialScaling, tm.config.targetToExcessScaling, "targetToExcessScaling changed")
