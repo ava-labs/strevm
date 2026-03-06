@@ -147,6 +147,8 @@ func (tm *Time) Price() gas.Price {
 	if tm.config.staticPricing {
 		return tm.config.minPrice
 	}
+	// TODO (ceyonur): Consider omitting `MinPrice` in favor of `MinExcess`.
+	// https://github.com/ava-labs/strevm/issues/267
 	return gas.CalculatePrice(tm.config.minPrice, tm.excess, tm.excessScalingFactor())
 }
 
