@@ -317,6 +317,17 @@ func (e *Estimator) FeeHistory(
 	return new(big.Int).SetUint64(first), reward, baseFee, gasUsedRatio, nil
 }
 
+// EstimateNextBaseFee returns the worst-case upper bound on the next block's
+// base fee. It returns nil when the last accepted block has no worst-case
+// bounds, which happens when it is the genesis block.
+func (e *Estimator) EstimateNextBaseFee() *big.Int {
+	bounds := e.backend.LastAcceptedBlock().WorstCaseBounds()
+	if bounds == nil {
+		return nil
+	}
+	return bounds.LatestEndTime.BaseFee().ToBig()
+}
+
 var _ io.Closer = (*Estimator)(nil)
 
 // Close releases allocated resources.
