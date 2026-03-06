@@ -66,6 +66,13 @@ type price struct {
 	GasFee *hexutil.Big `json:"maxFeePerGas"`
 }
 
+func newPrice(tip, baseFee *big.Int) *price {
+	return &price{
+		GasTip: (*hexutil.Big)(tip),
+		GasFee: (*hexutil.Big)(new(big.Int).Add(tip, baseFee)),
+	}
+}
+
 // priceOptions groups slow/normal/fast gas-price suggestions.
 type priceOptions struct {
 	Slow   *price `json:"slow"`
@@ -75,6 +82,29 @@ type priceOptions struct {
 
 var minGasTip = big.NewInt(params.Wei)
 
+func newPriceOptions(tip, baseFee *big.Int) *priceOptions {
+	const (
+		slowTipPercent = 95
+		fastTipPercent = 105
+	)
+	slowTip := math.BigMax(scale(tip, slowTipPercent), minGasTip)
+	fastTip := scale(tip, fastTipPercent)
+	return &priceOptions{
+		Slow:   newPrice(slowTip, baseFee),
+		Normal: newPrice(tip, baseFee),
+		Fast:   newPrice(fastTip, baseFee),
+	}
+}
+
+var big100 = big.NewInt(100)
+
+// scale returns v * percent / 100.
+func scale(v *big.Int, percent uint64) *big.Int {
+	x := new(big.Int).SetUint64(percent)
+	x.Mul(x, v)
+	return x.Div(x, big100)
+}
+
 // SuggestPriceOptions returns gas-price suggestions at three speed tiers.
 // Each tier contains a tip and a total fee cap (2*baseFee + tip).
 func (c *customAPI) SuggestPriceOptions(ctx context.Context) (*priceOptions, error) {
@@ -82,40 +112,12 @@ func (c *customAPI) SuggestPriceOptions(ctx context.Context) (*priceOptions, err
 	if err != nil {
 		return nil, err
 	}
-
 	doubleBaseFee := c.estimateNextBaseFee()
 	if doubleBaseFee == nil {
 		return nil, nil
 	}
 	doubleBaseFee.Lsh(doubleBaseFee, 1)
-
-	const (
-		slowTipPct = 95
-		fastTipPct = 105
-	)
-	slowTip := math.BigMax(scaleTip(tip, slowTipPct), minGasTip)
-	fastTip := scaleTip(tip, fastTipPct)
-	return &priceOptions{
-		Slow:   newPrice(slowTip, doubleBaseFee),
-		Normal: newPrice(tip, doubleBaseFee),
-		Fast:   newPrice(fastTip, doubleBaseFee),
-	}, nil
-}
-
-var big100 = big.NewInt(100)
-
-// scaleTip returns tip * pct / 100.
-func scaleTip(tip *big.Int, pct uint64) *big.Int {
-	x := new(big.Int).SetUint64(pct)
-	x.Mul(x, tip)
-	return x.Div(x, big100)
-}
-
-func newPrice(tip, doubleBaseFee *big.Int) *price {
-	return &price{
-		GasTip: (*hexutil.Big)(tip),
-		GasFee: (*hexutil.Big)(new(big.Int).Add(doubleBaseFee, tip)),
-	}
+	return newPriceOptions(tip, doubleBaseFee), nil
 }
 
 // NewAcceptedTransactions creates a subscription that is notified each time a
