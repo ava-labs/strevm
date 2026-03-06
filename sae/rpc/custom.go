@@ -32,11 +32,7 @@ func (c *customAPI) GetChainConfig(ctx context.Context) *params.ChainConfig {
 // BaseFee returns an upper-bound estimate of the base fee for the next block.
 // It returns nil if the estimate is unavailable, matching coreth's behaviour.
 func (c *customAPI) BaseFee(ctx context.Context) (*hexutil.Big, error) {
-	baseFee := c.b.EstimateNextBaseFee()
-	if baseFee == nil {
-		return nil, nil
-	}
-	return (*hexutil.Big)(baseFee), nil
+	return (*hexutil.Big)(c.b.EstimateNextBaseFee()), nil
 }
 
 // detailedExecutionResult is the response for eth_callDetailed.
