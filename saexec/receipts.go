@@ -8,16 +8,16 @@ import (
 	"context"
 	"runtime"
 	"slices"
-	"sync"
 
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core/types"
+	"github.com/ava-labs/libevm/libevm/sync"
 
 	"github.com/ava-labs/strevm/blocks"
 )
 
-var receiptChPool = sync.Pool{
-	New: func() any { return make(chan *Receipt, 1) },
+var receiptChPool = sync.Pool[chan *Receipt]{
+	New: func() chan *Receipt { return make(chan *Receipt, 1) },
 }
 
 func (e *Executor) createReceiptBuffers(b *blocks.Block) {
@@ -26,7 +26,7 @@ func (e *Executor) createReceiptBuffers(b *blocks.Block) {
 		txs[i] = tx.Hash()
 	}
 	e.receipts.StoreFromFunc(func(common.Hash) chan *Receipt {
-		return receiptChPool.Get().(chan *Receipt) //nolint:forcetypeassert // New always returns chan *Receipt
+		return receiptChPool.Get()
 	}, txs...)
 	// This satisfies the minimum-lifespan guarantee of [Executor.RecentReceipt]
 	// but, in practice, will keep the receipts around until the block is an
