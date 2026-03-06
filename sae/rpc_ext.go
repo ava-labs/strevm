@@ -81,7 +81,7 @@ const (
 
 var (
 	minGasTip  = big.NewInt(params.Wei)
-	bigHundred = big.NewInt(100)
+	big100 = big.NewInt(100)
 )
 
 // SuggestPriceOptions returns gas-price suggestions at three speed tiers.
