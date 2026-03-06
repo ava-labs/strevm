@@ -180,6 +180,8 @@ func (c *GasPriceConfig) Validate() error {
 	if c.TargetToExcessScaling == 0 {
 		return errTargetToExcessScalingZero
 	}
+	// TODO (ceyonur): Decide whether we want to allow zero min price exclusive for static pricing,
+	// to support fee-less networks.
 	if c.MinPrice == 0 {
 		return errMinPriceZero
 	}
