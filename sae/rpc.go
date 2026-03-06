@@ -120,7 +120,7 @@ func (vm *VM) ethRPCServer() (*rpc.Server, error) {
 		{
 			"eth",
 			immediateReceipts{
-				vm.exec,
+				vm,
 				ethapi.NewTransactionAPI(b, new(ethapi.AddrLocker)),
 			},
 		},

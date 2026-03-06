@@ -29,6 +29,8 @@ import (
 )
 
 func TestRecoverFromDatabase(t *testing.T) {
+	t.Parallel()
+
 	sutOpt, vmTime := withVMTime(t, time.Unix(saeparams.TauSeconds, 0))
 
 	var srcDB database.Database
