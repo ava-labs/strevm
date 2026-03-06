@@ -67,7 +67,7 @@ type priceOptions struct {
 }
 
 // Tip-speed scaling constants, matching coreth's defaults.
-// See: github.com/ava-labs/avalanchego/blob/v1.14.1/graft/coreth/plugin/evm/config/config.go
+// See github.com/ava-labs/avalanchego/blob/1a59a6f646ef/graft/coreth/plugin/evm/config/default_config.go#L84-L85
 const (
 	slowTipPct = 95
 	fastTipPct = 105
