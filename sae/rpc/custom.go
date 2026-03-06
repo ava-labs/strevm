@@ -30,7 +30,7 @@ func (c *customAPI) GetChainConfig(ctx context.Context) *params.ChainConfig {
 }
 
 // BaseFee returns an upper-bound estimate of the base fee for the next block.
-// It returns nil if the estimate is unavailable, matching coreth's behaviour.
+// It returns nil if the estimate is unavailable.
 func (c *customAPI) BaseFee(ctx context.Context) (*hexutil.Big, error) {
 	return (*hexutil.Big)(c.b.EstimateNextBaseFee()), nil
 }
@@ -62,21 +62,19 @@ type priceOptions struct {
 	Fast   *price `json:"fast"`
 }
 
-// Tip-speed scaling constants, matching coreth's defaults.
-// See github.com/ava-labs/avalanchego/blob/1a59a6f646ef/graft/coreth/plugin/evm/config/default_config.go#L84-L85
+// Tip-speed scaling constants.
 const (
 	slowTipPct = 95
 	fastTipPct = 105
 )
 
 var (
-	minGasTip  = big.NewInt(1) // 1 Wei floor for the slow tier, matching coreth.
+	minGasTip  = big.NewInt(1) // 1 Wei floor for the slow tier.
 	bigHundred = big.NewInt(100)
 )
 
 // SuggestPriceOptions returns gas-price suggestions at three speed tiers.
-// Each tier contains a tip and a total fee cap (2*baseFee + tip), following
-// the same approach as the coreth reference implementation.
+// Each tier contains a tip and a total fee cap (2*baseFee + tip).
 func (c *customAPI) SuggestPriceOptions(ctx context.Context) (*priceOptions, error) {
 	baseFee := c.b.EstimateNextBaseFee()
 	if baseFee == nil {
@@ -88,7 +86,7 @@ func (c *customAPI) SuggestPriceOptions(ctx context.Context) (*priceOptions, err
 		return nil, err
 	}
 
-	slowTip := math.BigMax(scaleTip(tip, slowTipPct), minGasTip) // Floor matching coreth's minGasTip.
+	slowTip := math.BigMax(scaleTip(tip, slowTipPct), minGasTip)
 	fastTip := scaleTip(tip, fastTipPct)
 
 	doubleBaseFee := new(big.Int).Lsh(baseFee, 1)
