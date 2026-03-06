@@ -95,7 +95,7 @@ func (c *customAPI) SuggestPriceOptions(ctx context.Context) (*priceOptions, err
 	slowTip := math.BigMax(scaleTip(tip, slowTipPct), minGasTip) // Floor matching coreth's minGasTip.
 	fastTip := scaleTip(tip, fastTipPct)
 
-	doubleBaseFee := baseFee.Lsh(baseFee, 1)
+	doubleBaseFee := new(big.Int).Lsh(baseFee, 1)
 	return &priceOptions{
 		Slow:   newPrice(slowTip, doubleBaseFee),
 		Normal: newPrice(tip, doubleBaseFee),
