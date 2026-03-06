@@ -106,7 +106,6 @@ func scale(v *big.Int, percent uint64) *big.Int {
 }
 
 // SuggestPriceOptions returns gas-price suggestions at three speed tiers.
-// Each tier contains a tip and a total fee cap (2*baseFee + tip).
 func (c *customAPI) SuggestPriceOptions(ctx context.Context) (*priceOptions, error) {
 	tip, err := c.b.SuggestGasTipCap(ctx)
 	if err != nil {
