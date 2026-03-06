@@ -314,17 +314,7 @@ func NewVM[T hook.Transaction](
 		bloomIdx := newBloomIndexer(vm.db, chainIdx, override, cfg.RPCConfig.BlocksPerBloomSection)
 		vm.toClose = append(vm.toClose, bloomIdx.Close)
 
-		numberResolver := &resolver{
-			lastAccepted: &vm.last.accepted,
-			lastSettled:  &vm.last.settled,
-			exec:         vm.exec,
-		}
-		estimatorBackend := &estimatorBackend{
-			resolver:       numberResolver,
-			acceptedBlocks: &vm.acceptedBlocks,
-			db:             vm.db,
-		}
-		estimator, err := gasprice.NewEstimator(estimatorBackend, snowCtx.Log, gasprice.DefaultConfig())
+		estimator, err := gasprice.NewEstimator(&estimatorBackend{vm}, snowCtx.Log, gasprice.DefaultConfig())
 		if err != nil {
 			return nil, fmt.Errorf("gasprice.NewEstimator(...): %v", err)
 		}
@@ -338,7 +328,6 @@ func NewVM[T hook.Transaction](
 			Estimator:      estimator,
 			bloomIndexer:   bloomIdx,
 			bloomOverrider: override,
-			resolver:       numberResolver,
 		}
 	}
 

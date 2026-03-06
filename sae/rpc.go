@@ -10,7 +10,6 @@ import (
 	"math/big"
 	"strconv"
 	"sync"
-	"sync/atomic"
 
 	"github.com/ava-labs/avalanchego/network/p2p"
 	"github.com/ava-labs/avalanchego/version"
@@ -323,7 +322,6 @@ type apiBackend struct {
 	accountManager *accounts.Manager
 
 	*gasprice.Estimator
-	*resolver
 	*txgossip.Set
 	chainIndexer
 	bloomOverrider
@@ -387,11 +385,11 @@ func (b *apiBackend) SyncProgress() ethereum.SyncProgress {
 }
 
 func (b *apiBackend) HeaderByNumber(ctx context.Context, n rpc.BlockNumber) (*types.Header, error) {
-	return readByNumber(b, b.vm.db, n, neverErrs(rawdb.ReadHeader))
+	return readByNumber(b.vm, n, neverErrs(rawdb.ReadHeader))
 }
 
 func (b *apiBackend) BlockByNumber(ctx context.Context, n rpc.BlockNumber) (*types.Block, error) {
-	return readByNumber(b, b.vm.db, n, neverErrs(rawdb.ReadBlock))
+	return readByNumber(b.vm, n, neverErrs(rawdb.ReadBlock))
 }
 
 func (b *apiBackend) HeaderByHash(ctx context.Context, hash common.Hash) (*types.Header, error) {
@@ -476,14 +474,14 @@ func neverErrs[T any](fn func(ethdb.Reader, common.Hash, uint64) *T) canonicalRe
 	}
 }
 
-func readByNumber[T any](r numberResolver, db ethdb.Database, n rpc.BlockNumber, read canonicalReaderWithErr[T]) (*T, error) {
-	num, err := r.ResolveBlockNumber(n)
+func readByNumber[T any](vm *VM, n rpc.BlockNumber, read canonicalReaderWithErr[T]) (*T, error) {
+	num, err := vm.ResolveBlockNumber(n)
 	if errors.Is(err, errFutureBlockNotResolved) {
 		return nil, nil
 	} else if err != nil {
 		return nil, err
 	}
-	return read(db, rawdb.ReadCanonicalHash(db, num), num)
+	return read(vm.db, rawdb.ReadCanonicalHash(vm.db, num), num)
 }
 
 // readByHash returns `fromMem(b)` if a block with the specified hash is in the
@@ -568,35 +566,35 @@ func (b *apiBackend) resolveBlockNumberOrHash(numOrHash rpc.BlockNumberOrHash) (
 
 var errFutureBlockNotResolved = errors.New("not accepted yet")
 
-type numberResolver interface {
-	ResolveBlockNumber(rpc.BlockNumber) (uint64, error)
+func (b *apiBackend) ResolveBlockNumber(bn rpc.BlockNumber) (uint64, error) {
+	return b.vm.ResolveBlockNumber(bn)
 }
 
-var _ numberResolver = (*resolver)(nil)
-
-type resolver struct {
-	lastAccepted *atomic.Pointer[blocks.Block]
-	lastSettled  *atomic.Pointer[blocks.Block]
-	exec         *saexec.Executor
-}
-
-// ResolveBlockNumber resolves the block number for the given block number.
-// It supports the following block numbers:
-// - PendingBlockNumber: the height of the last accepted (head) block
-// - LatestBlockNumber: the height of the last executed block
-// - SafeBlockNumber, FinalizedBlockNumber: the height of the last settled block
-// - Other block numbers: the height of the block with the given number
-// It returns an error if the block number is negative or greater than the height of the head block.
-func (r *resolver) ResolveBlockNumber(bn rpc.BlockNumber) (uint64, error) {
-	head := r.lastAccepted.Load().Height()
+// ResolveBlockNumber resolves the [rpc.BlockNumber], supporting the following
+// named blocks:
+//
+// - [rpc.PendingBlockNumber]: last accepted
+// - [rpc.LatestBlockNumber]: last executed
+// - [rpc.SafeBlockNumber] and [rpc.FinalizedBlockNumber]: last settled
+//
+// Explicit, positive block numbers are returned unmodified as long as the block
+// has been accepted.
+//
+// NOTE: the definition of safe and finalized as the last-settled block DOES NOT
+// affect finality of consensus under SAE, which is immediate upon acceptance.
+// Safe blocks can be thought of as safe against hard-drive corruption on the
+// specific validator, while final blocks are labelled as such only to maintain
+// monotonicity of the naming convention.
+func (vm *VM) ResolveBlockNumber(bn rpc.BlockNumber) (uint64, error) {
+	head := vm.last.accepted.Load().Height()
 
 	switch bn {
 	case rpc.PendingBlockNumber:
 		return head, nil
 	case rpc.LatestBlockNumber:
-		return r.exec.LastExecuted().Height(), nil
+		return vm.exec.LastExecuted().Height(), nil
 	case rpc.SafeBlockNumber, rpc.FinalizedBlockNumber:
-		return r.lastSettled.Load().Height(), nil
+		return vm.last.settled.Load().Height(), nil
 	}
 
 	if bn < 0 {

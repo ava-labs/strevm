@@ -6,7 +6,6 @@ package sae
 import (
 	"github.com/ava-labs/libevm/core/rawdb"
 	"github.com/ava-labs/libevm/core/types"
-	"github.com/ava-labs/libevm/ethdb"
 	"github.com/ava-labs/libevm/event"
 	"github.com/ava-labs/libevm/rpc"
 
@@ -15,16 +14,13 @@ import (
 )
 
 type estimatorBackend struct {
-	*resolver
-
-	acceptedBlocks *event.FeedOf[*types.Block]
-	db             ethdb.Database
+	*VM
 }
 
 var _ gasprice.Backend = (*estimatorBackend)(nil)
 
 func (e *estimatorBackend) BlockByNumber(n rpc.BlockNumber) (*types.Block, error) {
-	return readByNumber(e, e.db, n, neverErrs(rawdb.ReadBlock))
+	return readByNumber(e.VM, n, neverErrs(rawdb.ReadBlock))
 }
 
 func (e *estimatorBackend) SubscribeAcceptedBlockEvent(ch chan<- *types.Block) event.Subscription {
@@ -32,5 +28,5 @@ func (e *estimatorBackend) SubscribeAcceptedBlockEvent(ch chan<- *types.Block) e
 }
 
 func (e *estimatorBackend) LastAcceptedBlock() *blocks.Block {
-	return e.lastAccepted.Load()
+	return e.last.accepted.Load()
 }
