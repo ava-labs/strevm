@@ -17,10 +17,6 @@ import (
 	"github.com/ava-labs/strevm/proxytime"
 )
 
-func gasExtractionCmpOpt() cmp.Option {
-	return proxytime.CmpOpt[gas.Gas]()
-}
-
 func TestGasTime(t *testing.T) {
 	const (
 		unix   = 42
@@ -43,7 +39,7 @@ func TestGasTime(t *testing.T) {
 	want := proxytime.New(unix, rate)
 	want.Tick(frac)
 
-	if diff := cmp.Diff(want, got, gasExtractionCmpOpt()); diff != "" {
+	if diff := cmp.Diff(want, got, proxytime.CmpOpt[gas.Gas]()); diff != "" {
 		t.Errorf("GasTime(...) diff (-want +got):\n%s", diff)
 	}
 }
@@ -88,7 +84,7 @@ func FuzzTimeExtraction(f *testing.F) {
 			rate := gastime.SafeRateOfTarget(gas.Gas(target))
 			want.SetRate(rate)
 
-			if diff := cmp.Diff(want, got, gasExtractionCmpOpt()); diff != "" {
+			if diff := cmp.Diff(want, got, proxytime.CmpOpt[gas.Gas]()); diff != "" {
 				t.Errorf("diff (-proxytime.Of +GasTime):\n%s", diff)
 			}
 		})
