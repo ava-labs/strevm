@@ -9,7 +9,6 @@ import (
 
 	"github.com/ava-labs/libevm/common/hexutil"
 	"github.com/ava-labs/libevm/params"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/ava-labs/strevm/saetest"
@@ -39,12 +38,9 @@ func TestBaseFee(t *testing.T) {
 
 func TestNewPriceOptions(t *testing.T) {
 	toBig := big.NewInt
-	toHex := func(x int64) *hexutil.Big {
-		return (*hexutil.Big)(toBig(x))
-	}
 	minimumPrice := &price{
-		GasTip: toHex(params.Wei),
-		GasFee: toHex(2 * params.Wei),
+		GasTip: hexBig(params.Wei),
+		GasFee: hexBig(2 * params.Wei),
 	}
 	const (
 		tip     = 500
@@ -82,7 +78,7 @@ func TestNewPriceOptions(t *testing.T) {
 			tip := new(big.Int).SetUint64(test.tip)
 			baseFee := new(big.Int).SetUint64(test.baseFee)
 			got := newPriceOptions(tip, baseFee)
-			assert.Equalf(t, test.want, got, "newPriceOptions(%s, %v)", tip, baseFee)
+			require.Equalf(t, test.want, got, "newPriceOptions(%s, %v)", tip, baseFee)
 		})
 	}
 }
