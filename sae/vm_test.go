@@ -61,7 +61,6 @@ import (
 	saeparams "github.com/ava-labs/strevm/params"
 	"github.com/ava-labs/strevm/saedb"
 	"github.com/ava-labs/strevm/saetest"
-	"github.com/ava-labs/strevm/saexec"
 )
 
 func TestMain(m *testing.M) {
@@ -974,7 +973,7 @@ func TestRegressionLoseStateBeforeSettlement(t *testing.T) {
 	b := sut.runConsensusLoop(t, createTx(t, common.Address{}))
 	vmTime.advanceToSettle(ctx, t, b)
 
-	for range saexec.StateHistory + 10 {
+	for range saedb.StateHistory + 10 {
 		sut.runConsensusLoop(t, createTx(t, common.Address{}))
 	}
 }

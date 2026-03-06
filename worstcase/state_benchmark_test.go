@@ -14,8 +14,8 @@ import (
 	"github.com/ava-labs/libevm/params"
 	"github.com/stretchr/testify/require"
 
+	"github.com/ava-labs/strevm/saedb"
 	"github.com/ava-labs/strevm/saetest"
-	"github.com/ava-labs/strevm/saexec"
 )
 
 func BenchmarkApplyTxWithSnapshot(b *testing.B) {
@@ -34,7 +34,7 @@ func BenchmarkApplyTxWithSnapshot(b *testing.B) {
 			snaps, err := snapshot.New(
 				snapshot.Config{
 					AsyncBuild: false,
-					CacheSize:  saexec.SnapshotCacheSizeMB,
+					CacheSize:  saedb.SnapshotCacheSizeMB,
 				},
 				sut.db, sut.stateCache.TrieDB(), sut.genesis.PostExecutionStateRoot(),
 			)

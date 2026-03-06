@@ -29,7 +29,7 @@ var _ saedb.StateDBOpener = (*Executor)(nil)
 
 // An Executor accepts and executes a [blocks.Block] FIFO queue.
 type Executor struct {
-	*stateRecorder
+	*saedb.Recorder
 	quit, done chan struct{}
 	log        logging.Logger
 	hooks      hook.Points
@@ -64,17 +64,17 @@ func New(
 	hooks hook.Points,
 	log logging.Logger,
 ) (*Executor, error) {
-	s, err := newStateRecorder(db, triedbConfig, lastExecuted.PostExecutionStateRoot(), log)
+	s, err := saedb.NewStateRecorder(db, triedbConfig, lastExecuted.PostExecutionStateRoot(), log)
 	if err != nil {
 		return nil, err
 	}
 
 	e := &Executor{
-		stateRecorder: s,
-		quit:          make(chan struct{}), // closed by [Executor.Close]
-		done:          make(chan struct{}), // closed by [Executor.processQueue] after `quit` is closed
-		log:           log,
-		hooks:         hooks,
+		Recorder: s,
+		quit:     make(chan struct{}), // closed by [Executor.Close]
+		done:     make(chan struct{}), // closed by [Executor.processQueue] after `quit` is closed
+		log:      log,
+		hooks:    hooks,
 		// On startup we enqueue every block since the last time the trie DB was
 		// committed, so the queue needs sufficient capacity to avoid
 		// [Executor.Enqueue] warning about it being too full.
@@ -101,7 +101,7 @@ func (e *Executor) Close() error {
 	close(e.quit)
 	<-e.done
 
-	return e.stateRecorder.close()
+	return e.Recorder.Close()
 }
 
 // SignerForBlock returns the transaction signer for the block.
