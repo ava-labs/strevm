@@ -99,8 +99,9 @@ func (c *customAPI) SuggestPriceOptions(ctx context.Context) (*priceOptions, err
 
 // scaleTip returns tip * pct / 100.
 func scaleTip(tip *big.Int, pct uint64) *big.Int {
-	n := new(big.Int).Mul(tip, new(big.Int).SetUint64(pct))
-	return n.Div(n, bigHundred)
+	x := new(big.Int).SetUint64(pct)
+	x.Mul(x, tip)
+	return x.Div(x, bigHundred)
 }
 
 func newPrice(tip, doubleBaseFee *big.Int) *price {
