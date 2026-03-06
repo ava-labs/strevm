@@ -31,8 +31,8 @@ func (c *customAPI) GetChainConfig(ctx context.Context) *params.ChainConfig {
 
 // BaseFee returns an upper-bound estimate of the base fee for the next block.
 // It returns nil if the estimate is unavailable.
-func (c *customAPI) BaseFee(ctx context.Context) (*hexutil.Big, error) {
-	return (*hexutil.Big)(c.estimateNextBaseFee()), nil
+func (c *customAPI) BaseFee(ctx context.Context) *hexutil.Big {
+	return (*hexutil.Big)(c.estimateNextBaseFee())
 }
 
 // estimateNextBaseFee returns the worst-case upper bound on the next block's
