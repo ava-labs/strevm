@@ -55,10 +55,10 @@ func (vm *VM) ethRPCServer() (*rpc.Server, error) {
 
 	filterSystem := filters.NewFilterSystem(b, filters.Config{})
 	filterAPI := filters.NewFilterAPI(filterSystem, false /*isLightClient*/)
-	vm.toClose = append(vm.toClose, func() error {
+	vm.toClose = append(vm.toClose, closerFunc(func() error {
 		filters.CloseAPI(filterAPI)
 		return nil
-	})
+	}))
 
 	type api struct {
 		namespace string
@@ -143,6 +143,8 @@ func (vm *VM) ethRPCServer() (*rpc.Server, error) {
 		//  - newPendingTransactions
 		//  - logs
 		{"eth", filterAPI},
+		// Avalanche-custom eth extensions:
+		{"eth", &customAPI{b}},
 	}
 
 	if vm.config.RPCConfig.EnableDBInspecting {

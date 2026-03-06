@@ -104,8 +104,6 @@ func (c *Config) validate() error {
 	return nil
 }
 
-var _ io.Closer = (*Estimator)(nil)
-
 type last struct {
 	lock   sync.RWMutex
 	number uint64
@@ -318,6 +316,8 @@ func (e *Estimator) FeeHistory(
 	}
 	return new(big.Int).SetUint64(first), reward, baseFee, gasUsedRatio, nil
 }
+
+var _ io.Closer = (*Estimator)(nil)
 
 // Close releases allocated resources.
 func (e *Estimator) Close() error {
