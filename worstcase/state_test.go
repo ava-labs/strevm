@@ -64,9 +64,7 @@ func newSUT(tb testing.TB, alloc types.GenesisAlloc) SUT {
 		blockstest.WithGasTarget(initialGasTarget),
 		blockstest.WithGasExcess(initialExcess),
 	)
-	hooks := &hookstest.Stub{
-		Target: initialGasTarget,
-	}
+	hooks := hookstest.NewStub(initialGasTarget)
 	s, err := NewState(hooks, config, genesis, saetest.NewStateDBOpener(cache, nil))
 	require.NoError(tb, err, "NewState()")
 
@@ -109,6 +107,7 @@ func TestMultipleBlocks(t *testing.T) {
 
 	state := sut.State
 	lastHash := sut.genesis.Hash()
+	wantLatestEndTime := sut.genesis.ExecutedByGasTime().Clone()
 
 	const importedAmount = 10
 	type op struct {
@@ -126,9 +125,7 @@ func TestMultipleBlocks(t *testing.T) {
 		wantMinSenderBalances []map[common.Address]uint64 // transformed to uint256.Int
 	}{
 		{
-			hooks: &hookstest.Stub{
-				Target: 2 * initialGasTarget, // Will double the target _after_ this block.
-			},
+			hooks:        hookstest.NewStub(2 * initialGasTarget), // Will double the target _after_ this block.
 			wantGasLimit: initialMaxBlockSize,
 			wantBaseFee:  uint256.NewInt(1),
 			ops: []op{
@@ -167,9 +164,7 @@ func TestMultipleBlocks(t *testing.T) {
 			},
 		},
 		{
-			hooks: &hookstest.Stub{
-				Target: initialGasTarget, // Restore the target _after_ this block.
-			},
+			hooks:        hookstest.NewStub(initialGasTarget), // Restore the target _after_ this block.
 			wantGasLimit: 2 * initialMaxBlockSize,
 			wantBaseFee:  uint256.NewInt(2),
 			ops: []op{
@@ -281,6 +276,8 @@ func TestMultipleBlocks(t *testing.T) {
 			Number:     big.NewInt(int64(i)),
 			Time:       block.time,
 		}
+
+		wantLatestEndTime.BeforeBlock(sut.hooks, header)
 		require.NoErrorf(t, state.StartBlock(header), "StartBlock(%d)", i)
 		require.Equalf(t, block.wantBaseFee, state.BaseFee(), "base fee after StartBlock(%d)", i)
 		require.Equalf(t, block.wantGasLimit, state.GasLimit(), "gas limit after StartBlock(%d)", i)
@@ -295,9 +292,11 @@ func TestMultipleBlocks(t *testing.T) {
 
 		got, err := state.FinishBlock()
 		require.NoError(t, err, "FinishBlock()")
+		require.NoError(t, wantLatestEndTime.AfterBlock(gas.Gas(state.GasUsed()), sut.hooks, header), "AfterBlock()")
 
 		want := &blocks.WorstCaseBounds{
-			MaxBaseFee: block.wantBaseFee,
+			MaxBaseFee:    block.wantBaseFee,
+			LatestEndTime: wantLatestEndTime.Clone(),
 		}
 		for _, bals := range block.wantMinSenderBalances {
 			uBals := make(map[common.Address]*uint256.Int)
@@ -306,7 +305,7 @@ func TestMultipleBlocks(t *testing.T) {
 			}
 			want.MinOpBurnerBalances = append(want.MinOpBurnerBalances, uBals)
 		}
-		if diff := cmp.Diff(want, got, cmpopts.EquateEmpty()); diff != "" {
+		if diff := cmp.Diff(want, got, cmpopts.EquateEmpty(), gastime.CmpOpt()); diff != "" {
 			t.Errorf("FinishBlock() diff (-want +got): \n%s", diff)
 		}
 

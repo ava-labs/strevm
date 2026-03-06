@@ -8,6 +8,7 @@
 package saexec
 
 import (
+	"io"
 	"sync/atomic"
 
 	"github.com/ava-labs/avalanchego/cache/lru"
@@ -95,6 +96,8 @@ func New(
 	return e, nil
 }
 
+var _ io.Closer = (*Executor)(nil)
+
 // Close shuts down the [Executor], waits for the currently executing block
 // to complete, and then releases all resources.
 func (e *Executor) Close() error {
@@ -105,8 +108,8 @@ func (e *Executor) Close() error {
 }
 
 // SignerForBlock returns the transaction signer for the block.
-func (e *Executor) SignerForBlock(b *blocks.Block) types.Signer {
-	return types.MakeSigner(e.chainConfig, b.Number(), b.BuildTime())
+func (e *Executor) SignerForBlock(b *types.Block) types.Signer {
+	return types.MakeSigner(e.chainConfig, b.Number(), b.Time())
 }
 
 // ChainConfig returns the config originally passed to [New].
