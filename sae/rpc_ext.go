@@ -89,11 +89,10 @@ func newPriceOptions(tip, baseFee *big.Int) *priceOptions {
 	)
 	slowTip := math.BigMax(scale(tip, slowTipPercent), minGasTip)
 	fastTip := scale(tip, fastTipPercent)
-	doubleBaseFee := new(big.Int).Lsh(baseFee, 1)
 	return &priceOptions{
-		Slow:   newPrice(slowTip, doubleBaseFee),
-		Normal: newPrice(tip, doubleBaseFee),
-		Fast:   newPrice(fastTip, doubleBaseFee),
+		Slow:   newPrice(slowTip, baseFee),
+		Normal: newPrice(tip, baseFee),
+		Fast:   newPrice(fastTip, baseFee),
 	}
 }
 
@@ -113,11 +112,12 @@ func (c *customAPI) SuggestPriceOptions(ctx context.Context) (*priceOptions, err
 	if err != nil {
 		return nil, err
 	}
-	baseFee := c.estimateNextBaseFee()
-	if baseFee == nil {
+	doubleBaseFee := c.estimateNextBaseFee()
+	if doubleBaseFee == nil {
 		return nil, nil
 	}
-	return newPriceOptions(tip, baseFee), nil
+	doubleBaseFee.Lsh(doubleBaseFee, 1)
+	return newPriceOptions(tip, doubleBaseFee), nil
 }
 
 // NewAcceptedTransactions creates a subscription that is notified each time a

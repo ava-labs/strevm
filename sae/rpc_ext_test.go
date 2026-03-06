@@ -44,7 +44,7 @@ func TestNewPriceOptions(t *testing.T) {
 	}
 	minimumPrice := &price{
 		GasTip: toHex(params.Wei),
-		GasFee: toHex(3 * params.Wei),
+		GasFee: toHex(2 * params.Wei),
 	}
 	const (
 		tip     = 500
@@ -71,9 +71,9 @@ func TestNewPriceOptions(t *testing.T) {
 			tip:     tip,
 			baseFee: baseFee,
 			want: &priceOptions{
-				Slow:   newPrice(toBig(tip*.95), toBig(2*baseFee)),
-				Normal: newPrice(toBig(tip), toBig(2*baseFee)),
-				Fast:   newPrice(toBig(tip*1.05), toBig(2*baseFee)),
+				Slow:   newPrice(toBig(tip*.95), toBig(baseFee)),
+				Normal: newPrice(toBig(tip), toBig(baseFee)),
+				Fast:   newPrice(toBig(tip*1.05), toBig(baseFee)),
 			},
 		},
 	}
@@ -100,9 +100,10 @@ func TestSuggestPriceOptions(t *testing.T) {
 	// See [TestNewPriceOptions] for behavioral tests.
 	tip, err := sut.rawVM.apiBackend.SuggestGasTipCap(t.Context())
 	require.NoErrorf(t, err, "SuggestGasTipCap()")
-	baseFee := sut.rawVM.last.accepted.Load().WorstCaseBounds().LatestEndTime.BaseFee().ToBig()
+	doubleBaseFee := sut.rawVM.last.accepted.Load().WorstCaseBounds().LatestEndTime.BaseFee().ToBig()
+	doubleBaseFee.Lsh(doubleBaseFee, 1)
 	sut.testRPC(ctx, t, rpcTest{
 		method: "eth_suggestPriceOptions",
-		want:   newPriceOptions(tip, baseFee),
+		want:   newPriceOptions(tip, doubleBaseFee),
 	})
 }
