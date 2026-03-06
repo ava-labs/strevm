@@ -17,6 +17,7 @@ import (
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core"
 	"github.com/ava-labs/libevm/core/state"
+	"github.com/ava-labs/libevm/core/state/snapshot"
 	"github.com/ava-labs/libevm/core/txpool"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/params"
@@ -55,7 +56,6 @@ type State struct {
 
 	baseFee             *uint256.Int
 	curr                *types.Header
-	rules               params.Rules
 	signer              types.Signer
 	minOpBurnerBalances []map[common.Address]*uint256.Int
 }
@@ -68,13 +68,13 @@ func NewState(
 	config *params.ChainConfig,
 	stateCache state.Database,
 	settled *blocks.Block,
+	snaps *snapshot.Tree,
 ) (*State, error) {
 	if !settled.Executed() {
 		return nil, errSettledBlockNotExecuted
 	}
 
-	// TODO: Should we be providing snapshots here?
-	db, err := state.New(settled.PostExecutionStateRoot(), stateCache, nil)
+	db, err := state.New(settled.PostExecutionStateRoot(), stateCache, snaps)
 	if err != nil {
 		return nil, err
 	}
@@ -141,9 +141,8 @@ func (s *State) StartBlock(h *types.Header) error {
 	s.curr.GasLimit = uint64(s.maxBlockSize)
 	s.curr.BaseFee = s.baseFee.ToBig()
 
-	// For both rules and signer, we MUST use the block's timestamp, not the
-	// execution clock's, otherwise we might enable an upgrade too early.
-	s.rules = s.config.Rules(h.Number, true /*merge*/, h.Time)
+	// We MUST use the block's timestamp, not the execution clock's, otherwise
+	// we might enable an upgrade too early.
 	s.signer = types.MakeSigner(s.config, h.Number, h.Time)
 	return nil
 }
@@ -192,7 +191,10 @@ func (s *State) ApplyTx(tx *types.Transaction) error {
 			1<<types.LegacyTxType |
 			1<<types.AccessListTxType |
 			1<<types.DynamicFeeTxType,
-		MaxSize: math.MaxUint, // TODO(arr4n)
+		// No byte-size limit needed as gas validation (intrinsic gas ≤
+		// tx gas ≤ block gas limit) already enforces an implicit size
+		// limit (2MB) on transactions.
+		MaxSize: math.MaxUint,
 		MinTip:  big.NewInt(0),
 	}
 	if err := txpool.ValidateTransaction(tx, s.curr, s.signer, opts); err != nil {
@@ -213,22 +215,62 @@ func (s *State) ApplyTx(tx *types.Transaction) error {
 		return fmt.Errorf("%w: address %v, codehash: %s", core.ErrSenderNoEOA, from.Hex(), codeHash)
 	}
 
-	op, err := txToOp(from, tx)
+	if err := s.hooks.CanExecuteTransaction(from, tx.To(), s.db); err != nil {
+		return fmt.Errorf("transaction blocked by CanExecuteTransaction hook: %w", err)
+	}
+
+	op, err := txToOp(from, tx, s.baseFee)
 	if err != nil {
 		return fmt.Errorf("converting transaction to operation: %w", err)
 	}
 	return s.Apply(op)
 }
 
-func txToOp(from common.Address, tx *types.Transaction) (hook.Op, error) {
+func bigToUint256(v *big.Int) (_ uint256.Int, overflow bool) {
+	var x uint256.Int
+	overflow = x.SetFromBig(v)
+	return x, overflow
+}
+
+// mulAdd returns a*b + c and reports whether overflow occurred.
+func mulAdd(a uint64, b, c *uint256.Int) (_ uint256.Int, overflow bool) {
+	var x uint256.Int
+	x.SetUint64(a)
+	if _, overflow := x.MulOverflow(&x, b); overflow {
+		return uint256.Int{}, true
+	}
+	_, overflow = x.AddOverflow(&x, c)
+	return x, overflow
+}
+
+func txToOp(from common.Address, tx *types.Transaction, baseFee *uint256.Int) (hook.Op, error) {
 	type Op = hook.Op // for convenience when returning zero value
 
-	var gasFeeCap uint256.Int
-	if overflow := gasFeeCap.SetFromBig(tx.GasFeeCap()); overflow {
+	gasFeeCap, overflow := bigToUint256(tx.GasFeeCap())
+	if overflow {
 		return Op{}, core.ErrFeeCapVeryHigh
 	}
-	var amount uint256.Int
-	if overflow := amount.SetFromBig(tx.Cost()); overflow {
+	value, overflow := bigToUint256(tx.Value())
+	if overflow {
+		return Op{}, core.ErrInsufficientFundsForTransfer
+	}
+	minBalance, overflow := mulAdd(tx.Gas(), &gasFeeCap, &value)
+	if overflow {
+		return Op{}, errCostOverflow
+	}
+
+	// effectiveGasPrice = min(gasFeeCap, baseFee + gasTipCap)
+	gasTipCap, overflow := bigToUint256(tx.GasTipCap())
+	if overflow {
+		return Op{}, core.ErrTipVeryHigh
+	}
+	var effectiveGasPrice uint256.Int
+	if _, overflow := effectiveGasPrice.AddOverflow(baseFee, &gasTipCap); overflow || gasFeeCap.Lt(&effectiveGasPrice) {
+		effectiveGasPrice.Set(&gasFeeCap)
+	}
+
+	amount, overflow := mulAdd(tx.Gas(), &effectiveGasPrice, &value)
+	if overflow {
 		return Op{}, errCostOverflow
 	}
 	return Op{
@@ -236,8 +278,9 @@ func txToOp(from common.Address, tx *types.Transaction) (hook.Op, error) {
 		GasFeeCap: gasFeeCap,
 		Burn: map[common.Address]hook.AccountDebit{
 			from: {
-				Nonce:  tx.Nonce(),
-				Amount: amount,
+				Nonce:      tx.Nonce(),
+				Amount:     amount,
+				MinBalance: minBalance,
 			},
 		},
 		// Mint MUST NOT be populated here because this transaction may revert.
@@ -300,6 +343,7 @@ func (s *State) FinishBlock() *blocks.WorstCaseBounds {
 	s.qSize += s.blockSize
 	return &blocks.WorstCaseBounds{
 		MaxBaseFee:          s.baseFee,
+		LatestEndTime:       s.clock.Clone(),
 		MinOpBurnerBalances: slices.Clone(s.minOpBurnerBalances),
 	}
 }

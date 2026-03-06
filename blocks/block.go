@@ -157,26 +157,36 @@ func (b *Block) CopyAncestorsFrom(c *Block) error {
 	return b.SetAncestors(a.parent, a.lastSettled)
 }
 
-// A Source returns a [Block] that matches both a hash and number, and a boolean
-// indicating if such a block was found.
-type Source func(hash common.Hash, number uint64) (*Block, bool)
+type (
+	// A Source returns a [Block] that matches both a hash and number, and a
+	// boolean indicating if such a block was found.
+	Source func(hash common.Hash, number uint64) (*Block, bool)
+	// An EthBlockSource is equivalent to a [Source] except that it returns the
+	// raw Ethereum block.
+	EthBlockSource func(hash common.Hash, number uint64) (*types.Block, bool)
+	// A HeaderSource is equivalent to a [Source] except that it only returns
+	// the block header.
+	HeaderSource func(hash common.Hash, number uint64) (*types.Header, bool)
+)
 
-// EthBlock returns the [types.Block] with the given hash and number, or nil if
-// not found.
-func (s Source) EthBlock(h common.Hash, n uint64) *types.Block {
-	b, ok := s(h, n)
-	if !ok {
-		return nil
+// AsEthBlockSource returns an [EthBlockSource] backed by the original [Source].
+func (s Source) AsEthBlockSource() EthBlockSource {
+	return func(h common.Hash, n uint64) (*types.Block, bool) {
+		b, ok := s(h, n)
+		if !ok {
+			return nil, false
+		}
+		return b.EthBlock(), true
 	}
-	return b.EthBlock()
 }
 
-// Header returns the [types.Header] with the given hash and number, or nil if
-// not found.
-func (s Source) Header(h common.Hash, n uint64) *types.Header {
-	b, ok := s(h, n)
-	if !ok {
-		return nil
+// AsHeaderSource returns a [HeaderSource] backed by the original [Source].
+func (s Source) AsHeaderSource() HeaderSource {
+	return func(h common.Hash, n uint64) (*types.Header, bool) {
+		b, ok := s(h, n)
+		if !ok {
+			return nil, false
+		}
+		return b.Header(), true
 	}
-	return b.Header()
 }

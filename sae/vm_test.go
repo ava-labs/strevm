@@ -6,12 +6,14 @@ package sae
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"math/big"
 	"math/rand/v2"
 	"net/http/httptest"
 	"os"
 	"runtime"
+	"sync"
 	"testing"
 	"time"
 
@@ -35,13 +37,17 @@ import (
 	"github.com/ava-labs/libevm/core/txpool"
 	"github.com/ava-labs/libevm/core/txpool/legacypool"
 	"github.com/ava-labs/libevm/core/types"
+	"github.com/ava-labs/libevm/core/vm"
 	"github.com/ava-labs/libevm/ethclient"
 	"github.com/ava-labs/libevm/ethdb"
+	"github.com/ava-labs/libevm/libevm"
+	libevmhookstest "github.com/ava-labs/libevm/libevm/hookstest"
 	"github.com/ava-labs/libevm/libevm/options"
 	"github.com/ava-labs/libevm/log"
 	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/rpc"
 	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/holiman/uint256"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -50,7 +56,7 @@ import (
 	"github.com/ava-labs/strevm/adaptor"
 	"github.com/ava-labs/strevm/blocks"
 	"github.com/ava-labs/strevm/blocks/blockstest"
-	"github.com/ava-labs/strevm/hook"
+	"github.com/ava-labs/strevm/cmputils"
 	"github.com/ava-labs/strevm/hook/hookstest"
 	saeparams "github.com/ava-labs/strevm/params"
 	"github.com/ava-labs/strevm/saedb"
@@ -86,7 +92,7 @@ type SUT struct {
 	wallet  *saetest.Wallet
 	avaDB   database.Database
 	db      ethdb.Database
-	hooks   hook.Points
+	hooks   *hookstest.Stub
 	logger  *saetest.TBLogger
 
 	validators *validatorstest.State
@@ -95,10 +101,12 @@ type SUT struct {
 
 type (
 	sutConfig struct {
-		vmConfig Config
-		logLevel logging.Level
-		genesis  core.Genesis
-		db       database.Database
+		hooks       *hookstest.Stub
+		vmConfig    Config
+		logLevel    logging.Level
+		genesis     core.Genesis
+		db          database.Database
+		precompiles map[common.Address]libevm.PrecompiledContract
 	}
 	sutOption = options.Option[sutConfig]
 )
@@ -116,14 +124,11 @@ func newSUT(tb testing.TB, numAccounts uint, opts ...sutOption) (context.Context
 
 	xdb := saetest.NewExecutionResultsDB()
 	conf := options.ApplyTo(&sutConfig{
+		hooks: hookstest.NewStub(100e6, hookstest.WithExecutionResultsDBFn(func(string) (saedb.ExecutionResults, error) {
+			return xdb, nil
+		})),
 		vmConfig: Config{
 			MempoolConfig: mempoolConf,
-			Hooks: &hookstest.Stub{
-				Target: 100e6,
-				ExecutionResultsDBFn: func(string) (saedb.ExecutionResults, error) {
-					return xdb, nil
-				},
-			},
 		},
 		logLevel: logging.Debug,
 		genesis: core.Genesis{
@@ -135,11 +140,10 @@ func newSUT(tb testing.TB, numAccounts uint, opts ...sutOption) (context.Context
 		db: memdb.New(),
 	}, opts...)
 
-	vm := NewSinceGenesis(conf.vmConfig)
+	vm := NewSinceGenesis(conf.hooks, conf.vmConfig)
 	snow := adaptor.Convert(vm)
 	tb.Cleanup(func() {
 		ctx := context.WithoutCancel(tb.Context())
-		require.NoError(tb, vm.last.accepted.Load().WaitUntilExecuted(ctx), "{last-accepted block}.WaitUntilExecuted()")
 		require.NoError(tb, snow.Shutdown(ctx), "Shutdown()")
 	})
 
@@ -165,6 +169,19 @@ func newSUT(tb testing.TB, numAccounts uint, opts ...sutOption) (context.Context
 		sender,
 	), "Initialize()")
 
+	if len(conf.precompiles) > 0 {
+		// All precompile registrations must occur after the VM is initialized,
+		// since [libevmhookstest.Stub] doesn't support JSON round-tripping,
+		// However, it must occur before the cleanup ensuring that all blocks
+		// are executed, since registering the precompile also adds a cleanup to
+		// remove the libevm registration.
+		registerPrecompiles(tb, conf.precompiles)
+	}
+	tb.Cleanup(func() {
+		ctx := context.WithoutCancel(tb.Context())
+		require.NoError(tb, vm.last.accepted.Load().WaitUntilExecuted(ctx), "{last-accepted block}.WaitUntilExecuted()")
+	})
+
 	rpcClient, ethClient := dialRPC(ctx, tb, snow)
 
 	validators, ok := snowCtx.ValidatorState.(*validatorstest.State)
@@ -181,7 +198,7 @@ func newSUT(tb testing.TB, numAccounts uint, opts ...sutOption) (context.Context
 		),
 		avaDB:  conf.db,
 		db:     newEthDB(conf.db),
-		hooks:  conf.vmConfig.Hooks,
+		hooks:  conf.hooks,
 		logger: logger,
 
 		validators: validators,
@@ -256,24 +273,18 @@ func withVMTime(tb testing.TB, startTime time.Time) (sutOption, *vmTime) {
 	opt := options.Func[sutConfig](func(c *sutConfig) {
 		// TODO(StephenButtolph) unify the time functions provided in the config
 		// and the hooks.
+		c.hooks.Now = t.now
 		c.vmConfig.Now = t.now
-
-		h, ok := c.vmConfig.Hooks.(*hookstest.Stub)
-		require.Truef(tb, ok, "%T.vmConfig.Hooks of type %T is not %T", c, c.vmConfig.Hooks, h)
-		h.Now = t.now
 	})
 
 	return opt, t
 }
 
 // withExecResultsDB returns an option that replaces the default
-// execution-results database with the provided one. If an earlier option
-// replaces the [hook.Points] with a concrete type other that [hookstest.Stub]
-// then this option will panic.
+// execution-results database with the provided one.
 func withExecResultsDB(hdb database.HeightIndex) sutOption {
 	return options.Func[sutConfig](func(c *sutConfig) {
-		s := c.vmConfig.Hooks.(*hookstest.Stub) //nolint:forcetypeassert // Test-only and panic() scenario documented above
-		s.ExecutionResultsDBFn = func(string) (saedb.ExecutionResults, error) {
+		c.hooks.ExecutionResultsDBFn = func(string) (saedb.ExecutionResults, error) {
 			return saedb.ExecutionResults{HeightIndex: hdb}, nil
 		}
 	})
@@ -283,6 +294,41 @@ func withBloomSectionSize(size uint64) sutOption {
 	return options.Func[sutConfig](func(c *sutConfig) {
 		c.vmConfig.RPCConfig.BlocksPerBloomSection = size
 	})
+}
+
+// withBlockingPrecompile adds a precompile that will block
+// all execution until the releasing function returned is called.
+// This should be called prior to closing the VM to prevent goroutine
+// leaks. The releaser can be called multiple times.
+func withBlockingPrecompile(addr common.Address) (sutOption, func()) {
+	unblock := make(chan struct{})
+	p := vm.NewStatefulPrecompile(func(vm.PrecompileEnvironment, []byte) ([]byte, error) {
+		<-unblock
+		return nil, nil
+	})
+	return withPrecompile(addr, p), sync.OnceFunc(func() { close(unblock) })
+}
+
+// withPrecompile adds any precompile at the specified address.
+func withPrecompile(addr common.Address, precompile libevm.PrecompiledContract) sutOption {
+	return options.Func[sutConfig](func(c *sutConfig) {
+		if c.precompiles == nil {
+			c.precompiles = make(map[common.Address]libevm.PrecompiledContract)
+		}
+		c.precompiles[addr] = precompile
+	})
+}
+
+// registerPrecompiles registers all `precompiles` as a libevm precompile.
+// As a side effect, a [testing.TB.Cleanup] will also be added, removing
+// the registration. This cleanup must run AFTER all transactions are
+// executed.
+func registerPrecompiles(tb testing.TB, precompiles map[common.Address]libevm.PrecompiledContract) {
+	tb.Helper()
+	h := &libevmhookstest.Stub{
+		PrecompileOverrides: precompiles,
+	}
+	h.Register(tb)
 }
 
 func (s *SUT) nodeID() ids.NodeID {
@@ -575,6 +621,124 @@ func TestIntegration(t *testing.T) {
 	})
 }
 
+// TestCanCreateContractSoftError verifies that a CanCreateContract rejection
+// results in a failed receipt, not a fatal execution error.
+func TestCanCreateContractSoftError(t *testing.T) {
+	ctx, sut := newSUT(t, 1)
+
+	stub := &libevmhookstest.Stub{
+		CanCreateContractFn: func(*libevm.AddressContext, uint64, libevm.StateReader) (uint64, error) {
+			return 0, errors.New("contract creation blocked")
+		},
+	}
+	stub.Register(t)
+
+	const gasLimit uint64 = 100_000
+	tx := sut.wallet.SetNonceAndSign(t, 0, &types.DynamicFeeTx{
+		To:        nil, // contract creation
+		Gas:       gasLimit,
+		GasFeeCap: big.NewInt(1),
+	})
+
+	b := sut.runConsensusLoop(t, tx)
+	require.NoErrorf(t, b.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", b)
+	require.Lenf(t, b.Receipts(), 1, "%T.Receipts()", b)
+
+	r := b.Receipts()[0]
+	assert.Equalf(t, types.ReceiptStatusFailed, r.Status, "%T.Status (contract creation should fail)", r)
+	assert.Equalf(t, gasLimit, r.GasUsed, "%T.GasUsed == limit because CanCreateContract returns 0 gas remaining", r)
+
+	// Verify the sender's nonce was incremented despite the failure.
+	sdb := sut.stateAt(t, b.PostExecutionStateRoot())
+	assert.Equalf(t, uint64(1), sdb.GetNonce(sut.wallet.Addresses()[0]), "%T.GetNonce([sender]) after blocked contract creation", sdb)
+}
+
+// TestCustomTransactionInclusion verifies that block building includes custom
+// transactions.
+func TestCustomTransactionInclusion(t *testing.T) {
+	const initialBalance = params.Ether
+	ctx, sut := newSUT(t, 1, options.Func[sutConfig](func(c *sutConfig) {
+		for addr, acc := range c.genesis.Alloc {
+			acc.Balance = big.NewInt(initialBalance)
+			c.genesis.Alloc[addr] = acc
+		}
+	}))
+
+	var (
+		sender    = sut.wallet.Addresses()[0]
+		receiver  = zeroAddr
+		gasFeeCap = *uint256.NewInt(params.Wei)
+	)
+	const (
+		sent     = 10
+		received = 100
+	)
+	sut.hooks.Ops = []hookstest.Op{
+		{
+			Gas:       100_000,
+			GasFeeCap: gasFeeCap,
+			Burn: []hookstest.AccountDebit{
+				{
+					Address:    sender,
+					Amount:     *uint256.NewInt(sent),
+					MinBalance: *uint256.NewInt(sent),
+				},
+			},
+		},
+		{ // Invalid operation: receiver initially has no funds
+			Gas:       150_000,
+			GasFeeCap: gasFeeCap,
+			Burn: []hookstest.AccountDebit{
+				{
+					Address:    receiver,
+					Amount:     *uint256.NewInt(params.Wei),
+					MinBalance: *uint256.NewInt(params.Wei),
+				},
+			},
+		},
+		{
+			Gas:       200_000,
+			GasFeeCap: gasFeeCap,
+			Mint: []hookstest.AccountCredit{
+				{
+					Address: receiver,
+					Amount:  *uint256.NewInt(received),
+				},
+			},
+		},
+	}
+
+	b := sut.runConsensusLoop(t)
+	assert.Equalf(t, uint64(300_000), b.Header().GasUsed, "%T.GasUsed after op inclusion", b)
+	require.NoErrorf(t, b.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", b)
+
+	// Verify nonces and balances are updated.
+	accounts := []struct {
+		name    string
+		address common.Address
+		nonce   uint64
+		balance uint64
+	}{
+		{
+			name:    "sender",
+			address: sender,
+			nonce:   1,
+			balance: initialBalance - sent,
+		},
+		{
+			name:    "receiver",
+			address: receiver,
+			nonce:   0, // only burning increments the nonce
+			balance: received,
+		},
+	}
+	sdb := sut.stateAt(t, b.PostExecutionStateRoot())
+	for _, a := range accounts {
+		assert.Equalf(t, a.nonce, sdb.GetNonce(a.address), "%T.GetNonce([%s])", sdb, a.name)
+		assert.Equalf(t, uint256.NewInt(a.balance), sdb.GetBalance(a.address), "%T.GetBalance([%s])", sdb, a.name)
+	}
+}
+
 func TestEmptyChainConfig(t *testing.T) {
 	_, sut := newSUT(t, 1, options.Func[sutConfig](func(c *sutConfig) {
 		c.genesis.Config = &params.ChainConfig{
@@ -607,10 +771,17 @@ func TestSyntacticBlockChecks(t *testing.T) {
 			wantErr: errBlockHeightNotUint64,
 		},
 		{
-			name: "block_time_overflow_protection",
+			name: "block_time_at_maximum",
 			header: &types.Header{
 				Number: big.NewInt(1),
-				Time:   now + maxBlockFutureSeconds + 1,
+				Time:   now + maxFutureBlockSeconds,
+			},
+		},
+		{
+			name: "block_time_after_maximum",
+			header: &types.Header{
+				Number: big.NewInt(1),
+				Time:   now + maxFutureBlockSeconds + 1,
 			},
 			wantErr: errBlockTooFarInFuture,
 		},
@@ -679,12 +850,10 @@ func TestAcceptBlock(t *testing.T) {
 
 func TestSemanticBlockChecks(t *testing.T) {
 	const now = 1e6
+	opt, _ := withVMTime(t, time.Unix(now, 0))
 	ctx, sut := newSUT(t, 1, options.Func[sutConfig](func(c *sutConfig) {
 		c.genesis.Timestamp = now
-	}))
-	sut.rawVM.config.Now = func() time.Time {
-		return time.Unix(now, 0)
-	}
+	}), opt)
 
 	lastAccepted := sut.lastAcceptedBlock(t)
 	tests := []struct {
@@ -717,7 +886,7 @@ func TestSemanticBlockChecks(t *testing.T) {
 		},
 		{
 			name:    "block_time_after_maximum",
-			time:    now + uint64(maxFutureBlockTime.Seconds()) + 1,
+			time:    now + maxFutureBlockSeconds + 1,
 			wantErr: errBlockTimeAfterMaximum,
 		},
 		{
@@ -754,9 +923,7 @@ func TestSemanticBlockChecks(t *testing.T) {
 				saetest.TrieHasher(),
 			)
 			b := blockstest.NewBlock(t, ethB, nil, nil)
-			snowB, err := sut.ParseBlock(ctx, b.Bytes())
-			require.NoErrorf(t, err, "ParseBlock(...)")
-			require.ErrorIs(t, snowB.Verify(ctx), tt.wantErr, "Verify()")
+			require.ErrorIs(t, sut.rawVM.VerifyBlock(ctx, nil, b), tt.wantErr, "VerifyBlock()")
 		})
 	}
 }
@@ -799,7 +966,7 @@ func TestGossip(t *testing.T) {
 	requireNotReceiveTx(t, nonValidators[1:], tx.Hash())
 }
 
-func TestGetBlock(t *testing.T) {
+func TestBlockSources(t *testing.T) {
 	opt, vmTime := withVMTime(t, time.Unix(saeparams.TauSeconds, 0))
 	ctx, sut := newSUT(t, 1, opt)
 
@@ -812,21 +979,12 @@ func TestGetBlock(t *testing.T) {
 	unsettled := sut.runConsensusLoop(t)
 
 	verified := sut.createAndVerifyBlock(t, unsettled)
-	unverified := sut.buildAndParseBlock(
-		t,
-		unsettled,
-		// Ensures that this is a completely unknown block.
-		sut.wallet.SetNonceAndSign(t, 0, &types.LegacyTx{
-			To:       &common.Address{},
-			Gas:      params.TxGas,
-			GasPrice: big.NewInt(1),
-		}),
-	)
+	unverified := sut.buildAndParseBlock(t, unwrap(t, verified))
 
 	tests := []struct {
-		name    string
-		block   *blocks.Block
-		wantErr testerr.Want
+		name            string
+		block           *blocks.Block
+		wantGetBlockErr testerr.Want
 	}{
 		{"genesis", genesis, nil},
 		{"on_disk", onDisk, nil},
@@ -838,16 +996,45 @@ func TestGetBlock(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := sut.GetBlock(ctx, tt.block.ID())
-			if diff := testerr.Diff(err, tt.wantErr); diff != "" {
-				t.Fatalf("GetBlock(...) %s", diff)
+			t.Run("GetBlock", func(t *testing.T) {
+				got, err := sut.GetBlock(ctx, tt.block.ID())
+				if diff := testerr.Diff(err, tt.wantGetBlockErr); diff != "" {
+					t.Fatalf("GetBlock(...) %s", diff)
+				}
+				if tt.wantGetBlockErr != nil {
+					return
+				}
+				if diff := cmp.Diff(tt.block, unwrap(t, got), blocks.CmpOpt()); diff != "" {
+					t.Errorf("GetBlock(...) diff (-want +got):\n%s", diff)
+				}
+			})
+
+			wantOK := tt.wantGetBlockErr == nil
+			opts := cmp.Options{
+				cmputils.Blocks(),
+				cmputils.Headers(),
+				cmpopts.EquateEmpty(),
 			}
-			if tt.wantErr != nil {
-				return
-			}
-			if diff := cmp.Diff(tt.block, unwrap(t, got), blocks.CmpOpt()); diff != "" {
-				t.Errorf("GetBlock(...) diff (-want +got):\n%s", diff)
-			}
+			t.Run("EthBlockSource", func(t *testing.T) {
+				got, gotOK := sut.rawVM.ethBlockSource(tt.block.Hash(), tt.block.NumberU64())
+				require.Equalf(t, wantOK, gotOK, "%T.ethBlockSource(...)", sut.rawVM)
+				if !wantOK {
+					return
+				}
+				if diff := cmp.Diff(tt.block.EthBlock(), got, opts); diff != "" {
+					t.Errorf("%T.ethBlockSource(...) diff (-want +got)\n%s", sut.rawVM, diff)
+				}
+			})
+			t.Run("HeaderSource", func(t *testing.T) {
+				got, gotOK := sut.rawVM.headerSource(tt.block.Hash(), tt.block.NumberU64())
+				require.Equalf(t, wantOK, gotOK, "%T.headerSource(...)", sut.rawVM)
+				if !wantOK {
+					return
+				}
+				if diff := cmp.Diff(tt.block.Header(), got, opts); diff != "" {
+					t.Errorf("%T.headerSource(...) diff (-want +got)\n%s", sut.rawVM, diff)
+				}
+			})
 		})
 	}
 }

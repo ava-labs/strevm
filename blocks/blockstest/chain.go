@@ -1,30 +1,34 @@
 // Copyright (C) 2025-2026, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
-// Package blockstest provides test helpers for constructing [Streaming
-// Asynchronous Execution] (SAE) blocks.
-//
-// [Streaming Asynchronous Execution]: https://github.com/avalanche-foundation/ACPs/tree/main/ACPs/194-streaming-asynchronous-execution
 package blockstest
 
 import (
+	"errors"
+	"fmt"
 	"slices"
 	"sync"
 	"testing"
 
 	"github.com/ava-labs/libevm/common"
+	"github.com/ava-labs/libevm/core"
 	"github.com/ava-labs/libevm/core/types"
+	"github.com/ava-labs/libevm/event"
 	"github.com/ava-labs/libevm/libevm/options"
 	"github.com/ava-labs/libevm/params"
+	"github.com/ava-labs/libevm/rpc"
 
 	"github.com/ava-labs/strevm/blocks"
 )
 
 // A ChainBuilder builds a chain of blocks, maintaining necessary invariants.
+//
+// It is not safe for concurrent use.
 type ChainBuilder struct {
 	config       *params.ChainConfig
 	chain        []*blocks.Block
 	blocksByHash sync.Map
+	headEvents   event.FeedOf[core.ChainHeadEvent]
 
 	defaultOpts []ChainOption
 }
@@ -70,7 +74,7 @@ func WithBlockOptions(opts ...BlockOption) ChainOption {
 	})
 }
 
-// NewBlock constructs and returns a new block in the chain.
+// NewBlock constructs a new block and appends it to the chain.
 func (cb *ChainBuilder) NewBlock(tb testing.TB, txs []*types.Transaction, opts ...ChainOption) *blocks.Block {
 	tb.Helper()
 
@@ -79,11 +83,12 @@ func (cb *ChainBuilder) NewBlock(tb testing.TB, txs []*types.Transaction, opts .
 	options.ApplyTo(allOpts, opts...)
 
 	last := cb.Last()
-	eth := NewEthBlock(last.EthBlock(), txs, allOpts.eth...)
-	b := NewBlock(tb, eth, last, nil, allOpts.sae...) // TODO(arr4n) support last-settled blocks
+	eth := NewEthBlock(tb, last.EthBlock(), txs, allOpts.eth...)
+	b := NewBlock(tb, eth, last, nil, allOpts.sae...)
 
 	cb.chain = append(cb.chain, b)
 	cb.blocksByHash.Store(b.Hash(), b)
+	cb.headEvents.Send(core.ChainHeadEvent{Block: b.EthBlock()})
 
 	return b
 }
@@ -117,4 +122,49 @@ func (cb *ChainBuilder) GetBlock(h common.Hash, num uint64) (*blocks.Block, bool
 		return nil, false
 	}
 	return b, true
+}
+
+// ErrBlockNotFound is returned by [ChainBuilder.ResolveBlockNumber] and
+// [ChainBuilder.BlockByNumber] when the requested block number exceeds the
+// chain height.
+var ErrBlockNotFound = errors.New("block not found")
+
+// SubscribeChainHeadEvent subscribes to chain head events fired by
+// [ChainBuilder.NewBlock].
+func (cb *ChainBuilder) SubscribeChainHeadEvent(ch chan<- core.ChainHeadEvent) event.Subscription {
+	return cb.headEvents.Subscribe(ch)
+}
+
+// LastAcceptedBlock returns the last block in the chain.
+func (cb *ChainBuilder) LastAcceptedBlock() *blocks.Block {
+	return cb.Last()
+}
+
+// ResolveBlockNumber resolves special block number aliases to concrete numbers.
+func (cb *ChainBuilder) ResolveBlockNumber(bn rpc.BlockNumber) (uint64, error) {
+	head := cb.LastAcceptedBlock().NumberU64()
+	switch bn {
+	case rpc.EarliestBlockNumber:
+		return 0, nil
+	case rpc.FinalizedBlockNumber, rpc.SafeBlockNumber, rpc.LatestBlockNumber, rpc.PendingBlockNumber:
+		return head, nil
+	default:
+		if bn < 0 {
+			return 0, fmt.Errorf("%s block unsupported", bn)
+		}
+		n := uint64(bn) //nolint:gosec // Non-negative checked above
+		if n > head {
+			return 0, fmt.Errorf("%w: %d", ErrBlockNotFound, n)
+		}
+		return n, nil
+	}
+}
+
+// BlockByNumber returns the accepted block at the specified height.
+func (cb *ChainBuilder) BlockByNumber(bn rpc.BlockNumber) (*types.Block, error) {
+	n, err := cb.ResolveBlockNumber(bn)
+	if err != nil {
+		return nil, err
+	}
+	return cb.chain[n].EthBlock(), nil
 }
