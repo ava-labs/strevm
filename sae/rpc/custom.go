@@ -80,7 +80,7 @@ const (
 )
 
 var (
-	minGasTip  = big.NewInt(1) // 1 Wei floor for the slow tier.
+	minGasTip  = big.NewInt(params.Wei)
 	bigHundred = big.NewInt(100)
 )
 
