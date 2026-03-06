@@ -51,6 +51,8 @@ func (e *Executor) Enqueue(ctx context.Context, block *blocks.Block) error {
 	}
 }
 
+const emergencyPlaybookLink = "https://github.com/ava-labs/strevm/issues/28"
+
 func (e *Executor) processQueue() {
 	defer close(e.done)
 
@@ -60,27 +62,39 @@ func (e *Executor) processQueue() {
 			return
 
 		case block := <-e.queue:
-			logger := e.log.With(
+			log := e.log.With(
 				zap.Uint64("block_height", block.Height()),
 				zap.Uint64("block_time", block.BuildTime()),
 				zap.Stringer("block_hash", block.Hash()),
 				zap.Int("tx_count", len(block.Transactions())),
 			)
 
-			if err := e.execute(block, logger); err != nil {
-				logger.Fatal(
-					"Block execution failed; see emergency playbook",
+			err := e.execute(block, log)
+			switch {
+			case errors.Is(err, errFatal):
+				log.Fatal( //nolint:gocritic // False positive, will not terminate the process
+					"Block execution failed",
+					zap.String("playbook", emergencyPlaybookLink),
 					zap.Error(err),
-					zap.String("playbook", "https://github.com/ava-labs/strevm/issues/28"),
 				)
+			case err != nil:
+				log.Error(
+					"Error of unknown severity in block execution",
+					zap.String("if_escalation_required", emergencyPlaybookLink),
+					zap.Error(err),
+				)
+			}
+			if err != nil {
 				return
 			}
 		}
 	}
 }
 
-func (e *Executor) execute(b *blocks.Block, logger logging.Logger) error {
-	logger.Debug("Executing block")
+var errFatal = errors.New("fatal execution error")
+
+func (e *Executor) execute(b *blocks.Block, log logging.Logger) error {
+	log.Debug("Executing block")
 
 	// Since `b` hasn't been executed, it definitely hasn't been settled, so we
 	// are guaranteed to have a non-nil parent available.
@@ -120,11 +134,6 @@ func (e *Executor) execute(b *blocks.Block, logger logging.Logger) error {
 		stateDB.SetTxContext(tx.Hash(), ti)
 		b.CheckSenderBalanceBound(stateDB, signer, tx)
 
-		logger = logger.With(
-			zap.Int("tx_index", ti),
-			zap.Stringer("tx_hash", tx.Hash()),
-		)
-
 		receipt, err := core.ApplyTransaction(
 			e.chainConfig,
 			e.chainContext,
@@ -137,12 +146,7 @@ func (e *Executor) execute(b *blocks.Block, logger logging.Logger) error {
 			vm.Config{},
 		)
 		if err != nil {
-			logger.Fatal(
-				"Transaction execution errored (not reverted); see emergency playbook",
-				zap.String("playbook", "https://github.com/ava-labs/strevm/issues/28"),
-				zap.Error(err),
-			)
-			return err
+			return fmt.Errorf("%w: transaction execution errored (not reverted) [%d](%#x): %v", errFatal, ti, tx.Hash(), err)
 		}
 
 		perTxClock.Tick(gas.Gas(receipt.GasUsed))
@@ -176,21 +180,18 @@ func (e *Executor) execute(b *blocks.Block, logger logging.Logger) error {
 	}
 
 	numTxs := len(b.Transactions())
-	for i, o := range e.hooks.EndOfBlockOps(b.EthBlock()) {
+	ops, err := e.hooks.EndOfBlockOps(b.EthBlock())
+	if err != nil {
+		return fmt.Errorf("%w: %T.EndOfBlockOps(%#x): %v", errFatal, e.hooks, b.Hash(), err)
+	}
+	for i, o := range ops {
 		b.CheckOpBurnerBalanceBounds(stateDB, numTxs+i, o)
 		blockGasConsumed += o.Gas
 		perTxClock.Tick(o.Gas)
 		b.SetInterimExecutionTime(perTxClock)
 
 		if err := o.ApplyTo(stateDB); err != nil {
-			logger.Fatal(
-				"Extra block operation errored; see emergency playbook",
-				zap.Int("op_index", i),
-				zap.Stringer("op_id", o.ID),
-				zap.String("playbook", "https://github.com/ava-labs/strevm/issues/28"),
-				zap.Error(err),
-			)
-			return err
+			return fmt.Errorf("%w: applying end-of-block operation [%d](%v): %v", errFatal, i, o.ID, err)
 		}
 	}
 
@@ -200,7 +201,7 @@ func (e *Executor) execute(b *blocks.Block, logger logging.Logger) error {
 		return fmt.Errorf("after-block gas time update: %w", err)
 	}
 
-	logger.Debug(
+	log.Debug(
 		"Block execution complete",
 		zap.Uint64("gas_consumed", uint64(blockGasConsumed)),
 		zap.Time("gas_time", gasClock.AsTime()),

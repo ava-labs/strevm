@@ -67,8 +67,8 @@ type VM struct {
 
 	exec         *saexec.Executor
 	mempool      *txgossip.Set
-	blockBuilder *blockBuilder
-	apiBackend   *ethAPIBackend
+	blockBuilder blockBuilder
+	apiBackend   *apiBackend
 	newTxs       chan struct{}
 
 	// toClose are closed in reverse order during [VM.Shutdown]. If a resource
@@ -112,9 +112,9 @@ type RPCConfig struct {
 // The state root of the last synchronous block MUST be available when creating
 // a [triedb.Database] from the provided [ethdb.Database] and [triedb.Config]
 // (the latter provided via the [Config]).
-func NewVM(
+func NewVM[T hook.Transaction](
 	ctx context.Context,
-	hooks hook.Points,
+	hooks hook.PointsG[T],
 	cfg Config,
 	snowCtx *snow.Context,
 	chainConfig *params.ChainConfig,
@@ -244,7 +244,7 @@ func NewVM(
 	}
 
 	{ // ==========  Block Builder  ==========
-		vm.blockBuilder = &blockBuilder{
+		vm.blockBuilder = &blockBuilderG[T]{
 			hooks,
 			cfg.Now,
 			snowCtx.Log,
@@ -319,7 +319,7 @@ func NewVM(
 		bloomIdx := newBloomIndexer(vm.db, chainIdx, override, cfg.RPCConfig.BlocksPerBloomSection)
 		vm.toClose = append(vm.toClose, bloomIdx)
 
-		vm.apiBackend = &ethAPIBackend{
+		vm.apiBackend = &apiBackend{
 			vm:             vm,
 			accountManager: accountManager,
 			Set:            vm.mempool,
