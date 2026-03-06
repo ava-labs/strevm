@@ -326,7 +326,7 @@ func NewVM[T hook.Transaction](
 		if err != nil {
 			return nil, fmt.Errorf("gasprice.NewEstimator(...): %v", err)
 		}
-		vm.toClose = append(vm.toClose, estimator.Close)
+		vm.toClose = append(vm.toClose, estimator)
 
 		vm.apiBackend = &apiBackend{
 			vm:             vm,
