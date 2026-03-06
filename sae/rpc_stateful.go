@@ -31,15 +31,15 @@ var (
 	errNoGenesisTransactions   = errors.New("no transactions in genesis")
 )
 
-func (b *ethAPIBackend) RPCEVMTimeout() time.Duration {
+func (b *apiBackend) RPCEVMTimeout() time.Duration {
 	return b.vm.config.RPCConfig.EVMTimeout
 }
 
-func (b *ethAPIBackend) RPCGasCap() uint64 {
+func (b *apiBackend) RPCGasCap() uint64 {
 	return b.vm.config.RPCConfig.GasCap
 }
 
-func (b *ethAPIBackend) Engine() consensus.Engine {
+func (b *apiBackend) Engine() consensus.Engine {
 	return (*coinbaseAsAuthor)(nil)
 }
 
@@ -51,7 +51,7 @@ func (*coinbaseAsAuthor) Author(h *types.Header) (common.Address, error) {
 	return h.Coinbase, nil
 }
 
-func (b *ethAPIBackend) GetEVM(ctx context.Context, msg *core.Message, sdb *state.StateDB, hdr *types.Header, cfg *vm.Config, bCtx *vm.BlockContext) *vm.EVM {
+func (b *apiBackend) GetEVM(ctx context.Context, msg *core.Message, sdb *state.StateDB, hdr *types.Header, cfg *vm.Config, bCtx *vm.BlockContext) *vm.EVM {
 	if bCtx == nil {
 		bCtx = new(vm.BlockContext)
 		*bCtx = core.NewEVMBlockContext(hdr, b.vm.exec.ChainContext(), &hdr.Coinbase)
@@ -62,14 +62,14 @@ func (b *ethAPIBackend) GetEVM(ctx context.Context, msg *core.Message, sdb *stat
 
 // StateAndHeaderByNumber performs the same faking as
 // [ethAPIBackend.StateAndHeaderByNumberOrHash].
-func (b *ethAPIBackend) StateAndHeaderByNumber(ctx context.Context, num rpc.BlockNumber) (*state.StateDB, *types.Header, error) {
+func (b *apiBackend) StateAndHeaderByNumber(ctx context.Context, num rpc.BlockNumber) (*state.StateDB, *types.Header, error) {
 	return b.StateAndHeaderByNumberOrHash(ctx, rpc.BlockNumberOrHashWithNumber(num))
 }
 
 // StateAndHeaderByNumberOrHash fakes the returned [types.Header] to contain
 // post-execution results, mimicking a synchronous block. The [state.StateDB] is
 // opened at the post-execution root, as carried by the faked header.
-func (b *ethAPIBackend) StateAndHeaderByNumberOrHash(ctx context.Context, numOrHash rpc.BlockNumberOrHash) (*state.StateDB, *types.Header, error) {
+func (b *apiBackend) StateAndHeaderByNumberOrHash(ctx context.Context, numOrHash rpc.BlockNumberOrHash) (*state.StateDB, *types.Header, error) {
 	if n, ok := numOrHash.Number(); ok && n == rpc.PendingBlockNumber {
 		return nil, nil, errPendingStateUnavailable
 	}
@@ -123,7 +123,7 @@ func (b *ethAPIBackend) StateAndHeaderByNumberOrHash(ctx context.Context, numOrH
 // trie data has not been pruned (or requires an archival node for older blocks).
 //
 // Reference: https://geth.ethereum.org/docs/developers/evm-tracing#state-availability
-func (b *ethAPIBackend) StateAtBlock(_ context.Context, block *types.Block, reexec uint64, base *state.StateDB, readOnly bool, preferDisk bool) (*state.StateDB, tracers.StateReleaseFunc, error) {
+func (b *apiBackend) StateAtBlock(_ context.Context, block *types.Block, reexec uint64, base *state.StateDB, readOnly bool, preferDisk bool) (*state.StateDB, tracers.StateReleaseFunc, error) {
 	// Guard against in-memory blocks that haven't been executed yet.
 	if bl, ok := b.vm.blocks.Load(block.Hash()); ok && !bl.Executed() {
 		return nil, nil, fmt.Errorf("execution results not yet available for block %d", block.NumberU64())
@@ -151,7 +151,7 @@ func (b *ethAPIBackend) StateAtBlock(_ context.Context, block *types.Block, reex
 // end-of-block operations and [saexec.NullReceiptStore] to skip receipt
 // broadcasting. Bound checks are safe no-ops on restored settled blocks
 // (nil bounds).
-func (b *ethAPIBackend) StateAtTransaction(ctx context.Context, block *types.Block, txIndex int, reexec uint64) (*core.Message, vm.BlockContext, *state.StateDB, tracers.StateReleaseFunc, error) {
+func (b *apiBackend) StateAtTransaction(ctx context.Context, block *types.Block, txIndex int, reexec uint64) (*core.Message, vm.BlockContext, *state.StateDB, tracers.StateReleaseFunc, error) {
 	if block.NumberU64() == 0 {
 		return nil, vm.BlockContext{}, nil, nil, errNoGenesisTransactions
 	}
@@ -207,7 +207,7 @@ func (b *ethAPIBackend) StateAtTransaction(ctx context.Context, block *types.Blo
 
 // resolveBlock resolves a *types.Block to a *blocks.Block, checking in-memory
 // blocks first and falling back to [blocks.RestoreSettledBlock] for on-disk blocks.
-func (b *ethAPIBackend) resolveBlock(block *types.Block) (*blocks.Block, error) {
+func (b *apiBackend) resolveBlock(block *types.Block) (*blocks.Block, error) {
 	if bl, ok := b.vm.blocks.Load(block.Hash()); ok {
 		return bl, nil
 	}
@@ -215,7 +215,7 @@ func (b *ethAPIBackend) resolveBlock(block *types.Block) (*blocks.Block, error) 
 }
 
 // resolveParentBlock resolves the parent of a *types.Block as a *blocks.Block.
-func (b *ethAPIBackend) resolveParentBlock(block *types.Block) (*blocks.Block, error) {
+func (b *apiBackend) resolveParentBlock(block *types.Block) (*blocks.Block, error) {
 	if bl, ok := b.vm.blocks.Load(block.ParentHash()); ok {
 		return bl, nil
 	}

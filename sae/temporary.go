@@ -17,14 +17,14 @@ import (
 
 var errUnimplemented = errors.New("unimplemented")
 
-func (b *ethAPIBackend) SuggestGasTipCap(context.Context) (*big.Int, error) {
+func (b *apiBackend) SuggestGasTipCap(context.Context) (*big.Int, error) {
 	panic(errUnimplemented)
 }
 
-func (b *ethAPIBackend) FeeHistory(context.Context, uint64, rpc.BlockNumber, []float64) (*big.Int, [][]*big.Int, []*big.Int, []float64, error) {
+func (b *apiBackend) FeeHistory(context.Context, uint64, rpc.BlockNumber, []float64) (*big.Int, [][]*big.Int, []*big.Int, []float64, error) {
 	panic(errUnimplemented)
 }
 
-func (b *ethAPIBackend) GetPoolNonce(context.Context, common.Address) (uint64, error) {
+func (b *apiBackend) GetPoolNonce(context.Context, common.Address) (uint64, error) {
 	panic(errUnimplemented)
 }
