@@ -87,20 +87,23 @@ var (
 // SuggestPriceOptions returns gas-price suggestions at three speed tiers.
 // Each tier contains a tip and a total fee cap (2*baseFee + tip).
 func (c *customAPI) SuggestPriceOptions(ctx context.Context) (*priceOptions, error) {
-	baseFee := c.estimateNextBaseFee()
-	if baseFee == nil {
-		return nil, nil
-	}
-
 	tip, err := c.b.SuggestGasTipCap(ctx)
 	if err != nil {
 		return nil, err
 	}
 
+	doubleBaseFee := c.estimateNextBaseFee()
+	if doubleBaseFee == nil {
+		return nil, nil
+	}
+	doubleBaseFee.Lsh(doubleBaseFee, 1)
+
+	const (
+		slowTipPct = 95
+		fastTipPct = 105
+	)
 	slowTip := math.BigMax(scaleTip(tip, slowTipPct), minGasTip)
 	fastTip := scaleTip(tip, fastTipPct)
-
-	doubleBaseFee := new(big.Int).Lsh(baseFee, 1)
 	return &priceOptions{
 		Slow:   newPrice(slowTip, doubleBaseFee),
 		Normal: newPrice(tip, doubleBaseFee),
