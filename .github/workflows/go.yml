@@ -124,7 +124,6 @@ jobs:
         run: |
           CORPUS_KEY="${{ matrix.package }}-${{ matrix.function }}_static-corpus_${{ hashFiles(format('{0}/testdata/fuzz/{1}/**', matrix.package, matrix.function)) }}"
           COMMIT_KEY="${CORPUS_KEY}_commit_${{ github.sha }}"
-          echo "TEST_KEY=${TEST_KEY}" >> "$GITHUB_ENV"
           echo "CORPUS_KEY=${CORPUS_KEY}" >> "$GITHUB_ENV"
           echo "COMMIT_KEY=${COMMIT_KEY}" >> "$GITHUB_ENV"
       - name: Restore fuzz corpus cache
