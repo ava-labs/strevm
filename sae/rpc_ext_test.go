@@ -94,13 +94,13 @@ func TestSuggestPriceOptions(t *testing.T) {
 		want:   (*priceOptions)(nil),
 	})
 
-	sut.runConsensusLoop(t)
+	b := sut.runConsensusLoop(t)
 
 	// This just asserts the round-tripping of the priceOptions through the RPC.
 	// See [TestNewPriceOptions] for behavioral tests.
 	tip, err := sut.rawVM.apiBackend.SuggestGasTipCap(t.Context())
 	require.NoErrorf(t, err, "SuggestGasTipCap()")
-	doubleBaseFee := sut.rawVM.last.accepted.Load().WorstCaseBounds().LatestEndTime.BaseFee().ToBig()
+	doubleBaseFee := b.WorstCaseBounds().LatestEndTime.BaseFee().ToBig()
 	doubleBaseFee.Lsh(doubleBaseFee, 1)
 	sut.testRPC(ctx, t, rpcTest{
 		method: "eth_suggestPriceOptions",
