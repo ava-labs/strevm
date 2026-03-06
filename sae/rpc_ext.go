@@ -37,7 +37,7 @@ func (c *customAPI) BaseFee(ctx context.Context) (*hexutil.Big, error) {
 
 // estimateNextBaseFee returns the worst-case upper bound on the next block's
 // base fee. It returns nil when the last accepted block has no worst-case
-// bounds, which happens when it is the genesis block.
+// bounds, which happens on startup.
 func (c *customAPI) estimateNextBaseFee() *big.Int {
 	bounds := c.b.vm.last.accepted.Load().WorstCaseBounds()
 	if bounds == nil {
