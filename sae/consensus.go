@@ -11,7 +11,6 @@ import (
 	"github.com/ava-labs/avalanchego/snow"
 	"github.com/ava-labs/avalanchego/snow/engine/snowman/block"
 	"github.com/ava-labs/libevm/core/rawdb"
-	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/event"
 	"go.uber.org/zap"
 
@@ -80,7 +79,7 @@ func (vm *VM) AcceptBlock(ctx context.Context, b *blocks.Block) error {
 
 	// I(s ∈ S) above, before I(b ∈ A) before I(b ∈ E)
 	vm.last.accepted.Store(b)
-	vm.acceptedBlocks.Send(b.EthBlock())
+	vm.acceptedBlocks.Send(b)
 	if err := vm.exec.Enqueue(ctx, b); err != nil {
 		return err
 	}
@@ -130,6 +129,6 @@ func (vm *VM) RejectBlock(ctx context.Context, b *blocks.Block) error {
 
 // SubscribeAcceptedBlockEvent returns a new subscription for each [*types.Block]
 // emitted after consensus acceptance of a [blocks.Block] with [VM.AcceptBlock].
-func (vm *VM) SubscribeAcceptedBlockEvent(ch chan<- *types.Block) event.Subscription {
+func (vm *VM) SubscribeAcceptedBlockEvent(ch chan<- *blocks.Block) event.Subscription {
 	return vm.acceptedBlocks.Subscribe(ch)
 }

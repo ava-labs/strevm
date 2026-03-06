@@ -17,7 +17,7 @@ import (
 type estimatorBackend struct {
 	*resolver
 
-	acceptedBlocks *event.FeedOf[*types.Block]
+	acceptedBlocks *event.FeedOf[*blocks.Block]
 	db             ethdb.Database
 }
 
@@ -27,7 +27,7 @@ func (e *estimatorBackend) BlockByNumber(n rpc.BlockNumber) (*types.Block, error
 	return readByNumber(e, e.db, n, neverErrs(rawdb.ReadBlock))
 }
 
-func (e *estimatorBackend) SubscribeAcceptedBlockEvent(ch chan<- *types.Block) event.Subscription {
+func (e *estimatorBackend) SubscribeAcceptedBlockEvent(ch chan<- *blocks.Block) event.Subscription {
 	return e.acceptedBlocks.Subscribe(ch)
 }
 

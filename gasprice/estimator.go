@@ -30,7 +30,7 @@ import (
 type Backend interface {
 	ResolveBlockNumber(bn rpc.BlockNumber) (uint64, error)
 	BlockByNumber(bn rpc.BlockNumber) (*types.Block, error)
-	SubscribeAcceptedBlockEvent(ch chan<- *types.Block) event.Subscription
+	SubscribeAcceptedBlockEvent(ch chan<- *blocks.Block) event.Subscription
 	LastAcceptedBlock() *blocks.Block
 }
 
@@ -133,7 +133,7 @@ func NewEstimator(backend Backend, log logging.Logger, c Config) (*Estimator, er
 	// New blocks are cached in the background upon acceptance to avoid slow
 	// responses after long periods of no requests to the estimator. This
 	// allows us to avoid parallelizing reads inside individual API calls.
-	events := make(chan *types.Block, 1)
+	events := make(chan *blocks.Block, 1)
 	sub := backend.SubscribeAcceptedBlockEvent(events)
 	// Additional slots in the cache allows processing queries for previous
 	// blocks while new blocks are added concurrently.
@@ -145,7 +145,7 @@ func NewEstimator(backend Backend, log logging.Logger, c Config) (*Estimator, er
 		for {
 			select {
 			case e := <-events:
-				cache.cacheBlock(e)
+				cache.cacheBlock(e.EthBlock())
 			case <-sub.Err():
 				return
 			}

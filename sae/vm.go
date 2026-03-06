@@ -65,7 +65,7 @@ type VM struct {
 		accepted, settled atomic.Pointer[blocks.Block]
 		synchronous       uint64
 	}
-	acceptedBlocks event.FeedOf[*types.Block]
+	acceptedBlocks event.FeedOf[*blocks.Block]
 
 	exec         *saexec.Executor
 	mempool      *txgossip.Set

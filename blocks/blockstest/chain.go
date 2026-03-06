@@ -27,7 +27,7 @@ type ChainBuilder struct {
 	config         *params.ChainConfig
 	chain          []*blocks.Block
 	blocksByHash   sync.Map
-	acceptedBlocks event.FeedOf[*types.Block]
+	acceptedBlocks event.FeedOf[*blocks.Block]
 
 	defaultOpts []ChainOption
 }
@@ -87,7 +87,7 @@ func (cb *ChainBuilder) NewBlock(tb testing.TB, txs []*types.Transaction, opts .
 
 	cb.chain = append(cb.chain, b)
 	cb.blocksByHash.Store(b.Hash(), b)
-	cb.acceptedBlocks.Send(b.EthBlock())
+	cb.acceptedBlocks.Send(b)
 
 	return b
 }
@@ -130,7 +130,7 @@ var ErrBlockNotFound = errors.New("block not found")
 
 // SubscribeAcceptedBlockEvent subscribes to accepted block events fired by
 // [ChainBuilder.NewBlock].
-func (cb *ChainBuilder) SubscribeAcceptedBlockEvent(ch chan<- *types.Block) event.Subscription {
+func (cb *ChainBuilder) SubscribeAcceptedBlockEvent(ch chan<- *blocks.Block) event.Subscription {
 	return cb.acceptedBlocks.Subscribe(ch)
 }
 
