@@ -41,6 +41,7 @@ type APIBackend interface {
 	ethapi.Backend
 	// TODO(ceyonur): Add gasprice.Backend interface.
 	tracers.Backend
+	filters.Backend
 	filters.BloomOverrider
 }
 
@@ -86,19 +87,36 @@ func (vm *VM) ethRPCServer() (*rpc.Server, error) {
 		// - eth_syncing
 		{"eth", ethapi.NewEthereumAPI(b)},
 		// Standard Ethereum node APIs:
+		// - eth_gasPrice
+		// - eth_syncing
+		//
+		// Undocumented APIs:
+		// - eth_feeHistory
+		// - eth_maxPriorityFeePerGas
+		{"eth", ethapi.NewEthereumAPI(b)},
+		// Standard Ethereum node APIs:
 		// - eth_blockNumber
+		// - eth_call
 		// - eth_chainId
+		// - eth_estimateGas
+		// - eth_getBalance
 		// - eth_getBlockByHash
 		// - eth_getBlockByNumber
-		// - eth_getBlockReceipts
+		// - eth_getCode
+		// - eth_getStorageAt
 		// - eth_getUncleByBlockHashAndIndex
 		// - eth_getUncleByBlockNumberAndIndex
 		// - eth_getUncleCountByBlockHash
 		// - eth_getUncleCountByBlockNumber
 		//
 		// Geth-specific APIs:
+		// - eth_createAccessList
 		// - eth_getHeaderByHash
 		// - eth_getHeaderByNumber
+		//
+		// Undocumented APIs:
+		// - eth_getBlockReceipts
+		// - eth_getProof
 		{"eth", &blockChainAPI{ethapi.NewBlockChainAPI(b), b}},
 		// Standard Ethereum node APIs:
 		// - eth_getBlockTransactionCountByHash
@@ -106,6 +124,7 @@ func (vm *VM) ethRPCServer() (*rpc.Server, error) {
 		// - eth_getTransactionByBlockHashAndIndex
 		// - eth_getTransactionByBlockNumberAndIndex
 		// - eth_getTransactionByHash
+		// - eth_getTransactionCount
 		// - eth_getTransactionReceipt
 		// - eth_sendRawTransaction
 		// - eth_sendTransaction
@@ -113,10 +132,12 @@ func (vm *VM) ethRPCServer() (*rpc.Server, error) {
 		// - eth_signTransaction
 		//
 		// Undocumented APIs:
+		// - eth_fillTransaction
 		// - eth_getRawTransactionByBlockHashAndIndex
 		// - eth_getRawTransactionByBlockNumberAndIndex
 		// - eth_getRawTransactionByHash
 		// - eth_pendingTransactions
+		// - eth_resend
 		{
 			"eth",
 			immediateReceipts{
@@ -124,7 +145,7 @@ func (vm *VM) ethRPCServer() (*rpc.Server, error) {
 				ethapi.NewTransactionAPI(b, new(ethapi.AddrLocker)),
 			},
 		},
-		// Standard Ethereum node APIS:
+		// Standard Ethereum node APIs:
 		// - eth_getFilterChanges
 		// - eth_getFilterLogs
 		// - eth_getLogs
@@ -140,9 +161,13 @@ func (vm *VM) ethRPCServer() (*rpc.Server, error) {
 		//  - logs
 		{"eth", filterAPI},
 		// Avalanche-custom eth extensions:
+		// - eth_getChainConfig
+		// - eth_baseFee
+		// - eth_suggestPriceOptions
+		// - eth_callDetailed
+		// - eth_newAcceptedTransactions (subscription)
 		{"eth", &customAPI{b}},
 	}
-
 	if vm.config.RPCConfig.EnableDBInspecting {
 		apis = append(apis, api{
 			// Geth-specific APIs:
@@ -151,18 +176,15 @@ func (vm *VM) ethRPCServer() (*rpc.Server, error) {
 			// - debug_dbAncient
 			// - debug_dbAncients
 			// - debug_dbGet
-			// - debug_getRawTransaction
-			// - debug_printBlock
-			// - debug_setHead          (no-op, logs info)
-			//
-			// TODO: implement once BlockByNumberOrHash and GetReceipts exist:
 			// - debug_getRawBlock
 			// - debug_getRawHeader
 			// - debug_getRawReceipts
+			// - debug_getRawTransaction
+			// - debug_printBlock
+			// - debug_setHead
 			"debug", ethapi.NewDebugAPI(b),
 		})
 	}
-
 	if vm.config.RPCConfig.EnableProfiling {
 		apis = append(apis, api{
 			// Geth-specific APIs:
@@ -189,14 +211,51 @@ func (vm *VM) ethRPCServer() (*rpc.Server, error) {
 			"debug", debug.Handler,
 		})
 	}
-
 	if !vm.config.RPCConfig.DisableTracing {
 		apis = append(apis, api{
 			// Geth-specific APIs:
+			// - debug_intermediateRoots
+			// - debug_standardTraceBadBlockToFile
+			// - debug_standardTraceBlockToFile
+			// - debug_traceBadBlock
+			// - debug_traceBlock
+			// - debug_traceBlockByHash
+			// - debug_traceBlockByNumber
+			// - debug_traceBlockFromFile
+			// - debug_traceCall
+			// - debug_traceChain
+			// - debug_traceTransaction
 			"debug", tracers.NewAPI(b),
 		})
 	}
-
+	// Unsupported APIs:
+	//
+	// Standard Ethereum node APIs:
+	// - eth_protocolVersion
+	// - eth_coinbase
+	// - eth_mining
+	// - eth_hashrate
+	// - eth_accounts
+	//
+	// Block and state inspection APIs:
+	// - debug_accountRange
+	// - debug_dumpBlock
+	// - debug_getAccessibleState
+	// - debug_getBadBlocks
+	// - debug_getModifiedAccountsByHash
+	// - debug_getModifiedAccountsByNumber
+	// - debug_getTrieFlushInterval
+	// - debug_preimage
+	// - debug_setTrieFlushInterval
+	// - debug_storageRangeAt
+	//
+	// The admin namespace.
+	// The clique namespace.
+	// The les namespace.
+	// The miner namespace.
+	// The personal namespace.
+	//
+	// The graphql service.
 	s := rpc.NewServer()
 	for _, api := range apis {
 		if err := s.RegisterName(api.namespace, api.api); err != nil {
@@ -340,6 +399,7 @@ func (b *apiBackend) RPCTxFeeCap() float64 {
 }
 
 func (b *apiBackend) UnprotectedAllowed() bool {
+	// TODO(StephenButtolph) Expose this as a config and default to false.
 	return false
 }
 
