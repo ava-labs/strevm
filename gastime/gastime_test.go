@@ -415,9 +415,40 @@ func TestTargetClamping(t *testing.T) {
 }
 
 func TestNoExcessOverflow(t *testing.T) {
-	tm := mustNew(t, time.Unix(0, 0), 1, math.MaxUint64-100, DefaultGasPriceConfig())
-	tm.SetTarget(MaxTarget)
-	require.Equal(t, gas.Gas(math.MaxUint64), tm.Excess(), "Excess() after scaling")
-	tm.FastForwardTo(1, 0)
-	require.Less(t, tm.Excess(), gas.Gas(math.MaxUint64), "Excess() after capped and then fast-forwarding")
+	const (
+		initTarget      = 1
+		excessShortfall = 100
+		initExcess      = math.MaxUint64 - excessShortfall
+	)
+
+	tests := []struct {
+		name           string
+		overflowExcess func(*Time)
+	}{
+		{
+			name: "Tick",
+			overflowExcess: func(tm *Time) {
+				tm.Tick(TargetToRate*excessShortfall + 2)
+			},
+		},
+		{
+			name: "SetTarget",
+			overflowExcess: func(tm *Time) {
+				tm.SetTarget(MaxTarget)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			const max = gas.Gas(math.MaxUint64)
+
+			tm := mustNew(t, time.Unix(0, 0), initTarget, initExcess, DefaultGasPriceConfig())
+			tt.overflowExcess(tm)
+			require.Equal(t, max, tm.Excess(), "Excess() after capped")
+
+			tm.FastForwardTo(tm.Unix()+1, 0)
+			require.Less(t, tm.Excess(), max, "Excess() after capped and then fast-forwarding")
+		})
+	}
 }

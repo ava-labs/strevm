@@ -11,6 +11,14 @@ import (
 	"golang.org/x/exp/constraints"
 )
 
+// BoundedAdd returns `min(a+b,ceil)` without overflow.
+func BoundedAdd[T constraints.Unsigned](a, b, ceil T) T {
+	if a > ceil || b > ceil || a >= ceil-b {
+		return ceil
+	}
+	return a + b
+}
+
 // BoundedSubtract returns `max(a-b,floor)` without underflow.
 func BoundedSubtract[T constraints.Unsigned](a, b, floor T) T {
 	// If `floor + b` overflows then it's impossible for `a` to ever be large

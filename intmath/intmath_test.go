@@ -12,6 +12,28 @@ import (
 
 const max = math.MaxUint64
 
+func TestBoundedAdd(t *testing.T) {
+	tests := []struct {
+		a, b, ceil, want uint64
+	}{
+		{5, 0, 4, 4},        // addend > ceil
+		{5, 3, 7, 7},        // sum > ceil
+		{42, 100, 150, 142}, // unbounded
+		{123, 456, 0, 0},
+		{max - 1, 2, max, max},
+	}
+
+	for _, tt := range tests {
+		l, r := tt.a, tt.b
+		for range 2 {
+			if got := BoundedAdd(l, r, tt.ceil); got != tt.want {
+				t.Errorf("BoundedAdd(%d, %d, %d) got %d; want %d", l, r, tt.ceil, got, tt.want)
+			}
+			l, r = r, l
+		}
+	}
+}
+
 func TestBoundedSubtract(t *testing.T) {
 	tests := []struct {
 		a, b, floor, want uint64
