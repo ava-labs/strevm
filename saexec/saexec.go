@@ -149,6 +149,8 @@ func (e *Executor) ChainContext() core.ChainContext {
 	return e.chainContext
 }
 
+var _ saedb.StateDBOpener = (*Executor)(nil)
+
 // StateDB implements [saedb.StateDBOpener].
 func (e *Executor) StateDB(root common.Hash) (*state.StateDB, error) {
 	return state.New(root, e.stateCache, e.snaps)
