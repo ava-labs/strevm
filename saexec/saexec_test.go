@@ -961,9 +961,21 @@ func TestCloseRecoversHashDB(t *testing.T) {
 		}
 	}
 
+	t.Run("all states", func(t *testing.T) {
+		// We haven't dropped any states.
+		checkStates(t, e, func(height uint64) bool { return true })
+	})
+
 	t.Run("remove in memory state", func(t *testing.T) {
+		const numToDrop = 10
+		for i, b := range chain.AllBlocks() {
+			if i == numToDrop {
+				break
+			}
+			e.ReleaseInMemory(b.PostExecutionStateRoot())
+		}
 		checkStates(t, e, func(height uint64) bool {
-			return height > numBlocks-saedb.StateHistory
+			return height >= numToDrop
 		})
 	})
 

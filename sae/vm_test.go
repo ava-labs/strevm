@@ -969,11 +969,12 @@ func TestRegressionLoseStateBeforeSettlement(t *testing.T) {
 		})
 	}
 
-	// settle one block
+	// settle one block - won't be committed
 	b := sut.runConsensusLoop(t, createTx(t, common.Address{}))
 	vmTime.advanceToSettle(ctx, t, b)
 
-	for range saedb.StateHistory + 10 {
+	// Ensure settled block will be available for [VM.VerifyBlock]
+	for range 100 {
 		sut.runConsensusLoop(t, createTx(t, common.Address{}))
 	}
 }
