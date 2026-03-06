@@ -32,7 +32,18 @@ func (c *customAPI) GetChainConfig(ctx context.Context) *params.ChainConfig {
 // BaseFee returns an upper-bound estimate of the base fee for the next block.
 // It returns nil if the estimate is unavailable.
 func (c *customAPI) BaseFee(ctx context.Context) (*hexutil.Big, error) {
-	return (*hexutil.Big)(c.b.EstimateNextBaseFee()), nil
+	return (*hexutil.Big)(c.estimateNextBaseFee()), nil
+}
+
+// estimateNextBaseFee returns the worst-case upper bound on the next block's
+// base fee. It returns nil when the last accepted block has no worst-case
+// bounds, which happens when it is the genesis block.
+func (c *customAPI) estimateNextBaseFee() *big.Int {
+	bounds := c.b.vm.last.accepted.Load().WorstCaseBounds()
+	if bounds == nil {
+		return nil
+	}
+	return bounds.LatestEndTime.BaseFee().ToBig()
 }
 
 // detailedExecutionResult is the response for eth_callDetailed.
@@ -76,7 +87,7 @@ var (
 // SuggestPriceOptions returns gas-price suggestions at three speed tiers.
 // Each tier contains a tip and a total fee cap (2*baseFee + tip).
 func (c *customAPI) SuggestPriceOptions(ctx context.Context) (*priceOptions, error) {
-	baseFee := c.b.EstimateNextBaseFee()
+	baseFee := c.estimateNextBaseFee()
 	if baseFee == nil {
 		return nil, nil
 	}
