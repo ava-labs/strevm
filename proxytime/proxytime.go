@@ -181,8 +181,7 @@ func (tm *Time[D]) SetRate(hertz D) {
 }
 
 // Scale returns `val`, scaled from the existing [Time.Rate] to the newly
-// specified one. See [Time.SetRate] for details about overflow errors and
-// rounding.
+// specified one. See [intmath.MulDivCeil] for error cases.
 func (tm *Time[D]) Scale(val, newRate D) (D, error) {
 	scaled, _, err := intmath.MulDivCeil(val, newRate, tm.hertz)
 	if err != nil {
