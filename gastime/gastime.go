@@ -105,7 +105,6 @@ const MaxTarget = gas.Gas(math.MaxUint64 / TargetToRate)
 
 func rateOf(target gas.Gas) gas.Gas { return target * TargetToRate }
 func clampTarget(t gas.Gas) gas.Gas { return min(max(t, MinTarget), MaxTarget) }
-func roundRate(r gas.Gas) gas.Gas   { return (r / TargetToRate) * TargetToRate }
 
 // SafeRateOfTarget returns the corresponding rate for the given gas target,
 // after clamping it to the allowable range.
@@ -157,26 +156,28 @@ func (tm *Time) BaseFee() *uint256.Int {
 	return uint256.NewInt(uint64(tm.Price()))
 }
 
-// SetRate changes the gas rate per second, rounding down the argument if it is
-// not a multiple of [TargetToRate]. See [Time.SetTarget] re potential error(s).
+// SetRate is equivalent to [Time.SetTarget] after (integer) division of `r` by
+// [TargetToRate].
 func (tm *Time) SetRate(r gas.Gas) {
-	r = roundRate(r)
+	tm.SetTarget(r / TargetToRate)
+}
+
+// SetTarget changes the target gas consumption per second, clamping the
+// argument to the range [[MinTarget], [MaxTarget]]. If the [Time.Excess] were
+// to overflow as a result of this scaling then it is silently capped at
+// [math.MaxUint64].
+func (tm *Time) SetTarget(t gas.Gas) {
+	t = clampTarget(t)
+	r := rateOf(t)
+
 	x, err := tm.Scale(tm.excess, r)
 	if err != nil {
 		x = math.MaxUint64
 	}
-	// Cannot overflow as the current target is less than the current rate.
-	t, _ := tm.Scale(tm.target, r)
 
 	tm.TimeMarshaler.SetRate(r)
 	tm.excess = x
 	tm.target = t
-}
-
-// SetTarget changes the target gas consumption per second, clamping the
-// argument to the range [[MinTarget], [MaxTarget]].
-func (tm *Time) SetTarget(t gas.Gas) {
-	tm.SetRate(rateOf(clampTarget(t))) // also updates [Time.Target]
 }
 
 // Tick is equivalent to [proxytime.Time.Tick] except that it also updates the
