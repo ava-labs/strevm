@@ -29,6 +29,9 @@ var _ StateDBOpener = (*Recorder)(nil)
 
 // Recorder provides an abstraction to all state-related operations of the executor.
 // It manages all database operations not exposed by the [state.StateDB] itself.
+//
+// All methods are safe to be called even after [Recorder.Close], but state
+// will be unavailable.
 type Recorder struct {
 	snaps           *snapshot.Tree
 	cache           state.Database
@@ -38,10 +41,10 @@ type Recorder struct {
 	log logging.Logger
 }
 
-// NewStateRecorder provides a new [Recorder] on the underlying database
+// NewRecorder provides a new [Recorder] on the underlying database
 //
 // TODO(alarso16): Provide a custom config to generate the [triedb.Config].
-func NewStateRecorder(db ethdb.Database, c *triedb.Config, lastExecuted common.Hash, log logging.Logger) (*Recorder, error) {
+func NewRecorder(db ethdb.Database, c *triedb.Config, lastExecuted common.Hash, log logging.Logger) (*Recorder, error) {
 	cache := state.NewDatabaseWithConfig(db, c)
 	_, isHashDB := cache.TrieDB().Backend().(triedb.HashDB)
 	q, err := buffer.NewBoundedQueue(StateHistory, func(root common.Hash) {
@@ -82,36 +85,36 @@ func NewStateRecorder(db ethdb.Database, c *triedb.Config, lastExecuted common.H
 // as it has been referenced.
 //
 // Note: Snapshot memory leaks are avoided internally by [state.StateDB.Commit].
-func (s *Recorder) OnExecution(root common.Hash, height uint64) error {
+func (r *Recorder) OnExecution(root common.Hash, height uint64) error {
 	// State roots can only repeat with empty blocks, so we know that if this
 	// root already is tracked, then it must be the most recent one.
-	if s.lastRoot() != root {
-		s.referencedRoots.Push(root)
-		s.reference(root)
+	if r.lastRoot() != root {
+		r.referencedRoots.Push(root)
+		r.reference(root)
 	}
 
 	// Because `Release` is always expected to be called (whether the state root changed or not)
 	// We must always add an additional reference
-	s.reference(root)
+	r.reference(root)
 
 	if !ShouldCommitTrieDB(height) {
 		return nil
 	}
 
-	tdb := s.cache.TrieDB()
+	tdb := r.cache.TrieDB()
 	if err := tdb.Commit(root, false /* log */); err != nil {
 		return fmt.Errorf("%T.Commit(%#x) at end of block %d: %v", tdb, root, height, err)
 	}
 	return nil
 }
 
-func (s *Recorder) reference(root common.Hash) {
-	if !s.isHashDB {
+func (r *Recorder) reference(root common.Hash) {
+	if !r.isHashDB {
 		return
 	}
 
 	// Never returns an error.
-	if err := s.cache.TrieDB().Reference(root, common.Hash{}); err != nil {
+	if err := r.cache.TrieDB().Reference(root, common.Hash{}); err != nil {
 		log.Error("*triedb.Database.Reference()", zap.Error(err))
 	}
 }
@@ -119,21 +122,21 @@ func (s *Recorder) reference(root common.Hash) {
 // StaleState informs the execution engine that the state root
 // is no longer needed by consensus. All blocks, once they
 // are no longer needed, should call this method.
-func (s *Recorder) StaleState(root common.Hash) {
-	if !s.isHashDB {
+func (r *Recorder) StaleState(root common.Hash) {
+	if !r.isHashDB {
 		return
 	}
 
 	// Never returns an error.
-	if err := s.cache.TrieDB().Dereference(root); err != nil {
+	if err := r.cache.TrieDB().Dereference(root); err != nil {
 		log.Error("*triedb.Database.Dereference()", zap.Error(err))
 	}
 }
 
 // Returns the most recently recorded state root.
-func (s *Recorder) lastRoot() common.Hash {
-	r := s.referencedRoots
-	h, _ := r.Index(r.Len() - 1) // invariant: always at least the last-executed
+func (r *Recorder) lastRoot() common.Hash {
+	roots := r.referencedRoots
+	h, _ := roots.Index(roots.Len() - 1) // invariant: always at least the last-executed
 	return h
 }
 
@@ -143,34 +146,34 @@ func (s *Recorder) lastRoot() common.Hash {
 // However, the right to call [state.StateDB.Commit] is reserved
 // by the [Executor], as any other use could result in a memory
 // leak or state corruption.
-func (s *Recorder) StateDB(root common.Hash) (*state.StateDB, error) {
-	return state.New(root, s.cache, s.snaps)
+func (r *Recorder) StateDB(root common.Hash) (*state.StateDB, error) {
+	return state.New(root, r.cache, r.snaps)
 }
 
 // Close commits the most recent state to the database for shutdown.
-func (s *Recorder) Close() (errs error) {
+func (r *Recorder) Close() (errs error) {
 	defer func() {
-		s.snaps.Release()
-		if err := s.cache.TrieDB().Close(); err != nil {
+		r.snaps.Release()
+		if err := r.cache.TrieDB().Close(); err != nil {
 			errs = errors.Join(errs, fmt.Errorf("triedb.Database.Close(): %v", err))
 		}
 	}()
 
-	root := s.lastRoot()
+	root := r.lastRoot()
 
 	// We don't use [snapshot.Tree.Journal] because re-orgs are impossible under
 	// SAE so we don't mind flattening all snapshot layers to disk. Note that
 	// calling `Cap([disk root], 0)` returns an error when it's actually a
 	// no-op, so we ensure there are changes.
-	if root != s.snaps.DiskRoot() {
-		if err := s.snaps.Cap(root, 0); err != nil {
+	if root != r.snaps.DiskRoot() {
+		if err := r.snaps.Cap(root, 0); err != nil {
 			errs = errors.Join(errs, fmt.Errorf("snapshot.Tree.Cap([last post-execution state root], 0): %v", err))
 		}
 	}
 
 	// If we have new state, commit changes to database for easier startup.
 	// If there's no changes, this is a no-op.
-	if err := s.cache.TrieDB().Commit(root, true /* log */); err != nil {
+	if err := r.cache.TrieDB().Commit(root, true /* log */); err != nil {
 		errs = errors.Join(errs, fmt.Errorf("triedb.Database.Commit() for %#x: %v", root, err))
 	}
 	return errs

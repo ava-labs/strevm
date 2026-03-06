@@ -64,7 +64,7 @@ func New(
 	hooks hook.Points,
 	log logging.Logger,
 ) (*Executor, error) {
-	s, err := saedb.NewStateRecorder(db, triedbConfig, lastExecuted.PostExecutionStateRoot(), log)
+	s, err := saedb.NewRecorder(db, triedbConfig, lastExecuted.PostExecutionStateRoot(), log)
 	if err != nil {
 		return nil, err
 	}
