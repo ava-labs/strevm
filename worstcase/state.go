@@ -338,12 +338,14 @@ func (s *State) GasUsed() uint64 {
 // The returned bounds assume that every non-nil error from [State.ApplyTx]
 // resulted in said transaction being included, which is reflected in the
 // indexing of tx-sender balances.
-func (s *State) FinishBlock() *blocks.WorstCaseBounds {
-	s.clock.AfterBlock(s.blockSize, s.hooks, s.curr)
+func (s *State) FinishBlock() (*blocks.WorstCaseBounds, error) {
+	if err := s.clock.AfterBlock(s.blockSize, s.hooks, s.curr); err != nil {
+		return nil, fmt.Errorf("finishing block gas time update: %w", err)
+	}
 	s.qSize += s.blockSize
 	return &blocks.WorstCaseBounds{
 		MaxBaseFee:          s.baseFee,
 		LatestEndTime:       s.clock.Clone(),
 		MinOpBurnerBalances: slices.Clone(s.minOpBurnerBalances),
-	}
+	}, nil
 }

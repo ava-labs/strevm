@@ -230,7 +230,12 @@ func (b *blockBuilderG[T]) buildWithTxs(
 				return nil, fmt.Errorf("applying op at end of block %d to worst-case state: %v", block.Height(), err)
 			}
 		}
-		state.FinishBlock()
+		if _, err := state.FinishBlock(); err != nil {
+			blockLog.Warn("Could not finish historical worst-case calculation",
+				zap.Error(err),
+			)
+			return nil, fmt.Errorf("finishing worst-case state for block %d: %v", block.Height(), err)
+		}
 	}
 
 	hdr.Root = lastSettled.PostExecutionStateRoot()
@@ -304,7 +309,14 @@ func (b *blockBuilderG[T]) buildWithTxs(
 		includedOps = append(includedOps, tx)
 	}
 	hdr.GasUsed = state.GasUsed()
-	bounds := state.FinishBlock()
+
+	bounds, err := state.FinishBlock()
+	if err != nil {
+		log.Warn("Could not finish worst-case block calculation",
+			zap.Error(err),
+		)
+		return nil, fmt.Errorf("finishing worst-case state for new block: %v", err)
+	}
 
 	var receipts types.Receipts
 	settling := blocks.Range(parent.LastSettled(), lastSettled)
