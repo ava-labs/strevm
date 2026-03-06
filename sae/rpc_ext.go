@@ -73,12 +73,6 @@ type priceOptions struct {
 	Fast   *price `json:"fast"`
 }
 
-// Tip-speed scaling constants.
-const (
-	slowTipPct = 95
-	fastTipPct = 105
-)
-
 var minGasTip = big.NewInt(params.Wei)
 
 // SuggestPriceOptions returns gas-price suggestions at three speed tiers.
