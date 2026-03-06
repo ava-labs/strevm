@@ -79,10 +79,7 @@ const (
 	fastTipPct = 105
 )
 
-var (
-	minGasTip = big.NewInt(params.Wei)
-	big100    = big.NewInt(100)
-)
+var minGasTip = big.NewInt(params.Wei)
 
 // SuggestPriceOptions returns gas-price suggestions at three speed tiers.
 // Each tier contains a tip and a total fee cap (2*baseFee + tip).
@@ -110,6 +107,8 @@ func (c *customAPI) SuggestPriceOptions(ctx context.Context) (*priceOptions, err
 		Fast:   newPrice(fastTip, doubleBaseFee),
 	}, nil
 }
+
+var big100 = big.NewInt(100)
 
 // scaleTip returns tip * pct / 100.
 func scaleTip(tip *big.Int, pct uint64) *big.Int {
