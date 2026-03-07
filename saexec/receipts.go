@@ -21,7 +21,6 @@ func (e *Executor) createReceiptBuffers(b *blocks.Block) {
 	for i, tx := range b.Transactions() {
 		txs[i] = tx.Hash()
 	}
-	// TODO(arr4n) consider a pool for reusing channels.
 	e.receipts.StoreFromFunc(func(common.Hash) chan *Receipt {
 		return make(chan *Receipt, 1)
 	}, txs...)
