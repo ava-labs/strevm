@@ -17,6 +17,7 @@ import (
 	"github.com/ava-labs/libevm/core/state"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/core/vm"
+	"github.com/ava-labs/libevm/libevm/eventual"
 	"github.com/ava-labs/libevm/params"
 	"github.com/holiman/uint256"
 	"go.uber.org/zap"
@@ -119,7 +120,7 @@ type (
 	// Only the [Executor] needs to provide a real implementation to [Execute]
 	// and all other callers MUST use [NullReceiptStore].
 	ReceiptStore interface {
-		Load(common.Hash) (chan *Receipt, bool)
+		Load(common.Hash) (eventual.Value[*Receipt], bool)
 	}
 
 	// ExecutionResults holds the outputs of [Execute].
@@ -225,8 +226,8 @@ func Execute(
 		tip := tx.EffectiveGasTipValue(header.BaseFee)
 		receipt.EffectiveGasPrice = tip.Add(header.BaseFee, tip)
 
-		if ch, ok := receiptStore.Load(tx.Hash()); ok {
-			ch <- &Receipt{receipt, signer, tx}
+		if r, ok := receiptStore.Load(tx.Hash()); ok {
+			r.Put(&Receipt{receipt, signer, tx})
 		}
 		receipts[ti] = receipt
 	}
@@ -304,7 +305,7 @@ type NullReceiptStore struct{}
 
 var _ ReceiptStore = (*NullReceiptStore)(nil)
 
-// Load always returns `(nil, false)`.
-func (*NullReceiptStore) Load(common.Hash) (chan *Receipt, bool) {
-	return nil, false
+// Load always returns the zero value and false.
+func (*NullReceiptStore) Load(common.Hash) (eventual.Value[*Receipt], bool) {
+	return eventual.Value[*Receipt]{}, false
 }
