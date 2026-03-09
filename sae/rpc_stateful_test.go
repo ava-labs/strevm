@@ -33,8 +33,7 @@ type txTraceResult struct {
 }
 
 func TestTraceContractInteraction(t *testing.T) {
-	opt, _ := withVMTime(t, time.Unix(saeparams.TauSeconds, 0))
-	ctx, sut := newSUT(t, 1, opt)
+	ctx, sut := newSUT(t, 1)
 
 	escrowAddr := crypto.CreateAddress(sut.wallet.Addresses()[0], 0)
 	recv := common.Address{'r', 'e', 'c', 'v'}
@@ -60,50 +59,42 @@ func TestTraceContractInteraction(t *testing.T) {
 		require.Equalf(t, types.ReceiptStatusSuccessful, r.Status, "%T.Status", r)
 	}
 
+	deployReceipt := b.Receipts()[0]
+	depositReceipt := b.Receipts()[1]
+
 	sut.testRPC(ctx, t, []rpcTest{
 		{
 			method: "debug_traceTransaction",
 			args:   []any{depositTx.Hash()},
-			want:   logger.ExecutionResult{Failed: false},
+			want: logger.ExecutionResult{
+				Gas:         depositReceipt.GasUsed,
+				Failed:      false,
+				ReturnValue: "",
+			},
 			extraCmpOpts: []cmp.Option{
-				cmpopts.IgnoreFields(logger.ExecutionResult{}, "Gas", "ReturnValue"),
-				structLogsContain("SSTORE", "SLOAD"),
+				cmpopts.IgnoreFields(logger.ExecutionResult{}, "StructLogs"),
 			},
 		},
 		{
 			method: "debug_traceBlockByNumber",
 			args:   []any{hexutil.Uint64(b.Height())},
 			want: []txTraceResult{
-				{TxHash: deployTx.Hash(), Result: &logger.ExecutionResult{Failed: false}},
-				{TxHash: depositTx.Hash(), Result: &logger.ExecutionResult{Failed: false}},
+				{TxHash: deployTx.Hash(), Result: &logger.ExecutionResult{
+					Gas:         deployReceipt.GasUsed,
+					Failed:      false,
+					ReturnValue: common.Bytes2Hex(escrow.ByteCode()),
+				}},
+				{TxHash: depositTx.Hash(), Result: &logger.ExecutionResult{
+					Gas:         depositReceipt.GasUsed,
+					Failed:      false,
+					ReturnValue: "",
+				}},
 			},
 			extraCmpOpts: []cmp.Option{
-				cmpopts.IgnoreFields(txTraceResult{}, "Error"),
-				cmpopts.IgnoreFields(logger.ExecutionResult{}, "Gas", "ReturnValue", "StructLogs"),
+				cmpopts.IgnoreFields(logger.ExecutionResult{}, "StructLogs"),
 			},
 		},
 	}...)
-}
-
-func structLogsContain(ops ...string) cmp.Option {
-	contains := func(logs []logger.StructLogRes) bool {
-		if len(logs) == 0 {
-			return false
-		}
-		have := make(map[string]bool)
-		for _, l := range logs {
-			have[l.Op] = true
-		}
-		for _, op := range ops {
-			if !have[op] {
-				return false
-			}
-		}
-		return true
-	}
-	return cmp.Comparer(func(a, b []logger.StructLogRes) bool {
-		return contains(a) || contains(b)
-	})
 }
 
 func TestEthCall(t *testing.T) {
