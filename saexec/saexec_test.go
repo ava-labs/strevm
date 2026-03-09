@@ -37,7 +37,6 @@ import (
 	"github.com/ava-labs/strevm/blocks/blockstest"
 	"github.com/ava-labs/strevm/cmputils"
 	"github.com/ava-labs/strevm/gastime"
-	"github.com/ava-labs/strevm/hook"
 	saehookstest "github.com/ava-labs/strevm/hook/hookstest"
 	"github.com/ava-labs/strevm/proxytime"
 	"github.com/ava-labs/strevm/saetest"
@@ -97,7 +96,7 @@ func newSUT(tb testing.TB, hooks *saehookstest.Stub) (context.Context, SUT) {
 }
 
 func defaultHooks() *saehookstest.Stub {
-	return &saehookstest.Stub{Target: 1e6}
+	return saehookstest.NewStub(1e6)
 }
 
 func TestImmediateShutdownNonBlocking(t *testing.T) {
@@ -369,22 +368,27 @@ func TestEndOfBlockOps(t *testing.T) {
 
 	initialTime := sut.lastExecuted.Load().ExecutedByGasTime()
 
-	hooks.Ops = []hook.Op{
+	b := sut.chain.NewBlock(t, nil, blockstest.WithEthBlockOptions(blockstest.WithOps([]saehookstest.Op{
 		{
 			Gas: 100_000,
-			Burn: map[common.Address]hook.AccountDebit{
-				exportEOA: {Amount: *uint256.NewInt(10)},
+			Burn: []saehookstest.AccountDebit{
+				{
+					Address:    exportEOA,
+					Amount:     *uint256.NewInt(10),
+					MinBalance: *uint256.NewInt(10),
+				},
 			},
 		},
 		{
 			Gas: 150_000,
-			Mint: map[common.Address]uint256.Int{
-				importEOA: *uint256.NewInt(100),
+			Mint: []saehookstest.AccountCredit{
+				{
+					Address: importEOA,
+					Amount:  *uint256.NewInt(100),
+				},
 			},
 		},
-	}
-
-	b := sut.chain.NewBlock(t, nil)
+	})))
 	e := sut.Executor
 	require.NoError(t, e.Enqueue(ctx, b), "Enqueue()")
 	require.NoErrorf(t, b.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", b)
@@ -408,9 +412,7 @@ func TestEndOfBlockOps(t *testing.T) {
 
 func TestGasAccounting(t *testing.T) {
 	const gasPerTx = gas.Gas(params.TxGas)
-	hooks := &saehookstest.Stub{
-		Target: 5 * gasPerTx,
-	}
+	hooks := saehookstest.NewStub(5 * gasPerTx)
 	ctx, sut := newSUT(t, hooks)
 
 	at := func(blockTime, txs uint64, rate gas.Gas) *proxytime.Time[gas.Gas] {
@@ -496,21 +498,21 @@ func TestGasAccounting(t *testing.T) {
 			wantPriceAfter:  1,
 		},
 		{
-			blockTime:       21,                                 // fast-forward so excess is 0
-			numTxs:          30 * gastime.TargetToExcessScaling, // deliberate, see below
+			blockTime:       21,                                        // fast-forward so excess is 0
+			numTxs:          30 * gastime.DefaultTargetToExcessScaling, // deliberate, see below
 			targetAfter:     5 * gasPerTx,
-			wantExecutedBy:  at(21, 30*gastime.TargetToExcessScaling, 10*gasPerTx),
-			wantExcessAfter: 3 * ((5 * gasPerTx /*T*/) * gastime.TargetToExcessScaling /* == K */),
+			wantExecutedBy:  at(21, 30*gastime.DefaultTargetToExcessScaling, 10*gasPerTx),
+			wantExcessAfter: 3 * ((5 * gasPerTx /*T*/) * gastime.DefaultTargetToExcessScaling /* == K */),
 			// Excess is now 3·K so the price is e^3
 			wantPriceAfter: gas.Price(math.Floor(math.Exp(3 /* <----- NB */))),
 		},
 		{
 			blockTime:       22, // no fast-forward
-			numTxs:          10 * gastime.TargetToExcessScaling,
+			numTxs:          10 * gastime.DefaultTargetToExcessScaling,
 			gasTipCap:       1, // anything non-zero, to exercise [types.Receipt.EffectiveGasPrice]
 			targetAfter:     5 * gasPerTx,
-			wantExecutedBy:  at(21, 40*gastime.TargetToExcessScaling, 10*gasPerTx),
-			wantExcessAfter: 4 * ((5 * gasPerTx /*T*/) * gastime.TargetToExcessScaling /* == K */),
+			wantExecutedBy:  at(21, 40*gastime.DefaultTargetToExcessScaling, 10*gasPerTx),
+			wantExcessAfter: 4 * ((5 * gasPerTx /*T*/) * gastime.DefaultTargetToExcessScaling /* == K */),
 			wantPriceAfter:  gas.Price(math.Floor(math.Exp(4 /* <----- NB */))),
 		},
 	}
