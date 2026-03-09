@@ -9,8 +9,13 @@ import (
 
 	"github.com/ava-labs/libevm/common/hexutil"
 	"github.com/ava-labs/libevm/common/math"
+	"github.com/ava-labs/libevm/libevm/ethapi"
 	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/rpc"
+
+	"github.com/ava-labs/strevm/blocks"
+
+	_ "github.com/ava-labs/libevm/event"
 )
 
 // customAPI implements Avalanche-custom RPCs. These are not part of the
@@ -56,8 +61,27 @@ type detailedExecutionResult struct {
 
 // CallDetailed performs the same call as eth_call, but returns gas usage and
 // error details instead of just the return data.
-func (c *customAPI) CallDetailed(ctx context.Context, args any, blockNrOrHash rpc.BlockNumberOrHash, overrides any) (*detailedExecutionResult, error) {
-	panic(errUnimplemented)
+func (c *customAPI) CallDetailed(ctx context.Context, args ethapi.TransactionArgs, blockNrOrHash rpc.BlockNumberOrHash, overrides *ethapi.StateOverride) (*detailedExecutionResult, error) {
+	result, err := ethapi.DoCall(ctx, c.b, args, blockNrOrHash, overrides, nil, c.b.RPCEVMTimeout(), c.b.RPCGasCap())
+	if err != nil {
+		return nil, err
+	}
+	reply := &detailedExecutionResult{
+		UsedGas:    result.UsedGas,
+		ReturnData: result.ReturnData,
+	}
+	if result.Err != nil {
+		if rpcErr, ok := result.Err.(rpc.Error); ok {
+			reply.ErrCode = rpcErr.ErrorCode()
+		}
+		reply.Err = result.Err.Error()
+	}
+	if revert := result.Revert(); len(revert) > 0 {
+		revErr := ethapi.NewRevertError(revert)
+		reply.ErrCode = revErr.ErrorCode()
+		reply.Err = revErr.Error()
+	}
+	return reply, nil
 }
 
 // price represents a single gas-price suggestion.
@@ -123,5 +147,42 @@ func (c *customAPI) SuggestPriceOptions(ctx context.Context) (*priceOptions, err
 // transaction is accepted by consensus (prior to execution). If fullTx is true
 // the full tx is sent to the client, otherwise only the hash is sent.
 func (c *customAPI) NewAcceptedTransactions(ctx context.Context, fullTx *bool) (*rpc.Subscription, error) {
-	panic(errUnimplemented)
+	notifier, supported := rpc.NotifierFromContext(ctx)
+	if !supported {
+		return &rpc.Subscription{}, rpc.ErrNotificationsUnsupported
+	}
+	rpcSub := notifier.CreateSubscription()
+	// [event.FeedOf.Send] blocks until all subscribers receive the value, so a
+	// slow reader can stall the sender. An ample buffer avoids this in practice.
+	// See https://github.com/ava-labs/libevm/blob/3d7f8934ee6c/event/feedof.go#L49-L50
+	const acceptedBlocksBuf = 128
+	go func() {
+		ch := make(chan *blocks.Block, acceptedBlocksBuf)
+		sub := c.b.vm.acceptedBlocks.Subscribe(ch)
+		chainConfig := c.b.ChainConfig()
+		for {
+			select {
+			case block := <-ch:
+				hash := block.Hash()
+				num := block.NumberU64()
+				buildTime := block.BuildTime()
+				baseFee := block.Header().BaseFee
+				for i, tx := range block.Transactions() {
+					if fullTx != nil && *fullTx {
+						rpcTx := ethapi.NewRPCTransaction(tx, hash, num, buildTime, uint64(i), baseFee, chainConfig) //nolint:gosec // i will never overflow uint64
+						_ = notifier.Notify(rpcSub.ID, rpcTx)
+					} else {
+						_ = notifier.Notify(rpcSub.ID, tx.Hash())
+					}
+				}
+			case <-rpcSub.Err():
+				sub.Unsubscribe()
+				return
+			case <-notifier.Closed():
+				sub.Unsubscribe()
+				return
+			}
+		}
+	}()
+	return rpcSub, nil
 }
