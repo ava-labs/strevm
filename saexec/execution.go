@@ -178,7 +178,6 @@ func Execute(
 	header := types.CopyHeader(b.Header())
 	header.BaseFee = baseFee.ToBig()
 
-	blockCtx := core.NewEVMBlockContext(header, chainCtx, &header.Coinbase)
 	signer := types.MakeSigner(config, b.Number(), b.BuildTime())
 	gasPool := core.GasPool(math.MaxUint64) // required by geth but irrelevant so max it out
 	var blockGasConsumed gas.Gas
@@ -190,11 +189,6 @@ func Execute(
 	for ti, tx := range txs {
 		stateDB.SetTxContext(tx.Hash(), ti)
 		b.CheckSenderBalanceBound(stateDB, signer, tx)
-
-		log = log.With(
-			zap.Int("tx_index", ti),
-			zap.Stringer("tx_hash", tx.Hash()),
-		)
 
 		receipt, err := core.ApplyTransaction(
 			config,
@@ -270,7 +264,7 @@ func Execute(
 		BaseFee:  baseFee,
 		StateDB:  stateDB,
 		Signer:   signer,
-		BlockCtx: blockCtx,
+		BlockCtx: core.NewEVMBlockContext(header, chainCtx, &header.Coinbase),
 		Receipts: receipts,
 	}
 	r.FinishBy.Gas = gasClock

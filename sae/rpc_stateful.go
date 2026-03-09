@@ -7,7 +7,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math/big"
 	"time"
 
 	"github.com/ava-labs/libevm/common"
@@ -25,12 +24,7 @@ import (
 	"github.com/ava-labs/strevm/saexec"
 )
 
-var (
-	noopRelease tracers.StateReleaseFunc = func() {}
-
-	errPendingStateUnavailable = errors.New("state not available for pending block")
-	errNoGenesisTransactions   = errors.New("no transactions in genesis")
-)
+var noopRelease tracers.StateReleaseFunc = func() {}
 
 // noEndOfBlockOps wraps [hook.Points] to suppress
 // [hook.Points.EndOfBlockOps], used by the tracer to skip end-of-block
@@ -82,7 +76,7 @@ func (b *apiBackend) StateAndHeaderByNumber(ctx context.Context, num rpc.BlockNu
 // opened at the post-execution root, as carried by the faked header.
 func (b *apiBackend) StateAndHeaderByNumberOrHash(ctx context.Context, numOrHash rpc.BlockNumberOrHash) (*state.StateDB, *types.Header, error) {
 	if n, ok := numOrHash.Number(); ok && n == rpc.PendingBlockNumber {
-		return nil, nil, errPendingStateUnavailable
+		return nil, nil, errors.New("state not available for pending block")
 	}
 
 	num, hash, err := b.resolveBlockNumberOrHash(numOrHash)
@@ -107,14 +101,16 @@ func (b *apiBackend) StateAndHeaderByNumberOrHash(ctx context.Context, numOrHash
 		// TODO(arr4n) export [blocks.executionResults] to avoid multiple
 		// database reads and canoto unmarshallings here.
 		var err error
-		hdr.Root, err = b.vm.postExecutionStateRoot(hash, num)
+		hdr.Root, err = blocks.PostExecutionStateRoot(b.vm.xdb, num)
 		if err != nil {
 			return nil, nil, err
 		}
-		hdr.BaseFee, err = b.vm.executionBaseFee(hash, num)
+
+		bf, err := blocks.ExecutionBaseFee(b.vm.xdb, num)
 		if err != nil {
 			return nil, nil, err
 		}
+		hdr.BaseFee = bf.ToBig()
 	}
 
 	sdb, err := state.New(hdr.Root, b.exec.StateCache(), nil)
@@ -134,18 +130,13 @@ func (b *apiBackend) StateAndHeaderByNumberOrHash(ctx context.Context, numOrHash
 // trie data has not been pruned (or requires an archival node for older blocks).
 //
 // Reference: https://geth.ethereum.org/docs/developers/evm-tracing#state-availability
-func (b *apiBackend) StateAtBlock(_ context.Context, block *types.Block, reexec uint64, base *state.StateDB, readOnly bool, preferDisk bool) (*state.StateDB, tracers.StateReleaseFunc, error) {
-	// Guard against in-memory blocks that haven't been executed yet.
-	if bl, ok := b.vm.blocks.Load(block.Hash()); ok && !bl.Executed() {
-		return nil, nil, fmt.Errorf("execution results not yet available for block %d", block.NumberU64())
-	}
-
+func (b *apiBackend) StateAtBlock(ctx context.Context, block *types.Block, reexec uint64, base *state.StateDB, readOnly bool, preferDisk bool) (*state.StateDB, tracers.StateReleaseFunc, error) {
 	root, err := b.vm.postExecutionStateRoot(block.Hash(), block.NumberU64())
 	if err != nil {
 		return nil, nil, err
 	}
 
-	sdb, err := state.New(root, b.exec.StateCache(), nil)
+	sdb, err := b.exec.StateDB(root)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -163,7 +154,7 @@ func (b *apiBackend) StateAtBlock(_ context.Context, block *types.Block, reexec 
 func (b *apiBackend) StateAtTransaction(ctx context.Context, ethB *types.Block, txIndex int, reexec uint64) (*core.Message, vm.BlockContext, *state.StateDB, tracers.StateReleaseFunc, error) {
 	var bCtx vm.BlockContext
 	if ethB.NumberU64() == 0 {
-		return nil, bCtx, nil, nil, errNoGenesisTransactions
+		return nil, bCtx, nil, nil, errors.New("no transactions in genesis")
 	}
 	txs := ethB.Transactions()
 	if txIndex < 0 || txIndex >= len(txs) {
@@ -209,9 +200,7 @@ func (b *apiBackend) StateAtTransaction(ctx context.Context, ethB *types.Block, 
 		return nil, bCtx, nil, nil, err
 	}
 
-	// Prepare the target transaction's message.
-	targetTx := txs[txIndex]
-	msg, err := core.TransactionToMessage(targetTx, result.Signer, result.BaseFee.ToBig())
+	msg, err := core.TransactionToMessage(txs[txIndex], result.Signer, result.BaseFee.ToBig())
 	if err != nil {
 		return nil, bCtx, nil, nil, err
 	}
@@ -222,21 +211,12 @@ func (b *apiBackend) StateAtTransaction(ctx context.Context, ethB *types.Block, 
 // identified by hash and number, checking in-memory blocks first, then falling
 // back to disk.
 func (vm *VM) postExecutionStateRoot(hash common.Hash, num uint64) (common.Hash, error) {
-	if bl, ok := vm.blocks.Load(hash); ok {
+	switch bl, ok := vm.blocks.Load(hash); {
+	case !ok:
+		return blocks.PostExecutionStateRoot(vm.xdb, num)
+	case bl.Executed():
 		return bl.PostExecutionStateRoot(), nil
+	default:
+		return common.Hash{}, fmt.Errorf("post-execution state root unavailable for block %d (%#x)", num, hash)
 	}
-	return blocks.PostExecutionStateRoot(vm.xdb, num)
-}
-
-// executionBaseFee returns the execution base fee for the block identified by
-// hash and number, checking in-memory blocks first, then falling back to disk.
-func (vm *VM) executionBaseFee(hash common.Hash, num uint64) (*big.Int, error) {
-	if bl, ok := vm.blocks.Load(hash); ok {
-		return bl.BaseFee().ToBig(), nil
-	}
-	bf, err := blocks.ExecutionBaseFee(vm.xdb, num)
-	if err != nil {
-		return nil, err
-	}
-	return bf.ToBig(), nil
 }
