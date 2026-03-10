@@ -38,6 +38,7 @@ import (
 
 	"github.com/ava-labs/strevm/blocks"
 	"github.com/ava-labs/strevm/cmputils"
+	"github.com/ava-labs/strevm/gastime"
 	saeparams "github.com/ava-labs/strevm/params"
 	"github.com/ava-labs/strevm/saetest"
 	"github.com/ava-labs/strevm/saetest/escrow"
@@ -1471,104 +1472,53 @@ func TestGasPriceAPIs(t *testing.T) {
 }
 
 func TestFeeHistory(t *testing.T) {
-	const (
-		gasLimit       = 2_000_000_000 // Default newSut Target(100e6) * TargetToRate(2) * TauSeconds(5) * Lambda(2)
-		txGasUsedRatio = float64(params.TxGas) / float64(gasLimit)
-	)
+	// The actual implementation is tested extensively in the [gasprice] package
+	// so we are merely demonstrating correct plumbing.
 
-	baseFeeHex := hexBig(1) // zero excess => e^0 = 1
+	ctx, sut := newSUT(t, 1)
+	tips := []uint64{100, 200, 300}
+	for _, tip := range tips {
+		sut.runConsensusLoop(t, sut.wallet.SetNonceAndSign(t, 0, &types.DynamicFeeTx{
+			To:        &zeroAddr,
+			Gas:       params.TxGas,
+			GasTipCap: new(big.Int).SetUint64(tip),
+			GasFeeCap: new(big.Int).SetUint64(math.MaxUint64),
+		}))
+	}
+	require.NoError(t, sut.lastAcceptedBlock(t).WaitUntilExecuted(ctx), "last-accepted Block.WaitUntilExecuted()")
 
-	tests := []struct {
-		name              string
-		tipToBlock        []uint64 // each tip formed to tx which are included in separate blocks
-		blockCount        uint64
-		lastBlock         rpc.BlockNumber
-		rewardPercentiles []float64
-		want              ethclient.FeeHistoryResult
-	}{
-		{
-			name:       "genesis",
-			tipToBlock: []uint64{},
-			blockCount: 0,
-			lastBlock:  rpc.LatestBlockNumber,
-			want: ethclient.FeeHistoryResult{
-				OldestBlock: hexBig(0),
+	gasRate := sut.hooks.Target * gastime.TargetToRate
+	blockGasLimit := gasRate * saeparams.TauSeconds * saeparams.Lambda // by definition
+	gasUsedRatio := float64(params.TxGas) / float64(blockGasLimit)
+
+	baseFee := hexBig(1)
+
+	numBlocks := hexutil.Uint64(2)   // to fetch
+	rewardPercentile := []float64{0} // only one tip anyway
+
+	sut.testRPC(ctx, t, rpcTest{
+		method: "eth_feeHistory",
+		args:   []any{numBlocks, rpc.BlockNumber(3), rewardPercentile},
+		want: ethclient.FeeHistoryResult{
+			OldestBlock: hexBig(2),
+			Reward: [][]*hexutil.Big{
+				{hexBigU(tips[1])},
+				{hexBigU(tips[2])},
 			},
-		},
-		{
-			name:       "latest_block",
-			tipToBlock: []uint64{100},
-			blockCount: 1,
-			lastBlock:  rpc.LatestBlockNumber,
-			want: ethclient.FeeHistoryResult{
-				OldestBlock:  hexBig(1),
-				BaseFee:      []*hexutil.Big{baseFeeHex, baseFeeHex},
-				GasUsedRatio: []float64{txGasUsedRatio},
+			BaseFee: []*hexutil.Big{
+				baseFee,
+				baseFee,
+				baseFee, // the extra value is for the next block; the weird API signature is inherited from geth
 			},
+			GasUsedRatio: []float64{gasUsedRatio, gasUsedRatio},
 		},
-		{
-			name:              "with_reward_percentiles",
-			tipToBlock:        []uint64{100},
-			blockCount:        1,
-			lastBlock:         rpc.LatestBlockNumber,
-			rewardPercentiles: []float64{50},
-			want: ethclient.FeeHistoryResult{
-				OldestBlock:  hexBig(1),
-				Reward:       [][]*hexutil.Big{{hexBig(100)}},
-				BaseFee:      []*hexutil.Big{baseFeeHex, baseFeeHex},
-				GasUsedRatio: []float64{txGasUsedRatio},
-			},
-		},
-		{
-			name:       "multiple_blocks",
-			tipToBlock: []uint64{100, 200},
-			blockCount: 2,
-			lastBlock:  rpc.LatestBlockNumber,
-			want: ethclient.FeeHistoryResult{
-				OldestBlock:  hexBig(1),
-				BaseFee:      []*hexutil.Big{baseFeeHex, baseFeeHex, baseFeeHex},
-				GasUsedRatio: []float64{txGasUsedRatio, txGasUsedRatio},
-			},
-		},
-		{
-			name:              "specific_block_number",
-			tipToBlock:        []uint64{100, 200, 300},
-			blockCount:        2,
-			lastBlock:         3,
-			rewardPercentiles: []float64{50},
-			want: ethclient.FeeHistoryResult{
-				OldestBlock: hexBig(2),
-				Reward: [][]*hexutil.Big{
-					{hexBig(200)},
-					{hexBig(300)},
-				},
-				BaseFee:      []*hexutil.Big{baseFeeHex, baseFeeHex, baseFeeHex},
-				GasUsedRatio: []float64{txGasUsedRatio, txGasUsedRatio},
-			},
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			ctx, sut := newSUT(t, 1)
-			for _, tip := range tt.tipToBlock {
-				b := sut.runConsensusLoop(t, sut.wallet.SetNonceAndSign(t, 0, &types.DynamicFeeTx{
-					To:        &zeroAddr,
-					Gas:       params.TxGas,
-					GasTipCap: new(big.Int).SetUint64(tip),
-					GasFeeCap: new(big.Int).SetUint64(math.MaxUint64),
-				}))
-				require.NoErrorf(t, b.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", b)
-			}
-			hexBlockCount := hexutil.Uint64(tt.blockCount)
-			sut.testRPC(ctx, t, rpcTest{
-				method: "eth_feeHistory",
-				args:   []any{hexBlockCount, tt.lastBlock, tt.rewardPercentiles},
-				want:   tt.want,
-			})
-		})
-	}
+	})
 }
 
 func hexBig(n int64) *hexutil.Big {
 	return (*hexutil.Big)(big.NewInt(n))
+}
+
+func hexBigU(n uint64) *hexutil.Big {
+	return (*hexutil.Big)(new(big.Int).SetUint64(n))
 }
