@@ -575,7 +575,7 @@ func (b *apiBackend) ResolveBlockNumber(bn rpc.BlockNumber) (uint64, error) {
 // ResolveBlockNumber resolves the [rpc.BlockNumber], supporting the following
 // named blocks:
 //
-// - [rpc.PendingBlockNumber]: last accepted
+// - [rpc.PendingBlockNumber]: last accepted (i.e. pending execution)
 // - [rpc.LatestBlockNumber]: last executed
 // - [rpc.SafeBlockNumber] and [rpc.FinalizedBlockNumber]: last settled
 //
