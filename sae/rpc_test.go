@@ -1444,7 +1444,7 @@ func TestGasPriceAPIs(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx, sut := newSUT(t, 1)
-			for _, tip := range tt.tipToBlock {
+			for _, tip := range tt.txTips {
 				sut.runConsensusLoop(t, sut.wallet.SetNonceAndSign(t, 0, &types.DynamicFeeTx{
 					To:        &zeroAddr,
 					Gas:       params.TxGas,
