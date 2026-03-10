@@ -937,26 +937,67 @@ func TestGetTransactionCount(t *testing.T) {
 // so it succeeds without a keystore.
 func TestFillTransaction(t *testing.T) {
 	ctx, sut := newSUT(t, 1)
+	addr := sut.wallet.Addresses()[0]
 
-	var got json.RawMessage
-	err := sut.CallContext(ctx, &got, "eth_fillTransaction", map[string]any{
-		"from":  sut.wallet.Addresses()[0],
+	// setDefaults fills: nonce from pool, ChainID from config (1), and
+	// London fee fields from SuggestGasTipCap (MinSuggestedTip=1 wei) and
+	// the genesis base fee (InitialBaseFee).
+	tip := big.NewInt(1)
+	feeCap := new(big.Int).Add(
+		tip,
+		new(big.Int).Mul(big.NewInt(params.InitialBaseFee), big.NewInt(2)),
+	)
+	fillArgs := map[string]any{
+		"from":  addr,
 		"to":    zeroAddr,
 		"gas":   hexutil.Uint64(params.TxGas),
-		"value": hexutil.Big(*big.NewInt(100)),
+		"value": hexBig(100),
+	}
+	wantFilled := func(t *testing.T, nonce uint64) ethapi.SignTransactionResult {
+		t.Helper()
+		tx := types.NewTx(&types.DynamicFeeTx{
+			ChainID:   big.NewInt(1),
+			Nonce:     nonce,
+			GasTipCap: new(big.Int).Set(tip),
+			GasFeeCap: new(big.Int).Set(feeCap),
+			Gas:       params.TxGas,
+			To:        &zeroAddr,
+			Value:     big.NewInt(100),
+		})
+		raw, err := tx.MarshalBinary()
+		require.NoError(t, err, "tx.MarshalBinary()")
+		return ethapi.SignTransactionResult{Raw: raw, Tx: tx}
+	}
+
+	sut.testRPC(ctx, t, rpcTest{
+		method: "eth_fillTransaction",
+		args:   []any{fillArgs},
+		want:   wantFilled(t, 0),
 	})
-	require.NoError(t, err, "eth_fillTransaction()")
-	require.NotEmpty(t, got, "eth_fillTransaction()")
+
+	pendingTx := sut.wallet.SetNonceAndSign(t, 0, &types.DynamicFeeTx{
+		To:        &zeroAddr,
+		Gas:       params.TxGas,
+		GasFeeCap: big.NewInt(1),
+	})
+	sut.mustSendTx(t, pendingTx)
+	sut.requireInMempool(t, pendingTx.Hash())
+
+	sut.testRPC(ctx, t, rpcTest{
+		method: "eth_fillTransaction",
+		args:   []any{fillArgs},
+		want:   wantFilled(t, 1),
+	})
 }
 
-// eth_resend exercises setDefaults (SuggestGasTipCap, GetPoolNonce) then
-// fails gracefully because no matching pending transaction exists.
+// eth_resend exercises setDefaults (SuggestGasTipCap) then fails gracefully
+// because no matching pending transaction exists.
 func TestResend(t *testing.T) {
 	ctx, sut := newSUT(t, 1)
 
 	sut.testRPC(ctx, t, rpcTest{
 		method: "eth_resend",
-		// By not inclduing some fields we can force setDefaults() to
+		// By not including some fields we can force setDefaults() to
 		// call SuggestGasTipCap().
 		args: []any{
 			map[string]any{
