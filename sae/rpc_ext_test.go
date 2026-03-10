@@ -46,7 +46,6 @@ func TestBaseFee(t *testing.T) {
 }
 
 func TestNewPriceOptions(t *testing.T) {
-	toBig := big.NewInt
 	minimumPrice := &price{
 		GasTip: hexBig(params.Wei),
 		GasFee: hexBig(2 * params.Wei),
@@ -76,9 +75,9 @@ func TestNewPriceOptions(t *testing.T) {
 			tip:     tip,
 			baseFee: baseFee,
 			want: &priceOptions{
-				Slow:   newPrice(toBig(tip*.95), toBig(baseFee)),
-				Normal: newPrice(toBig(tip), toBig(baseFee)),
-				Fast:   newPrice(toBig(tip*1.05), toBig(baseFee)),
+				Slow:   newPrice(big.NewInt(tip*.95), big.NewInt(baseFee)),
+				Normal: newPrice(big.NewInt(tip), big.NewInt(baseFee)),
+				Fast:   newPrice(big.NewInt(tip*1.05), big.NewInt(baseFee)),
 			},
 		},
 	}

@@ -139,6 +139,9 @@ func (c *customAPI) SuggestPriceOptions(ctx context.Context) (*priceOptions, err
 	if doubleBaseFee == nil {
 		return nil, nil
 	}
+	// Double the base fee estimate so the suggested maxFeePerGas remains
+	// valid even if the base fee rises for several consecutive
+	// blocks before the transaction is included.
 	doubleBaseFee.Lsh(doubleBaseFee, 1)
 	return newPriceOptions(tip, doubleBaseFee), nil
 }
