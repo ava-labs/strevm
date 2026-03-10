@@ -174,11 +174,7 @@ func (l *TBLogger) log(lvl logging.Level, msg string, fields ...zap.Field) {
 // WARNING: sets a global logger so it must NOT be used in parallel tests.
 func EnableLibEVMTBLogger(tb testing.TB) {
 	tb.Helper()
-	old := log.Root()
-	tb.Cleanup(func() {
-		log.SetDefault(old)
-	})
-	log.SetDefault(log.NewLogger(ethtest.NewTBLogHandler(tb, slog.LevelError)))
+	setLibEVMLogger(tb, log.NewLogger(ethtest.NewTBLogHandler(tb, slog.LevelError)))
 }
 
 // DisableLibEVMLogger sets the global libevm logger to a no-op discard
@@ -186,9 +182,16 @@ func EnableLibEVMTBLogger(tb testing.TB) {
 // [EnableLibEVMTBLogger], this is safe to call before parallel subtests.
 func DisableLibEVMLogger(tb testing.TB) {
 	tb.Helper()
+	setLibEVMLogger(tb, log.NewLogger(log.DiscardHandler()))
+}
+
+// setLibEVMLogger sets the global libevm logger to l, restoring the original
+// during tb cleanup.
+func setLibEVMLogger(tb testing.TB, l log.Logger) {
+	tb.Helper()
 	old := log.Root()
 	tb.Cleanup(func() {
 		log.SetDefault(old)
 	})
-	log.SetDefault(log.NewLogger(log.DiscardHandler()))
+	log.SetDefault(l)
 }
