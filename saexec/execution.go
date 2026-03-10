@@ -212,7 +212,7 @@ func (e *Executor) execute(b *blocks.Block, log logging.Logger) error {
 	if err != nil {
 		return fmt.Errorf("%T.Commit() at end of block %d: %w", stateDB, b.NumberU64(), err)
 	}
-	if err := e.Recorder.OnExecution(root, b.NumberU64()); err != nil {
+	if err := e.Tracker.Track(root, b.NumberU64()); err != nil {
 		return err
 	}
 

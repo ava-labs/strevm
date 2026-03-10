@@ -998,7 +998,7 @@ func TestCloseRecoversHashDB(t *testing.T) {
 			if i == numToDrop {
 				break
 			}
-			e.ReleaseInMemory(b.PostExecutionStateRoot())
+			e.Untrack(b.PostExecutionStateRoot())
 		}
 		checkStates(t, e, func(height uint64) bool {
 			return height >= numToDrop
@@ -1043,7 +1043,7 @@ func TestArchivalStoresAll(t *testing.T) {
 
 	// Dereferencing doesn't do anything
 	for _, b := range chain.AllBlocks() {
-		e.ReleaseInMemory(b.PostExecutionStateRoot())
+		e.Untrack(b.PostExecutionStateRoot())
 	}
 	require.NoErrorf(t, sut.Close(), "%T.Close()", e)
 

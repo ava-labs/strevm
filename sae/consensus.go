@@ -107,11 +107,11 @@ func (vm *VM) AcceptBlock(ctx context.Context, b *blocks.Block) error {
 			continue
 		}
 		vm.blocks.Delete(s.Hash())
-		vm.exec.ReleaseInMemory(s.PostExecutionStateRoot())
+		vm.exec.Untrack(s.PostExecutionStateRoot())
 	}
 	if h := parentLastSettled.Hash(); h != keep { // i.e. `parentLastSettled` was the last block's `keep`
 		vm.blocks.Delete(h)
-		vm.exec.ReleaseInMemory(parentLastSettled.PostExecutionStateRoot())
+		vm.exec.Untrack(parentLastSettled.PostExecutionStateRoot())
 	}
 	return nil
 }

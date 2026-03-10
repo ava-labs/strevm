@@ -29,14 +29,14 @@ type Config struct {
 // TODO(alarso16): move to config
 const SnapshotCacheSizeMB = 128
 
-var _ StateDBOpener = (*Recorder)(nil)
+var _ StateDBOpener = (*Tracker)(nil)
 
-// Recorder provides an abstraction to all state-related operations of the executor.
+// Tracker provides an abstraction to all state-related operations of the executor.
 // It manages all database operations not exposed by the [state.StateDB] itself.
 //
-// All methods are safe to be called even after [Recorder.Close], but state
+// All methods are safe to be called even after [Tracker.Close], but state
 // will be unavailable.
-type Recorder struct {
+type Tracker struct {
 	snaps       *snapshot.Tree
 	cache       state.Database
 	isHashDB    bool
@@ -45,8 +45,8 @@ type Recorder struct {
 	currentRoot common.Hash
 }
 
-// NewRecorder provides a new [Recorder] on the underlying database
-func NewRecorder(db ethdb.Database, c Config, lastExecuted common.Hash, log logging.Logger) (*Recorder, error) {
+// NewTracker provides a new [Tracker] on the underlying database
+func NewTracker(db ethdb.Database, c Config, lastExecuted common.Hash, log logging.Logger) (*Tracker, error) {
 	cache := state.NewDatabaseWithConfig(db, c.TrieDBConfig)
 	_, isHashDB := cache.TrieDB().Backend().(triedb.HashDB)
 	snapConf := snapshot.Config{
@@ -57,7 +57,7 @@ func NewRecorder(db ethdb.Database, c Config, lastExecuted common.Hash, log logg
 	if err != nil {
 		return nil, err
 	}
-	return &Recorder{
+	return &Tracker{
 		snaps:       snaps,
 		cache:       cache,
 		currentRoot: lastExecuted,
@@ -67,55 +67,55 @@ func NewRecorder(db ethdb.Database, c Config, lastExecuted common.Hash, log logg
 	}, nil
 }
 
-// OnExecution tracks the root and may commit the trie associated with the root
+// Track tracks the root and may commit the trie associated with the root
 // to the database if [ShouldCommitTrieDB] returns true, or the [Config]
 // specifies that the node is archival.
 //
-// This state will be available until [Recorder.ReleaseInMemory] has been called
+// This state will be available until [Tracker.Untrack] has been called
 // or the root as many times as it has been referenced.
 //
 // Note: Snapshot memory leaks are avoided internally by [state.StateDB.Commit].
-func (r *Recorder) OnExecution(root common.Hash, height uint64) error {
+func (t *Tracker) Track(root common.Hash, height uint64) error {
 	// Because `Release` is always expected to be called (whether the state root changed or not)
 	// We must always add an additional reference
-	r.reference(root) // keepalive until dereference
-	r.currentRoot = root
+	t.reference(root) // keepalive until dereference
+	t.currentRoot = root
 
-	if !r.isArchival && !ShouldCommitTrieDB(height) {
+	if !t.isArchival && !ShouldCommitTrieDB(height) {
 		return nil
 	}
 
-	tdb := r.cache.TrieDB()
+	tdb := t.cache.TrieDB()
 	if err := tdb.Commit(root, false /* log */); err != nil {
 		return fmt.Errorf("%T.Commit(%#x) at end of block %d: %v", tdb, root, height, err)
 	}
 	return nil
 }
 
-func (r *Recorder) reference(root common.Hash) {
-	if !r.isHashDB {
+func (t *Tracker) reference(root common.Hash) {
+	if !t.isHashDB {
 		return
 	}
 
 	// Never returns an error.
-	if err := r.cache.TrieDB().Reference(root, common.Hash{}); err != nil {
+	if err := t.cache.TrieDB().Reference(root, common.Hash{}); err != nil {
 		log.Error("*triedb.Database.Reference()", zap.Error(err))
 	}
 }
 
-// ReleaseInMemory informs the recorder that the state corresponding
+// Untrack informs the recorder that the state corresponding
 // with `root` can have its reference count reduced. If the reference
 // count is 0, the state will be removed from memory.
 //
 // This should be called on each block after its state is no longer
 // needed. If the state is already on disk, no operation is performed.
-func (r *Recorder) ReleaseInMemory(root common.Hash) {
-	if !r.isHashDB {
+func (t *Tracker) Untrack(root common.Hash) {
+	if !t.isHashDB {
 		return
 	}
 
 	// Never returns an error.
-	if err := r.cache.TrieDB().Dereference(root); err != nil {
+	if err := t.cache.TrieDB().Dereference(root); err != nil {
 		log.Error("*triedb.Database.Dereference()", zap.Error(err))
 	}
 }
@@ -126,15 +126,15 @@ func (r *Recorder) ReleaseInMemory(root common.Hash) {
 // However, the right to call [state.StateDB.Commit] is reserved
 // for canonical blocks, as any other use could result in a memory
 // leak or state corruption.
-func (r *Recorder) StateDB(root common.Hash) (*state.StateDB, error) {
-	return state.New(root, r.cache, r.snaps)
+func (t *Tracker) StateDB(root common.Hash) (*state.StateDB, error) {
+	return state.New(root, t.cache, t.snaps)
 }
 
 // Close commits the most recent state to the database for shutdown.
-func (r *Recorder) Close() (errs error) {
+func (t *Tracker) Close() (errs error) {
 	defer func() {
-		r.snaps.Release()
-		if err := r.cache.TrieDB().Close(); err != nil {
+		t.snaps.Release()
+		if err := t.cache.TrieDB().Close(); err != nil {
 			errs = errors.Join(errs, fmt.Errorf("triedb.Database.Close(): %v", err))
 		}
 	}()
@@ -143,16 +143,16 @@ func (r *Recorder) Close() (errs error) {
 	// SAE so we don't mind flattening all snapshot layers to disk. Note that
 	// calling `Cap([disk root], 0)` returns an error when it's actually a
 	// no-op, so we ensure there are changes.
-	if r.currentRoot != r.snaps.DiskRoot() {
-		if err := r.snaps.Cap(r.currentRoot, 0); err != nil {
+	if t.currentRoot != t.snaps.DiskRoot() {
+		if err := t.snaps.Cap(t.currentRoot, 0); err != nil {
 			errs = errors.Join(errs, fmt.Errorf("snapshot.Tree.Cap([last post-execution state root], 0): %v", err))
 		}
 	}
 
 	// If we have new state, commit changes to database for easier startup.
 	// If there's no changes, this is a no-op.
-	if err := r.cache.TrieDB().Commit(r.currentRoot, true /* log */); err != nil {
-		errs = errors.Join(errs, fmt.Errorf("triedb.Database.Commit() for %#x: %v", r.currentRoot, err))
+	if err := t.cache.TrieDB().Commit(t.currentRoot, true /* log */); err != nil {
+		errs = errors.Join(errs, fmt.Errorf("triedb.Database.Commit() for %#x: %v", t.currentRoot, err))
 	}
 	return errs
 }
