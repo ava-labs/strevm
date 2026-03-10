@@ -1444,18 +1444,18 @@ func TestGasPriceAPIs(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx, sut := newSUT(t, 1)
-			lastBlock := sut.lastAcceptedBlock(t)
-			for _, tip := range tt.txTips {
-				b := sut.runConsensusLoop(t, sut.wallet.SetNonceAndSign(t, 0, &types.DynamicFeeTx{
+			for _, tip := range tt.tipToBlock {
+				sut.runConsensusLoop(t, sut.wallet.SetNonceAndSign(t, 0, &types.DynamicFeeTx{
 					To:        &zeroAddr,
 					Gas:       params.TxGas,
 					GasTipCap: new(big.Int).SetUint64(tip),
 					GasFeeCap: new(big.Int).SetUint64(math.MaxUint64),
 				}))
-				require.NoErrorf(t, b.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", b)
-				lastBlock = b
 			}
-			baseFee := lastBlock.BaseFee()
+
+			b := sut.lastAcceptedBlock(t)
+			require.NoError(t, b.WaitUntilExecuted(ctx), "last-accepted %T.WaitUntilExecuted()", b)
+			baseFee := b.BaseFee()
 			sut.testRPC(ctx, t,
 				rpcTest{
 					method: "eth_maxPriorityFeePerGas",
