@@ -11,7 +11,6 @@ import (
 	"math/big"
 	"math/rand/v2"
 	"net/http/httptest"
-	"path/filepath"
 	"runtime"
 	"sync"
 	"testing"
@@ -117,7 +116,7 @@ func newSUT(tb testing.TB, numAccounts uint, opts ...sutOption) (context.Context
 	saetest.EnableLibEVMTBLogger(tb)
 
 	mempoolConf := legacypool.DefaultConfig // copies
-	mempoolConf.Journal = filepath.Join(tb.TempDir(), "transactions.rlp")
+	mempoolConf.Journal = "/dev/null"
 
 	keys := saetest.NewUNSAFEKeyChain(tb, numAccounts)
 
