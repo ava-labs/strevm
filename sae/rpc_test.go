@@ -1422,30 +1422,30 @@ func TestResolveBlockNumberOrHash(t *testing.T) {
 
 func TestGasPriceAPIs(t *testing.T) {
 	tests := []struct {
-		name       string
-		tipToBlock []uint64 // each tip formed to tx which are included in separate blocks
-		wantTip    uint64
+		name    string
+		txTips  []uint64 // one tx per block
+		wantTip uint64
 	}{
 		{
 			name:    "genesis",
 			wantTip: params.Wei,
 		},
 		{
-			name:       "after_block_with_tip",
-			tipToBlock: []uint64{100},
-			wantTip:    100,
+			name:    "after_block_with_tip",
+			txTips:  []uint64{100},
+			wantTip: 100,
 		},
 		{
-			name:       "multiple_blocks",
-			tipToBlock: []uint64{100, 200, 300},
-			wantTip:    100,
+			name:    "multiple_blocks",
+			txTips:  []uint64{100, 110, 120, 130},
+			wantTip: 110, // because suggestion is 40th percentil
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx, sut := newSUT(t, 1)
 			lastBlock := sut.lastAcceptedBlock(t)
-			for _, tip := range tt.tipToBlock {
+			for _, tip := range tt.txTips {
 				b := sut.runConsensusLoop(t, sut.wallet.SetNonceAndSign(t, 0, &types.DynamicFeeTx{
 					To:        &zeroAddr,
 					Gas:       params.TxGas,
