@@ -10,7 +10,6 @@ import (
 	"testing"
 
 	"github.com/ava-labs/avalanchego/utils/logging"
-	"github.com/ava-labs/avalanchego/vms/components/gas"
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core/state"
 	"github.com/ava-labs/libevm/core/types"
@@ -63,8 +62,16 @@ func NewExecutor[CommonData, Prefetch any, R parallel.PrecompileResult, Aggregat
 	}
 	stub.Register(tb)
 
-	src := blocks.Source(chain.GetBlock)
-	exec, err := saexec.New(gen, src.AsHeaderSource(), config, db, xdb, &triedb.Config{}, &hooks{par: par}, logger)
+	exec, err := saexec.New(
+		gen,
+		blocks.Source(chain.GetBlock).AsHeaderSource(),
+		config,
+		db,
+		xdb,
+		&triedb.Config{},
+		&hooks{saehookstest.NewStub(100e6), par},
+		logger,
+	)
 	require.NoError(tb, err, "saexec.New()")
 	tb.Cleanup(func() {
 		ctx := context.WithoutCancel(tb.Context())
@@ -77,15 +84,11 @@ func NewExecutor[CommonData, Prefetch any, R parallel.PrecompileResult, Aggregat
 }
 
 type hooks struct {
-	saehookstest.Stub
+	*saehookstest.Stub
 	par *parallel.Processor
 }
 
 var _ hook.Points = (*hooks)(nil)
-
-func (*hooks) GasTargetAfter(*types.Header) gas.Gas {
-	return 100e6
-}
 
 func (h *hooks) BeforeExecutingBlock(rules params.Rules, sdb *state.StateDB, b *types.Block) error {
 	return h.par.StartBlock(sdb, rules, b)
