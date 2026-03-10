@@ -1,6 +1,6 @@
 module github.com/ava-labs/strevm
 
-go 1.25.7
+go 1.25.8
 
 tool github.com/go-task/task/v3/cmd/task
 
