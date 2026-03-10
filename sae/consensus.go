@@ -77,7 +77,7 @@ func (vm *VM) AcceptBlock(ctx context.Context, b *blocks.Block) error {
 		}
 	}
 
-	// I(s ∈ S) above, before I(b ∈ A) before I(b ∈ E)
+	// I(s ∈ S) above, before I(b ∈ A) before X(b ∈ A)
 	vm.last.accepted.Store(b)
 	vm.acceptedBlocks.Send(b)
 	if err := vm.exec.Enqueue(ctx, b); err != nil {
