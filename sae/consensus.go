@@ -127,8 +127,8 @@ func (vm *VM) RejectBlock(ctx context.Context, b *blocks.Block) error {
 	return nil
 }
 
-// SubscribeAcceptedBlockEvent returns a new subscription for each [*types.Block]
-// emitted after consensus acceptance of a [blocks.Block] with [VM.AcceptBlock].
-func (vm *VM) SubscribeAcceptedBlockEvent(ch chan<- *blocks.Block) event.Subscription {
+// SubscribeAcceptedBlocks returns a new subscription for each [*blocks.Block]
+// emitted after consensus acceptance via [VM.AcceptBlock].
+func (vm *VM) SubscribeAcceptedBlocks(ch chan<- *blocks.Block) event.Subscription {
 	return vm.acceptedBlocks.Subscribe(ch)
 }

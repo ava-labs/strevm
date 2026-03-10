@@ -128,9 +128,9 @@ func (cb *ChainBuilder) GetBlock(h common.Hash, num uint64) (*blocks.Block, bool
 // chain height.
 var ErrBlockNotFound = errors.New("block not found")
 
-// SubscribeAcceptedBlockEvent subscribes to accepted block events fired by
+// SubscribeAcceptedBlocks subscribes to accepted block events fired by
 // [ChainBuilder.NewBlock].
-func (cb *ChainBuilder) SubscribeAcceptedBlockEvent(ch chan<- *blocks.Block) event.Subscription {
+func (cb *ChainBuilder) SubscribeAcceptedBlocks(ch chan<- *blocks.Block) event.Subscription {
 	return cb.acceptedBlocks.Subscribe(ch)
 }
 
