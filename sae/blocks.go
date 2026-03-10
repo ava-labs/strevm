@@ -20,6 +20,7 @@ import (
 	"github.com/ava-labs/libevm/rlp"
 
 	"github.com/ava-labs/strevm/blocks"
+	"github.com/ava-labs/strevm/sae/rpc"
 )
 
 // maxFutureBlockDuration is the maximum time from the current time allowed for
@@ -159,8 +160,8 @@ func (vm *VM) settledBlockFromDB(db ethdb.Reader, hash common.Hash, num uint64) 
 func (vm *VM) GetBlock(ctx context.Context, id ids.ID) (*blocks.Block, error) {
 	var _ snowman.Block // protect the input to allow comment linking
 
-	return readByHash(
-		vm,
+	return rpc.ReadByHash(
+		rpcSource{vm, vm.exec},
 		common.Hash(id),
 		func(b *blocks.Block) *blocks.Block {
 			return b
@@ -193,7 +194,7 @@ func (vm *VM) headerSource(hash common.Hash, num uint64) (*types.Header, bool) {
 	return source(vm, hash, num, (*blocks.Block).Header, rawdb.ReadHeader)
 }
 
-func source[T any](vm *VM, hash common.Hash, num uint64, fromMem blockAccessor[T], fromDB canonicalReader[T]) (*T, bool) {
+func source[T any](vm *VM, hash common.Hash, num uint64, fromMem rpc.BlockAccessor[T], fromDB rpc.CanonicalReader[T]) (*T, bool) {
 	if b, ok := vm.blocks.Load(hash); ok {
 		if b.NumberU64() != num {
 			return nil, false

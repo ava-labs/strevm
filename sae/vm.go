@@ -23,7 +23,6 @@ import (
 	"github.com/ava-labs/avalanchego/utils/logging"
 	"github.com/ava-labs/avalanchego/version"
 	"github.com/ava-labs/avalanchego/vms/components/gas"
-	"github.com/ava-labs/libevm/accounts"
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core"
 	"github.com/ava-labs/libevm/core/rawdb"
@@ -37,8 +36,8 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/ava-labs/strevm/blocks"
-	"github.com/ava-labs/strevm/gasprice"
 	"github.com/ava-labs/strevm/hook"
+	"github.com/ava-labs/strevm/sae/rpc"
 	"github.com/ava-labs/strevm/saedb"
 	"github.com/ava-labs/strevm/saexec"
 	"github.com/ava-labs/strevm/txgossip"
@@ -71,7 +70,7 @@ type VM struct {
 	exec         *saexec.Executor
 	mempool      *txgossip.Set
 	blockBuilder blockBuilder
-	apiBackend   *apiBackend
+	rpcAPIs      *rpc.APIs
 	newTxs       chan struct{}
 
 	// toClose are closed in reverse order during [VM.Shutdown]. If a resource
@@ -98,16 +97,7 @@ type Config struct {
 	Now func() time.Time // defaults to [time.Now] if nil
 }
 
-// RPCConfig provides options for initialization of RPCs for the node.
-type RPCConfig struct {
-	BlocksPerBloomSection uint64
-	EnableDBInspecting    bool
-	EnableProfiling       bool
-	DisableTracing        bool
-	EVMTimeout            time.Duration
-	GasCap                uint64
-	TxFeeCap              float64 // 0 = no cap
-}
+type RPCConfig = rpc.Config // DO NOT MERGE
 
 // NewVM returns a new [VM] that is ready for use immediately upon return.
 // [VM.Shutdown] MUST be called to release resources.
@@ -309,34 +299,12 @@ func NewVM[T hook.Transaction](
 	}
 
 	{ // ==========  API Backend  ==========
-		// Empty account manager provides graceful errors for signing
-		// RPCs (e.g. eth_sign) instead of nil-pointer panics. No
-		// actual account functionality is expected.
-		accountManager := accounts.NewManager(&accounts.Config{})
-		vm.toClose = append(vm.toClose, accountManager)
-
-		chainIdx := chainIndexer{vm.exec}
-		override := bloomOverrider{vm.db}
-		// TODO(alarso16): if we are state syncing, we need to provide the first
-		// block available to the indexer via [core.ChainIndexer.AddCheckpoint].
-		bloomIdx := newBloomIndexer(vm.db, chainIdx, override, cfg.RPCConfig.BlocksPerBloomSection)
-		vm.toClose = append(vm.toClose, bloomIdx)
-
-		estimator, err := gasprice.NewEstimator(&estimatorBackend{vm}, snowCtx.Log, gasprice.DefaultConfig())
+		apis, err := rpc.New(rpcSource{vm, vm.exec}, cfg.RPCConfig)
 		if err != nil {
-			return nil, fmt.Errorf("gasprice.NewEstimator(...): %v", err)
+			return nil, err
 		}
-		vm.toClose = append(vm.toClose, estimator)
-
-		vm.apiBackend = &apiBackend{
-			vm:             vm,
-			accountManager: accountManager,
-			Set:            vm.mempool,
-			chainIndexer:   chainIdx,
-			Estimator:      estimator,
-			bloomIndexer:   bloomIdx,
-			bloomOverrider: override,
-		}
+		vm.toClose = append(vm.toClose, apis)
+		vm.rpcAPIs = apis
 	}
 
 	return vm, nil

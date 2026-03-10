@@ -1,0 +1,105 @@
+package rpc
+
+import (
+	"context"
+
+	"github.com/ava-labs/libevm/common"
+	"github.com/ava-labs/libevm/core/rawdb"
+	"github.com/ava-labs/libevm/core/types"
+	"github.com/ava-labs/libevm/libevm/ethapi"
+	"github.com/ava-labs/libevm/rpc"
+	"github.com/ava-labs/strevm/blocks"
+)
+
+func (b *apiBackend) GetReceipts(ctx context.Context, hash common.Hash) (types.Receipts, error) {
+	receipts, _, err := b.getReceipts(rpc.BlockNumberOrHashWithHash(hash, false))
+	if err != nil {
+		return nil, nil //nolint:nilerr // This follows Geth behavior for [ethapi.Backend.GetReceipts]
+	}
+	return receipts, nil
+}
+
+// getReceipts resolves receipts and the underlying [types.Block] by number or
+// hash, checking in-memory blocks first then falling back to the database.
+// Returns nils for blocks that are not yet executed.
+func (b *apiBackend) getReceipts(numOrHash rpc.BlockNumberOrHash) (types.Receipts, *types.Block, error) {
+	blk, err := readByNumberOrHash(
+		b,
+		numOrHash,
+		func(b *blocks.Block) *blocks.Block {
+			return b
+		},
+		b.vm.SettledBlockFromDB,
+	)
+	if err != nil {
+		return nil, nil, err
+	}
+	if !blk.Executed() {
+		return nil, nil, nil
+	}
+	return blk.Receipts(), blk.EthBlock(), nil
+}
+
+type blockChainAPI struct {
+	*ethapi.BlockChainAPI
+	b *apiBackend
+}
+
+// We override [ethapi.BlockChainAPI.GetBlockReceipts] so that we do not return
+// an error when a user queries a known, but not yet executed, block.
+func (b *blockChainAPI) GetBlockReceipts(ctx context.Context, blockNrOrHash rpc.BlockNumberOrHash) ([]map[string]any, error) {
+	receipts, blk, err := b.b.getReceipts(blockNrOrHash)
+	if err != nil || blk == nil {
+		return nil, nil //nolint:nilerr // This follows Geth behavior for [ethapi.BlockChainAPI.GetBlockReceipts]
+	}
+
+	hash := blk.Hash()
+	num := blk.NumberU64()
+	signer := b.b.vm.SignerForBlock(blk)
+	txs := blk.Transactions()
+
+	result := make([]map[string]any, len(txs))
+	for i, receipt := range receipts {
+		result[i] = ethapi.MarshalReceipt(receipt, hash, num, signer, txs[i], i)
+	}
+	return result, nil
+}
+
+// PendingBlockAndReceipts returns a nil block and receipts. Returning nil tells
+// geth that this backend does not support pending blocks. In SAE, the pending
+// block is defined as the most recently accepted block, but receipts are only
+// available after execution. Returning a non-nil block with incorrect or empty
+// receipts could cause geth to encounter errors.
+func (*apiBackend) PendingBlockAndReceipts() (*types.Block, types.Receipts) {
+	return nil, nil
+}
+
+func (b *apiBackend) GetLogs(ctx context.Context, blockHash common.Hash, number uint64) ([][]*types.Log, error) {
+	return rawdb.ReadLogs(b.vm.DB(), blockHash, number), nil
+}
+
+type immediateReceipts struct {
+	vm VM
+	*ethapi.TransactionAPI
+}
+
+func (ir immediateReceipts) GetTransactionReceipt(ctx context.Context, h common.Hash) (map[string]any, error) {
+	r, ok, err := ir.vm.RecentReceipt(ctx, h)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		// The transaction has either not been included yet, or it was cleared
+		// from the [saexec.Executor] cache but is on disk. The standard
+		// mechanism already differentiates between these scenarios.
+		return ir.TransactionAPI.GetTransactionReceipt(ctx, h)
+	}
+	return ethapi.MarshalReceipt(
+		r.Receipt,
+		r.BlockHash,
+		r.BlockNumber.Uint64(),
+		r.Signer,
+		r.Tx,
+		int(r.TransactionIndex), //nolint:gosec // Known to not overflow
+	), nil
+}
