@@ -21,6 +21,7 @@ import (
 	"github.com/ava-labs/libevm/event"
 	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/rpc"
+	"go.uber.org/zap"
 
 	"github.com/ava-labs/strevm/blocks"
 	"github.com/ava-labs/strevm/intmath"
@@ -144,7 +145,10 @@ func NewEstimator(backend Backend, log logging.Logger, c Config) (*Estimator, er
 			select {
 			case e := <-events:
 				cache.cacheBlock(e.EthBlock())
-			case <-sub.Err():
+			case err := <-sub.Err():
+				if err != nil {
+					log.Warn("Accepted-block subscription failed", zap.Error(err))
+				}
 				return
 			}
 		}
