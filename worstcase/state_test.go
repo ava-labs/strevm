@@ -64,9 +64,7 @@ func newSUT(tb testing.TB, alloc types.GenesisAlloc) SUT {
 		blockstest.WithGasTarget(initialGasTarget),
 		blockstest.WithGasExcess(initialExcess),
 	)
-	hooks := &hookstest.Stub{
-		Target: initialGasTarget,
-	}
+	hooks := hookstest.NewStub(initialGasTarget)
 	s, err := NewState(hooks, config, cache, genesis, nil)
 	require.NoError(tb, err, "NewState()")
 
@@ -109,6 +107,7 @@ func TestMultipleBlocks(t *testing.T) {
 
 	state := sut.State
 	lastHash := sut.genesis.Hash()
+	wantLatestEndTime := sut.genesis.ExecutedByGasTime().Clone()
 
 	const importedAmount = 10
 	type op struct {
@@ -126,9 +125,7 @@ func TestMultipleBlocks(t *testing.T) {
 		wantMinSenderBalances []map[common.Address]uint64 // transformed to uint256.Int
 	}{
 		{
-			hooks: &hookstest.Stub{
-				Target: 2 * initialGasTarget, // Will double the target _after_ this block.
-			},
+			hooks:        hookstest.NewStub(2 * initialGasTarget), // Will double the target _after_ this block.
 			wantGasLimit: initialMaxBlockSize,
 			wantBaseFee:  uint256.NewInt(1),
 			ops: []op{
@@ -167,9 +164,7 @@ func TestMultipleBlocks(t *testing.T) {
 			},
 		},
 		{
-			hooks: &hookstest.Stub{
-				Target: initialGasTarget, // Restore the target _after_ this block.
-			},
+			hooks:        hookstest.NewStub(initialGasTarget), // Restore the target _after_ this block.
 			wantGasLimit: 2 * initialMaxBlockSize,
 			wantBaseFee:  uint256.NewInt(2),
 			ops: []op{
@@ -191,7 +186,8 @@ func TestMultipleBlocks(t *testing.T) {
 						GasFeeCap: *uint256.NewInt(2),
 						Burn: map[common.Address]AccountDebit{
 							eoaNoBalance: {
-								Amount: *uint256.NewInt(importedAmount + 1),
+								Amount:     *uint256.NewInt(importedAmount + 1),
+								MinBalance: *uint256.NewInt(importedAmount + 1),
 							},
 						},
 					},
@@ -204,7 +200,8 @@ func TestMultipleBlocks(t *testing.T) {
 						GasFeeCap: *uint256.NewInt(2),
 						Burn: map[common.Address]AccountDebit{
 							eoaNoBalance: {
-								Amount: *uint256.NewInt(importedAmount),
+								Amount:     *uint256.NewInt(importedAmount),
+								MinBalance: *uint256.NewInt(importedAmount),
 							},
 						},
 					},
@@ -238,10 +235,9 @@ func TestMultipleBlocks(t *testing.T) {
 					GasPrice: big.NewInt(10), // charged in full
 				}),
 				wallet.SetNonceAndSign(t, 0, &types.DynamicFeeTx{
-					To:  &common.Address{},
-					Gas: 100_000,
-					// TODO(arr4n) do we want to be more lenient for dynamic-fee
-					// txs since we know the worst-case base fee?
+					To:        &common.Address{},
+					Gas:       100_000,
+					GasTipCap: big.NewInt(1),
 					GasFeeCap: big.NewInt(100),
 				}),
 				wallet.SetNonceAndSign(t, 0, &types.LegacyTx{
@@ -258,8 +254,8 @@ func TestMultipleBlocks(t *testing.T) {
 				{eoaViaTx: startingBalance},
 				{eoaViaTx: startingBalance - 2*100_000},
 				{eoaViaTx: startingBalance - 2*100_000 - (2*200_000 + 123_456)},
-				{eoaViaTx: startingBalance - 2*100_000 - (2*200_000 + 123_456) - 10*100_000},               // non-dynamic fee
-				{eoaViaTx: startingBalance - 2*100_000 - (2*200_000 + 123_456) - 10*100_000 - 100*100_000}, // dynamic fee _not_ reduced (https://github.com/ava-labs/strevm/issues/74)
+				{eoaViaTx: startingBalance - 2*100_000 - (2*200_000 + 123_456) - 10*100_000},             // non-dynamic fee
+				{eoaViaTx: startingBalance - 2*100_000 - (2*200_000 + 123_456) - 10*100_000 - 3*100_000}, // dynamic fee: effective gas price = baseFee + gasTipCap
 			},
 		},
 		{
@@ -280,6 +276,8 @@ func TestMultipleBlocks(t *testing.T) {
 			Number:     big.NewInt(int64(i)),
 			Time:       block.time,
 		}
+
+		wantLatestEndTime.BeforeBlock(sut.hooks, header)
 		require.NoErrorf(t, state.StartBlock(header), "StartBlock(%d)", i)
 		require.Equalf(t, block.wantBaseFee, state.BaseFee(), "base fee after StartBlock(%d)", i)
 		require.Equalf(t, block.wantGasLimit, state.GasLimit(), "gas limit after StartBlock(%d)", i)
@@ -294,9 +292,11 @@ func TestMultipleBlocks(t *testing.T) {
 
 		got, err := state.FinishBlock()
 		require.NoError(t, err, "FinishBlock()")
+		require.NoError(t, wantLatestEndTime.AfterBlock(gas.Gas(state.GasUsed()), sut.hooks, header), "AfterBlock()")
 
 		want := &blocks.WorstCaseBounds{
-			MaxBaseFee: block.wantBaseFee,
+			MaxBaseFee:    block.wantBaseFee,
+			LatestEndTime: wantLatestEndTime.Clone(),
 		}
 		for _, bals := range block.wantMinSenderBalances {
 			uBals := make(map[common.Address]*uint256.Int)
@@ -305,7 +305,7 @@ func TestMultipleBlocks(t *testing.T) {
 			}
 			want.MinOpBurnerBalances = append(want.MinOpBurnerBalances, uBals)
 		}
-		if diff := cmp.Diff(want, got, cmpopts.EquateEmpty()); diff != "" {
+		if diff := cmp.Diff(want, got, cmpopts.EquateEmpty(), gastime.CmpOpt()); diff != "" {
 			t.Errorf("FinishBlock() diff (-want +got): \n%s", diff)
 		}
 
@@ -478,6 +478,17 @@ func TestTransactionValidation(t *testing.T) {
 				To:        &common.Address{},
 			},
 			wantErr: core.ErrFeeCapTooLow,
+		},
+		{
+			name:    "dynamic_fee_insufficient_for_fee_cap",
+			balance: 100_000, // enough for effectiveGasPrice (1) * gas (21000) but not gasFeeCap (100) * gas (21000) = 2_100_000
+			tx: &types.DynamicFeeTx{
+				GasTipCap: big.NewInt(0),
+				GasFeeCap: big.NewInt(100),
+				Gas:       params.TxGas,
+				To:        &common.Address{},
+			},
+			wantErr: core.ErrInsufficientFunds,
 		},
 
 		// EIP-3607: reject transactions from non-EOAs
