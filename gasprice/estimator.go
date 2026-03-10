@@ -118,8 +118,8 @@ type Estimator struct {
 
 	last last
 
-	acceptedHead event.Subscription
-	blockCache   *blockCache
+	acceptedBlocks event.Subscription
+	blockCache     *blockCache
 }
 
 // NewEstimator creates an Estimator for gas tips and fee history.
@@ -156,8 +156,8 @@ func NewEstimator(backend Backend, log logging.Logger, c Config) (*Estimator, er
 		last: last{
 			price: c.MinSuggestedTip,
 		},
-		acceptedHead: sub,
-		blockCache:   cache,
+		acceptedBlocks: sub,
+		blockCache:     cache,
 	}, nil
 }
 
@@ -321,7 +321,7 @@ var _ io.Closer = (*Estimator)(nil)
 
 // Close releases allocated resources.
 func (e *Estimator) Close() error {
-	e.acceptedHead.Unsubscribe()
+	e.acceptedBlocks.Unsubscribe()
 	return nil
 }
 
