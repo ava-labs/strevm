@@ -151,15 +151,20 @@ func (c *customAPI) NewAcceptedTransactions(ctx context.Context, fullTx *bool) (
 	if !supported {
 		return &rpc.Subscription{}, rpc.ErrNotificationsUnsupported
 	}
+
 	rpcSub := notifier.CreateSubscription()
+
 	// [event.FeedOf.Send] blocks until all subscribers receive the value, so a
 	// slow reader can stall the sender. An ample buffer avoids this in practice.
 	// See https://github.com/ava-labs/libevm/blob/3d7f8934ee6c/event/feedof.go#L49-L50
 	const acceptedBlocksBuf = 128
+
+	ch := make(chan *blocks.Block, acceptedBlocksBuf)
+	sub := c.b.vm.acceptedBlocks.Subscribe(ch)
+	chainConfig := c.b.ChainConfig()
+
 	go func() {
-		ch := make(chan *blocks.Block, acceptedBlocksBuf)
-		sub := c.b.vm.acceptedBlocks.Subscribe(ch)
-		chainConfig := c.b.ChainConfig()
+		defer sub.Unsubscribe()
 		for {
 			select {
 			case block := <-ch:
@@ -176,10 +181,8 @@ func (c *customAPI) NewAcceptedTransactions(ctx context.Context, fullTx *bool) (
 					}
 				}
 			case <-rpcSub.Err():
-				sub.Unsubscribe()
 				return
 			case <-notifier.Closed():
-				sub.Unsubscribe()
 				return
 			}
 		}
