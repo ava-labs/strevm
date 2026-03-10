@@ -45,11 +45,12 @@ import (
 var zeroAddr common.Address
 
 type rpcTest struct {
-	method     string
-	args       []any
-	want       any // untyped nil means no return value.
-	wantErr    testerr.Want
-	eventually bool
+	method       string
+	args         []any
+	want         any // untyped nil means no return value.
+	wantErr      testerr.Want
+	eventually   bool
+	extraCmpOpts []cmp.Option
 }
 
 func (s *SUT) testRPC(ctx context.Context, t *testing.T, tcs ...rpcTest) {
@@ -74,6 +75,7 @@ func (s *SUT) testRPC(ctx context.Context, t *testing.T, tcs ...rpcTest) {
 				t.Errorf("CallContext(...) %s", diff)
 				t.FailNow()
 			}
+			opts := append(opts, tc.extraCmpOpts...)
 			if diff := cmp.Diff(tc.want, got.Elem().Interface(), opts...); diff != "" {
 				t.Errorf("Unmarshalled %T diff (-want +got):\n%s", got.Elem().Interface(), diff)
 			}
@@ -915,8 +917,8 @@ func TestEthSigningAPIs(t *testing.T) {
 		"from":     zeroAddr,
 		"to":       zeroAddr,
 		"gas":      hexutil.Uint64(params.TxGas),
-		"gasPrice": hexutil.Big(*big.NewInt(1)),
-		"value":    hexutil.Big(*big.NewInt(100)),
+		"gasPrice": hexBig(1),
+		"value":    hexBig(100),
 		"nonce":    hexutil.Uint64(0),
 	}
 	sut.testRPC(ctx, t, []rpcTest{
@@ -1417,4 +1419,12 @@ func TestResolveBlockNumberOrHash(t *testing.T) {
 			assert.Equal(t, tt.wantHash, gotHash)
 		})
 	}
+}
+
+func hexBig(n int64) *hexutil.Big {
+	return (*hexutil.Big)(big.NewInt(n))
+}
+
+func hexBigU(n uint64) *hexutil.Big {
+	return (*hexutil.Big)(new(big.Int).SetUint64(n))
 }
