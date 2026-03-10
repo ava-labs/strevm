@@ -180,3 +180,15 @@ func EnableLibEVMTBLogger(tb testing.TB) {
 	})
 	log.SetDefault(log.NewLogger(ethtest.NewTBLogHandler(tb, slog.LevelError)))
 }
+
+// DisableLibEVMLogger sets the global libevm logger to a no-op discard
+// handler, restoring the original during tb cleanup. Unlike
+// [EnableLibEVMTBLogger], this is safe to call before parallel subtests.
+func DisableLibEVMLogger(tb testing.TB) {
+	tb.Helper()
+	old := log.Root()
+	tb.Cleanup(func() {
+		log.SetDefault(old)
+	})
+	log.SetDefault(log.NewLogger(log.DiscardHandler()))
+}
