@@ -169,7 +169,7 @@ func (c *customAPI) NewAcceptedTransactions(ctx context.Context, fullTx *bool) (
 				baseFee := block.Header().BaseFee
 				for i, tx := range block.Transactions() {
 					if fullTx != nil && *fullTx {
-						rpcTx := ethapi.NewRPCTransaction(tx, hash, num, buildTime, uint64(i), baseFee, chainConfig) //nolint:gosec // i will never overflow uint64
+						rpcTx := ethapi.NewRPCTransaction(tx, hash, num, buildTime, uint64(i), baseFee, chainConfig) //nolint:gosec // i is non-negative
 						_ = notifier.Notify(rpcSub.ID, rpcTx)
 					} else {
 						_ = notifier.Notify(rpcSub.ID, tx.Hash())
