@@ -17,6 +17,7 @@ import (
 	"github.com/ava-labs/libevm/core/vm"
 	"github.com/ava-labs/libevm/crypto"
 	"github.com/ava-labs/libevm/eth/tracers/logger"
+	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/rpc"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
@@ -27,6 +28,31 @@ import (
 	saeparams "github.com/ava-labs/strevm/params"
 	"github.com/ava-labs/strevm/saetest/escrow"
 )
+
+// TestStateQueryOnUnexecutedBlock verifies that state-dependent RPC calls
+// (e.g. eth_getBalance) on a verified-but-unexecuted in-memory block return an
+// error instead of reading zero-valued execution artifacts.
+func TestStateQueryOnUnexecutedBlock(t *testing.T) {
+	blocking := common.Address{'b', 'l', 'o', 'c', 'k'}
+	opt, unblock := withBlockingPrecompile(blocking)
+	ctx, sut := newSUT(t, 1, opt)
+	t.Cleanup(unblock)
+
+	tx := sut.wallet.SetNonceAndSign(t, 0, &types.LegacyTx{
+		To:       &blocking,
+		Gas:      params.TxGas,
+		GasPrice: big.NewInt(1),
+	})
+
+	b := sut.runConsensusLoop(t, tx)
+	require.Falsef(t, b.Executed(), "%T.Executed()", b)
+
+	sut.testRPC(ctx, t, rpcTest{
+		method:  "eth_getBalance",
+		args:    []any{sut.wallet.Addresses()[0], rpc.BlockNumberOrHashWithHash(b.Hash(), false)},
+		wantErr: testerr.Contains("not yet executed"),
+	})
+}
 
 func TestDebugTrace(t *testing.T) {
 	ctx, sut := newSUT(t, 1)
