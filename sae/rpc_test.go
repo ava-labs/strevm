@@ -990,8 +990,10 @@ func TestFillTransaction(t *testing.T) {
 	})
 }
 
-// eth_resend exercises setDefaults (SuggestGasTipCap) then fails gracefully
-// because no matching pending transaction exists.
+// eth_resend replaces a pending transaction with updated gas parameters.
+// Resend re-signs the replacement transaction server-side which requires a
+// keystore, which SAE does not support, so we verify that this RPC fails
+// in an expected way.
 func TestResend(t *testing.T) {
 	ctx, sut := newSUT(t, 1)
 
