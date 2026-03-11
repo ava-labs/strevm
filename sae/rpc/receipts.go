@@ -2,10 +2,12 @@ package rpc
 
 import (
 	"context"
+	"errors"
 
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core/rawdb"
 	"github.com/ava-labs/libevm/core/types"
+	"github.com/ava-labs/libevm/ethdb"
 	"github.com/ava-labs/libevm/libevm/ethapi"
 	"github.com/ava-labs/libevm/rpc"
 	"github.com/ava-labs/strevm/blocks"
@@ -23,21 +25,38 @@ func (b *apiBackend) GetReceipts(ctx context.Context, hash common.Hash) (types.R
 // hash, checking in-memory blocks first then falling back to the database.
 // Returns nils for blocks that are not yet executed.
 func (b *apiBackend) getReceipts(numOrHash rpc.BlockNumberOrHash) (types.Receipts, *types.Block, error) {
+	numOrHash.RequireCanonical = true
+
 	blk, err := readByNumberOrHash(
 		b,
 		numOrHash,
 		func(b *blocks.Block) *blocks.Block {
 			return b
 		},
-		b.vm.SettledBlockFromDB,
+		func(db ethdb.Reader, h common.Hash, num uint64) (*blocks.Block, error) {
+			if num > b.vm.LastExecuted().Height() {
+				return nil, blocks.ErrNotFound
+			}
+			blk, err := blocks.New(rawdb.ReadBlock(db, h, num), nil, nil, b.vm.Logger())
+			if err != nil {
+				return nil, err
+			}
+			if err := blk.RestoreExecutionArtefacts(b.vm.DB(), b.vm.XDB(), b.ChainConfig()); err != nil {
+				return nil, err
+			}
+			return blk, nil
+		},
 	)
-	if err != nil {
-		return nil, nil, err
-	}
-	if !blk.Executed() {
+	switch {
+	case errors.Is(err, blocks.ErrNotFound):
 		return nil, nil, nil
+	case err != nil:
+		return nil, nil, err
+	case !blk.Executed():
+		return nil, nil, nil
+	default:
+		return blk.Receipts(), blk.EthBlock(), nil
 	}
-	return blk.Receipts(), blk.EthBlock(), nil
 }
 
 type blockChainAPI struct {

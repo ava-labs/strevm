@@ -20,7 +20,7 @@ type estimatorBackend struct {
 var _ gasprice.Backend = (*estimatorBackend)(nil)
 
 func (e *estimatorBackend) BlockByNumber(n rpc.BlockNumber) (*types.Block, error) {
-	return readByNumber(e.vm, n, neverErrs(rawdb.ReadBlock))
+	return readByNumber(e.vm, n, rawdb.ReadBlock)
 }
 
 func (e *estimatorBackend) LastAcceptedBlock() *blocks.Block {

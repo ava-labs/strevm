@@ -56,9 +56,7 @@ type VM interface {
 
 	SignerForBlock(*types.Block) types.Signer
 
-	LastAccepted() *blocks.Block
-	LastExecuted() *blocks.Block
-	LastSettled() *blocks.Block
+	blocks.Chain
 	ResolveBlockNumber(rpc.BlockNumber) (uint64, error)
 	RecentReceipt(context.Context, common.Hash) (*saexec.Receipt, bool, error)
 

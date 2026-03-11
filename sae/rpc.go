@@ -40,15 +40,16 @@ type rpcSource struct {
 	*saexec.Executor
 }
 
-func (s rpcSource) Logger() logging.Logger                              { return s.VM.snowCtx.Log }
-func (s rpcSource) Hooks() hook.Points                                  { return s.hooks }
-func (s rpcSource) DB() ethdb.Database                                  { return s.db }
-func (s rpcSource) XDB() saedb.ExecutionResults                         { return s.xdb }
-func (s rpcSource) Mempool() *txgossip.Set                              { return s.mempool }
-func (s rpcSource) Peers() *p2p.Peers                                   { return s.peers }
-func (s rpcSource) BlockFromMemory(h common.Hash) (*blocks.Block, bool) { return s.blocks.Load(h) }
-func (s rpcSource) LastAccepted() *blocks.Block                         { return s.last.accepted.Load() }
-func (s rpcSource) LastSettled() *blocks.Block                          { return s.last.settled.Load() }
+func (s rpcSource) Logger() logging.Logger                               { return s.VM.snowCtx.Log }
+func (s rpcSource) Hooks() hook.Points                                   { return s.hooks }
+func (s rpcSource) DB() ethdb.Database                                   { return s.db }
+func (s rpcSource) XDB() saedb.ExecutionResults                          { return s.xdb }
+func (s rpcSource) Mempool() *txgossip.Set                               { return s.mempool }
+func (s rpcSource) Peers() *p2p.Peers                                    { return s.peers }
+func (s rpcSource) BlockFromMemory(h common.Hash) (*blocks.Block, bool)  { return s.blocks.Load(h) }
+func (s rpcSource) BlockInConsensus(h common.Hash) (*blocks.Block, bool) { return s.blocks.Load(h) }
+func (s rpcSource) LastAccepted() *blocks.Block                          { return s.last.accepted.Load() }
+func (s rpcSource) LastSettled() *blocks.Block                           { return s.last.settled.Load() }
 
 func (s rpcSource) NewBlock(eth *types.Block, parent, lastSettled *blocks.Block) (*blocks.Block, error) {
 	return s.blockBuilder.new(eth, parent, lastSettled)
