@@ -92,6 +92,9 @@ func (b *backend) StateAndHeaderByNumberOrHash(ctx context.Context, numOrHash rp
 	// devise an approach to ensure that it is confirmed on each.
 	var hdr *types.Header
 	if bl, ok := b.ConsensusCriticalBlock(hash); ok {
+		if !bl.Executed() {
+			return nil, nil, fmt.Errorf("block %d (%#x) not yet executed", num, hash)
+		}
 		hdr = bl.Header()
 		hdr.Root = bl.PostExecutionStateRoot()
 		hdr.BaseFee = bl.BaseFee().ToBig()
