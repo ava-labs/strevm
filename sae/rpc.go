@@ -91,18 +91,27 @@ func (vm *VM) ethRPCServer() (*rpc.Server, error) {
 		{"eth", ethapi.NewEthereumAPI(b)},
 		// Standard Ethereum node APIs:
 		// - eth_blockNumber
+		// - eth_call
 		// - eth_chainId
+		// - eth_estimateGas
+		// - eth_getBalance
 		// - eth_getBlockByHash
 		// - eth_getBlockByNumber
-		// - eth_getBlockReceipts
+		// - eth_getCode
+		// - eth_getStorageAt
 		// - eth_getUncleByBlockHashAndIndex
 		// - eth_getUncleByBlockNumberAndIndex
 		// - eth_getUncleCountByBlockHash
 		// - eth_getUncleCountByBlockNumber
 		//
 		// Geth-specific APIs:
+		// - eth_createAccessList
 		// - eth_getHeaderByHash
 		// - eth_getHeaderByNumber
+		//
+		// Undocumented APIs:
+		// - eth_getBlockReceipts
+		// - eth_getProof
 		{"eth", &blockChainAPI{ethapi.NewBlockChainAPI(b), b}},
 		// Standard Ethereum node APIs:
 		// - eth_getBlockTransactionCountByHash
