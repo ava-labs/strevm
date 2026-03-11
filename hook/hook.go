@@ -8,6 +8,9 @@
 package hook
 
 import (
+	"errors"
+	"fmt"
+	"iter"
 	"math"
 	"time"
 
@@ -26,28 +29,34 @@ import (
 	"github.com/ava-labs/strevm/saedb"
 )
 
-// Points define user-injected hook points.
+// PointsG define user-injected hook points.
 //
 // Directly using this interface as a [BlockBuilder] is indicative of this node
-// locally building a block. Calling [Points.BlockRebuilderFrom] with an
+// locally building a block. Calling [PointsG.BlockRebuilderFrom] with an
 // existing block is indicative of this node reconstructing a block built
 // elsewhere during verification.
+type PointsG[T Transaction] interface {
+	Points
+
+	BlockBuilder[T]
+	// BlockRebuilderFrom returns a [BlockBuilder] that will attempt to
+	// reconstruct the provided block. If the provided block is valid for
+	// inclusion, then the returned builder MUST be able to reconstruct an
+	// identical block.
+	BlockRebuilderFrom(block *types.Block) (BlockBuilder[T], error)
+}
+
+// Points define user-injected hook points which do not depend on generic
+// types.
 type Points interface {
 	// ExecutionResultsDB opens and returns a height-indexed database, which
 	// will be closed by the VM when no longer needed. It MAY use the provided
 	// directory for persistence and MUST NOT write data outside of it.
 	ExecutionResultsDB(dataDir string) (saedb.ExecutionResults, error)
 
-	BlockBuilder
-	// BlockRebuilderFrom returns a [BlockBuilder] that will attempt to
-	// reconstruct the provided block. If the provided block is valid for
-	// inclusion, then the returned builder MUST be able to reconstruct an
-	// identical block.
-	BlockRebuilderFrom(block *types.Block) BlockBuilder
-
-	// GasTargetAfter returns the gas target that should go into effect
-	// immediately after the provided block.
-	GasTargetAfter(*types.Header) gas.Gas
+	// GasConfigAfter returns the gas target and configuration that should go
+	// into effect immediately after the provided block.
+	GasConfigAfter(*types.Header) (target gas.Gas, c GasPriceConfig)
 	// SubSecondBlockTime returns the sub-second portion of the block time,
 	// which MUST be non-negative and strictly shorter than a second; i.e. a
 	// value d such that 0 <= d < [time.Second].
@@ -56,7 +65,7 @@ type Points interface {
 	// to perform while executing the block, after regular EVM transactions.
 	// These operations will be performed during both worst-case and actual
 	// execution.
-	EndOfBlockOps(*types.Block) []Op
+	EndOfBlockOps(*types.Block) ([]Op, error)
 	// CanExecuteTransaction mirrors [params.RulesAllowlistHooks.CanExecuteTransaction]
 	// so that consumers can use a single concrete type for both SAE and libevm hooks.
 	CanExecuteTransaction(common.Address, *common.Address, libevm.StateReader) error
@@ -67,7 +76,7 @@ type Points interface {
 }
 
 // BlockBuilder constructs a block given its components.
-type BlockBuilder interface {
+type BlockBuilder[T Transaction] interface {
 	// BuildHeader constructs a header from the parent header.
 	//
 	// The returned header MUST have [types.Header.ParentHash],
@@ -79,6 +88,12 @@ type BlockBuilder interface {
 	// SAE always uses this method instead of directly constructing a header, to
 	// ensure any libevm header extras are properly populated.
 	BuildHeader(parent *types.Header) *types.Header
+	// PotentialEndOfBlockOps returns an iterator of custom transactions that
+	// would be valid to include into a block.
+	//
+	// SAE will filter any transactions whose [Op] can not be safely applied to
+	// the state.
+	PotentialEndOfBlockOps() iter.Seq[T]
 	// BuildBlock constructs a block with the given components.
 	//
 	// SAE always uses this method instead of [types.NewBlock], to ensure any
@@ -87,15 +102,28 @@ type BlockBuilder interface {
 		header *types.Header,
 		txs []*types.Transaction,
 		receipts []*types.Receipt,
+		endOfBlockOps []T,
 	) (*types.Block, error)
 }
 
-// AccountDebit includes an amount that an account should have debited,
-// along with the nonce used to aut debit the account.
-type AccountDebit struct {
-	Nonce  uint64
-	Amount uint256.Int
+// Transaction is a user-defined transaction type that can be represented as an
+// [Op].
+type Transaction interface {
+	AsOp() Op
 }
+
+// AccountDebit includes an amount that an account should have debited,
+// along with the nonce used to authorize the debit.
+type AccountDebit struct {
+	Nonce uint64
+	// Amount to deduct from the account balance.
+	Amount uint256.Int
+	// MinBalance is the minimum balance the account must have for the operation
+	// to be valid. It MUST be at least [AccountDebit.Amount].
+	MinBalance uint256.Int
+}
+
+var errMinBalanceBelowAmount = errors.New("minimum balance below amount to debit")
 
 // Op is an operation that can be applied to state during the execution of a
 // block.
@@ -117,11 +145,14 @@ type Op struct {
 
 // ApplyTo applies the operation to the statedb.
 //
-// If an account has insufficient funds, [core.ErrInsufficientFunds] is returned
-// and the statedb is unchanged.
+// If an account has insufficient funds, [core.ErrInsufficientFunds] is
+// returned and the statedb is unchanged.
 func (o *Op) ApplyTo(stateDB *state.StateDB) error {
 	for from, acc := range o.Burn {
-		if b := stateDB.GetBalance(from); b.Lt(&acc.Amount) {
+		if acc.MinBalance.Lt(&acc.Amount) {
+			return fmt.Errorf("%w: account %s minimum balance %v < amount to debit %v", errMinBalanceBelowAmount, from, acc.MinBalance, acc.Amount)
+		}
+		if b := stateDB.GetBalance(from); b.Lt(&acc.MinBalance) {
 			return core.ErrInsufficientFunds
 		}
 	}
@@ -141,6 +172,40 @@ func (o *Op) ApplyTo(stateDB *state.StateDB) error {
 	}
 	for to, amount := range o.Mint {
 		stateDB.AddBalance(to, &amount)
+	}
+	return nil
+}
+
+// GasPriceConfig contains gas-related parameters that can be configured via hooks.
+type GasPriceConfig struct {
+	// TargetToExcessScaling is the ratio between the gas target and the
+	// reciprocal of the excess coefficient used in price calculation
+	// (K variable in ACP-176, where K = TargetToExcessScaling * T).
+	// MUST be non-zero.
+	TargetToExcessScaling gas.Gas
+	// MinPrice is the minimum gas price / base fee (M parameter in ACP-176).
+	// MUST be non-zero.
+	MinPrice gas.Price
+	// StaticPricing is a flag indicating whether the gas price should be static
+	// at the minimum price.
+	StaticPricing bool
+}
+
+var (
+	errTargetToExcessScalingZero = errors.New("targetToExcessScaling must be non-zero")
+	errMinPriceZero              = errors.New("minPrice must be non-zero")
+)
+
+// Validate checks that the GasPriceConfig fields are valid.
+func (c *GasPriceConfig) Validate() error {
+	if c.TargetToExcessScaling == 0 {
+		return errTargetToExcessScalingZero
+	}
+	// TODO (ceyonur): Decide whether we want to allow zero min price exclusive for static pricing,
+	// to support fee-less networks.
+	// https://github.com/ava-labs/strevm/issues/266
+	if c.MinPrice == 0 {
+		return errMinPriceZero
 	}
 	return nil
 }

@@ -1,13 +1,13 @@
 module github.com/ava-labs/strevm
 
-go 1.25.7
+go 1.25.8
 
 tool github.com/go-task/task/v3/cmd/task
 
 require (
 	github.com/arr4n/shed v0.0.0-20260217105731-4cd15adfa100
 	github.com/ava-labs/avalanchego v1.14.2-0.20260123184805-18c4dbe2714e
-	github.com/ava-labs/libevm v1.13.15-0.20260218120213-98a792673af1
+	github.com/ava-labs/libevm v1.13.15-0.20260310192938-d71b6cc8513a
 	github.com/google/go-cmp v0.7.0
 	github.com/holiman/uint256 v1.2.4
 	github.com/stretchr/testify v1.11.1
@@ -158,7 +158,7 @@ require (
 	golang.org/x/net v0.47.0 // indirect
 	golang.org/x/sys v0.40.0 // indirect
 	golang.org/x/term v0.37.0 // indirect
-	golang.org/x/text v0.31.0 // indirect
+	golang.org/x/text v0.31.0
 	gonum.org/v1/gonum v0.16.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20250707201910-8d1bb00bc6a7 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20250818200422-3122310a409c // indirect
