@@ -32,6 +32,8 @@ type Stub struct {
 	Ops                     []Op
 	ExecutionResultsDBFn    func(string) (saedb.ExecutionResults, error)
 	CanExecuteTransactionFn func(common.Address, *common.Address, libevm.StateReader) error
+	BeforeExecutingBlockFn  func(params.Rules, *state.StateDB, *types.Block) error
+	AfterExecutingBlockFn   func(*state.StateDB, *types.Block, types.Receipts)
 	GasPriceConfig          hook.GasPriceConfig
 }
 
@@ -210,13 +212,22 @@ func (s *Stub) CanExecuteTransaction(from common.Address, to *common.Address, sr
 	return nil
 }
 
-// BeforeExecutingBlock is a no-op that always returns nil.
-func (*Stub) BeforeExecutingBlock(params.Rules, *state.StateDB, *types.Block) error {
+// BeforeExecutingBlock proxies to [Stub.BeforeExecutingBlockFn] if non-nil,
+// otherwise it is a no-op.
+func (s *Stub) BeforeExecutingBlock(rules params.Rules, sdb *state.StateDB, b *types.Block) error {
+	if fn := s.BeforeExecutingBlockFn; fn != nil {
+		return fn(rules, sdb, b)
+	}
 	return nil
 }
 
-// AfterExecutingBlock is a no-op.
-func (*Stub) AfterExecutingBlock(*state.StateDB, *types.Block, types.Receipts) {}
+// AfterExecutingBlock proxies to [Stub.AfterExecutingBlockFn] if non-nil,
+// otherwise it is a no-op.
+func (s *Stub) AfterExecutingBlock(sdb *state.StateDB, b *types.Block, rs types.Receipts) {
+	if fn := s.AfterExecutingBlockFn; fn != nil {
+		fn(sdb, b, rs)
+	}
+}
 
 //go:generate go run github.com/StephenButtolph/canoto/canoto $GOFILE
 
