@@ -72,7 +72,6 @@ func newSUT(t *testing.T, numAccounts uint) SUT {
 	t.Helper()
 
 	saetest.EnableLibEVMTBLogger(t)
-
 	logger := saetest.NewTBLogger(t, logging.Warn)
 
 	wallet := newWallet(t, numAccounts)
