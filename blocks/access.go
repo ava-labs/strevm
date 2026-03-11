@@ -72,7 +72,7 @@ func ResolveRPCNumber(f Frontier, bn rpc.BlockNumber) (uint64, error) {
 	return n, nil
 }
 
-func ResolveBlockNumberOrHash(c Chain, numOrHash rpc.BlockNumberOrHash) (uint64, common.Hash, error) {
+func ResolveRPCNumberOrHash(c Chain, numOrHash rpc.BlockNumberOrHash) (uint64, common.Hash, error) {
 	rpcNum, isNum := numOrHash.Number()
 	hash, isHash := numOrHash.Hash()
 
@@ -154,7 +154,7 @@ func FromHash[T any](c Chain, hash common.Hash, fromConsensus Extractor[T], from
 }
 
 func FromNumberOrHash[T any](c Chain, blockNrOrHash rpc.BlockNumberOrHash, fromConsensus Extractor[T], fromDB ReaderWithErr[T]) (*T, error) {
-	n, hash, err := ResolveBlockNumberOrHash(c, blockNrOrHash)
+	n, hash, err := ResolveRPCNumberOrHash(c, blockNrOrHash)
 	if err != nil {
 		return nil, err
 	}

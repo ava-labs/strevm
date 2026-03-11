@@ -15,7 +15,6 @@ import (
 	"github.com/ava-labs/libevm/accounts"
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core"
-	"github.com/ava-labs/libevm/core/rawdb"
 	"github.com/ava-labs/libevm/core/state"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/eth/filters"
@@ -24,7 +23,6 @@ import (
 	"github.com/ava-labs/libevm/event"
 	"github.com/ava-labs/libevm/libevm/ethapi"
 	"github.com/ava-labs/libevm/params"
-	"github.com/ava-labs/libevm/rpc"
 
 	"github.com/ava-labs/strevm/blocks"
 	"github.com/ava-labs/strevm/gasprice"
@@ -57,7 +55,6 @@ type VM interface {
 	SignerForBlock(*types.Block) types.Signer
 
 	blocks.Chain
-	ResolveBlockNumber(rpc.BlockNumber) (uint64, error)
 	RecentReceipt(context.Context, common.Hash) (*saexec.Receipt, bool, error)
 
 	SubscribeAcceptedBlocks(chan<- *blocks.Block) event.Subscription
@@ -167,52 +164,4 @@ type apiBackend struct {
 	chainIndexer
 	bloomOverrider
 	*bloomIndexer
-}
-
-var (
-	ErrNeitherNumberNorHash = fmt.Errorf("%T carrying neither number nor hash", rpc.BlockNumberOrHash{})
-	ErrBothNumberAndHash    = fmt.Errorf("%T carrying both number and hash", rpc.BlockNumberOrHash{})
-	ErrNonCanonicalBlock    = errors.New("non-canonical block")
-)
-
-func (b *apiBackend) resolveBlockNumberOrHash(numOrHash rpc.BlockNumberOrHash) (uint64, common.Hash, error) {
-	rpcNum, isNum := numOrHash.Number()
-	hash, isHash := numOrHash.Hash()
-
-	switch {
-	case isNum && isHash:
-		return 0, common.Hash{}, ErrBothNumberAndHash
-
-	case isNum:
-		num, err := b.vm.ResolveBlockNumber(rpcNum)
-		if err != nil {
-			return 0, common.Hash{}, err
-		}
-
-		hash := rawdb.ReadCanonicalHash(b.vm.DB(), num)
-		if hash == (common.Hash{}) {
-			return 0, common.Hash{}, fmt.Errorf("block %d not found", num)
-		}
-		return num, hash, nil
-
-	case isHash:
-		if bl, ok := b.vm.BlockFromMemory(hash); ok {
-			n := bl.NumberU64()
-			if numOrHash.RequireCanonical && hash != rawdb.ReadCanonicalHash(b.vm.DB(), n) {
-				return 0, common.Hash{}, ErrNonCanonicalBlock
-			}
-			return n, hash, nil
-		}
-
-		numPtr := rawdb.ReadHeaderNumber(b.vm.DB(), hash)
-		if numPtr == nil {
-			return 0, common.Hash{}, fmt.Errorf("block %#x not found", hash)
-		}
-		// We only write canonical blocks to the database so there's no need to
-		// perform a check.
-		return *numPtr, hash, nil
-
-	default:
-		return 0, common.Hash{}, ErrNeitherNumberNorHash
-	}
 }

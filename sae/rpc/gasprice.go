@@ -28,7 +28,7 @@ func (e *estimatorBackend) LastAcceptedBlock() *blocks.Block {
 }
 
 func (e *estimatorBackend) ResolveBlockNumber(bn rpc.BlockNumber) (uint64, error) {
-	return e.vm.ResolveBlockNumber(bn)
+	return blocks.ResolveRPCNumber(e.vm, bn)
 }
 
 func (e *estimatorBackend) SubscribeAcceptedBlocks(ch chan<- *blocks.Block) event.Subscription {

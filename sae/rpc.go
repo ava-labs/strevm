@@ -4,8 +4,6 @@
 package sae
 
 import (
-	"fmt"
-
 	"github.com/ava-labs/avalanchego/network/p2p"
 	"github.com/ava-labs/avalanchego/utils/logging"
 	"github.com/ava-labs/libevm/common"
@@ -61,41 +59,4 @@ func (s rpcSource) SettledBlockFromDB(db ethdb.Reader, hash common.Hash, num uin
 
 func (s rpcSource) SubscribeAcceptedBlocks(ch chan<- *blocks.Block) event.Subscription {
 	return s.acceptedBlocks.Subscribe(ch)
-}
-
-// ResolveBlockNumber resolves the [rpc.BlockNumber], supporting the following
-// named blocks:
-//
-// - [rpc.PendingBlockNumber]: last accepted (i.e. pending execution)
-// - [rpc.LatestBlockNumber]: last executed
-// - [rpc.SafeBlockNumber] and [rpc.FinalizedBlockNumber]: last settled
-//
-// Explicit, positive block numbers are returned unmodified as long as the block
-// has been accepted.
-//
-// NOTE: the definition of safe and finalized as the last-settled block DOES NOT
-// affect finality of consensus under SAE, which is immediate upon acceptance.
-// Safe blocks can be thought of as safe against hard-drive corruption on the
-// specific validator, while final blocks are labelled as such only to maintain
-// monotonicity of the naming convention.
-func (s rpcSource) ResolveBlockNumber(bn rpc.BlockNumber) (uint64, error) {
-	head := s.LastAccepted().Height()
-
-	switch bn {
-	case rpc.PendingBlockNumber:
-		return head, nil
-	case rpc.LatestBlockNumber:
-		return s.LastExecuted().Height(), nil
-	case rpc.SafeBlockNumber, rpc.FinalizedBlockNumber:
-		return s.LastSettled().Height(), nil
-	}
-
-	if bn < 0 {
-		return 0, fmt.Errorf("%s block unsupported", bn.String())
-	}
-	n := uint64(bn) //nolint:gosec // Non-negative check performed above
-	if n > head {
-		return 0, fmt.Errorf("%w: block %d", saerpc.ErrFutureBlockNotResolved, n)
-	}
-	return n, nil
 }

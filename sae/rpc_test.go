@@ -1412,7 +1412,7 @@ func TestResolveBlockNumberOrHash(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			src := rpcSource{sut.rawVM, sut.rawVM.exec}
-			gotNum, gotHash, err := blocks.ResolveBlockNumberOrHash(src, tt.nOrH)
+			gotNum, gotHash, err := blocks.ResolveRPCNumberOrHash(src, tt.nOrH)
 			t.Logf("blocks.ResolveBlockNumberOrhash(%T, %+v)", src, tt.nOrH) // avoids having to repeat in failure messages
 			require.ErrorIs(t, err, tt.wantErr)
 			assert.Equal(t, tt.wantNum, gotNum)
