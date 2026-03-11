@@ -137,6 +137,9 @@ func (s *State) StartBlock(h *types.Header) error {
 	// expectedParentHash is updated prior to modifying the GasLimit and BaseFee
 	// to ensure that historical block hashes are not modified.
 	s.expectedParentHash = h.Hash()
+	// We intentionally copy [h] to avoid modifying the original header.
+	// This might mean double-copying the header in some cases, but it's negligible
+	// compared to the risk.
 	s.curr = types.CopyHeader(h)
 	s.curr.GasLimit = uint64(s.maxBlockSize)
 	s.curr.BaseFee = s.baseFee.ToBig()

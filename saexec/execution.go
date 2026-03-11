@@ -176,7 +176,7 @@ func Execute(
 
 	baseFee := gasClock.BaseFee()
 	b.CheckBaseFeeBound(baseFee)
-	header := types.CopyHeader(b.Header())
+	header := b.Header()
 	header.BaseFee = baseFee.ToBig()
 
 	signer := types.MakeSigner(config, b.Number(), b.BuildTime())
