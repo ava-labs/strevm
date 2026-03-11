@@ -10,6 +10,7 @@ import (
 	"github.com/ava-labs/libevm/ethdb"
 	"github.com/ava-labs/libevm/libevm/ethapi"
 	"github.com/ava-labs/libevm/rpc"
+
 	"github.com/ava-labs/strevm/blocks"
 )
 
