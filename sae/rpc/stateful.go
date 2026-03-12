@@ -112,7 +112,6 @@ func (b *backend) StateAndHeaderByNumberOrHash(ctx context.Context, numOrHash rp
 			return nil, nil, err
 		}
 		hdr.BaseFee = bf.ToBig()
-
 	}
 
 	sdb, err := b.StateDB(hdr.Root)

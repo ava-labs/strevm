@@ -293,7 +293,6 @@ func (e *Executor) afterExecution(b *blocks.Block, r *ExecutionResults) error {
 	// 2. Internal indicator of last executed MUST follow in-memory change.
 	// 3. External indicator of last executed MUST follow internal indicator.
 	if err := b.MarkExecuted(e.db, e.xdb, r.FinishBy.Gas.Clone(), r.FinishBy.Wall, r.BaseFee.ToBig(), r.Receipts, root, &e.lastExecuted /* (2) */); err != nil {
-
 		return err
 	}
 	e.sendPostExecutionEvents(b.EthBlock(), r.Receipts) // (3)
