@@ -86,7 +86,7 @@ func New(chain Chain, config Config) (*Provider, error) {
 	}
 
 	chainIdx := chainIndexer{chain}
-	override := bloomOverrider{chain.DB()}
+	override := bloomOverrider{chain}
 
 	back := &backend{
 		chain,

@@ -33,7 +33,7 @@ func (c chainIndexer) CurrentHeader() *types.Header {
 // A bloomOverrider constructs Bloom filters from persisted receipts instead of
 // relying on the [types.Header] field.
 type bloomOverrider struct {
-	db ethdb.Database
+	chain Chain
 }
 
 var _ filters.BloomOverrider = bloomOverrider{}
@@ -43,7 +43,7 @@ var _ filters.BloomOverrider = bloomOverrider{}
 // settled by the block.
 func (b bloomOverrider) OverrideHeaderBloom(header *types.Header) types.Bloom {
 	return types.CreateBloom(rawdb.ReadRawReceipts(
-		b.db,
+		b.chain.DB(),
 		header.Hash(),
 		header.Number.Uint64(),
 	))

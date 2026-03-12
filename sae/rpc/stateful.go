@@ -167,7 +167,7 @@ func (b *backend) StateAtTransaction(ctx context.Context, ethB *types.Block, txI
 	parent, err := b.NewBlock(
 		// The I(E) check above guarantees D(A) of the same block; see
 		// ../docs/invariants.md for details.
-		rawdb.ReadBlock(b.db, ethB.ParentHash(), ethB.NumberU64()-1),
+		rawdb.ReadBlock(b.DB(), ethB.ParentHash(), ethB.NumberU64()-1),
 		// Ancestry is irrelevant for the parent as we just want its
 		// post-execution artefacts.
 		nil, nil,
