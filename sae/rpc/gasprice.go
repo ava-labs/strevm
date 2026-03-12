@@ -14,23 +14,23 @@ import (
 )
 
 type estimatorBackend struct {
-	vm Chain
+	chain Chain
 }
 
 var _ gasprice.Backend = (*estimatorBackend)(nil)
 
 func (e *estimatorBackend) BlockByNumber(n rpc.BlockNumber) (*types.Block, error) {
-	return readByNumber(e.vm, n, rawdb.ReadBlock)
+	return readByNumber(e.chain, n, rawdb.ReadBlock)
 }
 
 func (e *estimatorBackend) LastAcceptedBlock() *blocks.Block {
-	return e.vm.LastAccepted()
+	return e.chain.LastAccepted()
 }
 
 func (e *estimatorBackend) ResolveBlockNumber(bn rpc.BlockNumber) (uint64, error) {
-	return blocks.ResolveRPCNumber(e.vm, bn)
+	return blocks.ResolveRPCNumber(e.chain, bn)
 }
 
 func (e *estimatorBackend) SubscribeAcceptedBlocks(ch chan<- *blocks.Block) event.Subscription {
-	return e.vm.SubscribeAcceptedBlocks(ch)
+	return e.chain.SubscribeAcceptedBlocks(ch)
 }
