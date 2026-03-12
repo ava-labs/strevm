@@ -19,7 +19,7 @@ import (
 // - https://github.com/ava-labs/avalanchego/blob/v1.14.1/graft/coreth/internal/ethapi/api_extra.go
 // - https://github.com/ava-labs/avalanchego/blob/v1.14.1/graft/coreth/internal/ethapi/api.coreth.go
 type customAPI struct {
-	b *apiBackend
+	b *backend
 }
 
 // GetChainConfig returns the chain configuration.

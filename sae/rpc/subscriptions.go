@@ -11,31 +11,23 @@ import (
 	"github.com/ava-labs/libevm/event"
 )
 
-func (b *apiBackend) SubscribeChainEvent(ch chan<- core.ChainEvent) event.Subscription {
-	return b.vm.SubscribeChainEvent(ch)
-}
-
-func (b *apiBackend) SubscribeChainSideEvent(chan<- core.ChainSideEvent) event.Subscription {
-	// SAE never reorgs, so there are no side events.
-	return newNoopSubscription()
-}
-
-func (b *apiBackend) SubscribeNewTxsEvent(ch chan<- core.NewTxsEvent) event.Subscription {
+func (b *backend) SubscribeNewTxsEvent(ch chan<- core.NewTxsEvent) event.Subscription {
 	return b.Set.Pool.SubscribeTransactions(ch, true)
 }
 
-func (b *apiBackend) SubscribeRemovedLogsEvent(chan<- core.RemovedLogsEvent) event.Subscription {
-	// SAE never reorgs, so no logs are ever removed.
+// A number of subscriptions don't make sense in SAE so are no-ops. The lack of
+// reorgs makes chain-side and log-removal events impossible. As "pending"
+// refers to accepted but not executed blocks, pending logs are an oxymoron.
+
+func (b *backend) SubscribeChainSideEvent(chan<- core.ChainSideEvent) event.Subscription {
 	return newNoopSubscription()
 }
 
-func (b *apiBackend) SubscribeLogsEvent(ch chan<- []*types.Log) event.Subscription {
-	return b.vm.SubscribeLogsEvent(ch)
+func (b *backend) SubscribeRemovedLogsEvent(chan<- core.RemovedLogsEvent) event.Subscription {
+	return newNoopSubscription()
 }
 
-func (b *apiBackend) SubscribePendingLogsEvent(chan<- []*types.Log) event.Subscription {
-	// In SAE, "pending" refers to the execution status. There are no logs known
-	// for transactions pending execution.
+func (b *backend) SubscribePendingLogsEvent(chan<- []*types.Log) event.Subscription {
 	return newNoopSubscription()
 }
 

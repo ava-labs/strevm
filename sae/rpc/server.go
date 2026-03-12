@@ -6,15 +6,20 @@ package rpc
 import (
 	"fmt"
 
+	"github.com/ava-labs/libevm/eth/filters"
 	"github.com/ava-labs/libevm/eth/tracers"
 	"github.com/ava-labs/libevm/libevm/debug"
 	"github.com/ava-labs/libevm/libevm/ethapi"
 	"github.com/ava-labs/libevm/rpc"
 )
 
-func (a *APIs) NewServer() (*rpc.Server, error) {
-	b := a.backend
+// Server returns the Provider's [rpc.Server], with all configured JSON-RPC
+// namespace handlers registered.
+func (p *Provider) Server() *rpc.Server {
+	return p.server
+}
 
+func (b *backend) server(filter *filters.FilterAPI) (*rpc.Server, error) {
 	type api struct {
 		namespace string
 		api       any
@@ -31,7 +36,7 @@ func (a *APIs) NewServer() (*rpc.Server, error) {
 		// - net_listening
 		// - net_peerCount
 		// - net_version
-		{"net", newNetAPI(a.vm.Peers(), a.vm.ChainConfig().ChainID.Uint64())},
+		{"net", newNetAPI(b.Peers(), b.ChainConfig().ChainID.Uint64())},
 		// Geth-specific APIs:
 		// - txpool_content
 		// - txpool_contentFrom
@@ -79,7 +84,7 @@ func (a *APIs) NewServer() (*rpc.Server, error) {
 		{
 			"eth",
 			immediateReceipts{
-				a.vm,
+				b.RecentReceipt,
 				ethapi.NewTransactionAPI(b, new(ethapi.AddrLocker)),
 			},
 		},
@@ -97,12 +102,12 @@ func (a *APIs) NewServer() (*rpc.Server, error) {
 		//  - newHeads
 		//  - newPendingTransactions
 		//  - logs
-		{"eth", a.Filter},
+		{"eth", filter},
 		// Avalanche-custom eth extensions:
 		{"eth", &customAPI{b}},
 	}
 
-	if a.backend.config.EnableDBInspecting {
+	if b.config.EnableDBInspecting {
 		apis = append(apis, api{
 			// Geth-specific APIs:
 			// - debug_chaindbCompact
@@ -122,7 +127,7 @@ func (a *APIs) NewServer() (*rpc.Server, error) {
 		})
 	}
 
-	if a.backend.config.EnableProfiling {
+	if b.config.EnableProfiling {
 		apis = append(apis, api{
 			// Geth-specific APIs:
 			// - debug_blockProfile
@@ -149,7 +154,7 @@ func (a *APIs) NewServer() (*rpc.Server, error) {
 		})
 	}
 
-	if !a.backend.config.DisableTracing {
+	if !b.config.DisableTracing {
 		apis = append(apis, api{
 			// Geth-specific APIs:
 			"debug", tracers.NewAPI(b),

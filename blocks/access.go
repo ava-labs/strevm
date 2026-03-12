@@ -11,16 +11,18 @@ import (
 	"github.com/ava-labs/libevm/core/rawdb"
 	"github.com/ava-labs/libevm/ethdb"
 	"github.com/ava-labs/libevm/rpc"
+	"github.com/ava-labs/strevm/saedb"
 )
 
 type (
 	Chain interface {
-		Consensus
+		InConsensus
 		Frontier
 		DB() ethdb.Database
+		XDB() saedb.ExecutionResults
 	}
 
-	Consensus interface {
+	InConsensus interface {
 		BlockInConsensus(common.Hash) (*Block, bool)
 	}
 

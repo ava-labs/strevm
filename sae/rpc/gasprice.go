@@ -14,7 +14,7 @@ import (
 )
 
 type estimatorBackend struct {
-	vm VM
+	vm Chain
 }
 
 var _ gasprice.Backend = (*estimatorBackend)(nil)

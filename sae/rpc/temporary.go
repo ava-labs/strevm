@@ -15,6 +15,6 @@ import (
 
 var errUnimplemented = errors.New("unimplemented")
 
-func (b *apiBackend) GetPoolNonce(context.Context, common.Address) (uint64, error) {
+func (b *backend) GetPoolNonce(context.Context, common.Address) (uint64, error) {
 	panic(errUnimplemented)
 }

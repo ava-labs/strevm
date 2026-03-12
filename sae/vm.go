@@ -70,7 +70,7 @@ type VM struct {
 	exec         *saexec.Executor
 	mempool      *txgossip.Set
 	blockBuilder blockBuilder
-	rpcAPIs      *rpc.APIs
+	rpcProvider  *rpc.Provider
 	newTxs       chan struct{}
 
 	// toClose are closed in reverse order during [VM.Shutdown]. If a resource
@@ -89,15 +89,13 @@ func (f closerFunc) Close() error { return f() }
 // A Config configures construction of a new [VM].
 type Config struct {
 	MempoolConfig legacypool.Config
-	RPCConfig     RPCConfig
+	RPCConfig     rpc.Config
 	TrieDBConfig  *triedb.Config
 
 	ExcessAfterLastSynchronous gas.Gas
 
 	Now func() time.Time // defaults to [time.Now] if nil
 }
-
-type RPCConfig = rpc.Config // DO NOT MERGE
 
 // NewVM returns a new [VM] that is ready for use immediately upon return.
 // [VM.Shutdown] MUST be called to release resources.
@@ -298,13 +296,13 @@ func NewVM[T hook.Transaction](
 		}))
 	}
 
-	{ // ==========  API Backend  ==========
-		apis, err := rpc.New(rpcSource{vm, vm.exec}, cfg.RPCConfig)
+	{ // ==========  RPC Provider  ==========
+		r, err := rpc.New(vm.rpcChain(), cfg.RPCConfig)
 		if err != nil {
 			return nil, err
 		}
-		vm.toClose = append(vm.toClose, apis)
-		vm.rpcAPIs = apis
+		vm.toClose = append(vm.toClose, r)
+		vm.rpcProvider = r
 	}
 
 	return vm, nil

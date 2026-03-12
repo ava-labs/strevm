@@ -15,24 +15,19 @@ import (
 	"github.com/ava-labs/libevm/eth"
 	"github.com/ava-labs/libevm/eth/filters"
 	"github.com/ava-labs/libevm/ethdb"
-	"github.com/ava-labs/libevm/event"
 	"github.com/ava-labs/libevm/params"
 )
 
 // chainIndexer implements the subset of [ethapi.Backend] required to back a
 // [core.ChainIndexer].
 type chainIndexer struct {
-	vm VM
+	Chain
 }
 
 var _ core.ChainIndexerChain = chainIndexer{}
 
 func (c chainIndexer) CurrentHeader() *types.Header {
-	return types.CopyHeader(c.vm.LastExecuted().Header())
-}
-
-func (c chainIndexer) SubscribeChainHeadEvent(ch chan<- core.ChainHeadEvent) event.Subscription {
-	return c.vm.SubscribeChainHeadEvent(ch)
+	return c.LastExecuted().Header()
 }
 
 // A bloomOverrider constructs Bloom filters from persisted receipts instead of

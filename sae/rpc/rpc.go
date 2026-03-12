@@ -1,6 +1,9 @@
 // Copyright (C) 2025-2026, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
+// Package rpc converts an SAE VM into forms suitable for backing [ethapi],
+// [tracers], and [filters] packages, and for providing other [rpc] namespaces
+// (e.g. web3 and net).
 package rpc
 
 import (
@@ -15,14 +18,11 @@ import (
 	"github.com/ava-labs/libevm/accounts"
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core"
-	"github.com/ava-labs/libevm/core/state"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/eth/filters"
-	"github.com/ava-labs/libevm/eth/tracers"
-	"github.com/ava-labs/libevm/ethdb"
 	"github.com/ava-labs/libevm/event"
-	"github.com/ava-labs/libevm/libevm/ethapi"
 	"github.com/ava-labs/libevm/params"
+	"github.com/ava-labs/libevm/rpc"
 
 	"github.com/ava-labs/strevm/blocks"
 	"github.com/ava-labs/strevm/gasprice"
@@ -32,38 +32,34 @@ import (
 	"github.com/ava-labs/strevm/txgossip"
 )
 
-var ErrFutureBlockNotResolved = errors.New("not accepted yet")
-
-type VM interface {
+// A Chain provides the consensus and execution state required to serve RPC
+// requests.
+type Chain interface {
+	// Static and configuration
 	Logger() logging.Logger
 	Hooks() hook.Points
-
-	DB() ethdb.Database
-	XDB() saedb.ExecutionResults
-	StateDB(common.Hash) (*state.StateDB, error)
-
-	Mempool() *txgossip.Set
-	Peers() *p2p.Peers
-
 	ChainConfig() *params.ChainConfig
+
+	// Consensus and block-building
+	Peers() *p2p.Peers
+	Mempool() *txgossip.Set
+	blocks.Chain
 	ChainContext() core.ChainContext
 
-	NewBlock(eth *types.Block, parent, lastSettled *blocks.Block) (*blocks.Block, error)
-	BlockFromMemory(common.Hash) (*blocks.Block, bool)
-	SettledBlockFromDB(db ethdb.Reader, hash common.Hash, num uint64) (*blocks.Block, error)
-
-	SignerForBlock(*types.Block) types.Signer
-
-	blocks.Chain
+	// Execution results and replay
+	saedb.StateDBOpener
 	RecentReceipt(context.Context, common.Hash) (*saexec.Receipt, bool, error)
+	NewBlock(eth *types.Block, parent, lastSettled *blocks.Block) (*blocks.Block, error)
 
+	// Subscriptions
 	SubscribeAcceptedBlocks(chan<- *blocks.Block) event.Subscription
 	SubscribeChainEvent(chan<- core.ChainEvent) event.Subscription
 	SubscribeChainHeadEvent(chan<- core.ChainHeadEvent) event.Subscription
 	SubscribeLogsEvent(chan<- []*types.Log) event.Subscription
 }
 
-// Config provides options for initialization of RPCs for the node.
+// Config controls which JSON-RPC namespaces are enabled and their resource
+// limits.
 type Config struct {
 	BlocksPerBloomSection uint64
 	EnableDBInspecting    bool
@@ -74,94 +70,65 @@ type Config struct {
 	TxFeeCap              float64 // 0 = no cap
 }
 
-// Backend is the union of all interfaces required to implement the Ethereum
-// APIs.
-type Backend interface {
-	ethapi.Backend
-	tracers.Backend
-	filters.BloomOverrider
-	filters.Backend
+// A Provider provides an [rpc.Server] along with the raw Geth backends that
+// handle the RPC requests.
+type Provider struct {
+	backend *backend
+	server  *rpc.Server
+	filter  *filters.FilterAPI
 }
 
-type APIs struct {
-	vm VM
-
-	backend  *apiBackend
-	Filter   *filters.FilterAPI
-	Accounts *accounts.Manager
-	GasPrice *gasprice.Estimator
-
-	bloomIdx *bloomIndexer
-}
-
-var _ io.Closer = (*APIs)(nil)
-
-func (a *APIs) Close() error {
-	filters.CloseAPI(a.Filter)
-	return errors.Join(
-		a.Accounts.Close(),
-		a.bloomIdx.Close(),
-		a.GasPrice.Close(),
-	)
-}
-
-func (a *APIs) Backend() Backend {
-	return a.backend
-}
-
-func New(vm VM, config Config) (*APIs, error) {
-	gaspricer, err := gasprice.NewEstimator(&estimatorBackend{vm}, vm.Logger(), gasprice.DefaultConfig())
+// New constructs a new [Provider].
+func New(chain Chain, config Config) (*Provider, error) {
+	price, err := gasprice.NewEstimator(&estimatorBackend{chain}, chain.Logger(), gasprice.DefaultConfig())
 	if err != nil {
 		return nil, fmt.Errorf("gasprice.NewEstimator(...): %v", err)
 	}
 
-	chainIdx := chainIndexer{vm}
-	override := bloomOverrider{vm.DB()}
+	chainIdx := chainIndexer{chain}
+	override := bloomOverrider{chain.DB()}
 
-	back := &apiBackend{
-		config, vm,
+	back := &backend{
+		chain,
+		config,
 		// An empty account manager provides graceful errors for signing RPCs
 		// (e.g. eth_sign) instead of nil-pointer panics. No actual account
 		// functionality is expected.
 		accounts.NewManager(&accounts.Config{}),
-		gaspricer,
-		vm.Mempool(),
+		price,
+		chain.Mempool(),
 		chainIdx,
 		override,
 		newBloomIndexer(
 			// TODO(alarso16): if we are state syncing, we need to provide the
 			// first block available to the indexer via
 			// [core.ChainIndexer.AddCheckpoint].
-			vm.DB(),
+			chain.DB(),
 			chainIdx,
 			override,
 			config.BlocksPerBloomSection,
 		),
 	}
 
-	return &APIs{
-		vm,
-		back,
-		filters.NewFilterAPI(
-			filters.NewFilterSystem(back, filters.Config{}),
-			false, /*isLightClient*/
-		),
-		back.accountManager,
-		back.Estimator,
-		back.bloomIndexer,
-	}, nil
+	filter := filters.NewFilterAPI(
+		filters.NewFilterSystem(back, filters.Config{}),
+		false, /*isLightClient*/
+	)
+	srv, err := back.server(filter)
+	if err != nil {
+		filters.CloseAPI(filter)
+		return nil, errors.Join(err, back.close())
+	}
+
+	return &Provider{back, srv, filter}, nil
 }
 
-var _ Backend = (*apiBackend)(nil)
+var _ io.Closer = (*Provider)(nil)
 
-type apiBackend struct {
-	config         Config
-	vm             VM
-	accountManager *accounts.Manager
-
-	*gasprice.Estimator
-	*txgossip.Set
-	chainIndexer
-	bloomOverrider
-	*bloomIndexer
+// Close releases all resources in use by the [GethBackends], and stops the
+// [Provider.Server].
+func (p *Provider) Close() error {
+	filters.CloseAPI(p.filter)
+	p.server.Stop()
+	return p.backend.close()
 }

@@ -3,6 +3,6 @@
 
 package rpc
 
-func (b *apiBackend) SetHead(uint64) {
-	b.vm.Logger().Info("debug_setHead called but not supported by SAE")
+func (b *backend) SetHead(uint64) {
+	b.Logger().Info("debug_setHead called but not supported by SAE")
 }

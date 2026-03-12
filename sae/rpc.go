@@ -10,7 +10,6 @@ import (
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/ethdb"
 	"github.com/ava-labs/libevm/event"
-	"github.com/ava-labs/libevm/rpc"
 
 	"github.com/ava-labs/strevm/blocks"
 	"github.com/ava-labs/strevm/hook"
@@ -20,43 +19,33 @@ import (
 	"github.com/ava-labs/strevm/txgossip"
 )
 
-type APIBackend = saerpc.Backend // DO NOT MERGE
-
-// APIBackend returns an API backend backed by the [VM].
-func (vm *VM) APIBackend() saerpc.Backend {
-	return vm.rpcAPIs.Backend()
+func (vm *VM) APIBackend() saerpc.GethBackends {
+	return vm.rpcProvider.GethBackends()
 }
 
-func (vm *VM) ethRPCServer() (*rpc.Server, error) {
-	return vm.rpcAPIs.NewServer()
+func (vm *VM) rpcChain() saerpc.Chain {
+	return rpcChain{vm, vm.exec}
 }
 
-var _ saerpc.VM = rpcSource{}
-
-type rpcSource struct {
+type rpcChain struct {
 	*VM
 	*saexec.Executor
 }
 
-func (s rpcSource) Logger() logging.Logger                               { return s.VM.snowCtx.Log }
-func (s rpcSource) Hooks() hook.Points                                   { return s.hooks }
-func (s rpcSource) DB() ethdb.Database                                   { return s.db }
-func (s rpcSource) XDB() saedb.ExecutionResults                          { return s.xdb }
-func (s rpcSource) Mempool() *txgossip.Set                               { return s.mempool }
-func (s rpcSource) Peers() *p2p.Peers                                    { return s.peers }
-func (s rpcSource) BlockFromMemory(h common.Hash) (*blocks.Block, bool)  { return s.blocks.Load(h) }
-func (s rpcSource) BlockInConsensus(h common.Hash) (*blocks.Block, bool) { return s.blocks.Load(h) }
-func (s rpcSource) LastAccepted() *blocks.Block                          { return s.last.accepted.Load() }
-func (s rpcSource) LastSettled() *blocks.Block                           { return s.last.settled.Load() }
+func (c rpcChain) Logger() logging.Logger                               { return c.VM.snowCtx.Log }
+func (c rpcChain) Hooks() hook.Points                                   { return c.hooks }
+func (c rpcChain) DB() ethdb.Database                                   { return c.db }
+func (c rpcChain) XDB() saedb.ExecutionResults                          { return c.xdb }
+func (c rpcChain) Mempool() *txgossip.Set                               { return c.mempool }
+func (c rpcChain) Peers() *p2p.Peers                                    { return c.peers }
+func (c rpcChain) BlockInConsensus(h common.Hash) (*blocks.Block, bool) { return c.blocks.Load(h) }
+func (c rpcChain) LastAccepted() *blocks.Block                          { return c.last.accepted.Load() }
+func (c rpcChain) LastSettled() *blocks.Block                           { return c.last.settled.Load() }
 
-func (s rpcSource) NewBlock(eth *types.Block, parent, lastSettled *blocks.Block) (*blocks.Block, error) {
-	return s.blockBuilder.new(eth, parent, lastSettled)
+func (c rpcChain) NewBlock(eth *types.Block, parent, lastSettled *blocks.Block) (*blocks.Block, error) {
+	return c.blockBuilder.new(eth, parent, lastSettled)
 }
 
-func (s rpcSource) SettledBlockFromDB(db ethdb.Reader, hash common.Hash, num uint64) (*blocks.Block, error) {
-	return s.settledBlockFromDB(db, hash, num)
-}
-
-func (s rpcSource) SubscribeAcceptedBlocks(ch chan<- *blocks.Block) event.Subscription {
-	return s.acceptedBlocks.Subscribe(ch)
+func (c rpcChain) SubscribeAcceptedBlocks(ch chan<- *blocks.Block) event.Subscription {
+	return c.acceptedBlocks.Subscribe(ch)
 }

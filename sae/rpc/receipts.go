@@ -15,9 +15,10 @@ import (
 	"github.com/ava-labs/libevm/rpc"
 
 	"github.com/ava-labs/strevm/blocks"
+	"github.com/ava-labs/strevm/saexec"
 )
 
-func (b *apiBackend) GetReceipts(ctx context.Context, hash common.Hash) (types.Receipts, error) {
+func (b *backend) GetReceipts(ctx context.Context, hash common.Hash) (types.Receipts, error) {
 	receipts, _, err := b.getReceipts(rpc.BlockNumberOrHashWithHash(hash, false))
 	if err != nil {
 		return nil, nil //nolint:nilerr // This follows Geth behavior for [ethapi.Backend.GetReceipts]
@@ -28,7 +29,7 @@ func (b *apiBackend) GetReceipts(ctx context.Context, hash common.Hash) (types.R
 // getReceipts resolves receipts and the underlying [types.Block] by number or
 // hash, checking in-memory blocks first then falling back to the database.
 // Returns nils for blocks that are not yet executed.
-func (b *apiBackend) getReceipts(numOrHash rpc.BlockNumberOrHash) (types.Receipts, *types.Block, error) {
+func (b *backend) getReceipts(numOrHash rpc.BlockNumberOrHash) (types.Receipts, *types.Block, error) {
 	numOrHash.RequireCanonical = true
 
 	blk, err := readByNumberOrHash(
@@ -38,14 +39,14 @@ func (b *apiBackend) getReceipts(numOrHash rpc.BlockNumberOrHash) (types.Receipt
 			return b
 		},
 		func(db ethdb.Reader, h common.Hash, num uint64) (*blocks.Block, error) {
-			if num > b.vm.LastExecuted().Height() {
+			if num > b.LastExecuted().Height() {
 				return nil, blocks.ErrNotFound
 			}
-			blk, err := blocks.New(rawdb.ReadBlock(db, h, num), nil, nil, b.vm.Logger())
+			blk, err := blocks.New(rawdb.ReadBlock(db, h, num), nil, nil, b.Logger())
 			if err != nil {
 				return nil, err
 			}
-			if err := blk.RestoreExecutionArtefacts(b.vm.DB(), b.vm.XDB(), b.ChainConfig()); err != nil {
+			if err := blk.RestoreExecutionArtefacts(b.DB(), b.XDB(), b.ChainConfig()); err != nil {
 				return nil, err
 			}
 			return blk, nil
@@ -65,11 +66,11 @@ func (b *apiBackend) getReceipts(numOrHash rpc.BlockNumberOrHash) (types.Receipt
 
 type blockChainAPI struct {
 	*ethapi.BlockChainAPI
-	b *apiBackend
+	b *backend
 }
 
-// We override [ethapi.BlockChainAPI.GetBlockReceipts] so that we do not return
-// an error when a user queries a known, but not yet executed, block.
+// GetBlockReceipts overrides [ethapi.BlockChainAPI.GetBlockReceipts] to avoid
+// returning an error when a user queries a known, but not yet executed, block.
 func (b *blockChainAPI) GetBlockReceipts(ctx context.Context, blockNrOrHash rpc.BlockNumberOrHash) ([]map[string]any, error) {
 	receipts, blk, err := b.b.getReceipts(blockNrOrHash)
 	if err != nil || blk == nil {
@@ -78,7 +79,7 @@ func (b *blockChainAPI) GetBlockReceipts(ctx context.Context, blockNrOrHash rpc.
 
 	hash := blk.Hash()
 	num := blk.NumberU64()
-	signer := b.b.vm.SignerForBlock(blk)
+	signer := blocks.Signer(blk, b.b.ChainConfig())
 	txs := blk.Transactions()
 
 	result := make([]map[string]any, len(txs))
@@ -93,21 +94,21 @@ func (b *blockChainAPI) GetBlockReceipts(ctx context.Context, blockNrOrHash rpc.
 // block is defined as the most recently accepted block, but receipts are only
 // available after execution. Returning a non-nil block with incorrect or empty
 // receipts could cause geth to encounter errors.
-func (*apiBackend) PendingBlockAndReceipts() (*types.Block, types.Receipts) {
+func (*backend) PendingBlockAndReceipts() (*types.Block, types.Receipts) {
 	return nil, nil
 }
 
-func (b *apiBackend) GetLogs(ctx context.Context, blockHash common.Hash, number uint64) ([][]*types.Log, error) {
-	return rawdb.ReadLogs(b.vm.DB(), blockHash, number), nil
+func (b *backend) GetLogs(ctx context.Context, blockHash common.Hash, number uint64) ([][]*types.Log, error) {
+	return rawdb.ReadLogs(b.DB(), blockHash, number), nil
 }
 
 type immediateReceipts struct {
-	vm VM
+	recent func(context.Context, common.Hash) (*saexec.Receipt, bool, error)
 	*ethapi.TransactionAPI
 }
 
 func (ir immediateReceipts) GetTransactionReceipt(ctx context.Context, h common.Hash) (map[string]any, error) {
-	r, ok, err := ir.vm.RecentReceipt(ctx, h)
+	r, ok, err := ir.recent(ctx, h)
 	if err != nil {
 		return nil, err
 	}

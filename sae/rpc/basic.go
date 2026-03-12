@@ -11,28 +11,23 @@ import (
 	"github.com/ava-labs/libevm/accounts"
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/ethdb"
-	"github.com/ava-labs/libevm/params"
 )
 
-func (b *apiBackend) ChainDb() ethdb.Database { //nolint:staticcheck // this name required by ethapi.Backend interface
-	return b.vm.DB()
+func (b *backend) ChainDb() ethdb.Database { //nolint:staticcheck // this name required by ethapi.Backend interface
+	return b.DB()
 }
 
-func (b *apiBackend) ChainConfig() *params.ChainConfig {
-	return b.vm.ChainConfig()
-}
-
-func (b *apiBackend) RPCTxFeeCap() float64 {
+func (b *backend) RPCTxFeeCap() float64 {
 	return b.config.TxFeeCap
 }
 
-func (b *apiBackend) UnprotectedAllowed() bool {
+func (b *backend) UnprotectedAllowed() bool {
 	return false
 }
 
 // ExtRPCEnabled reports that external RPC access is enabled. This adds an
 // additional security measure in case we add support for the personal API.
-func (*apiBackend) ExtRPCEnabled() bool {
+func (*backend) ExtRPCEnabled() bool {
 	return true
 }
 
@@ -42,15 +37,15 @@ func (*apiBackend) ExtRPCEnabled() bool {
 // and no longer exposes the total difficulty of the chain at all via the API.
 //
 // TODO(JonathanOppenheimer): Once we update libevm, remove GetTd.
-func (b *apiBackend) GetTd(ctx context.Context, hash common.Hash) *big.Int {
+func (b *backend) GetTd(ctx context.Context, hash common.Hash) *big.Int {
 	return new(big.Int)
 }
 
-func (b *apiBackend) SyncProgress() ethereum.SyncProgress {
+func (b *backend) SyncProgress() ethereum.SyncProgress {
 	// Avalanchego does not expose APIs until after the node has fully synced.
 	return ethereum.SyncProgress{}
 }
 
-func (b *apiBackend) AccountManager() *accounts.Manager {
+func (b *backend) AccountManager() *accounts.Manager {
 	return b.accountManager
 }
