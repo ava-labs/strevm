@@ -55,13 +55,14 @@ type VM struct {
 	snowCtx *snow.Context
 	metrics *prometheus.Registry
 
-	db     ethdb.Database
-	xdb    saedb.ExecutionResults
-	blocks *syncMap[common.Hash, *blocks.Block]
+	db  ethdb.Database
+	xdb saedb.ExecutionResults
 
 	consensusState utils.Atomic[snow.State]
-	preference     atomic.Pointer[blocks.Block]
-	last           struct {
+
+	preference  atomic.Pointer[blocks.Block]
+	inConsensus *syncMap[common.Hash, *blocks.Block]
+	last        struct {
 		accepted, settled atomic.Pointer[blocks.Block]
 		synchronous       uint64
 	}
@@ -117,12 +118,12 @@ func NewVM[T hook.Transaction](
 		cfg.Now = time.Now
 	}
 	vm := &VM{
-		hooks:   hooks,
-		config:  cfg,
-		snowCtx: snowCtx,
-		metrics: prometheus.NewRegistry(),
-		db:      db,
-		blocks:  newSyncMap[common.Hash, *blocks.Block](),
+		hooks:       hooks,
+		config:      cfg,
+		snowCtx:     snowCtx,
+		metrics:     prometheus.NewRegistry(),
+		db:          db,
+		inConsensus: newSyncMap[common.Hash, *blocks.Block](),
 	}
 	defer func() {
 		if retErr != nil {
@@ -203,7 +204,7 @@ func NewVM[T hook.Transaction](
 		if err != nil {
 			return nil, err
 		}
-		vm.blocks = bMap
+		vm.inConsensus = bMap
 
 		vm.last.settled.Store(lastSettled)
 		vm.last.accepted.Store(head)

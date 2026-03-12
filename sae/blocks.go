@@ -96,7 +96,7 @@ func (vm *VM) VerifyBlock(ctx context.Context, bCtx *block.Context, b *blocks.Bl
 	}
 	b.SetWorstCaseBounds(rebuilt.WorstCaseBounds())
 
-	vm.blocks.Store(b.Hash(), b)
+	vm.inConsensus.Store(b.Hash(), b)
 	return nil
 }
 
@@ -197,7 +197,7 @@ func (vm *VM) headerSource(hash common.Hash, num uint64) (*types.Header, bool) {
 }
 
 func source[T any](vm *VM, hash common.Hash, num uint64, fromMem blocks.Extractor[T], fromDB blocks.Reader[T]) (*T, bool) {
-	if b, ok := vm.blocks.Load(hash); ok {
+	if b, ok := vm.inConsensus.Load(hash); ok {
 		if b.NumberU64() != num {
 			return nil, false
 		}
