@@ -56,12 +56,11 @@ func (b *Block) CheckBaseFeeBound(actual uint256.Int) {
 		return
 	}
 
-	maxBF := b.bounds.MaxBaseFee
-	switch actual.Cmp(&maxBF) {
+	switch actual.Cmp(&b.bounds.MaxBaseFee) {
 	case 1:
 		b.log.Error("Actual base fee > predicted worst case",
 			zap.Stringer("actual", &actual),
-			zap.Stringer("predicted", &maxBF),
+			zap.Stringer("predicted", &b.bounds.MaxBaseFee),
 		)
 
 	case 0: // Coverage visualisation
