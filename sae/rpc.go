@@ -19,7 +19,9 @@ import (
 	"github.com/ava-labs/strevm/txgossip"
 )
 
-func (vm *VM) APIBackend() saerpc.GethBackends {
+// GethRPCBackends returns the backing infrastructure for Geth's implementations
+// of the JSON-RPC namespaces supported by the VM.
+func (vm *VM) GethRPCBackends() saerpc.GethBackends {
 	return vm.rpcProvider.GethBackends()
 }
 

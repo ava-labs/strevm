@@ -655,7 +655,7 @@ func TestGetLogs(t *testing.T) {
 	// Although the FiltersAPI will work without any blocks indexed, such a
 	// scenario would not test the functionality of the bloom indexer.
 	require.EventuallyWithT(t, func(c *assert.CollectT) {
-		be := sut.rawVM.APIBackend()
+		be := sut.rawVM.GethRPCBackends()
 		_, got := be.BloomStatus()
 		require.Equal(c, uint64(1), got, "%T.BloomStatus() sections", be)
 	}, 5*time.Second, 100*time.Millisecond, "bloom indexer never finished")
