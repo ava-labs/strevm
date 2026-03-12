@@ -174,7 +174,7 @@ func TestMultipleBlocks(t *testing.T) {
 						Gas:       1,
 						GasFeeCap: uint256.Int{2},
 						Mint: map[common.Address]uint256.Int{
-							eoaNoBalance: uint256.Int{importedAmount},
+							eoaNoBalance: {importedAmount},
 						},
 					},
 					wantErr: nil,
