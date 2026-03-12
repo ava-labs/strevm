@@ -66,7 +66,7 @@ func (b *backend) GetEVM(ctx context.Context, msg *core.Message, sdb *state.Stat
 }
 
 // StateAndHeaderByNumber performs the same faking as
-// [apiBackend.StateAndHeaderByNumberOrHash].
+// [backend.StateAndHeaderByNumberOrHash].
 func (b *backend) StateAndHeaderByNumber(ctx context.Context, num rpc.BlockNumber) (*state.StateDB, *types.Header, error) {
 	return b.StateAndHeaderByNumberOrHash(ctx, rpc.BlockNumberOrHashWithNumber(num))
 }

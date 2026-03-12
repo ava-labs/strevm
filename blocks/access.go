@@ -249,18 +249,18 @@ func FromNumberOrHash[T any](c Chain, blockNrOrHash rpc.BlockNumberOrHash, fromC
 // FromNumberAndHash behaves like [FromNumberOrHash] except that it accepts both
 // the number and hash as separate, required arguments. It verifies that any
 // [Block] found in consensus has the expected number.
-func FromNumberAndHash[T any](c Chain, hash common.Hash, num rpc.BlockNumber, fromConsensus Extractor[T], fromDB DBReaderWithErr[T]) (*T, error) {
+func FromNumberAndHash[T any](c Chain, hash common.Hash, rpcNum rpc.BlockNumber, fromConsensus Extractor[T], fromDB DBReaderWithErr[T]) (*T, error) {
 	if hash == (common.Hash{}) {
 		return nil, errors.New("empty block hash")
 	}
-	n, err := ResolveRPCNumber(c, num)
+	n, err := ResolveRPCNumber(c, rpcNum)
 	if err != nil {
 		return nil, err
 	}
 
 	if b, ok := c.BlockInConsensus(hash); ok {
 		if b.NumberU64() != n {
-			return nil, fmt.Errorf("%w: found block number %d for hash %#x, expected %d", ErrNotFound, b.NumberU64(), hash, num)
+			return nil, fmt.Errorf("%w: found block number %d for hash %#x, expected %d", ErrNotFound, b.NumberU64(), hash, n)
 		}
 		return fromConsensus(b), nil
 	}
