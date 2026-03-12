@@ -15,6 +15,7 @@ import (
 )
 
 type (
+	// A Chain provides access to the full life cycle of a [Block].
 	Chain interface {
 		InConsensus
 		Frontier
@@ -22,36 +23,94 @@ type (
 		XDB() saedb.ExecutionResults
 	}
 
+	// An InConsensus implementation provides access to a [Block] that is
+	// currently in use by a consensus mechanism, at any point in the life
+	// cycle, including recently rejected. It does not guarantee access to every
+	// [Block] being processed by consensus nor does it guarantee that a
+	// returned [Block] is still being processed, but every returned [Block]
+	// MUST be treated as consensus-critical. An InConsensus implementation can
+	// be thought of as a cache of ready-made [Block] instances, and consumers
+	// SHOULD treat return values as read-only.
+	//
+	// Implementations MUST be thread-safe and every returned [Block] MUST
+	// uphold all life-cycle invariants.
 	InConsensus interface {
 		BlockInConsensus(common.Hash) (*Block, bool)
 	}
 
+	// The Frontier is a thread-safe view of all life-cycle stages of a [Block].
 	Frontier interface {
 		AcceptanceFrontier
 		ExecutionFrontier
 		SettlementFrontier
 	}
-
+	// The AcceptanceFrontier is a thread-safe view of the last accepted
+	// [Block].
 	AcceptanceFrontier interface {
 		LastAccepted() *Block
 	}
+	// The ExecutionFrontier is a thread-safe view of the last executed [Block].
 	ExecutionFrontier interface {
 		LastExecuted() *Block
 	}
+	// The SettlementFrontier is a thread-safe view of the last settled [Block].
 	SettlementFrontier interface {
 		LastSettled() *Block
 	}
 )
 
-var (
-	ErrNotFound               = errors.New("block not found")
-	ErrFutureBlockNotResolved = fmt.Errorf("%w: not accepted yet", ErrNotFound)
-	ErrNonCanonicalBlock      = fmt.Errorf("%w: non-canonical block", ErrNotFound)
+// ErrNotFound is returned by the Resolve*() and From*() functions when the
+// requested [Block] could not be discerned or loaded, respectively.
+//
+// Note that the From*() functions DO NOT intercept return arguments. If a
+// [DBReaderWithErr] returns `nil, nil`—as is common in geth when the `T` is not
+// found—then so too will the From*() function return a nil error even though
+// ErrNotFound is more appropriate. This pattern MUST NOT be considered as
+// precedence as it is a foot gun and MUST be limited to, and contained within,
+// packages in which it is idiomatic behaviour because of reliance on equivalent
+// geth functionality.
+var ErrNotFound = errors.New("block not found")
 
-	ErrNeitherNumberNorHash = fmt.Errorf("%T carrying neither number nor hash", rpc.BlockNumberOrHash{})
-	ErrBothNumberAndHash    = fmt.Errorf("%T carrying both number and hash", rpc.BlockNumberOrHash{})
-)
+// ErrFutureBlockNotResolved is a specific case of [ErrNotFound], which it
+// wraps, returned when attempting to resolve an [rpc.BlockNumber] not yet
+// accepted by consensus. Such numbers are ambiguous as there may be more than
+// one matching [Block].
+var ErrFutureBlockNotResolved = fmt.Errorf("%w: not accepted yet", ErrNotFound)
 
+// ErrNonCanonicalBlock is a specific case of [ErrFutureBlockNotResolved], which
+// it wraps, returned when an unambiguous [Block] could be resolved (by its
+// hash), but (a) it has not yet been accepted by consensus; and (b) the
+// [rpc.BlockNumberOrHash.RequireCanonical] field was set to `true`.
+var ErrNonCanonicalBlock = fmt.Errorf("%w: canonical block required", ErrFutureBlockNotResolved)
+
+// ResolveRPCNumber converts an [rpc.BlockNumber] into the specific number of
+// the corresponding block, treating named blocks as relative to execution:
+//
+//   - [rpc.PendingBlockNumber] is that returned by the [AcceptanceFrontier],
+//     its execution status being unknown but eventually guaranteed.
+//   - [rpc.LatestBlockNumber] is that returned by the [ExecutionFrontier].
+//   - [rpc.SafeBlockNumber] and [rpc.FinalizedBlockNumber] are both that
+//     returned by the [SettlementFrontier].
+//
+// Explicit block numbers are returned unchanged, as long as a corresponding
+// [Block] has been accepted, otherwise [ErrFutureBlockNotResolved] is returned
+// instead.
+//
+// # Important note re finality
+//
+// "Safe" and "finalized", as being separate to "last", are both Ethereum
+// concepts with imperfect translation to SAE. Finality is the property of a
+// canonical block being permanently so, without the possibility of re-org,
+// which occurs immediately at acceptance under SAE. In Ethereum, "safety" is an
+// interim stage towards finality, with greater but still imperfect guarantees.
+//
+// In keeping with "pending" and "latest", the point of reference for safety is
+// relative to execution results, and the only non-determinism that can arise is
+// due to (very rare) disk corruption. Settlement demonstrates consensus of
+// execution results, such that they can be considered "safe" in the lay sense
+// of the word. The "finalized" block is defined identically because we wish to
+// maintain monotonicity of the labels, and no further guarantees are possible
+// after settlement.
 func ResolveRPCNumber(f Frontier, bn rpc.BlockNumber) (uint64, error) {
 	tip := f.LastAccepted().Height()
 
@@ -74,6 +133,20 @@ func ResolveRPCNumber(f Frontier, bn rpc.BlockNumber) (uint64, error) {
 	return n, nil
 }
 
+// Errors returned when resolving an invalid [rpc.BlockNumberOrHash].
+var (
+	ErrNeitherNumberNorHash = fmt.Errorf("%T carrying neither number nor hash", rpc.BlockNumberOrHash{})
+	ErrBothNumberAndHash    = fmt.Errorf("%T carrying both number and hash", rpc.BlockNumberOrHash{})
+)
+
+// ResolveRPCNumberOrHash converts an [rpc.BlockNumberOrHash] into the specific
+// number and hash of the corresponding [Block]. See [ResolveRPCNumber] for
+// treatment of named block numbers.
+//
+// The [Block] with the returned [common.Hash] is guaranteed to have the
+// returned number but is only guaranteed to be the canonical block of said
+// number if (a) it was specified by [rpc.BlockNumberOrHash.Number], or (b) the
+// [rpc.BlockNumberOrHash.RequireCanonical] field is `true`.
 func ResolveRPCNumberOrHash(c Chain, numOrHash rpc.BlockNumberOrHash) (uint64, common.Hash, error) {
 	rpcNum, isNum := numOrHash.Number()
 	hash, isHash := numOrHash.Hash()
@@ -87,25 +160,22 @@ func ResolveRPCNumberOrHash(c Chain, numOrHash rpc.BlockNumberOrHash) (uint64, c
 		if err != nil {
 			return 0, common.Hash{}, err
 		}
-
-		hash := rawdb.ReadCanonicalHash(c.DB(), num)
-		if hash == (common.Hash{}) {
-			return 0, common.Hash{}, fmt.Errorf("block %d not found", num)
-		}
-		return num, hash, nil
+		// [ResolveRPCNumber] is documented as only returning canonical blocks,
+		// so we don't need to check for a zero hash.
+		return num, rawdb.ReadCanonicalHash(c.DB(), num), nil
 
 	case isHash:
 		if bl, ok := c.BlockInConsensus(hash); ok {
 			n := bl.NumberU64()
 			if numOrHash.RequireCanonical && hash != rawdb.ReadCanonicalHash(c.DB(), n) {
-				return 0, common.Hash{}, ErrNonCanonicalBlock
+				return 0, common.Hash{}, fmt.Errorf("%w: hash %#x", ErrNonCanonicalBlock, hash)
 			}
 			return n, hash, nil
 		}
 
 		numPtr := rawdb.ReadHeaderNumber(c.DB(), hash)
 		if numPtr == nil {
-			return 0, common.Hash{}, fmt.Errorf("block %#x not found", hash)
+			return 0, common.Hash{}, fmt.Errorf("%w: hash %#x", ErrNotFound, hash)
 		}
 		// We only write canonical blocks to the database so there's no need to
 		// perform a check.
@@ -117,18 +187,28 @@ func ResolveRPCNumberOrHash(c Chain, numOrHash rpc.BlockNumberOrHash) (uint64, c
 }
 
 type (
-	Reader[T any]        func(db ethdb.Reader, hash common.Hash, num uint64) *T
-	ReaderWithErr[T any] func(db ethdb.Reader, hash common.Hash, num uint64) (*T, error)
-	Extractor[T any]     func(*Block) *T
+	// A DBReader returns any block-related artefact from the database. It is
+	// typically one of the [rawdb] `Read*()` functions.
+	DBReader[T any] func(db ethdb.Reader, hash common.Hash, num uint64) *T
+	// A DBReaderWithErr is equivalent to a [DBReader] except that it MAY return
+	// an error.
+	DBReaderWithErr[T any] func(db ethdb.Reader, hash common.Hash, num uint64) (*T, error)
+	// An Extractor returns any artefact from a [Block]. It is typically one of
+	// the type's nulladic methods.
+	Extractor[T any] func(*Block) *T
 )
 
-func (r Reader[T]) WithNilErr() ReaderWithErr[T] {
+// WithNilErr converts the [DBReader] into a [DBReaderWithErr] that always
+// returns a nil error.
+func (r DBReader[T]) WithNilErr() DBReaderWithErr[T] {
 	return func(db ethdb.Reader, h common.Hash, n uint64) (*T, error) {
 		return r(db, h, n), nil
 	}
 }
 
-func FromNumber[T any](c Chain, n rpc.BlockNumber, fromDB ReaderWithErr[T]) (*T, error) {
+// FromNumber resolves the canonical [Block] for the given [rpc.BlockNumber]
+// and returns the result of calling `fromDB` with its number and hash.
+func FromNumber[T any](c Chain, n rpc.BlockNumber, fromDB DBReaderWithErr[T]) (*T, error) {
 	num, err := ResolveRPCNumber(c, n)
 	if err != nil {
 		return nil, err
@@ -136,15 +216,11 @@ func FromNumber[T any](c Chain, n rpc.BlockNumber, fromDB ReaderWithErr[T]) (*T,
 	return fromDB(c.DB(), rawdb.ReadCanonicalHash(c.DB(), num), num)
 }
 
-// FromHash returns `fromMem(b)` if a block with the specified hash is in the
-// VM's memory, otherwise it returns `fromDB()` i.f.f. the block was previously
-// accepted. If `fromDB()` is called then the block is guaranteed to exist if
-// read with [rawdb] functions.
-//
-// A hash that is in neither of the VM's memory nor the database will result in
-// a return of `(nil, errWhenNotFound)` to allow for usage with the [rawdb]
-// pattern of returning `(nil, nil)`.
-func FromHash[T any](c Chain, hash common.Hash, fromConsensus Extractor[T], fromDB ReaderWithErr[T]) (*T, error) {
+// FromHash returns `fromConsensus()` if a [Block] with the specified hash is
+// returned by the [InConsensus] method of the [Chain], otherwise it returns
+// `fromDB()` i.f.f. the block was previously accepted. If `fromDB()` is called
+// then the block is guaranteed to exist if read with [rawdb] functions.
+func FromHash[T any](c Chain, hash common.Hash, fromConsensus Extractor[T], fromDB DBReaderWithErr[T]) (*T, error) {
 	if blk, ok := c.BlockInConsensus(hash); ok {
 		return fromConsensus(blk), nil
 	}
@@ -155,7 +231,10 @@ func FromHash[T any](c Chain, hash common.Hash, fromConsensus Extractor[T], from
 	return fromDB(c.DB(), hash, *num)
 }
 
-func FromNumberOrHash[T any](c Chain, blockNrOrHash rpc.BlockNumberOrHash, fromConsensus Extractor[T], fromDB ReaderWithErr[T]) (*T, error) {
+// FromNumberOrHash resolves the [Block] for the given [rpc.BlockNumberOrHash]
+// and returns the result of `fromConsensus` or `fromDB`, preferring the former.
+// See [ResolveRPCNumberOrHash] for canonicality guarantees.
+func FromNumberOrHash[T any](c Chain, blockNrOrHash rpc.BlockNumberOrHash, fromConsensus Extractor[T], fromDB DBReaderWithErr[T]) (*T, error) {
 	n, hash, err := ResolveRPCNumberOrHash(c, blockNrOrHash)
 	if err != nil {
 		return nil, err
@@ -166,7 +245,10 @@ func FromNumberOrHash[T any](c Chain, blockNrOrHash rpc.BlockNumberOrHash, fromC
 	return fromDB(c.DB(), hash, n)
 }
 
-func FromNumberAndHash[T any](c Chain, hash common.Hash, num rpc.BlockNumber, fromConsensus Extractor[T], fromDB ReaderWithErr[T]) (*T, error) {
+// FromNumberAndHash behaves like [FromNumberOrHash] except that it accepts both
+// the number and hash as separate, required arguments. It verifies that any
+// [Block] found in consensus has the expected number.
+func FromNumberAndHash[T any](c Chain, hash common.Hash, num rpc.BlockNumber, fromConsensus Extractor[T], fromDB DBReaderWithErr[T]) (*T, error) {
 	if hash == (common.Hash{}) {
 		return nil, errors.New("empty block hash")
 	}
@@ -177,7 +259,7 @@ func FromNumberAndHash[T any](c Chain, hash common.Hash, num rpc.BlockNumber, fr
 
 	if b, ok := c.BlockInConsensus(hash); ok {
 		if b.NumberU64() != n {
-			return nil, fmt.Errorf("found block number %d for hash %#x, expected %d", b.NumberU64(), hash, num)
+			return nil, fmt.Errorf("%w: found block number %d for hash %#x, expected %d", ErrNotFound, b.NumberU64(), hash, num)
 		}
 		return fromConsensus(b), nil
 	}

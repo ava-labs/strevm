@@ -5,7 +5,6 @@ package rpc
 
 import (
 	"context"
-	"errors"
 
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core/rawdb"
@@ -53,12 +52,10 @@ func (b *backend) getReceipts(numOrHash rpc.BlockNumberOrHash) (types.Receipts, 
 		},
 	)
 	switch {
-	case errors.Is(err, blocks.ErrNotFound):
+	case blk == nil || !blk.Executed():
 		return nil, nil, nil
 	case err != nil:
 		return nil, nil, err
-	case !blk.Executed():
-		return nil, nil, nil
 	default:
 		return blk.Receipts(), blk.EthBlock(), nil
 	}

@@ -196,7 +196,7 @@ func (vm *VM) headerSource(hash common.Hash, num uint64) (*types.Header, bool) {
 	return source(vm, hash, num, (*blocks.Block).Header, rawdb.ReadHeader)
 }
 
-func source[T any](vm *VM, hash common.Hash, num uint64, fromMem blocks.Extractor[T], fromDB blocks.Reader[T]) (*T, bool) {
+func source[T any](vm *VM, hash common.Hash, num uint64, fromMem blocks.Extractor[T], fromDB blocks.DBReader[T]) (*T, bool) {
 	if b, ok := vm.inConsensus.Load(hash); ok {
 		if b.NumberU64() != num {
 			return nil, false
