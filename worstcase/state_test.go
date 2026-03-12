@@ -119,7 +119,7 @@ func TestMultipleBlocks(t *testing.T) {
 		hooks                 *hookstest.Stub
 		time                  uint64
 		wantGasLimit          uint64
-		wantBaseFee           *uint256.Int
+		wantBaseFee           uint256.Int
 		ops                   []op
 		txsAfterOps           []*types.Transaction
 		wantMinSenderBalances []map[common.Address]uint64 // transformed to uint256.Int
@@ -127,13 +127,13 @@ func TestMultipleBlocks(t *testing.T) {
 		{
 			hooks:        hookstest.NewStub(2 * initialGasTarget), // Will double the target _after_ this block.
 			wantGasLimit: initialMaxBlockSize,
-			wantBaseFee:  uint256.NewInt(1),
+			wantBaseFee:  uint256.Int{1},
 			ops: []op{
 				{
 					name: "include_small_operation",
 					op: Op{
 						Gas:       gas.Gas(params.TxGas),
-						GasFeeCap: *uint256.NewInt(1),
+						GasFeeCap: uint256.Int{1},
 						Burn: map[common.Address]hook.AccountDebit{
 							eoa: {},
 						},
@@ -144,7 +144,7 @@ func TestMultipleBlocks(t *testing.T) {
 					name: "would_exceed_limit",
 					op: Op{
 						Gas:       gas.Gas(initialMaxBlockSize - params.TxGas + 1),
-						GasFeeCap: *uint256.NewInt(1),
+						GasFeeCap: uint256.Int{1},
 					},
 					wantErr: core.ErrGasLimitReached,
 				},
@@ -152,7 +152,7 @@ func TestMultipleBlocks(t *testing.T) {
 					name: "fill_block",
 					op: Op{
 						Gas:       gas.Gas(initialMaxBlockSize - params.TxGas),
-						GasFeeCap: *uint256.NewInt(1),
+						GasFeeCap: uint256.Int{1},
 					},
 					wantErr: nil,
 				},
@@ -166,15 +166,15 @@ func TestMultipleBlocks(t *testing.T) {
 		{
 			hooks:        hookstest.NewStub(initialGasTarget), // Restore the target _after_ this block.
 			wantGasLimit: 2 * initialMaxBlockSize,
-			wantBaseFee:  uint256.NewInt(2),
+			wantBaseFee:  uint256.Int{2},
 			ops: []op{
 				{
 					name: "import",
 					op: Op{
 						Gas:       1,
-						GasFeeCap: *uint256.NewInt(2),
+						GasFeeCap: uint256.Int{2},
 						Mint: map[common.Address]uint256.Int{
-							eoaNoBalance: *uint256.NewInt(importedAmount),
+							eoaNoBalance: uint256.Int{importedAmount},
 						},
 					},
 					wantErr: nil,
@@ -183,11 +183,11 @@ func TestMultipleBlocks(t *testing.T) {
 					name: "imported_funds_insufficient",
 					op: Op{
 						Gas:       1,
-						GasFeeCap: *uint256.NewInt(2),
+						GasFeeCap: uint256.Int{2},
 						Burn: map[common.Address]AccountDebit{
 							eoaNoBalance: {
-								Amount:     *uint256.NewInt(importedAmount + 1),
-								MinBalance: *uint256.NewInt(importedAmount + 1),
+								Amount:     uint256.Int{importedAmount + 1},
+								MinBalance: uint256.Int{importedAmount + 1},
 							},
 						},
 					},
@@ -197,11 +197,11 @@ func TestMultipleBlocks(t *testing.T) {
 					name: "spend_imported_funds",
 					op: Op{
 						Gas:       1,
-						GasFeeCap: *uint256.NewInt(2),
+						GasFeeCap: uint256.Int{2},
 						Burn: map[common.Address]AccountDebit{
 							eoaNoBalance: {
-								Amount:     *uint256.NewInt(importedAmount),
-								MinBalance: *uint256.NewInt(importedAmount),
+								Amount:     uint256.Int{importedAmount},
+								MinBalance: uint256.Int{importedAmount},
 							},
 						},
 					},
@@ -216,7 +216,7 @@ func TestMultipleBlocks(t *testing.T) {
 		},
 		{
 			wantGasLimit: initialMaxBlockSize,
-			wantBaseFee:  uint256.NewInt(2),
+			wantBaseFee:  uint256.Int{2},
 			txsAfterOps: []*types.Transaction{
 				wallet.SetNonceAndSign(t, 0, &types.LegacyTx{
 					To:       &common.Address{},
@@ -264,7 +264,7 @@ func TestMultipleBlocks(t *testing.T) {
 			// fee.
 			time:         21,
 			wantGasLimit: initialMaxBlockSize,
-			wantBaseFee:  uint256.NewInt(1),
+			wantBaseFee:  uint256.Int{1},
 		},
 	}
 	for i, block := range tests {
@@ -299,9 +299,9 @@ func TestMultipleBlocks(t *testing.T) {
 			LatestEndTime: wantLatestEndTime.Clone(),
 		}
 		for _, bals := range block.wantMinSenderBalances {
-			uBals := make(map[common.Address]*uint256.Int)
+			uBals := make(map[common.Address]uint256.Int)
 			for addr, b := range bals {
-				uBals[addr] = uint256.NewInt(b)
+				uBals[addr] = uint256.Int{b}
 			}
 			want.MinOpBurnerBalances = append(want.MinOpBurnerBalances, uBals)
 		}
@@ -585,7 +585,7 @@ func TestStartBlockQueueFull(t *testing.T) {
 
 		err := state.Apply(Op{
 			Gas:       gas,
-			GasFeeCap: *uint256.NewInt(2),
+			GasFeeCap: uint256.Int{2},
 		})
 		require.NoError(t, err, "Apply()")
 
@@ -616,7 +616,7 @@ func TestStartBlockQueueFullDueToTargetChanges(t *testing.T) {
 
 	err := state.Apply(Op{
 		Gas:       initialMaxBlockSize,
-		GasFeeCap: *uint256.NewInt(1),
+		GasFeeCap: uint256.Int{1},
 	})
 	require.NoError(t, err, "Apply()")
 

@@ -160,8 +160,10 @@ func (tm *Time) excessScalingFactor() gas.Gas {
 
 // BaseFee is equivalent to [Time.Price], returning the result as a uint256 for
 // compatibility with geth/libevm objects.
-func (tm *Time) BaseFee() *uint256.Int {
-	return uint256.NewInt(uint64(tm.Price()))
+func (tm *Time) BaseFee() uint256.Int {
+	var bf uint256.Int
+	bf.SetUint64(uint64(tm.Price()))
+	return bf
 }
 
 // SetRate changes the gas rate per second, rounding down the argument if it is

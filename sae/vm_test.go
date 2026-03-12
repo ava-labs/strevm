@@ -667,7 +667,7 @@ func TestCustomTransactionInclusion(t *testing.T) {
 	var (
 		sender    = sut.wallet.Addresses()[0]
 		receiver  = zeroAddr
-		gasFeeCap = *uint256.NewInt(params.Wei)
+		gasFeeCap = uint256.Int{params.Wei}
 	)
 	const (
 		sent     = 10
@@ -680,8 +680,8 @@ func TestCustomTransactionInclusion(t *testing.T) {
 			Burn: []hookstest.AccountDebit{
 				{
 					Address:    sender,
-					Amount:     *uint256.NewInt(sent),
-					MinBalance: *uint256.NewInt(sent),
+					Amount:     uint256.Int{sent},
+					MinBalance: uint256.Int{sent},
 				},
 			},
 		},
@@ -691,8 +691,8 @@ func TestCustomTransactionInclusion(t *testing.T) {
 			Burn: []hookstest.AccountDebit{
 				{
 					Address:    receiver,
-					Amount:     *uint256.NewInt(params.Wei),
-					MinBalance: *uint256.NewInt(params.Wei),
+					Amount:     uint256.Int{params.Wei},
+					MinBalance: uint256.Int{params.Wei},
 				},
 			},
 		},
@@ -702,7 +702,7 @@ func TestCustomTransactionInclusion(t *testing.T) {
 			Mint: []hookstest.AccountCredit{
 				{
 					Address: receiver,
-					Amount:  *uint256.NewInt(received),
+					Amount:  uint256.Int{received},
 				},
 			},
 		},

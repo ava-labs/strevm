@@ -211,7 +211,7 @@ func TestSubscriptions(t *testing.T) {
 	})
 	mustSendTx(depositTx)
 
-	wantLog := escrow.DepositEvent(sender, amount)
+	wantLog := escrow.DepositEvent(sender, *amount)
 	wantLog.Address = contractAddr
 	wantLog.TxHash = depositTx.Hash()
 	runConsensusLoop(*wantLog)

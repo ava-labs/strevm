@@ -84,7 +84,7 @@ func (b *block) tipPercentiles(percentiles []float64) []*big.Int {
 			txIndex++
 			sumGas += b.txs[txIndex].gas
 		}
-		out[i] = b.txs[txIndex].tip
+		out[i] = new(big.Int).Set(b.txs[txIndex].tip)
 	}
 	return out
 }

@@ -100,7 +100,7 @@ func TestMarkExecuted(t *testing.T) {
 	gasTime := mustNewGasTime(t, time.Unix(42, 0), 1e6, 42, gastime.DefaultGasPriceConfig())
 	wallTime := time.Unix(42, 100)
 	stateRoot := common.Hash{'s', 't', 'a', 't', 'e'}
-	baseFee := uint256.NewInt(314159)
+	baseFee := uint256.Int{314159}
 	var (
 		receipts      types.Receipts
 		cumulativeGas uint64
@@ -149,7 +149,7 @@ func TestMarkExecuted(t *testing.T) {
 			require.NoError(t, b.WaitUntilExecuted(context.Background()), "WaitUntilExecuted()")
 
 			assert.Zero(t, b.ExecutedByGasTime().Compare(gasTime.Time), "ExecutedByGasTime().Compare([original input])")
-			assert.Zero(t, b.BaseFee().Cmp(baseFee), "BaseFee().Cmp([original input])")
+			assert.Equal(t, baseFee, b.BaseFee(), "BaseFee()")
 			assert.Empty(t, cmp.Diff(receipts, b.Receipts(), cmputils.Receipts(), cmputils.NilSlicesAreEmpty[[]*types.Log]()), "Receipts()")
 
 			assert.Equal(t, stateRoot, b.PostExecutionStateRoot(), "PostExecutionStateRoot()") // i.e. this block

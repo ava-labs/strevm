@@ -23,7 +23,7 @@ import (
 // WorstCaseBounds define the limits of certain values, predicted by the block
 // builder, that a [Block] will encounter when eventually executed.
 type WorstCaseBounds struct {
-	MaxBaseFee *uint256.Int
+	MaxBaseFee uint256.Int
 	// LatestEndTime is the worst-case [gastime.Time] after this block's gas has been
 	// consumed and the target updated. Its [gastime.Time.BaseFee] is an upper
 	// bound on the next block's base fee because the next block's
@@ -32,7 +32,7 @@ type WorstCaseBounds struct {
 	// Invariant: keys of individual maps MUST be identical to those of the
 	// respective [hook.Op.Burn] map. For transaction-derived Ops, there is
 	// always 1 entry.
-	MinOpBurnerBalances []map[common.Address]*uint256.Int
+	MinOpBurnerBalances []map[common.Address]uint256.Int
 }
 
 // SetWorstCaseBounds sets the bounds, which MUST be done before execution.
@@ -51,16 +51,17 @@ func (b *Block) WorstCaseBounds() *WorstCaseBounds {
 // Such a violation, while potentially critical, might not result in failed
 // execution so no error is returned and execution MUST continue optimistically.
 // Any such log in development will cause tests to fail.
-func (b *Block) CheckBaseFeeBound(actual *uint256.Int) {
+func (b *Block) CheckBaseFeeBound(actual uint256.Int) {
 	if b.bounds == nil {
 		return
 	}
 
-	switch actual.Cmp(b.bounds.MaxBaseFee) {
+	maxBF := b.bounds.MaxBaseFee
+	switch actual.Cmp(&maxBF) {
 	case 1:
 		b.log.Error("Actual base fee > predicted worst case",
-			zap.Stringer("actual", actual),
-			zap.Stringer("predicted", b.bounds.MaxBaseFee),
+			zap.Stringer("actual", &actual),
+			zap.Stringer("predicted", &maxBF),
 		)
 
 	case 0: // Coverage visualisation
@@ -139,12 +140,12 @@ func (b *Block) checkBalanceBounds(log logging.Logger, stateDB *state.StateDB, o
 			)
 			continue
 		}
-		switch actual := stateDB.GetBalance(addr); actual.Cmp(low) {
+		switch actual := stateDB.GetBalance(addr); actual.Cmp(&low) {
 		case -1:
 			log.Error("Actual balance < predicted worst case",
 				zap.Stringer("burner_or_sender", addr),
 				zap.Stringer("actual", actual),
-				zap.Stringer("predicted", low),
+				zap.Stringer("predicted", &low),
 			)
 
 		case 0: // Coverage visualisation

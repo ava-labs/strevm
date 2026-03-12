@@ -211,7 +211,7 @@ func executionArtefact[T any](b *Block, desc string, get func(*executionResults)
 
 func (e *executionResults) executedByGasTime() *gastime.Time    { return e.byGas.Clone() }
 func (e *executionResults) executedByWallTime() time.Time       { return e.byWall }
-func (e *executionResults) cloneBaseFee() *uint256.Int          { return e.baseFee.Clone() }
+func (e *executionResults) cloneBaseFee() uint256.Int           { return e.baseFee }
 func (e *executionResults) cloneReceiptsSlice() types.Receipts  { return slices.Clone(e.receipts) }
 func (e *executionResults) postExecutionStateRoot() common.Hash { return e.stateRootPost }
 
@@ -227,9 +227,9 @@ func (b *Block) ExecutedByWallTime() time.Time {
 	return executionArtefact(b, "execution (wall) time", (*executionResults).executedByWallTime)
 }
 
-// BaseFee returns the base gas price passed to [Block.MarkExecuted] or nil if
-// no such successful call has been made.
-func (b *Block) BaseFee() *uint256.Int {
+// BaseFee returns the base gas price passed to [Block.MarkExecuted] or the
+// zero value if no such successful call has been made.
+func (b *Block) BaseFee() uint256.Int {
 	return executionArtefact(b, "baseFee", (*executionResults).cloneBaseFee)
 }
 
@@ -299,6 +299,6 @@ func PostExecutionStateRoot(xdb saedb.ExecutionResults, blockNum uint64) (common
 // ExecutionBaseFee mirrors the behaviour of [Block.RestoreExecutionArtefacts],
 // without requiring a full [Block], and only returning the base fee when the
 // block was executed (as against the worst-case prediction).
-func ExecutionBaseFee(xdb saedb.ExecutionResults, blockNum uint64) (*uint256.Int, error) {
+func ExecutionBaseFee(xdb saedb.ExecutionResults, blockNum uint64) (uint256.Int, error) {
 	return persistedExecutionArtefact(xdb, blockNum, (*executionResults).cloneBaseFee)
 }

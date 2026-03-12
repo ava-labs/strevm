@@ -94,7 +94,8 @@ func (b *backend) StateAndHeaderByNumberOrHash(ctx context.Context, numOrHash rp
 	if bl, ok := b.ConsensusCriticalBlock(hash); ok {
 		hdr = bl.Header()
 		hdr.Root = bl.PostExecutionStateRoot()
-		hdr.BaseFee = bl.BaseFee().ToBig()
+		bf := bl.BaseFee()
+		hdr.BaseFee = bf.ToBig()
 	} else {
 		hdr = rawdb.ReadHeader(b.DB(), hash, num)
 
@@ -111,6 +112,7 @@ func (b *backend) StateAndHeaderByNumberOrHash(ctx context.Context, numOrHash rp
 			return nil, nil, err
 		}
 		hdr.BaseFee = bf.ToBig()
+
 	}
 
 	sdb, err := b.StateDB(hdr.Root)
