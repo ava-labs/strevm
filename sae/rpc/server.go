@@ -26,7 +26,7 @@ func (b *backend) server(filter *filters.FilterAPI) (*rpc.Server, error) {
 	}
 
 	// Standard Ethereum APIs are documented at: https://ethereum.org/developers/docs/apis/json-rpc
-	// Geth-specific APIs are documented at: https://geth.ethereum.org/docs/interacting-with-geth/rpc
+	// geth-specific APIs are documented at: https://geth.ethereum.org/docs/interacting-with-geth/rpc
 	apis := []api{
 		// Standard Ethereum node APIs:
 		// - web3_clientVersion
@@ -37,7 +37,7 @@ func (b *backend) server(filter *filters.FilterAPI) (*rpc.Server, error) {
 		// - net_peerCount
 		// - net_version
 		{"net", newNetAPI(b.Peers(), b.ChainConfig().ChainID.Uint64())},
-		// Geth-specific APIs:
+		// geth-specific APIs:
 		// - txpool_content
 		// - txpool_contentFrom
 		// - txpool_inspect
@@ -60,7 +60,7 @@ func (b *backend) server(filter *filters.FilterAPI) (*rpc.Server, error) {
 		// - eth_getUncleCountByBlockHash
 		// - eth_getUncleCountByBlockNumber
 		//
-		// Geth-specific APIs:
+		// geth-specific APIs:
 		// - eth_getHeaderByHash
 		// - eth_getHeaderByNumber
 		{"eth", &blockChainAPI{ethapi.NewBlockChainAPI(b), b}},
@@ -97,7 +97,7 @@ func (b *backend) server(filter *filters.FilterAPI) (*rpc.Server, error) {
 		// - eth_newPendingTransactionFilter
 		// - eth_uninstallFilter
 		//
-		// Geth-specific APIs:
+		// geth-specific APIs:
 		// - eth_subscribe
 		//  - newHeads
 		//  - newPendingTransactions
@@ -109,7 +109,7 @@ func (b *backend) server(filter *filters.FilterAPI) (*rpc.Server, error) {
 
 	if b.config.EnableDBInspecting {
 		apis = append(apis, api{
-			// Geth-specific APIs:
+			// geth-specific APIs:
 			// - debug_chaindbCompact
 			// - debug_chaindbProperty
 			// - debug_dbAncient
@@ -129,7 +129,7 @@ func (b *backend) server(filter *filters.FilterAPI) (*rpc.Server, error) {
 
 	if b.config.EnableProfiling {
 		apis = append(apis, api{
-			// Geth-specific APIs:
+			// geth-specific APIs:
 			// - debug_blockProfile
 			// - debug_cpuProfile
 			// - debug_freeOSMemory
@@ -156,7 +156,7 @@ func (b *backend) server(filter *filters.FilterAPI) (*rpc.Server, error) {
 
 	if !b.config.DisableTracing {
 		apis = append(apis, api{
-			// Geth-specific APIs:
+			// geth-specific APIs:
 			"debug", tracers.NewAPI(b),
 		})
 	}

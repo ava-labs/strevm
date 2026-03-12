@@ -21,7 +21,7 @@ import (
 func (b *backend) GetReceipts(ctx context.Context, hash common.Hash) (types.Receipts, error) {
 	receipts, _, err := b.getReceipts(rpc.BlockNumberOrHashWithHash(hash, false))
 	if err != nil {
-		return nil, nil //nolint:nilerr // This follows Geth behavior for [ethapi.Backend.GetReceipts]
+		return nil, nil //nolint:nilerr // This follows geth behavior for [ethapi.Backend.GetReceipts]
 	}
 	return receipts, nil
 }
@@ -74,7 +74,7 @@ type blockChainAPI struct {
 func (b *blockChainAPI) GetBlockReceipts(ctx context.Context, blockNrOrHash rpc.BlockNumberOrHash) ([]map[string]any, error) {
 	receipts, blk, err := b.b.getReceipts(blockNrOrHash)
 	if err != nil || blk == nil {
-		return nil, nil //nolint:nilerr // This follows Geth behavior for [ethapi.BlockChainAPI.GetBlockReceipts]
+		return nil, nil //nolint:nilerr // This follows geth behavior for [ethapi.BlockChainAPI.GetBlockReceipts]
 	}
 
 	hash := blk.Hash()

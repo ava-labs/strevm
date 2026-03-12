@@ -70,7 +70,7 @@ type Config struct {
 	TxFeeCap              float64 // 0 = no cap
 }
 
-// A Provider provides an [rpc.Server] along with the raw Geth backends that
+// A Provider provides an [rpc.Server] along with the raw geth backends that
 // handle the RPC requests.
 type Provider struct {
 	backend *backend
