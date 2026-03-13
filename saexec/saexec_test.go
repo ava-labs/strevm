@@ -65,12 +65,31 @@ type SUT struct {
 	db     ethdb.Database
 }
 
+// newSUTOption configures [newSUT] behaviour.
+type newSUTOption func(*newSUTConfig)
+
+type newSUTConfig struct {
+	skipGlobalLogger bool
+}
+
+// withoutGlobalLogger skips the global libevm logger setup in [newSUT].
+func withoutGlobalLogger() newSUTOption {
+	return func(c *newSUTConfig) { c.skipGlobalLogger = true }
+}
+
 // newSUT returns a new SUT. Any >= [logging.Error] on the logger will also
 // cancel the returned context, which is useful when waiting for blocks that
 // can never finish execution because of an error.
-func newSUT(tb testing.TB, hooks *saehookstest.Stub) (context.Context, SUT) {
+func newSUT(tb testing.TB, hooks *saehookstest.Stub, opts ...newSUTOption) (context.Context, SUT) {
 	tb.Helper()
 
+	var cfg newSUTConfig
+	for _, o := range opts {
+		o(&cfg)
+	}
+	if !cfg.skipGlobalLogger {
+		saetest.EnableLibEVMTBLogger(tb)
+	}
 	logger := saetest.NewTBLogger(tb, logging.Warn)
 	ctx := logger.CancelOnError(tb.Context())
 
@@ -83,10 +102,10 @@ func newSUT(tb testing.TB, hooks *saehookstest.Stub) (context.Context, SUT) {
 	alloc := saetest.MaxAllocFor(wallet.Addresses()...)
 	genesis := blockstest.NewGenesis(tb, db, xdb, config, alloc, blockstest.WithTrieDBConfig(tdbConfig), blockstest.WithGasTarget(hooks.Target))
 
-	opts := blockstest.WithBlockOptions(
+	chainOpts := blockstest.WithBlockOptions(
 		blockstest.WithLogger(logger),
 	)
-	chain := blockstest.NewChainBuilder(config, genesis, opts)
+	chain := blockstest.NewChainBuilder(config, genesis, chainOpts)
 	src := blocks.Source(chain.GetBlock)
 
 	e, err := New(genesis, src.AsHeaderSource(), config, db, xdb, tdbConfig, hooks, logger)
@@ -643,7 +662,7 @@ func FuzzOpCodes(f *testing.F) {
 	f.Fuzz(func(t *testing.T, code []byte) {
 		t.Parallel() // for corpus in ./testdata/
 
-		_, sut := newSUT(t, defaultHooks())
+		_, sut := newSUT(t, defaultHooks(), withoutGlobalLogger())
 		tx := sut.wallet.SetNonceAndSign(t, 0, &types.LegacyTx{
 			To:       nil, // i.e. contract creation, resulting in `code` being executed
 			GasPrice: big.NewInt(1),
