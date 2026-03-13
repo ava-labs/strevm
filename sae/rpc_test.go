@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/arr4n/shed/testerr"
+	"github.com/ava-labs/avalanchego/utils"
 	"github.com/ava-labs/avalanchego/version"
 	ethereum "github.com/ava-labs/libevm"
 	"github.com/ava-labs/libevm/common"
@@ -45,11 +46,12 @@ import (
 var zeroAddr common.Address
 
 type rpcTest struct {
-	method     string
-	args       []any
-	want       any // untyped nil means no return value.
-	wantErr    testerr.Want
-	eventually bool
+	method       string
+	args         []any
+	want         any // untyped nil means no return value.
+	wantErr      testerr.Want
+	eventually   bool
+	extraCmpOpts []cmp.Option
 }
 
 func (s *SUT) testRPC(ctx context.Context, t *testing.T, tcs ...rpcTest) {
@@ -74,6 +76,7 @@ func (s *SUT) testRPC(ctx context.Context, t *testing.T, tcs ...rpcTest) {
 				t.Errorf("CallContext(...) %s", diff)
 				t.FailNow()
 			}
+			opts := append(opts, tc.extraCmpOpts...)
 			if diff := cmp.Diff(tc.want, got.Elem().Interface(), opts...); diff != "" {
 				t.Errorf("Unmarshalled %T diff (-want +got):\n%s", got.Elem().Interface(), diff)
 			}
@@ -653,7 +656,7 @@ func TestGetLogs(t *testing.T) {
 	// Although the FiltersAPI will work without any blocks indexed, such a
 	// scenario would not test the functionality of the bloom indexer.
 	require.EventuallyWithT(t, func(c *assert.CollectT) {
-		be := sut.rawVM.APIBackend()
+		be := sut.rawVM.GethRPCBackends()
 		_, got := be.BloomStatus()
 		require.Equal(c, uint64(1), got, "%T.BloomStatus() sections", be)
 	}, 5*time.Second, 100*time.Millisecond, "bloom indexer never finished")
@@ -915,8 +918,8 @@ func TestEthSigningAPIs(t *testing.T) {
 		"from":     zeroAddr,
 		"to":       zeroAddr,
 		"gas":      hexutil.Uint64(params.TxGas),
-		"gasPrice": hexutil.Big(*big.NewInt(1)),
-		"value":    hexutil.Big(*big.NewInt(100)),
+		"gasPrice": hexBig(1),
+		"value":    hexBig(100),
 		"nonce":    hexutil.Uint64(0),
 	}
 	sut.testRPC(ctx, t, []rpcTest{
@@ -1320,10 +1323,6 @@ func withDebugAPI() sutOption {
 	})
 }
 
-func ptrTo[T any](v T) *T {
-	return &v
-}
-
 func TestResolveBlockNumberOrHash(t *testing.T) {
 	opt, vmTime := withVMTime(t, time.Unix(saeparams.TauSeconds, 0))
 	ctx, sut := newSUT(t, 0, opt)
@@ -1335,7 +1334,7 @@ func TestResolveBlockNumberOrHash(t *testing.T) {
 		b := sut.runConsensusLoop(t)
 		vmTime.advanceToSettle(ctx, t, b)
 	}
-	_, ok := sut.rawVM.blocks.Load(settled.Hash())
+	_, ok := sut.rawVM.consensusCritical.Load(settled.Hash())
 	require.False(t, ok, "settled block still in VM memory")
 
 	accepted := sut.runConsensusLoop(t)
@@ -1357,15 +1356,15 @@ func TestResolveBlockNumberOrHash(t *testing.T) {
 	}{
 		{
 			name:    "neither_num_nor_hash",
-			wantErr: errNeitherNumberNorHash,
+			wantErr: blocks.ErrNeitherNumberNorHash,
 		},
 		{
 			name: "both_num_and_hash",
 			nOrH: rpc.BlockNumberOrHash{
-				BlockNumber: ptrTo(rpc.LatestBlockNumber),
+				BlockNumber: utils.PointerTo(rpc.LatestBlockNumber),
 				BlockHash:   &common.Hash{},
 			},
-			wantErr: errBothNumberAndHash,
+			wantErr: blocks.ErrBothNumberAndHash,
 		},
 		{
 			name:     "named_block",
@@ -1376,7 +1375,7 @@ func TestResolveBlockNumberOrHash(t *testing.T) {
 		{
 			name: "canonical_hash_in_memory",
 			nOrH: rpc.BlockNumberOrHash{
-				BlockHash: ptrTo(accepted.Hash()),
+				BlockHash: utils.PointerTo(accepted.Hash()),
 			},
 			wantNum:  accepted.NumberU64(),
 			wantHash: accepted.Hash(),
@@ -1384,7 +1383,7 @@ func TestResolveBlockNumberOrHash(t *testing.T) {
 		{
 			name: "canonical_hash_on_disk",
 			nOrH: rpc.BlockNumberOrHash{
-				BlockHash: ptrTo(settled.Hash()),
+				BlockHash: utils.PointerTo(settled.Hash()),
 			},
 			wantNum:  settled.NumberU64(),
 			wantHash: settled.Hash(),
@@ -1392,7 +1391,7 @@ func TestResolveBlockNumberOrHash(t *testing.T) {
 		{
 			name: "non_canonical_when_canonical_not_required",
 			nOrH: rpc.BlockNumberOrHash{
-				BlockHash: ptrTo(nonCanonical.Hash()),
+				BlockHash: utils.PointerTo(nonCanonical.Hash()),
 			},
 			wantNum:  nonCanonical.NumberU64(),
 			wantHash: nonCanonical.Hash(),
@@ -1400,21 +1399,29 @@ func TestResolveBlockNumberOrHash(t *testing.T) {
 		{
 			name: "non_canonical_when_canonical_required",
 			nOrH: rpc.BlockNumberOrHash{
-				BlockHash:        ptrTo(nonCanonical.Hash()),
+				BlockHash:        utils.PointerTo(nonCanonical.Hash()),
 				RequireCanonical: true,
 			},
-			wantErr: errNonCanonicalBlock,
+			wantErr: blocks.ErrNonCanonicalBlock,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			be := sut.rawVM.apiBackend
-			gotNum, gotHash, err := be.resolveBlockNumberOrHash(tt.nOrH)
-			t.Logf("%T.resolveBlockNumberOrhash(%+v)", be, tt.nOrH) // avoids having to repeat in failure messages
+			chain := sut.rawVM.chain()
+			gotNum, gotHash, err := blocks.ResolveRPCNumberOrHash(chain, tt.nOrH)
+			t.Logf("blocks.ResolveBlockNumberOrhash(%T, %+v)", chain, tt.nOrH) // avoids having to repeat in failure messages
 			require.ErrorIs(t, err, tt.wantErr)
 			assert.Equal(t, tt.wantNum, gotNum)
 			assert.Equal(t, tt.wantHash, gotHash)
 		})
 	}
+}
+
+func hexBig(n int64) *hexutil.Big {
+	return (*hexutil.Big)(big.NewInt(n))
+}
+
+func hexBigU(n uint64) *hexutil.Big {
+	return (*hexutil.Big)(new(big.Int).SetUint64(n))
 }

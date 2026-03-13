@@ -1,10 +1,11 @@
-// Copyright (C) 2026, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2025-2026, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
-package sae
+package rpc
 
 import (
 	"context"
+	"io"
 	"math"
 
 	"github.com/ava-labs/libevm/core"
@@ -16,6 +17,37 @@ import (
 	"github.com/ava-labs/libevm/ethdb"
 	"github.com/ava-labs/libevm/params"
 )
+
+// chainIndexer implements the subset of [ethapi.Backend] required to back a
+// [core.ChainIndexer].
+type chainIndexer struct {
+	Chain
+}
+
+var _ core.ChainIndexerChain = chainIndexer{}
+
+func (c chainIndexer) CurrentHeader() *types.Header {
+	return c.LastExecuted().Header()
+}
+
+// A bloomOverrider constructs Bloom filters from persisted receipts instead of
+// relying on the [types.Header] field.
+type bloomOverrider struct {
+	chain Chain
+}
+
+var _ filters.BloomOverrider = bloomOverrider{}
+
+// OverrideHeaderBloom returns the Bloom filter of the receipts generated when
+// executing the respective block, whereas the [types.Header] carries those
+// settled by the block.
+func (b bloomOverrider) OverrideHeaderBloom(header *types.Header) types.Bloom {
+	return types.CreateBloom(rawdb.ReadRawReceipts(
+		b.chain.DB(),
+		header.Hash(),
+		header.Number.Uint64(),
+	))
+}
 
 // bloomIndexer provides the [bloomIndexer.BloomStatus] and
 // [bloomIndexer.ServiceFilter] methods of an [ethapi.Backend] implementation.
@@ -58,6 +90,8 @@ func (b *bloomIndexer) ServiceFilter(ctx context.Context, session *bloombits.Mat
 		go session.Multiplex(eth.BloomRetrievalBatch, eth.BloomRetrievalWait, b.handlers.Requests)
 	}
 }
+
+var _ io.Closer = (*bloomIndexer)(nil)
 
 func (b *bloomIndexer) Close() error {
 	b.handlers.Close()

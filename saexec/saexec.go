@@ -9,6 +9,7 @@ package saexec
 
 import (
 	"fmt"
+	"io"
 	"sync/atomic"
 
 	"github.com/ava-labs/avalanchego/cache/lru"
@@ -20,6 +21,7 @@ import (
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/ethdb"
 	"github.com/ava-labs/libevm/event"
+	"github.com/ava-labs/libevm/libevm/eventual"
 	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/triedb"
 
@@ -43,7 +45,7 @@ type Executor struct {
 	headEvents  event.FeedOf[core.ChainHeadEvent]
 	chainEvents event.FeedOf[core.ChainEvent]
 	logEvents   event.FeedOf[[]*types.Log]
-	receipts    *syncMap[common.Hash, chan *Receipt]
+	receipts    *syncMap[common.Hash, eventual.Value[*Receipt]]
 
 	chainContext *chainContext
 	chainConfig  *params.ChainConfig
@@ -105,13 +107,15 @@ func New(
 		stateCache:  cache,
 		snaps:       snaps,
 		xdb:         xdb,
-		receipts:    newSyncMap[common.Hash, chan *Receipt](),
+		receipts:    newSyncMap[common.Hash, eventual.Value[*Receipt]](),
 	}
 	e.lastExecuted.Store(lastExecuted)
 
 	go e.processQueue()
 	return e, nil
 }
+
+var _ io.Closer = (*Executor)(nil)
 
 // Close shuts down the [Executor], waits for the currently executing block
 // to complete, and then releases all resources.
@@ -133,11 +137,6 @@ func (e *Executor) Close() error {
 	return nil
 }
 
-// SignerForBlock returns the transaction signer for the block.
-func (e *Executor) SignerForBlock(b *types.Block) types.Signer {
-	return types.MakeSigner(e.chainConfig, b.Number(), b.Time())
-}
-
 // ChainConfig returns the config originally passed to [New].
 func (e *Executor) ChainConfig() *params.ChainConfig {
 	return e.chainConfig
@@ -147,6 +146,13 @@ func (e *Executor) ChainConfig() *params.ChainConfig {
 // passed to [New].
 func (e *Executor) ChainContext() core.ChainContext {
 	return e.chainContext
+}
+
+var _ saedb.StateDBOpener = (*Executor)(nil)
+
+// StateDB implements [saedb.StateDBOpener].
+func (e *Executor) StateDB(root common.Hash) (*state.StateDB, error) {
+	return state.New(root, e.stateCache, e.snaps)
 }
 
 // StateCache returns caching database underpinning execution.

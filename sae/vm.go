@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"path/filepath"
 	"slices"
 	"sync"
@@ -22,7 +23,6 @@ import (
 	"github.com/ava-labs/avalanchego/utils/logging"
 	"github.com/ava-labs/avalanchego/version"
 	"github.com/ava-labs/avalanchego/vms/components/gas"
-	"github.com/ava-labs/libevm/accounts"
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core"
 	"github.com/ava-labs/libevm/core/rawdb"
@@ -30,12 +30,14 @@ import (
 	"github.com/ava-labs/libevm/core/txpool/legacypool"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/ethdb"
+	"github.com/ava-labs/libevm/event"
 	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/triedb"
 	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/ava-labs/strevm/blocks"
 	"github.com/ava-labs/strevm/hook"
+	"github.com/ava-labs/strevm/sae/rpc"
 	"github.com/ava-labs/strevm/saedb"
 	"github.com/ava-labs/strevm/saexec"
 	"github.com/ava-labs/strevm/txgossip"
@@ -46,56 +48,59 @@ import (
 // provide a last-synchronous block, which MAY be the genesis.
 type VM struct {
 	*p2p.Network
-	peers *p2p.Peers
+	Peers          *p2p.Peers
+	ValidatorPeers *p2p.Validators
 
 	hooks   hook.Points
 	config  Config
 	snowCtx *snow.Context
 	metrics *prometheus.Registry
 
-	db     ethdb.Database
-	xdb    saedb.ExecutionResults
-	blocks *syncMap[common.Hash, *blocks.Block]
+	db  ethdb.Database
+	xdb saedb.ExecutionResults
 
 	consensusState utils.Atomic[snow.State]
-	preference     atomic.Pointer[blocks.Block]
-	last           struct {
+
+	preference atomic.Pointer[blocks.Block]
+	last       struct {
 		accepted, settled atomic.Pointer[blocks.Block]
 		synchronous       uint64
 	}
+	acceptedBlocks event.FeedOf[*blocks.Block]
+	// Consensus-critical blocks are those either (a) undergoing a consensus
+	// decision; or (b) informing consensus invariants (e.g. artefacts to
+	// settle). The latter is defined as the history of accepted blocks up to,
+	// and including, the last-settled block.
+	consensusCritical *syncMap[common.Hash, *blocks.Block]
 
 	exec         *saexec.Executor
 	mempool      *txgossip.Set
 	blockBuilder blockBuilder
-	apiBackend   *apiBackend
+	rpcProvider  *rpc.Provider
 	newTxs       chan struct{}
 
 	// toClose are closed in reverse order during [VM.Shutdown]. If a resource
 	// depends on another resource, it MUST be added AFTER the resource it
 	// depends on.
-	toClose [](func() error)
+	toClose []io.Closer
 }
+
+// closerFunc adapts a func() error to [io.Closer].
+type closerFunc func() error
+
+var _ io.Closer = (*closerFunc)(nil)
+
+func (f closerFunc) Close() error { return f() }
 
 // A Config configures construction of a new [VM].
 type Config struct {
 	MempoolConfig legacypool.Config
-	RPCConfig     RPCConfig
+	RPCConfig     rpc.Config
 	TrieDBConfig  *triedb.Config
 
 	ExcessAfterLastSynchronous gas.Gas
 
 	Now func() time.Time // defaults to [time.Now] if nil
-}
-
-// RPCConfig provides options for initialization of RPCs for the node.
-type RPCConfig struct {
-	BlocksPerBloomSection uint64
-	EnableDBInspecting    bool
-	EnableProfiling       bool
-	DisableTracing        bool
-	EVMTimeout            time.Duration
-	GasCap                uint64
-	TxFeeCap              float64 // 0 = no cap
 }
 
 // NewVM returns a new [VM] that is ready for use immediately upon return.
@@ -118,12 +123,12 @@ func NewVM[T hook.Transaction](
 		cfg.Now = time.Now
 	}
 	vm := &VM{
-		hooks:   hooks,
-		config:  cfg,
-		snowCtx: snowCtx,
-		metrics: prometheus.NewRegistry(),
-		db:      db,
-		blocks:  newSyncMap[common.Hash, *blocks.Block](),
+		hooks:             hooks,
+		config:            cfg,
+		snowCtx:           snowCtx,
+		metrics:           prometheus.NewRegistry(),
+		db:                db,
+		consensusCritical: newSyncMap[common.Hash, *blocks.Block](),
 	}
 	defer func() {
 		if retErr != nil {
@@ -142,7 +147,7 @@ func NewVM[T hook.Transaction](
 		return nil, fmt.Errorf("%T.ExecutionResultsDB(%q): %v", hooks, snowCtx.ChainDataDir, err)
 	}
 	vm.xdb = xdb
-	vm.toClose = append(vm.toClose, xdb.Close)
+	vm.toClose = append(vm.toClose, &xdb)
 
 	lastSync, err := blocks.New(lastSynchronous, nil, nil, snowCtx.Log)
 	if err != nil {
@@ -180,7 +185,7 @@ func NewVM[T hook.Transaction](
 			return nil, fmt.Errorf("saexec.New(...): %v", err)
 		}
 		vm.exec = exec
-		vm.toClose = append(vm.toClose, exec.Close)
+		vm.toClose = append(vm.toClose, exec)
 
 		last := lastExecuted
 		for b, err := range unexecuted {
@@ -204,7 +209,7 @@ func NewVM[T hook.Transaction](
 		if err != nil {
 			return nil, err
 		}
-		vm.blocks = bMap
+		vm.consensusCritical = bMap
 
 		vm.last.settled.Store(lastSettled)
 		vm.last.accepted.Store(head)
@@ -220,7 +225,7 @@ func NewVM[T hook.Transaction](
 		if err != nil {
 			return nil, fmt.Errorf("txpool.New(...): %v", err)
 		}
-		vm.toClose = append(vm.toClose, txPool.Close)
+		vm.toClose = append(vm.toClose, txPool)
 
 		metrics, err := bloom.NewMetrics("mempool", vm.metrics)
 		if err != nil {
@@ -288,37 +293,23 @@ func NewVM[T hook.Transaction](
 		}()
 
 		vm.Network = network
-		vm.peers = peers
+		vm.Peers = peers
+		vm.ValidatorPeers = validatorPeers
 		vm.mempool.RegisterPushGossiper(pushGossiper)
-		vm.toClose = append(vm.toClose, func() error {
+		vm.toClose = append(vm.toClose, closerFunc(func() error {
 			cancel()
 			wg.Wait()
 			return nil
-		})
+		}))
 	}
 
-	{ // ==========  API Backend  ==========
-		// Empty account manager provides graceful errors for signing
-		// RPCs (e.g. eth_sign) instead of nil-pointer panics. No
-		// actual account functionality is expected.
-		accountManager := accounts.NewManager(&accounts.Config{})
-		vm.toClose = append(vm.toClose, accountManager.Close)
-
-		chainIdx := chainIndexer{vm.exec}
-		override := bloomOverrider{vm.db}
-		// TODO(alarso16): if we are state syncing, we need to provide the first
-		// block available to the indexer via [core.ChainIndexer.AddCheckpoint].
-		bloomIdx := newBloomIndexer(vm.db, chainIdx, override, cfg.RPCConfig.BlocksPerBloomSection)
-		vm.toClose = append(vm.toClose, bloomIdx.Close)
-
-		vm.apiBackend = &apiBackend{
-			vm:             vm,
-			accountManager: accountManager,
-			Set:            vm.mempool,
-			chainIndexer:   chainIdx,
-			bloomIndexer:   bloomIdx,
-			bloomOverrider: override,
+	{ // ==========  RPC Provider  ==========
+		r, err := rpc.New(chain{vm, vm.exec}, cfg.RPCConfig)
+		if err != nil {
+			return nil, err
 		}
+		vm.toClose = append(vm.toClose, r)
+		vm.rpcProvider = r
 	}
 
 	return vm, nil
@@ -354,11 +345,11 @@ func canonicaliseLastSynchronous(db ethdb.Database, block *blocks.Block) error {
 func (vm *VM) signalNewTxsToEngine() {
 	ch := make(chan core.NewTxsEvent)
 	sub := vm.mempool.Pool.SubscribeTransactions(ch, false /*reorgs but ignored by legacypool*/)
-	vm.toClose = append(vm.toClose, func() error {
+	vm.toClose = append(vm.toClose, closerFunc(func() error {
 		defer close(ch)
 		sub.Unsubscribe()
 		return <-sub.Err() // guaranteed to be closed due to unsubscribing
-	})
+	}))
 
 	// See [VM.WaitForEvent] for why this requires a buffer.
 	vm.newTxs = make(chan struct{}, 1)
@@ -425,8 +416,8 @@ func (vm *VM) Shutdown(context.Context) error {
 
 func (vm *VM) close() error {
 	errs := make([]error, len(vm.toClose))
-	for i, fn := range slices.Backward(vm.toClose) {
-		errs[i] = fn()
+	for i, c := range slices.Backward(vm.toClose) {
+		errs[i] = c.Close()
 	}
 	return errors.Join(errs...)
 }
