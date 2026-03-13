@@ -26,7 +26,7 @@ func (tm *Time[D]) assertEq(tb testing.TB, desc string, seconds uint64, fraction
 		fraction: fraction.Numerator,
 		hertz:    fraction.Denominator,
 	}
-	if diff := gocmp.Diff(want, tm, CmpOpt[D](IgnoreRateInvariants)); diff != "" {
+	if diff := gocmp.Diff(want, tm, CmpOpt[D]()); diff != "" {
 		tb.Errorf("%s diff (-want +got):\n%s", desc, diff)
 		return false
 	}
@@ -137,10 +137,6 @@ func TestSetRate(t *testing.T) {
 	tm.Tick(tick)
 	tm.requireEq(t, "baseline", initSeconds, frac(tick, initRate))
 
-	const initInvariant = 200 * divisor
-	invariant := uint64(initInvariant)
-	tm.SetRateInvariants(&invariant)
-
 	steps := []struct {
 		newRate, wantNumerator uint64
 		wantInvariant          uint64
@@ -148,12 +144,10 @@ func TestSetRate(t *testing.T) {
 		{
 			newRate:       initRate / divisor, // no rounding
 			wantNumerator: tick / divisor,
-			wantInvariant: invariant / divisor,
 		},
 		{
 			newRate:       initRate * 5,
 			wantNumerator: tick * 5,
-			wantInvariant: invariant * 5,
 		},
 		{
 			newRate:       15_000, // same as above, but shows the numbers explicitly
@@ -174,10 +168,9 @@ func TestSetRate(t *testing.T) {
 
 	for _, s := range steps {
 		old := tm.Rate()
-		require.NoErrorf(t, tm.SetRate(s.newRate), "%T.SetRate(%d)", tm, s.newRate)
+		tm.SetRate(s.newRate)
 		desc := fmt.Sprintf("rate changed from %d to %d", old, s.newRate)
 		tm.requireEq(t, desc, initSeconds, frac(s.wantNumerator, s.newRate))
-		assert.Equal(t, s.wantInvariant, invariant, "scaled invariant")
 	}
 }
 
@@ -218,7 +211,7 @@ func TestSetRateRoundUpFullSecond(t *testing.T) {
 		t.Run(fmt.Sprintf("%d_of_%d_scaled_down_to_%d", tt.tick, tt.rate, tt.newRate), func(t *testing.T) {
 			tm := New(startUnix, tt.rate)
 			tm.Tick(tt.tick)
-			require.NoError(t, tm.SetRate(tt.newRate), "SetRate(%d) from %d", tt.newRate, tt.rate)
+			tm.SetRate(tt.newRate)
 
 			tm.assertEq(t, "After scaling rate down to force tick to next second", startUnix+1, frac(0, tt.newRate))
 		})
