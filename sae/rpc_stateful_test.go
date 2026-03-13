@@ -25,6 +25,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	saeparams "github.com/ava-labs/strevm/params"
+	saerpc "github.com/ava-labs/strevm/sae/rpc"
 	"github.com/ava-labs/strevm/saetest/escrow"
 )
 
@@ -38,7 +39,7 @@ func TestStateQueryOnUnexecutedBlock(t *testing.T) {
 	sut.testRPC(ctx, t, rpcTest{
 		method:  "eth_getBalance",
 		args:    []any{sut.wallet.Addresses()[0], rpc.BlockNumberOrHashWithHash(b.Hash(), false)},
-		wantErr: testerr.Contains(errNotExecuted.Error()),
+		wantErr: testerr.Contains(saerpc.ErrNotExecuted.Error()),
 	})
 }
 

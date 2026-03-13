@@ -71,7 +71,7 @@ func (b *backend) StateAndHeaderByNumber(ctx context.Context, num rpc.BlockNumbe
 	return b.StateAndHeaderByNumberOrHash(ctx, rpc.BlockNumberOrHashWithNumber(num))
 }
 
-var errNotExecuted = errors.New("not yet executed")
+var ErrNotExecuted = errors.New("not yet executed")
 
 // StateAndHeaderByNumberOrHash fakes the returned [types.Header] to contain
 // post-execution results, mimicking a synchronous block. The [state.StateDB] is
@@ -95,7 +95,7 @@ func (b *backend) StateAndHeaderByNumberOrHash(ctx context.Context, numOrHash rp
 	var hdr *types.Header
 	if bl, ok := b.ConsensusCriticalBlock(hash); ok {
 		if !bl.Executed() {
-			return nil, nil, fmt.Errorf("block %d (%#x): %w", num, hash, errNotExecuted)
+			return nil, nil, fmt.Errorf("block %d (%#x): %w", num, hash, ErrNotExecuted)
 		}
 		hdr = bl.Header()
 		hdr.Root = bl.PostExecutionStateRoot()
