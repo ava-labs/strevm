@@ -5,11 +5,14 @@ package rpc
 
 import (
 	"context"
+	"errors"
 
 	"github.com/ava-labs/libevm/common/hexutil"
 	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/rpc"
 )
+
+var errUnimplemented = errors.New("unimplemented")
 
 // customAPI implements Avalanche-custom RPCs. These are not part of the
 // standard Ethereum JSON-RPC spec or in geth, but are exposed by Avalanche

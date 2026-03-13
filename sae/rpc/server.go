@@ -70,6 +70,7 @@ func (b *backend) server(filter *filters.FilterAPI) (*rpc.Server, error) {
 		// - eth_getTransactionByBlockHashAndIndex
 		// - eth_getTransactionByBlockNumberAndIndex
 		// - eth_getTransactionByHash
+		// - eth_getTransactionCount
 		// - eth_getTransactionReceipt
 		// - eth_sendRawTransaction
 		// - eth_sendTransaction
@@ -77,10 +78,12 @@ func (b *backend) server(filter *filters.FilterAPI) (*rpc.Server, error) {
 		// - eth_signTransaction
 		//
 		// Undocumented APIs:
+		// - eth_fillTransaction
 		// - eth_getRawTransactionByBlockHashAndIndex
 		// - eth_getRawTransactionByBlockNumberAndIndex
 		// - eth_getRawTransactionByHash
 		// - eth_pendingTransactions
+		// - eth_resend
 		{
 			"eth",
 			immediateReceipts{

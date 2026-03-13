@@ -908,6 +908,112 @@ func TestGetReceipts(t *testing.T) {
 	sut.testRPC(ctx, t, tests...)
 }
 
+func TestGetTransactionCount(t *testing.T) {
+	ctx, sut := newSUT(t, 1)
+	addr := sut.wallet.Addresses()[0]
+
+	sut.testRPC(ctx, t, rpcTest{
+		method: "eth_getTransactionCount",
+		args:   []any{addr, "pending"},
+		want:   hexutil.Uint64(0),
+	})
+
+	tx := sut.wallet.SetNonceAndSign(t, 0, &types.DynamicFeeTx{
+		To:        &zeroAddr,
+		Gas:       params.TxGas,
+		GasFeeCap: big.NewInt(1),
+	})
+	sut.mustSendTx(t, tx)
+	sut.requireInMempool(t, tx.Hash())
+
+	sut.testRPC(ctx, t, rpcTest{
+		method: "eth_getTransactionCount",
+		args:   []any{addr, "pending"},
+		want:   hexutil.Uint64(1),
+	})
+}
+
+// eth_fillTransaction fills defaults (nonce, gas price) without signing,
+// so it succeeds without a keystore.
+func TestFillTransaction(t *testing.T) {
+	ctx, sut := newSUT(t, 1)
+	addr := sut.wallet.Addresses()[0]
+
+	// setDefaults fills: nonce from pool, ChainID from config (1), and
+	// London fee fields from SuggestGasTipCap (MinSuggestedTip=1 wei) and
+	// the genesis base fee (InitialBaseFee).
+	tip := big.NewInt(1)
+	feeCap := new(big.Int).Add(
+		tip,
+		new(big.Int).Mul(big.NewInt(params.InitialBaseFee), big.NewInt(2)),
+	)
+	fillArgs := map[string]any{
+		"from":  addr,
+		"to":    zeroAddr,
+		"gas":   hexutil.Uint64(params.TxGas),
+		"value": hexBig(100),
+	}
+	wantFilled := func(t *testing.T, nonce uint64) ethapi.SignTransactionResult {
+		t.Helper()
+		tx := types.NewTx(&types.DynamicFeeTx{
+			ChainID:   big.NewInt(1),
+			Nonce:     nonce,
+			GasTipCap: new(big.Int).Set(tip),
+			GasFeeCap: new(big.Int).Set(feeCap),
+			Gas:       params.TxGas,
+			To:        &zeroAddr,
+			Value:     big.NewInt(100),
+		})
+		raw, err := tx.MarshalBinary()
+		require.NoError(t, err, "tx.MarshalBinary()")
+		return ethapi.SignTransactionResult{Raw: raw, Tx: tx}
+	}
+
+	sut.testRPC(ctx, t, rpcTest{
+		method: "eth_fillTransaction",
+		args:   []any{fillArgs},
+		want:   wantFilled(t, 0),
+	})
+
+	pendingTx := sut.wallet.SetNonceAndSign(t, 0, &types.DynamicFeeTx{
+		To:        &zeroAddr,
+		Gas:       params.TxGas,
+		GasFeeCap: big.NewInt(1),
+	})
+	sut.mustSendTx(t, pendingTx)
+	sut.requireInMempool(t, pendingTx.Hash())
+
+	sut.testRPC(ctx, t, rpcTest{
+		method: "eth_fillTransaction",
+		args:   []any{fillArgs},
+		want:   wantFilled(t, 1),
+	})
+}
+
+// eth_resend replaces a pending transaction with updated gas parameters.
+// Resend re-signs the replacement transaction server-side which requires a
+// keystore, which SAE does not support, so we verify that this RPC fails
+// in an expected way.
+func TestResend(t *testing.T) {
+	ctx, sut := newSUT(t, 1)
+
+	sut.testRPC(ctx, t, rpcTest{
+		method: "eth_resend",
+		// By not including some fields we can force setDefaults() to
+		// call SuggestGasTipCap().
+		args: []any{
+			map[string]any{
+				"to":    zeroAddr,
+				"gas":   hexutil.Uint64(params.TxGas),
+				"nonce": hexutil.Uint64(0),
+			},
+			hexutil.Big(*big.NewInt(2)),
+			hexutil.Uint64(params.TxGas),
+		},
+		wantErr: testerr.Contains("not found"),
+	})
+}
+
 // SAE doesn't really support APIs that require a key on the node, as there is
 // no way to add keys. But, we want to ensure the methods error gracefully.
 func TestEthSigningAPIs(t *testing.T) {
