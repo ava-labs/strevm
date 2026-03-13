@@ -71,6 +71,8 @@ func (b *backend) StateAndHeaderByNumber(ctx context.Context, num rpc.BlockNumbe
 	return b.StateAndHeaderByNumberOrHash(ctx, rpc.BlockNumberOrHashWithNumber(num))
 }
 
+// ErrNotExecuted is returned when a state query targets a block that has been
+// accepted but not yet executed.
 var ErrNotExecuted = errors.New("not yet executed")
 
 // StateAndHeaderByNumberOrHash fakes the returned [types.Header] to contain
