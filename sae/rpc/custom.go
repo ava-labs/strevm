@@ -39,7 +39,7 @@ func (c *customAPI) BaseFee(ctx context.Context) *hexutil.Big {
 // base fee. It returns nil when the last accepted block has no worst-case
 // bounds, which happens on startup.
 func (c *customAPI) estimateNextBaseFee() *big.Int {
-	bounds := c.b.vm.last.accepted.Load().WorstCaseBounds()
+	bounds := c.b.LastAccepted().WorstCaseBounds()
 	if bounds == nil {
 		return nil
 	}
@@ -60,39 +60,39 @@ func (c *customAPI) CallDetailed(ctx context.Context, args any, blockNrOrHash rp
 	panic(errUnimplemented)
 }
 
-// price represents a single gas-price suggestion.
-type price struct {
+// Price represents a single gas-price suggestion.
+type Price struct {
 	GasTip *hexutil.Big `json:"maxPriorityFeePerGas"`
 	GasFee *hexutil.Big `json:"maxFeePerGas"`
 }
 
-func newPrice(tip, baseFee *big.Int) *price {
-	return &price{
+func NewPrice(tip, baseFee *big.Int) *Price {
+	return &Price{
 		GasTip: (*hexutil.Big)(tip),
 		GasFee: (*hexutil.Big)(new(big.Int).Add(tip, baseFee)),
 	}
 }
 
-// priceOptions groups slow/normal/fast gas-price suggestions.
-type priceOptions struct {
-	Slow   *price `json:"slow"`
-	Normal *price `json:"normal"`
-	Fast   *price `json:"fast"`
+// PriceOptions groups slow/normal/fast gas-price suggestions.
+type PriceOptions struct {
+	Slow   *Price `json:"slow"`
+	Normal *Price `json:"normal"`
+	Fast   *Price `json:"fast"`
 }
 
 var minGasTip = big.NewInt(params.Wei)
 
-func newPriceOptions(tip, baseFee *big.Int) *priceOptions {
+func NewPriceOptions(tip, baseFee *big.Int) *PriceOptions {
 	const (
 		slowTipPercent = 95
 		fastTipPercent = 105
 	)
 	slowTip := math.BigMax(scale(tip, slowTipPercent), minGasTip)
 	fastTip := scale(tip, fastTipPercent)
-	return &priceOptions{
-		Slow:   newPrice(slowTip, baseFee),
-		Normal: newPrice(tip, baseFee),
-		Fast:   newPrice(fastTip, baseFee),
+	return &PriceOptions{
+		Slow:   NewPrice(slowTip, baseFee),
+		Normal: NewPrice(tip, baseFee),
+		Fast:   NewPrice(fastTip, baseFee),
 	}
 }
 
@@ -106,7 +106,7 @@ func scale(v *big.Int, percent uint64) *big.Int {
 }
 
 // SuggestPriceOptions returns gas-price suggestions at three speed tiers.
-func (c *customAPI) SuggestPriceOptions(ctx context.Context) (*priceOptions, error) {
+func (c *customAPI) SuggestPriceOptions(ctx context.Context) (*PriceOptions, error) {
 	tip, err := c.b.SuggestGasTipCap(ctx)
 	if err != nil {
 		return nil, err
@@ -119,7 +119,7 @@ func (c *customAPI) SuggestPriceOptions(ctx context.Context) (*priceOptions, err
 	// valid even if the base fee rises for several consecutive
 	// blocks before the transaction is included.
 	doubleBaseFee.Lsh(doubleBaseFee, 1)
-	return newPriceOptions(tip, doubleBaseFee), nil
+	return NewPriceOptions(tip, doubleBaseFee), nil
 }
 
 // NewAcceptedTransactions creates a subscription that is notified each time a

@@ -11,6 +11,7 @@ import (
 	"github.com/ava-labs/libevm/params"
 	"github.com/stretchr/testify/require"
 
+	saerpc "github.com/ava-labs/strevm/sae/rpc"
 	"github.com/ava-labs/strevm/saetest"
 )
 
@@ -37,7 +38,7 @@ func TestBaseFee(t *testing.T) {
 }
 
 func TestNewPriceOptions(t *testing.T) {
-	minimumPrice := &price{
+	minimumPrice := &saerpc.Price{
 		GasTip: hexBig(params.Wei),
 		GasFee: hexBig(2 * params.Wei),
 	}
@@ -49,13 +50,13 @@ func TestNewPriceOptions(t *testing.T) {
 		name    string
 		tip     uint64
 		baseFee uint64
-		want    *priceOptions
+		want    *saerpc.PriceOptions
 	}{
 		{
 			name:    "minimum",
 			tip:     params.Wei,
 			baseFee: params.Wei,
-			want: &priceOptions{
+			want: &saerpc.PriceOptions{
 				Slow:   minimumPrice,
 				Normal: minimumPrice,
 				Fast:   minimumPrice,
@@ -65,10 +66,10 @@ func TestNewPriceOptions(t *testing.T) {
 			name:    "percentages",
 			tip:     tip,
 			baseFee: baseFee,
-			want: &priceOptions{
-				Slow:   newPrice(big.NewInt(tip*.95), big.NewInt(baseFee)),
-				Normal: newPrice(big.NewInt(tip), big.NewInt(baseFee)),
-				Fast:   newPrice(big.NewInt(tip*1.05), big.NewInt(baseFee)),
+			want: &saerpc.PriceOptions{
+				Slow:   saerpc.NewPrice(big.NewInt(tip*.95), big.NewInt(baseFee)),
+				Normal: saerpc.NewPrice(big.NewInt(tip), big.NewInt(baseFee)),
+				Fast:   saerpc.NewPrice(big.NewInt(tip*1.05), big.NewInt(baseFee)),
 			},
 		},
 	}
@@ -76,8 +77,8 @@ func TestNewPriceOptions(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			tip := new(big.Int).SetUint64(test.tip)
 			baseFee := new(big.Int).SetUint64(test.baseFee)
-			got := newPriceOptions(tip, baseFee)
-			require.Equalf(t, test.want, got, "newPriceOptions(%s, %v)", tip, baseFee)
+			got := saerpc.NewPriceOptions(tip, baseFee)
+			require.Equalf(t, test.want, got, "NewPriceOptions(%s, %v)", tip, baseFee)
 		})
 	}
 }
@@ -86,19 +87,19 @@ func TestSuggestPriceOptions(t *testing.T) {
 	ctx, sut := newSUT(t, 0)
 	sut.testRPC(ctx, t, rpcTest{
 		method: "eth_suggestPriceOptions",
-		want:   (*priceOptions)(nil),
+		want:   (*saerpc.PriceOptions)(nil),
 	})
 
 	b := sut.runConsensusLoop(t)
 
-	// This just asserts the round-tripping of the priceOptions through the RPC.
+	// This just asserts the round-tripping of the PriceOptions through the RPC.
 	// See [TestNewPriceOptions] for behavioral tests.
-	tip, err := sut.rawVM.apiBackend.SuggestGasTipCap(t.Context())
+	tip, err := sut.rawVM.GethRPCBackends().SuggestGasTipCap(t.Context())
 	require.NoErrorf(t, err, "SuggestGasTipCap()")
 	doubleBaseFee := b.WorstCaseBounds().LatestEndTime.BaseFee().ToBig()
 	doubleBaseFee.Lsh(doubleBaseFee, 1)
 	sut.testRPC(ctx, t, rpcTest{
 		method: "eth_suggestPriceOptions",
-		want:   newPriceOptions(tip, doubleBaseFee),
+		want:   saerpc.NewPriceOptions(tip, doubleBaseFee),
 	})
 }
