@@ -5,8 +5,10 @@ package rpc
 
 import (
 	"context"
+	"math/big"
 
 	"github.com/ava-labs/libevm/common/hexutil"
+	"github.com/ava-labs/libevm/common/math"
 	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/rpc"
 )
@@ -24,12 +26,24 @@ type customAPI struct {
 
 // GetChainConfig returns the chain configuration.
 func (c *customAPI) GetChainConfig(ctx context.Context) *params.ChainConfig {
-	panic(errUnimplemented)
+	return c.b.ChainConfig()
 }
 
-// BaseFee returns the worst-case base fee of the last accepted block.
-func (c *customAPI) BaseFee(ctx context.Context) (*hexutil.Big, error) {
-	panic(errUnimplemented)
+// BaseFee returns an upper-bound estimate of the base fee for the next block.
+// It returns nil if the estimate is unavailable.
+func (c *customAPI) BaseFee(ctx context.Context) *hexutil.Big {
+	return (*hexutil.Big)(c.estimateNextBaseFee())
+}
+
+// estimateNextBaseFee returns the worst-case upper bound on the next block's
+// base fee. It returns nil when the last accepted block has no worst-case
+// bounds, which happens on startup.
+func (c *customAPI) estimateNextBaseFee() *big.Int {
+	bounds := c.b.LastAccepted().WorstCaseBounds()
+	if bounds == nil {
+		return nil
+	}
+	return bounds.LatestEndTime.BaseFee().ToBig()
 }
 
 // detailedExecutionResult is the response for eth_callDetailed.
@@ -46,22 +60,68 @@ func (c *customAPI) CallDetailed(ctx context.Context, args any, blockNrOrHash rp
 	panic(errUnimplemented)
 }
 
-// price represents a single gas-price suggestion.
-type price struct {
+// Price represents a single gas-price suggestion.
+type Price struct {
 	GasTip *hexutil.Big `json:"maxPriorityFeePerGas"`
 	GasFee *hexutil.Big `json:"maxFeePerGas"`
 }
 
-// priceOptions groups slow/normal/fast gas-price suggestions.
-type priceOptions struct {
-	Slow   *price `json:"slow"`
-	Normal *price `json:"normal"`
-	Fast   *price `json:"fast"`
+// NewPrice returns a [Price] with the given tip and a max fee of tip + baseFee.
+func NewPrice(tip, baseFee *big.Int) *Price {
+	return &Price{
+		GasTip: (*hexutil.Big)(tip),
+		GasFee: (*hexutil.Big)(new(big.Int).Add(tip, baseFee)),
+	}
+}
+
+// PriceOptions groups slow/normal/fast gas-price suggestions.
+type PriceOptions struct {
+	Slow   *Price `json:"slow"`
+	Normal *Price `json:"normal"`
+	Fast   *Price `json:"fast"`
+}
+
+var minGasTip = big.NewInt(params.Wei)
+
+// NewPriceOptions returns slow, normal, and fast [PriceOptions] derived from the given tip and base fee.
+func NewPriceOptions(tip, baseFee *big.Int) *PriceOptions {
+	const (
+		slowTipPercent = 95
+		fastTipPercent = 105
+	)
+	slowTip := math.BigMax(scale(tip, slowTipPercent), minGasTip)
+	fastTip := scale(tip, fastTipPercent)
+	return &PriceOptions{
+		Slow:   NewPrice(slowTip, baseFee),
+		Normal: NewPrice(tip, baseFee),
+		Fast:   NewPrice(fastTip, baseFee),
+	}
+}
+
+var big100 = big.NewInt(100)
+
+// scale returns v * percent / 100.
+func scale(v *big.Int, percent uint64) *big.Int {
+	x := new(big.Int).SetUint64(percent)
+	x.Mul(x, v)
+	return x.Div(x, big100)
 }
 
 // SuggestPriceOptions returns gas-price suggestions at three speed tiers.
-func (c *customAPI) SuggestPriceOptions(ctx context.Context) (*priceOptions, error) {
-	panic(errUnimplemented)
+func (c *customAPI) SuggestPriceOptions(ctx context.Context) (*PriceOptions, error) {
+	tip, err := c.b.SuggestGasTipCap(ctx)
+	if err != nil {
+		return nil, err
+	}
+	doubleBaseFee := c.estimateNextBaseFee()
+	if doubleBaseFee == nil {
+		return nil, nil
+	}
+	// Double the base fee estimate so the suggested maxFeePerGas remains
+	// valid even if the base fee rises for several consecutive
+	// blocks before the transaction is included.
+	doubleBaseFee.Lsh(doubleBaseFee, 1)
+	return NewPriceOptions(tip, doubleBaseFee), nil
 }
 
 // NewAcceptedTransactions creates a subscription that is notified each time a
