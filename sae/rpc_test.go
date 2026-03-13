@@ -1334,7 +1334,7 @@ func TestResolveBlockNumberOrHash(t *testing.T) {
 		b := sut.runConsensusLoop(t)
 		vmTime.advanceToSettle(ctx, t, b)
 	}
-	_, ok := sut.rawVM.inConsensus.Load(settled.Hash())
+	_, ok := sut.rawVM.consensusCritical.Load(settled.Hash())
 	require.False(t, ok, "settled block still in VM memory")
 
 	accepted := sut.runConsensusLoop(t)

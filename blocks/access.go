@@ -18,25 +18,24 @@ import (
 type (
 	// A Chain provides access to the full life cycle of a [Block].
 	Chain interface {
-		InConsensus
+		ConsensusCritical
 		Frontier
 		DB() ethdb.Database
 		XDB() saedb.ExecutionResults
 	}
 
-	// An InConsensus implementation provides access to a [Block] that is
-	// currently in use by a consensus mechanism, at any point in the life
-	// cycle, including recently rejected. It does not guarantee access to every
-	// [Block] being processed by consensus nor does it guarantee that a
-	// returned [Block] is still being processed, but every returned [Block]
-	// MUST be treated as consensus-critical. An InConsensus implementation can
-	// be thought of as a cache of ready-made [Block] instances, and consumers
-	// SHOULD treat return values as read-only.
+	// ConsensusCritical blocks are currently in use by a consensus mechanism,
+	// at any point in the life cycle, including recently rejected. There is no
+	// guarantee of access to every [Block] being used by consensus nor is there
+	// a guarantee that a returned [Block] is still being used, but every
+	// returned [Block] MUST be treated as consensus-critical.
 	//
-	// Implementations MUST be thread-safe and every returned [Block] MUST
-	// uphold all life-cycle invariants.
-	InConsensus interface {
-		BlockInConsensus(common.Hash) (*Block, bool)
+	// A ConsensusCritical source can be thought of as a cache of ready-made
+	// [Block] instances, and consumers SHOULD treat return values as read-only.
+	// Sources MUST be thread-safe and every returned [Block] MUST uphold all
+	// life-cycle invariants.
+	ConsensusCritical interface {
+		ConsensusCriticalBlock(common.Hash) (*Block, bool)
 	}
 
 	// The Frontier is a thread-safe view of all life-cycle stages of a [Block].
@@ -166,7 +165,7 @@ func ResolveRPCNumberOrHash(c Chain, numOrHash rpc.BlockNumberOrHash) (uint64, c
 		return num, rawdb.ReadCanonicalHash(c.DB(), num), nil
 
 	case isHash:
-		if bl, ok := c.BlockInConsensus(hash); ok {
+		if bl, ok := c.ConsensusCriticalBlock(hash); ok {
 			n := bl.NumberU64()
 			if numOrHash.RequireCanonical && hash != rawdb.ReadCanonicalHash(c.DB(), n) {
 				return 0, common.Hash{}, fmt.Errorf("%w: hash %#x", ErrNonCanonicalBlock, hash)
@@ -218,11 +217,11 @@ func FromNumber[T any](c Chain, n rpc.BlockNumber, fromDB DBReaderWithErr[T]) (*
 }
 
 // FromHash returns `fromConsensus()` if a [Block] with the specified hash is
-// returned by the [InConsensus] method of the [Chain], otherwise it returns
+// returned by the [ConsensusCritical] method of the [Chain], otherwise it returns
 // `fromDB()` i.f.f. the block was previously accepted. If `fromDB()` is called
 // then the block is guaranteed to exist if read with [rawdb] functions.
 func FromHash[T any](c Chain, hash common.Hash, fromConsensus Extractor[T], fromDB DBReaderWithErr[T]) (*T, error) {
-	if blk, ok := c.BlockInConsensus(hash); ok {
+	if blk, ok := c.ConsensusCriticalBlock(hash); ok {
 		return fromConsensus(blk), nil
 	}
 	num := rawdb.ReadHeaderNumber(c.DB(), hash)
@@ -240,7 +239,7 @@ func FromNumberOrHash[T any](c Chain, blockNrOrHash rpc.BlockNumberOrHash, fromC
 	if err != nil {
 		return nil, err
 	}
-	if blk, ok := c.BlockInConsensus(hash); ok {
+	if blk, ok := c.ConsensusCriticalBlock(hash); ok {
 		return fromConsensus(blk), nil
 	}
 	return fromDB(c.DB(), hash, n)
@@ -258,7 +257,7 @@ func FromNumberAndHash[T any](c Chain, hash common.Hash, rpcNum rpc.BlockNumber,
 		return nil, err
 	}
 
-	if b, ok := c.BlockInConsensus(hash); ok {
+	if b, ok := c.ConsensusCriticalBlock(hash); ok {
 		if b.NumberU64() != n {
 			return nil, fmt.Errorf("%w: found block number %d for hash %#x, expected %d", ErrNotFound, b.NumberU64(), hash, n)
 		}

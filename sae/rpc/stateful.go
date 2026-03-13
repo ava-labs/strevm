@@ -91,7 +91,7 @@ func (b *backend) StateAndHeaderByNumberOrHash(ctx context.Context, numOrHash rp
 	// TODO(arr4n) the above assumption is brittle under geth/libevm updates;
 	// devise an approach to ensure that it is confirmed on each.
 	var hdr *types.Header
-	if bl, ok := b.BlockInConsensus(hash); ok {
+	if bl, ok := b.ConsensusCriticalBlock(hash); ok {
 		hdr = bl.Header()
 		hdr.Root = bl.PostExecutionStateRoot()
 		hdr.BaseFee = bl.BaseFee().ToBig()
@@ -211,7 +211,7 @@ func (b *backend) StateAtTransaction(ctx context.Context, ethB *types.Block, txI
 // identified by hash and number, checking in-memory blocks first, then falling
 // back to disk.
 func (b *backend) postExecutionStateRoot(hash common.Hash, num uint64) (common.Hash, error) {
-	switch bl, ok := b.BlockInConsensus(hash); {
+	switch bl, ok := b.ConsensusCriticalBlock(hash); {
 	case !ok:
 		return blocks.PostExecutionStateRoot(b.XDB(), num)
 	case bl.Executed():

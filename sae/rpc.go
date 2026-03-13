@@ -34,15 +34,18 @@ type rpcChain struct {
 	*saexec.Executor
 }
 
-func (c rpcChain) Logger() logging.Logger                               { return c.VM.snowCtx.Log }
-func (c rpcChain) Hooks() hook.Points                                   { return c.hooks }
-func (c rpcChain) DB() ethdb.Database                                   { return c.db }
-func (c rpcChain) XDB() saedb.ExecutionResults                          { return c.xdb }
-func (c rpcChain) Mempool() *txgossip.Set                               { return c.mempool }
-func (c rpcChain) Peers() *p2p.Peers                                    { return c.VM.Peers }
-func (c rpcChain) BlockInConsensus(h common.Hash) (*blocks.Block, bool) { return c.inConsensus.Load(h) }
-func (c rpcChain) LastAccepted() *blocks.Block                          { return c.last.accepted.Load() }
-func (c rpcChain) LastSettled() *blocks.Block                           { return c.last.settled.Load() }
+func (c rpcChain) Logger() logging.Logger      { return c.VM.snowCtx.Log }
+func (c rpcChain) Hooks() hook.Points          { return c.hooks }
+func (c rpcChain) DB() ethdb.Database          { return c.db }
+func (c rpcChain) XDB() saedb.ExecutionResults { return c.xdb }
+func (c rpcChain) Mempool() *txgossip.Set      { return c.mempool }
+func (c rpcChain) Peers() *p2p.Peers           { return c.VM.Peers }
+func (c rpcChain) LastAccepted() *blocks.Block { return c.last.accepted.Load() }
+func (c rpcChain) LastSettled() *blocks.Block  { return c.last.settled.Load() }
+
+func (c rpcChain) ConsensusCriticalBlock(h common.Hash) (*blocks.Block, bool) {
+	return c.consensusCritical.Load(h)
+}
 
 func (c rpcChain) NewBlock(eth *types.Block, parent, lastSettled *blocks.Block) (*blocks.Block, error) {
 	return c.blockBuilder.new(eth, parent, lastSettled)

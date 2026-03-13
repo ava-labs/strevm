@@ -140,7 +140,7 @@ func TestRecoverFromDatabase(t *testing.T) {
 				}
 			})
 
-			if diff := cmp.Diff(src.rawVM.inConsensus.m, sut.rawVM.inConsensus.m, blocks.CmpOpt()); diff != "" {
+			if diff := cmp.Diff(src.rawVM.consensusCritical.m, sut.rawVM.consensusCritical.m, blocks.CmpOpt()); diff != "" {
 				t.Errorf("%T.inConsensus diff (-source +recovered):\n%s", src.rawVM, diff)
 			}
 		})

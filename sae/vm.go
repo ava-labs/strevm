@@ -61,13 +61,17 @@ type VM struct {
 
 	consensusState utils.Atomic[snow.State]
 
-	preference  atomic.Pointer[blocks.Block]
-	inConsensus *syncMap[common.Hash, *blocks.Block]
-	last        struct {
+	preference atomic.Pointer[blocks.Block]
+	last       struct {
 		accepted, settled atomic.Pointer[blocks.Block]
 		synchronous       uint64
 	}
 	acceptedBlocks event.FeedOf[*blocks.Block]
+	// Consensus-critical blocks are those either (a) undergoing a consensus
+	// decision; or (b) informing consensus invariants (e.g. artefacts to
+	// settle). The latter is defined as the history of accepted blocks up to,
+	// and including, the last-settled block.
+	consensusCritical *syncMap[common.Hash, *blocks.Block]
 
 	exec         *saexec.Executor
 	mempool      *txgossip.Set
@@ -119,12 +123,12 @@ func NewVM[T hook.Transaction](
 		cfg.Now = time.Now
 	}
 	vm := &VM{
-		hooks:       hooks,
-		config:      cfg,
-		snowCtx:     snowCtx,
-		metrics:     prometheus.NewRegistry(),
-		db:          db,
-		inConsensus: newSyncMap[common.Hash, *blocks.Block](),
+		hooks:             hooks,
+		config:            cfg,
+		snowCtx:           snowCtx,
+		metrics:           prometheus.NewRegistry(),
+		db:                db,
+		consensusCritical: newSyncMap[common.Hash, *blocks.Block](),
 	}
 	defer func() {
 		if retErr != nil {
@@ -205,7 +209,7 @@ func NewVM[T hook.Transaction](
 		if err != nil {
 			return nil, err
 		}
-		vm.inConsensus = bMap
+		vm.consensusCritical = bMap
 
 		vm.last.settled.Store(lastSettled)
 		vm.last.accepted.Store(head)
