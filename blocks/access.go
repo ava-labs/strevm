@@ -247,16 +247,20 @@ func FromNumberOrHash[T any](c Chain, blockNrOrHash rpc.BlockNumberOrHash, fromC
 
 // FromNumberAndHash behaves like [FromNumberOrHash] except that it accepts both
 // the number and hash as separate, required arguments. It verifies that any
-// [Block] found in consensus has the expected number.
+// [Block] found in consensus has the expected number, and disallows named block
+// numbers such as [rpc.LatestBlockNumber].
+//
+// Unlike [FromNumberOrHash], there are no canonicality guarantees as the
+// provision of a hash resolves the ambiguity described in the comment on
+// [ErrFutureBlockNotResolved].
 func FromNumberAndHash[T any](c Chain, hash common.Hash, rpcNum rpc.BlockNumber, fromConsensus Extractor[T], fromDB DBReaderWithErr[T]) (*T, error) {
 	if hash == (common.Hash{}) {
 		return nil, errors.New("empty block hash")
 	}
-	n, err := ResolveRPCNumber(c, rpcNum)
-	if err != nil {
-		return nil, err
+	if rpcNum < 0 {
+		return nil, errors.New("named blocks not supported")
 	}
-
+	n := uint64(rpcNum)
 	if b, ok := c.ConsensusCriticalBlock(hash); ok {
 		if b.NumberU64() != n {
 			return nil, fmt.Errorf("%w: found block number %d for hash %#x, expected %d", ErrNotFound, b.NumberU64(), hash, n)
