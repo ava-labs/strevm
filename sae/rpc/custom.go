@@ -66,6 +66,7 @@ type Price struct {
 	GasFee *hexutil.Big `json:"maxFeePerGas"`
 }
 
+// NewPrice returns a [Price] with the given tip and a max fee of tip + baseFee.
 func NewPrice(tip, baseFee *big.Int) *Price {
 	return &Price{
 		GasTip: (*hexutil.Big)(tip),
@@ -82,6 +83,7 @@ type PriceOptions struct {
 
 var minGasTip = big.NewInt(params.Wei)
 
+// NewPriceOptions returns slow, normal, and fast [PriceOptions] derived from the given tip and base fee.
 func NewPriceOptions(tip, baseFee *big.Int) *PriceOptions {
 	const (
 		slowTipPercent = 95
