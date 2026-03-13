@@ -71,6 +71,10 @@ func (b *backend) StateAndHeaderByNumber(ctx context.Context, num rpc.BlockNumbe
 	return b.StateAndHeaderByNumberOrHash(ctx, rpc.BlockNumberOrHashWithNumber(num))
 }
 
+// ErrNotExecuted is returned when a state query targets a block that has been
+// accepted but not yet executed.
+var ErrNotExecuted = errors.New("not yet executed")
+
 // StateAndHeaderByNumberOrHash fakes the returned [types.Header] to contain
 // post-execution results, mimicking a synchronous block. The [state.StateDB] is
 // opened at the post-execution root, as carried by the faked header.
@@ -92,6 +96,9 @@ func (b *backend) StateAndHeaderByNumberOrHash(ctx context.Context, numOrHash rp
 	// devise an approach to ensure that it is confirmed on each.
 	var hdr *types.Header
 	if bl, ok := b.ConsensusCriticalBlock(hash); ok {
+		if !bl.Executed() {
+			return nil, nil, fmt.Errorf("block %d (%#x): %w", num, hash, ErrNotExecuted)
+		}
 		hdr = bl.Header()
 		hdr.Root = bl.PostExecutionStateRoot()
 		hdr.BaseFee = bl.BaseFee().ToBig()

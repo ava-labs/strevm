@@ -25,8 +25,23 @@ import (
 	"github.com/stretchr/testify/require"
 
 	saeparams "github.com/ava-labs/strevm/params"
+	saerpc "github.com/ava-labs/strevm/sae/rpc"
 	"github.com/ava-labs/strevm/saetest/escrow"
 )
+
+// TestStateQueryOnUnexecutedBlock verifies that state-dependent RPC calls
+// (e.g. eth_getBalance) on a verified-but-unexecuted in-memory block return an
+// error instead of reading zero-valued execution artifacts.
+func TestStateQueryOnUnexecutedBlock(t *testing.T) {
+	ctx, sut := newSUT(t, 1)
+	b := unwrap(t, sut.createAndVerifyBlock(t, sut.lastAcceptedBlock(t)))
+
+	sut.testRPC(ctx, t, rpcTest{
+		method:  "eth_getBalance",
+		args:    []any{sut.wallet.Addresses()[0], rpc.BlockNumberOrHashWithHash(b.Hash(), false)},
+		wantErr: testerr.Contains(saerpc.ErrNotExecuted.Error()),
+	})
+}
 
 func TestDebugTrace(t *testing.T) {
 	ctx, sut := newSUT(t, 1)
