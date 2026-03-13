@@ -125,7 +125,7 @@ type (
 
 	// ExecutionResults holds the outputs of [Execute].
 	ExecutionResults struct {
-		BaseFee  *uint256.Int
+		BaseFee  uint256.Int
 		StateDB  *state.StateDB
 		Signer   types.Signer
 		BlockCtx vm.BlockContext

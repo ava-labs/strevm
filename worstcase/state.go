@@ -54,10 +54,10 @@ type State struct {
 
 	qSize, blockSize, maxBlockSize gas.Gas
 
-	baseFee             *uint256.Int
+	baseFee             uint256.Int
 	curr                *types.Header
 	signer              types.Signer
-	minOpBurnerBalances []map[common.Address]*uint256.Int
+	minOpBurnerBalances []map[common.Address]uint256.Int
 }
 
 var errSettledBlockNotExecuted = errors.New("block marked for settling has not finished execution yet")
@@ -167,7 +167,7 @@ func (s *State) GasLimit() uint64 {
 }
 
 // BaseFee returns the worst-case base fee for the current block.
-func (s *State) BaseFee() *uint256.Int {
+func (s *State) BaseFee() uint256.Int {
 	return s.baseFee
 }
 
@@ -233,17 +233,17 @@ func bigToUint256(v *big.Int) (_ uint256.Int, overflow bool) {
 }
 
 // mulAdd returns a*b + c and reports whether overflow occurred.
-func mulAdd(a uint64, b, c *uint256.Int) (_ uint256.Int, overflow bool) {
+func mulAdd(a uint64, b, c uint256.Int) (_ uint256.Int, overflow bool) {
 	var x uint256.Int
 	x.SetUint64(a)
-	if _, overflow := x.MulOverflow(&x, b); overflow {
+	if _, overflow := x.MulOverflow(&x, &b); overflow {
 		return uint256.Int{}, true
 	}
-	_, overflow = x.AddOverflow(&x, c)
+	_, overflow = x.AddOverflow(&x, &c)
 	return x, overflow
 }
 
-func txToOp(from common.Address, tx *types.Transaction, baseFee *uint256.Int) (hook.Op, error) {
+func txToOp(from common.Address, tx *types.Transaction, baseFee uint256.Int) (hook.Op, error) {
 	type Op = hook.Op // for convenience when returning zero value
 
 	gasFeeCap, overflow := bigToUint256(tx.GasFeeCap())
@@ -254,7 +254,7 @@ func txToOp(from common.Address, tx *types.Transaction, baseFee *uint256.Int) (h
 	if overflow {
 		return Op{}, core.ErrInsufficientFundsForTransfer
 	}
-	minBalance, overflow := mulAdd(tx.Gas(), &gasFeeCap, &value)
+	minBalance, overflow := mulAdd(tx.Gas(), gasFeeCap, value)
 	if overflow {
 		return Op{}, errCostOverflow
 	}
@@ -265,11 +265,11 @@ func txToOp(from common.Address, tx *types.Transaction, baseFee *uint256.Int) (h
 		return Op{}, core.ErrTipVeryHigh
 	}
 	var effectiveGasPrice uint256.Int
-	if _, overflow := effectiveGasPrice.AddOverflow(baseFee, &gasTipCap); overflow || gasFeeCap.Lt(&effectiveGasPrice) {
+	if _, overflow := effectiveGasPrice.AddOverflow(&baseFee, &gasTipCap); overflow || gasFeeCap.Lt(&effectiveGasPrice) {
 		effectiveGasPrice.Set(&gasFeeCap)
 	}
 
-	amount, overflow := mulAdd(tx.Gas(), &effectiveGasPrice, &value)
+	amount, overflow := mulAdd(tx.Gas(), effectiveGasPrice, value)
 	if overflow {
 		return Op{}, errCostOverflow
 	}
@@ -302,11 +302,11 @@ func (s *State) Apply(o hook.Op) error {
 	if o.Gas > s.maxBlockSize-s.blockSize {
 		return core.ErrGasLimitReached
 	}
-	if o.GasFeeCap.Lt(s.baseFee) {
+	if o.GasFeeCap.Lt(&s.baseFee) {
 		return core.ErrFeeCapTooLow
 	}
 
-	burnerBalances := make(map[common.Address]*uint256.Int, len(o.Burn))
+	burnerBalances := make(map[common.Address]uint256.Int, len(o.Burn))
 	for from, ad := range o.Burn {
 		switch nonce, next := ad.Nonce, s.db.GetNonce(from); {
 		case nonce < next:
@@ -317,7 +317,7 @@ func (s *State) Apply(o hook.Op) error {
 			return core.ErrNonceMax
 		}
 		// MUST be before `o.ApplyTo()` to mirror [saexec.Executor] check
-		burnerBalances[from] = s.db.GetBalance(from)
+		burnerBalances[from] = *s.db.GetBalance(from)
 	}
 
 	if err := o.ApplyTo(s.db); err != nil {

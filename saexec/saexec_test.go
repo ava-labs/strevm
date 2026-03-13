@@ -297,7 +297,7 @@ func TestExecution(t *testing.T) {
 		t.Logf("Depositing %d", val)
 
 		txs = append(txs, tx)
-		ev := escrow.DepositEvent(eoa, uint256.NewInt(val))
+		ev := escrow.DepositEvent(eoa, uint256.Int{val})
 		ev.Address = contract
 		ev.TxHash = tx.Hash()
 		want = append(want, &types.Receipt{
@@ -383,8 +383,8 @@ func TestEndOfBlockOps(t *testing.T) {
 			Burn: []saehookstest.AccountDebit{
 				{
 					Address:    exportEOA,
-					Amount:     *uint256.NewInt(10),
-					MinBalance: *uint256.NewInt(10),
+					Amount:     uint256.Int{10},
+					MinBalance: uint256.Int{10},
 				},
 			},
 		},
@@ -393,7 +393,7 @@ func TestEndOfBlockOps(t *testing.T) {
 			Mint: []saehookstest.AccountCredit{
 				{
 					Address: importEOA,
-					Amount:  *uint256.NewInt(100),
+					Amount:  uint256.Int{100},
 				},
 			},
 		},
@@ -583,8 +583,9 @@ func TestGasAccounting(t *testing.T) {
 			if i > 0 {
 				wantBaseFee = steps[i-1].wantPriceAfter
 			}
-			require.Truef(t, b.BaseFee().IsUint64(), "%T.BaseFee().IsUint64()", b)
-			assert.Equalf(t, wantBaseFee, gas.Price(b.BaseFee().Uint64()), "%T.BaseFee().Uint64()", b)
+			gotBF := b.BaseFee()
+			require.Truef(t, gotBF.IsUint64(), "%T.BaseFee().IsUint64()", b)
+			assert.Equalf(t, wantBaseFee, gas.Price(gotBF.Uint64()), "%T.BaseFee().Uint64()", b)
 
 			t.Run("EffectiveGasPrice", func(t *testing.T) {
 				want := uint256.NewInt(uint64(wantBaseFee) + step.gasTipCap)

@@ -57,7 +57,7 @@ func callDataWithAddr(sig string, addr common.Address) []byte {
 
 // DepositEvent returns the [types.Log] emitted by a successful transaction with
 // [CallDataToDeposit] data.
-func DepositEvent(recipient common.Address, amount *uint256.Int) *types.Log {
+func DepositEvent(recipient common.Address, amount uint256.Int) *types.Log {
 	return &types.Log{
 		Topics: []common.Hash{crypto.Keccak256Hash([]byte("Deposit(address,uint256)"))},
 		Data: slices.Concat(
