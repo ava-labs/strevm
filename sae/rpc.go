@@ -25,32 +25,32 @@ func (vm *VM) GethRPCBackends() saerpc.GethBackends {
 	return vm.rpcProvider.GethBackends()
 }
 
-func (vm *VM) rpcChain() saerpc.Chain {
-	return rpcChain{vm, vm.exec}
+func (vm *VM) chain() saerpc.Chain {
+	return chain{vm, vm.exec}
 }
 
-type rpcChain struct {
+type chain struct {
 	*VM
 	*saexec.Executor
 }
 
-func (c rpcChain) Logger() logging.Logger      { return c.VM.snowCtx.Log }
-func (c rpcChain) Hooks() hook.Points          { return c.hooks }
-func (c rpcChain) DB() ethdb.Database          { return c.db }
-func (c rpcChain) XDB() saedb.ExecutionResults { return c.xdb }
-func (c rpcChain) Mempool() *txgossip.Set      { return c.mempool }
-func (c rpcChain) Peers() *p2p.Peers           { return c.VM.Peers }
-func (c rpcChain) LastAccepted() *blocks.Block { return c.last.accepted.Load() }
-func (c rpcChain) LastSettled() *blocks.Block  { return c.last.settled.Load() }
+func (c chain) Logger() logging.Logger      { return c.VM.snowCtx.Log }
+func (c chain) Hooks() hook.Points          { return c.hooks }
+func (c chain) DB() ethdb.Database          { return c.db }
+func (c chain) XDB() saedb.ExecutionResults { return c.xdb }
+func (c chain) Mempool() *txgossip.Set      { return c.mempool }
+func (c chain) Peers() *p2p.Peers           { return c.VM.Peers }
+func (c chain) LastAccepted() *blocks.Block { return c.last.accepted.Load() }
+func (c chain) LastSettled() *blocks.Block  { return c.last.settled.Load() }
 
-func (c rpcChain) ConsensusCriticalBlock(h common.Hash) (*blocks.Block, bool) {
+func (c chain) ConsensusCriticalBlock(h common.Hash) (*blocks.Block, bool) {
 	return c.consensusCritical.Load(h)
 }
 
-func (c rpcChain) NewBlock(eth *types.Block, parent, lastSettled *blocks.Block) (*blocks.Block, error) {
+func (c chain) NewBlock(eth *types.Block, parent, lastSettled *blocks.Block) (*blocks.Block, error) {
 	return c.blockBuilder.new(eth, parent, lastSettled)
 }
 
-func (c rpcChain) SubscribeAcceptedBlocks(ch chan<- *blocks.Block) event.Subscription {
+func (c chain) SubscribeAcceptedBlocks(ch chan<- *blocks.Block) event.Subscription {
 	return c.acceptedBlocks.Subscribe(ch)
 }

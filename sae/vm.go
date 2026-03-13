@@ -304,7 +304,7 @@ func NewVM[T hook.Transaction](
 	}
 
 	{ // ==========  RPC Provider  ==========
-		r, err := rpc.New(vm.rpcChain(), cfg.RPCConfig)
+		r, err := rpc.New(chain{vm, vm.exec}, cfg.RPCConfig)
 		if err != nil {
 			return nil, err
 		}

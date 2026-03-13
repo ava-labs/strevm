@@ -160,7 +160,7 @@ func (vm *VM) GetBlock(ctx context.Context, id ids.ID) (*blocks.Block, error) {
 	var _ snowman.Block // protect the input to allow comment linking
 
 	b, err := blocks.FromHash(
-		vm.rpcChain(),
+		vm.chain(),
 		common.Hash(id),
 		func(b *blocks.Block) *blocks.Block {
 			return b
