@@ -260,7 +260,7 @@ func FromNumberAndHash[T any](c Chain, hash common.Hash, rpcNum rpc.BlockNumber,
 	if rpcNum < 0 {
 		return nil, errors.New("named blocks not supported")
 	}
-	n := uint64(rpcNum)
+	n := uint64(rpcNum) //nolint:gosec // Non-negative check performed above
 	if b, ok := c.ConsensusCriticalBlock(hash); ok {
 		if b.NumberU64() != n {
 			return nil, fmt.Errorf("%w: found block number %d for hash %#x, expected %d", ErrNotFound, b.NumberU64(), hash, n)
