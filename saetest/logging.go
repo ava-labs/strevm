@@ -10,8 +10,11 @@ import (
 	"testing"
 
 	"github.com/ava-labs/avalanchego/utils/logging"
+	"github.com/ava-labs/libevm/libevm/ethtest"
+	"github.com/ava-labs/libevm/log"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
+	"golang.org/x/exp/slog"
 )
 
 // logger is the common wrapper around [LogRecorder] and [tbLogger] handlers,
@@ -163,4 +166,19 @@ func (l *TBLogger) log(lvl logging.Level, msg string, fields ...zap.Field) {
 	}
 	_, file, line, _ := runtime.Caller(3)
 	to("[Log@%s] %s %v - %s:%d", lvl, msg, enc.Fields, file, line)
+}
+
+// EnableLibEVMTBLogger redirects all libevm logs to tb. Logs at error level
+// and above are treated as test failures. The original logger is restored
+// during `tb` cleanup.
+//
+// WARNING: sets a global logger so it must NOT be used in parallel tests.
+func EnableLibEVMTBLogger(tb testing.TB) {
+	tb.Helper()
+
+	old := log.Root()
+	tb.Cleanup(func() {
+		log.SetDefault(old)
+	})
+	log.SetDefault(log.NewLogger(ethtest.NewTBLogHandler(tb, slog.LevelError)))
 }
