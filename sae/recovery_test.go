@@ -72,12 +72,7 @@ func TestRecoverFromDatabase(t *testing.T) {
 			continue
 		}
 		t.Run("recover", func(t *testing.T) {
-			newDB := memdb.New()
-			it := srcDB.NewIterator()
-			for it.Next() {
-				require.NoError(t, newDB.Put(it.Key(), it.Value()))
-			}
-			require.NoError(t, it.Error())
+			newDB := copyDB(t, srcDB)
 
 			sutCtx, sut := newSUT(t, 1, sutOpt, withExecResultsDB(srcHDB.Clone()), options.Func[sutConfig](func(c *sutConfig) {
 				c.db = newDB
@@ -145,4 +140,74 @@ func TestRecoverFromDatabase(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestRecoverWorstCaseUncommitted(t *testing.T) {
+	// block 4095 settled by 4096
+	// block 4097 still uses 4095 as settled root
+	sutOpt, vmTime := withVMTime(t, time.Unix(saeparams.TauSeconds, 0))
+
+	var srcDB database.Database
+	srcHDB := saetest.NewHeightIndexDB()
+	ctx, src := newSUT(t, 1, sutOpt, withExecResultsDB(srcHDB), options.Func[sutConfig](func(c *sutConfig) {
+		srcDB = c.db
+		c.logLevel = logging.Warn
+	}))
+
+	rng := rand.New(rand.NewPCG(0, 0)) //nolint:gosec // Deterministic replay for tests
+	newTx := func() *types.Transaction {
+		return src.wallet.SetNonceAndSign(t, 0, &types.LegacyTx{
+			To:       nil,                      // execute `Data` as code for contract "construction"
+			Data:     []byte{byte(vm.INVALID)}, // revert and consume all gas
+			Gas:      params.TxGas + params.CreateGas + params.TxDataNonZeroGasFrontier + rng.Uint64N(2e6),
+			GasPrice: big.NewInt(100),
+		})
+	}
+
+	lastSettled := src.lastAcceptedBlock(t) // will be block [saedb.CommitTrieDBEvery] - 1
+	for lastSettled.Height() < saedb.CommitTrieDBEvery-1 {
+		vmTime.advanceToSettle(ctx, t, lastSettled)
+		lastSettled = src.runConsensusLoop(t, newTx())
+		require.Len(t, lastSettled.Transactions(), 1)
+	}
+
+	vmTime.advance(time.Second)                       // < [saeparams.Tau]
+	lastPersisted := src.runConsensusLoop(t, newTx()) // height is [saedb.CommitTrieDBEvery]
+
+	vmTime.advanceToSettle(ctx, t, lastSettled)
+	unaccepted := src.createAndVerifyBlock(t, lastPersisted, newTx())
+	unacceptedB := unwrap(t, unaccepted)
+
+	// check test invariants
+	require.NoError(t, lastPersisted.WaitUntilExecuted(ctx))
+	require.False(t, lastSettled.Settled())
+	require.Equal(t, lastSettled.PostExecutionStateRoot(), unacceptedB.EthBlock().Root())
+
+	t.Run("recover", func(t *testing.T) {
+		newDB := copyDB(t, srcDB)
+
+		ctx, sut := newSUT(t, 1, sutOpt, withExecResultsDB(srcHDB.Clone()), options.Func[sutConfig](func(c *sutConfig) {
+			c.db = newDB
+			c.logLevel = logging.Warn
+		}))
+
+		// Try and accept block on unknown state
+		b, err := sut.ParseBlock(ctx, unaccepted.Bytes())
+		require.NoErrorf(t, err, "%T.ParseBlock()", sut)
+		require.NoErrorf(t, b.Verify(ctx), "%T.Verify()", b)
+		require.NoErrorf(t, b.Accept(ctx), "%T.Verify()", b)
+	})
+}
+
+func copyDB(t *testing.T, srcDB database.Database) database.Database {
+	t.Helper()
+
+	newDB := memdb.New()
+	it := srcDB.NewIterator()
+	for it.Next() {
+		require.NoError(t, newDB.Put(it.Key(), it.Value()))
+	}
+	require.NoError(t, it.Error())
+
+	return newDB
 }

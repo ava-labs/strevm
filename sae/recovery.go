@@ -44,7 +44,7 @@ func (rec *recovery) newCanonicalBlock(num uint64, parent *blocks.Block) (*block
 }
 
 func (rec *recovery) lastBlockWithStateRootAvailable() (*blocks.Block, error) {
-	// TODO(alarso16): unless there was an ungraceful shutdown, we can use the last executed block.
+	// num represents the last block with the settled state available.
 	num := saedb.LastCommittedTrieDBHeight(
 		rawdb.ReadHeadHeader(rec.db).Number.Uint64(),
 	)
@@ -56,20 +56,38 @@ func (rec *recovery) lastBlockWithStateRootAvailable() (*blocks.Block, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := b.RestoreExecutionArtefacts(rec.db, rec.xdb, rec.chainConfig); err != nil {
-		return nil, err
-	}
-	{
-		// TODO(alarso16) This error can only occur once we support Firewood.
-		// Reassess the likelihood of occurrence vs the need for a preemptive
-		// fix, which would require trying the root [params.CommitTrieDBEvery]
-		// blocks earlier.
-		root := b.PostExecutionStateRoot()
-		if _, err := state.NewDatabaseWithConfig(rec.db, rec.config.DBConfig.TrieDBConfig).OpenTrie(root); err != nil {
-			return nil, fmt.Errorf("database corrupted: latest expected state root (block %d / %#x) unavailable: %v", b.NumberU64(), b.Hash(), err)
+	lookingFor := b.Header().Root // last settled root
+
+	// TODO(alarso16): What if the blocks are too fast to settle within the constant below?
+	// Any number is arbitrary.
+	const maxReexec uint64 = 100
+	for h := num; h > 0 && num-h < maxReexec; h-- {
+		b, err := rec.newCanonicalBlock(h, nil)
+		if err != nil {
+			return nil, err
 		}
+		if err := b.RestoreExecutionArtefacts(rec.db, rec.xdb, rec.chainConfig); err != nil {
+			return nil, err
+		}
+		{
+			// TODO(alarso16): When Firewood is added, the exact root may be unknown.
+			root := b.PostExecutionStateRoot()
+			if root != lookingFor {
+				continue
+			}
+
+			_, err := state.NewDatabaseWithConfig(rec.db, rec.config.DBConfig.TrieDBConfig).OpenTrie(root)
+			if err != nil {
+				return nil, fmt.Errorf(
+					"database corrupted: checking for state root (block %d / %#x): %v",
+					b.NumberU64(), b.Hash(), err,
+				)
+			}
+		}
+		return b, nil
 	}
-	return b, nil
+
+	return nil, fmt.Errorf("checked %d blocks from %d", saedb.CommitTrieDBEvery, num)
 }
 
 // recoverFromDB returns the block to be used as the `lastExecuted` argument to

@@ -73,21 +73,11 @@ func NewTracker(db ethdb.Database, c Config, lastExecuted common.Hash, log loggi
 //
 // This state will be available in memory until [Tracker.Untrack] has been
 // called for the root as many times as [Tracker.Track] has been called.
-func (t *Tracker) Track(root common.Hash, height uint64) error {
+func (t *Tracker) Track(root common.Hash) {
 	// Because [Tracker.Untrack] is always expected to be called (whether the state root changed or not),
 	// we must always add an additional reference
 	t.reference(root) // keepalive until dereference
 	t.currentRoot = root
-
-	if !t.isArchival && !ShouldCommitTrieDB(height) {
-		return nil
-	}
-
-	tdb := t.cache.TrieDB()
-	if err := tdb.Commit(root, false /* log */); err != nil {
-		return fmt.Errorf("%T.Commit(%#x) at end of block %d: %v", tdb, root, height, err)
-	}
-	return nil
 }
 
 func (t *Tracker) reference(root common.Hash) {
@@ -99,6 +89,33 @@ func (t *Tracker) reference(root common.Hash) {
 	if err := t.cache.TrieDB().Reference(root, common.Hash{}); err != nil {
 		log.Error("*triedb.Database.Reference()", zap.Error(err))
 	}
+}
+
+// CheckCommit uses the provided height to decide if any root needs committed, following
+// the below rules (in order):
+//
+// 1. If [Config.Archival] is true, then `executionRoot` will be committed.
+// 2. If [ShouldCommitTrieDB] based on `height`, `settledRoot` is committed.
+// 3. Otherwise, nothing is committed.
+//
+// This does NOT change in-memory tracking.
+func (t *Tracker) CheckCommit(settledRoot, executionRoot common.Hash, height uint64) error {
+	tdb := t.cache.TrieDB()
+	if t.isArchival {
+		if err := tdb.Commit(executionRoot, false /* log */); err != nil {
+			return fmt.Errorf("%T.Commit(%#x) post-execution at end of block %d :%v", tdb, executionRoot, height, err)
+		}
+		return nil
+	}
+
+	if !ShouldCommitTrieDB(height) {
+		return nil
+	}
+
+	if err := tdb.Commit(settledRoot, false /* log */); err != nil {
+		return fmt.Errorf("%T.Commit(%#x) settled at end of block %d: %v", tdb, settledRoot, height, err)
+	}
+	return nil
 }
 
 // Untrack informs the [Tracker] that the state corresponding
