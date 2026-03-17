@@ -1015,11 +1015,9 @@ func TestResend(t *testing.T) {
 
 	// Submit a pending tx so Resend can find it in the pool.
 	tx := sut.wallet.SetNonceAndSign(t, 0, &types.DynamicFeeTx{
-		ChainID:   saetest.ChainConfig().ChainID,
 		To:        &zeroAddr,
 		Gas:       params.TxGas,
 		GasFeeCap: big.NewInt(1),
-		GasTipCap: new(big.Int),
 	})
 	sut.mustSendTx(t, tx)
 	sut.requireInMempool(t, tx.Hash())
