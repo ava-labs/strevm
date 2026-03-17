@@ -163,10 +163,6 @@ func ConvertMilliseconds[D Duration](rate D, ms uint64) (sec uint64, _ Fractiona
 // SetRate changes the unit rate at which time passes. The requisite integer
 // division may result in rounding up of the fractional-second component of
 // time. Rounding up instead of down achieves monotonicity of the clock.
-//
-// If no values have been registered with [Time.SetRateInvariants] then SetRate
-// will always return a nil error. A non-nil error will only be returned if any
-// of the rate-invariant values overflows a uint64 due to the scaling.
 func (tm *Time[D]) SetRate(hertz D) {
 	// If this happens then there is a bug in the implementation. The
 	// invariant that `tm.fraction < tm.hertz` makes overflow impossible as
@@ -190,8 +186,7 @@ func (tm *Time[D]) Scale(val, newRate D) (D, error) {
 	return scaled, nil
 }
 
-// Sub returns a new [Time], `s` seconds earlier. Rate invariants are NOT copied
-// and no underflow protection is provided.
+// Sub returns a new [Time], `s` seconds earlier.
 func (tm *Time[D]) Sub(s uint64) *Time[D] {
 	return &Time[D]{
 		seconds:  tm.seconds - s,
