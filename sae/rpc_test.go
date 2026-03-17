@@ -936,43 +936,56 @@ func TestGetTransactionCount(t *testing.T) {
 // eth_fillTransaction fills defaults (nonce, gas price) without signing,
 // so it succeeds without a keystore.
 func TestFillTransaction(t *testing.T) {
-	ctx, sut := newSUT(t, 1)
-	addr := sut.wallet.Addresses()[0]
+	const chainID = 42
+	ctx, sut := newSUT(t, 1, options.Func[sutConfig](func(c *sutConfig) {
+		cfg := *c.genesis.Config
+		cfg.ChainID = big.NewInt(chainID)
+		c.genesis.Config = &cfg
+	}))
 
-	// setDefaults fills: nonce from pool, ChainID from config (1), and
-	// London fee fields from SuggestGasTipCap (MinSuggestedTip=1 wei) and
-	// the genesis base fee (InitialBaseFee).
-	tip := big.NewInt(1)
-	feeCap := new(big.Int).Add(
-		tip,
-		new(big.Int).Mul(big.NewInt(params.InitialBaseFee), big.NewInt(2)),
+	to := common.Address{'b', 'o', 'b'}
+	const (
+		gas   = 56_789
+		value = 12_345
 	)
-	fillArgs := map[string]any{
-		"from":  addr,
-		"to":    zeroAddr,
-		"gas":   hexutil.Uint64(params.TxGas),
-		"value": hexBig(100),
-	}
-	wantFilled := func(t *testing.T, nonce uint64) ethapi.SignTransactionResult {
+
+	want := func(t *testing.T, nonce uint64) ethapi.SignTransactionResult {
 		t.Helper()
+
+		// libevm's internal setDefaults fills: nonce from pool, ChainID from config (1), and
+		// London fee fields from SuggestGasTipCap (MinSuggestedTip=1 wei) and
+		// the genesis base fee (InitialBaseFee).
+		tip := big.NewInt(1)
+		feeCap := new(big.Int).Add(
+			tip,
+			new(big.Int).Mul(big.NewInt(params.InitialBaseFee), big.NewInt(2)),
+		)
+
 		tx := types.NewTx(&types.DynamicFeeTx{
-			ChainID:   big.NewInt(1),
+			ChainID:   big.NewInt(chainID),
 			Nonce:     nonce,
-			GasTipCap: new(big.Int).Set(tip),
-			GasFeeCap: new(big.Int).Set(feeCap),
-			Gas:       params.TxGas,
-			To:        &zeroAddr,
-			Value:     big.NewInt(100),
+			To:        &to,
+			GasTipCap: tip,
+			GasFeeCap: feeCap,
+			Gas:       gas,
+			Value:     big.NewInt(value),
 		})
 		raw, err := tx.MarshalBinary()
 		require.NoError(t, err, "tx.MarshalBinary()")
 		return ethapi.SignTransactionResult{Raw: raw, Tx: tx}
 	}
 
+	args := map[string]any{
+		"from":  sut.wallet.Addresses()[0],
+		"to":    to,
+		"gas":   hexutil.Uint64(gas),
+		"value": hexBig(value),
+	}
+
 	sut.testRPC(ctx, t, rpcTest{
 		method: "eth_fillTransaction",
-		args:   []any{fillArgs},
-		want:   wantFilled(t, 0),
+		args:   []any{args},
+		want:   want(t, 0),
 	})
 
 	// Placing a transaction in the mempool to confirm that the filled nonce is
@@ -987,30 +1000,45 @@ func TestFillTransaction(t *testing.T) {
 
 	sut.testRPC(ctx, t, rpcTest{
 		method: "eth_fillTransaction",
-		args:   []any{fillArgs},
-		want:   wantFilled(t, 1),
+		args:   []any{args},
+		want:   want(t, 1),
 	})
 }
 
 // eth_resend replaces a pending transaction with updated gas parameters.
-// Resend re-signs the replacement transaction server-side which requires a
-// keystore, which SAE does not support, so we verify that this RPC fails
-// in an expected way.
+// Resend re-signs the replacement transaction server-side, which requires a
+// keystore, which SAE does not support, so signing is as far as we can get
+// and we verify that the RPC fails in an expected way.
 func TestResend(t *testing.T) {
 	ctx, sut := newSUT(t, 1)
+	addr := sut.wallet.Addresses()[0]
+
+	// Submit a pending tx so Resend can find it in the pool.
+	tx := sut.wallet.SetNonceAndSign(t, 0, &types.DynamicFeeTx{
+		ChainID:   saetest.ChainConfig().ChainID,
+		To:        &zeroAddr,
+		Gas:       params.TxGas,
+		GasFeeCap: big.NewInt(1),
+		GasTipCap: new(big.Int),
+	})
+	sut.mustSendTx(t, tx)
+	sut.requireInMempool(t, tx.Hash())
 
 	sut.testRPC(ctx, t, rpcTest{
 		method: "eth_resend",
 		args: []any{
 			map[string]any{
-				"to":    zeroAddr,
-				"gas":   hexutil.Uint64(params.TxGas),
-				"nonce": hexutil.Uint64(0),
+				"from":                 addr,
+				"to":                   zeroAddr,
+				"nonce":                hexutil.Uint64(0),
+				"gas":                  hexutil.Uint64(params.TxGas),
+				"maxFeePerGas":         hexBig(1),
+				"maxPriorityFeePerGas": hexBig(0),
 			},
 			hexutil.Big(*big.NewInt(2)),
 			hexutil.Uint64(params.TxGas),
 		},
-		wantErr: testerr.Contains("not found"),
+		wantErr: testerr.Contains("unknown account"),
 	})
 }
 
