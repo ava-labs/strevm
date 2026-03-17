@@ -120,7 +120,7 @@ func newSUT(tb testing.TB, opts ...sutOption) (context.Context, *SUT) {
 	tb.Cleanup(func() {
 		require.NoErrorf(tb, closeOnce(), "%T.Close()", e)
 	})
-	sut := &SUT{
+	return ctx, &SUT{
 		Executor:  e,
 		chain:     chain,
 		wallet:    wallet,
@@ -128,7 +128,6 @@ func newSUT(tb testing.TB, opts ...sutOption) (context.Context, *SUT) {
 		db:        db,
 		closeOnce: closeOnce,
 	}
-	return ctx, sut
 }
 
 func (s *SUT) Close() error {
@@ -142,12 +141,6 @@ func defaultHooks() *saehookstest.Stub {
 func withHooks(h *saehookstest.Stub) sutOption {
 	return options.Func[sutConfig](func(c *sutConfig) {
 		c.hooks = h
-	})
-}
-
-func withArchival() sutOption {
-	return options.Func[sutConfig](func(c *sutConfig) {
-		c.archival = true
 	})
 }
 
@@ -939,7 +932,7 @@ func TestSnapshotPersistence(t *testing.T) {
 	})
 }
 
-func TestCloseRecoversHashDB(t *testing.T) {
+func TestStateRootAvailability(t *testing.T) {
 	ctx, sut := newSUT(t)
 	e, chain := sut.Executor, sut.chain
 
@@ -994,10 +987,7 @@ func TestCloseRecoversHashDB(t *testing.T) {
 
 	t.Run("remove in memory state", func(t *testing.T) {
 		const numToDrop = 10
-		for i, b := range chain.AllBlocks() {
-			if i == numToDrop {
-				break
-			}
+		for _, b := range chain.AllBlocks()[:numToDrop] {
 			e.Untrack(b.PostExecutionStateRoot())
 		}
 		checkStates(t, e, func(height uint64) bool {
@@ -1023,7 +1013,9 @@ func TestCloseRecoversHashDB(t *testing.T) {
 }
 
 func TestArchivalStoresAll(t *testing.T) {
-	ctx, sut := newSUT(t, withArchival())
+	ctx, sut := newSUT(t, options.Func[sutConfig](func(c *sutConfig) {
+		c.archival = true
+	}))
 	e, chain := sut.Executor, sut.chain
 
 	const numBlocks = uint64(saedb.CommitTrieDBEvery) + 10
@@ -1058,7 +1050,7 @@ func TestArchivalStoresAll(t *testing.T) {
 
 		for _, b := range chain.AllBlocks() {
 			_, err := e.StateDB(b.PostExecutionStateRoot())
-			require.NoErrorf(t, err, "%T.StateDB()", e)
+			assert.NoErrorf(t, err, "%T.StateDB()", e)
 		}
 	})
 }

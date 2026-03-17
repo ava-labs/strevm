@@ -25,14 +25,14 @@ type Config struct {
 	Archival     bool // if true, will store every state on disk
 }
 
-// SnapshotCacheSizeMB is the snapshot cache size used by the executor.
+// SnapshotCacheSizeMB is the snapshot cache size used by a [Tracker].
 // TODO(alarso16): move to config
 const SnapshotCacheSizeMB = 128
 
 var _ StateDBOpener = (*Tracker)(nil)
 
-// Tracker provides an abstraction to all state-related operations of the executor.
-// It manages all database operations not exposed by the [state.StateDB] itself.
+// Tracker provides an abstraction to state-related operations, managing all
+// database operations not exposed by the [state.StateDB] itself.
 //
 // All methods are safe to be called even after [Tracker.Close], but state
 // will be unavailable.
@@ -45,7 +45,7 @@ type Tracker struct {
 	currentRoot common.Hash
 }
 
-// NewTracker provides a new [Tracker] on the underlying database
+// NewTracker provides a new [Tracker] on the underlying database.
 func NewTracker(db ethdb.Database, c Config, lastExecuted common.Hash, log logging.Logger) (*Tracker, error) {
 	cache := state.NewDatabaseWithConfig(db, c.TrieDBConfig)
 	_, isHashDB := cache.TrieDB().Backend().(triedb.HashDB)
@@ -71,13 +71,13 @@ func NewTracker(db ethdb.Database, c Config, lastExecuted common.Hash, log loggi
 // to the database if [ShouldCommitTrieDB] returns true, or the [Config]
 // specifies that the node is archival.
 //
-// This state will be available until [Tracker.Untrack] has been called
-// or the root as many times as it has been referenced.
+// This state will be available in memory until [Tracker.Untrack] has been
+// called for the root as many times as [Tracker.Track] has been called.
 //
 // Note: Snapshot memory leaks are avoided internally by [state.StateDB.Commit].
 func (t *Tracker) Track(root common.Hash, height uint64) error {
-	// Because `Release` is always expected to be called (whether the state root changed or not)
-	// We must always add an additional reference
+	// Because [Tracker.Untrack] is always expected to be called (whether the state root changed or not),
+	// we must always add an additional reference
 	t.reference(root) // keepalive until dereference
 	t.currentRoot = root
 
@@ -97,13 +97,13 @@ func (t *Tracker) reference(root common.Hash) {
 		return
 	}
 
-	// Never returns an error.
+	// Never returns an error because of the above check.
 	if err := t.cache.TrieDB().Reference(root, common.Hash{}); err != nil {
 		log.Error("*triedb.Database.Reference()", zap.Error(err))
 	}
 }
 
-// Untrack informs the recorder that the state corresponding
+// Untrack informs the [Tracker] that the state corresponding
 // with `root` can have its reference count reduced. If the reference
 // count is 0, the state will be removed from memory.
 //
@@ -114,7 +114,7 @@ func (t *Tracker) Untrack(root common.Hash) {
 		return
 	}
 
-	// Never returns an error.
+	// Never returns an error because of the above check.
 	if err := t.cache.TrieDB().Dereference(root); err != nil {
 		log.Error("*triedb.Database.Dereference()", zap.Error(err))
 	}

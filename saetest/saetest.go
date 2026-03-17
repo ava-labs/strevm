@@ -33,8 +33,8 @@ type stateDBOpener struct {
 	snaps *snapshot.Tree
 }
 
-// NewStateDBOpener provides an abstratction to create a `state.StateDB`.
-// `snaps` may be nil.
+// NewStateDBOpener provides an abstraction to create a `state.StateDB`.
+// `snaps` MAY be nil.
 func NewStateDBOpener(cache state.Database, snaps *snapshot.Tree) saedb.StateDBOpener {
 	return &stateDBOpener{
 		cache: cache,

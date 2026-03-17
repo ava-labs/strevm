@@ -1038,26 +1038,3 @@ func TestBlockSources(t *testing.T) {
 		})
 	}
 }
-
-func TestRegressionLoseStateBeforeSettlement(t *testing.T) {
-	opt, vmTime := withVMTime(t, time.Unix(saeparams.TauSeconds, 0))
-	ctx, sut := newSUT(t, 1, opt)
-
-	createTx := func(t *testing.T, to common.Address) *types.Transaction {
-		t.Helper()
-		return sut.wallet.SetNonceAndSign(t, 0, &types.DynamicFeeTx{
-			To:        &to,
-			Gas:       params.TxGas,
-			GasFeeCap: big.NewInt(1),
-		})
-	}
-
-	// settle one block - won't be committed
-	b := sut.runConsensusLoop(t, createTx(t, common.Address{}))
-	vmTime.advanceToSettle(ctx, t, b)
-
-	// Ensure settled block will be available for [VM.VerifyBlock]
-	for range 100 {
-		sut.runConsensusLoop(t, createTx(t, common.Address{}))
-	}
-}

@@ -65,13 +65,13 @@ func New(
 	hooks hook.Points,
 	log logging.Logger,
 ) (*Executor, error) {
-	s, err := saedb.NewTracker(db, saedbConfig, lastExecuted.PostExecutionStateRoot(), log)
+	t, err := saedb.NewTracker(db, saedbConfig, lastExecuted.PostExecutionStateRoot(), log)
 	if err != nil {
 		return nil, err
 	}
 
 	e := &Executor{
-		Tracker: s,
+		Tracker: t,
 		quit:    make(chan struct{}), // closed by [Executor.Close]
 		done:    make(chan struct{}), // closed by [Executor.processQueue] after `quit` is closed
 		log:     log,
