@@ -89,7 +89,7 @@ func NewPriceOptions(tip, baseFee *big.Int) *PriceOptions {
 		slowTipPercent = 95
 		fastTipPercent = 105
 	)
-	slowTip := math.BigMax(scale(tip, slowTipPercent), minGasTip)
+	slowTip := new(big.Int).Set(math.BigMax(scale(tip, slowTipPercent), minGasTip))
 	fastTip := scale(tip, fastTipPercent)
 	return &PriceOptions{
 		Slow:   NewPrice(slowTip, baseFee),
