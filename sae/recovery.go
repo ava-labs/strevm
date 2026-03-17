@@ -87,7 +87,7 @@ func (rec *recovery) lastBlockWithStateRootAvailable() (*blocks.Block, error) {
 		return b, nil
 	}
 
-	return nil, fmt.Errorf("checked %d blocks from %d", saedb.CommitTrieDBEvery, num)
+	return nil, fmt.Errorf("checked %d blocks from %d", maxReexec, num)
 }
 
 // recoverFromDB returns the block to be used as the `lastExecuted` argument to
