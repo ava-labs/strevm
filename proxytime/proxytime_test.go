@@ -139,7 +139,6 @@ func TestSetRate(t *testing.T) {
 
 	steps := []struct {
 		newRate, wantNumerator uint64
-		wantInvariant          uint64
 	}{
 		{
 			newRate:       initRate / divisor, // no rounding
@@ -152,17 +151,14 @@ func TestSetRate(t *testing.T) {
 		{
 			newRate:       15_000, // same as above, but shows the numbers explicitly
 			wantNumerator: 1_500,
-			wantInvariant: 3_000,
 		},
 		{
 			newRate:       75, // 15_000 / 200
 			wantNumerator: 8,  // ceil(1_500/200 == 7.5)
-			wantInvariant: 15,
 		},
 		{
 			newRate:       25, // 75 / 3
 			wantNumerator: 3,  // ceil(8/3 == 2.66...)
-			wantInvariant: 5,
 		},
 	}
 
