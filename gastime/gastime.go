@@ -17,6 +17,8 @@ import (
 	"github.com/ava-labs/strevm/proxytime"
 )
 
+//go:generate go run github.com/StephenButtolph/canoto/canoto $GOFILE
+
 // Time represents an instant in time, its passage measured in [gas.Gas]
 // consumption. It is not thread safe nor is the zero value valid.
 //
@@ -30,20 +32,12 @@ import (
 // [ACP-176]: https://github.com/avalanche-foundation/ACPs/tree/main/ACPs/176-dynamic-evm-gas-limit-and-price-discovery-updates
 // [ACP-194]: https://github.com/avalanche-foundation/ACPs/tree/main/ACPs/194-streaming-asynchronous-execution
 type Time struct {
-	TimeMarshaler
-}
+	*proxytime.Time[gas.Gas] `canoto:"pointer,1"`
+	target                   gas.Gas `canoto:"uint,2"`
+	excess                   gas.Gas `canoto:"uint,3"`
+	config                   config  `canoto:"value,4"`
 
-// makeTime is a constructor shared by [New] and [Time.Clone].
-func makeTime(t *proxytime.Time[gas.Gas], target, excess gas.Gas, c config) *Time {
-	tm := &Time{
-		TimeMarshaler: TimeMarshaler{
-			Time:   t,
-			target: target,
-			excess: excess,
-			config: c,
-		},
-	}
-	return tm
+	canotoData canotoData_Time `canoto:"nocopy"`
 }
 
 // New returns a new [Time], derived from a [time.Time]. The consumption of
@@ -54,10 +48,17 @@ func New(at time.Time, target, startingExcess gas.Gas, gasPriceConfig hook.GasPr
 	if err != nil {
 		return nil, err
 	}
-	target = clampTarget(target)
+
 	tm := proxytime.Of[gas.Gas](at)
+	target = clampTarget(target)
 	tm.SetRate(rateOf(target))
-	return makeTime(tm, target, startingExcess, cfg), nil
+
+	return &Time{
+		Time:   tm,
+		target: target,
+		excess: startingExcess,
+		config: cfg,
+	}, nil
 }
 
 // SubSecond scales the value returned by [hook.Points.SubSecondBlockTime] to
@@ -117,9 +118,12 @@ func SafeRateOfTarget(target gas.Gas) gas.Gas {
 
 // Clone returns a deep copy of the time.
 func (tm *Time) Clone() *Time {
-	// [proxytime.Time.Clone] explicitly does NOT clone the rate invariants, so
-	// we reestablish them as if we were constructing a new instance.
-	return makeTime(tm.Time.Clone(), tm.target, tm.excess, tm.config)
+	return &Time{
+		Time:   tm.Time.Clone(),
+		target: tm.target,
+		excess: tm.excess,
+		config: tm.config,
+	}
 }
 
 // Target returns the `T` parameter of ACP-176.
@@ -175,7 +179,7 @@ func (tm *Time) SetTarget(t gas.Gas) {
 		x = math.MaxUint64
 	}
 
-	tm.TimeMarshaler.SetRate(r)
+	tm.Time.SetRate(r)
 	tm.excess = x
 	tm.target = t
 }
