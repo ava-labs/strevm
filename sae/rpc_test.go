@@ -999,8 +999,6 @@ func TestResend(t *testing.T) {
 
 	sut.testRPC(ctx, t, rpcTest{
 		method: "eth_resend",
-		// By not including some fields we can force setDefaults() to
-		// call SuggestGasTipCap().
 		args: []any{
 			map[string]any{
 				"to":    zeroAddr,
