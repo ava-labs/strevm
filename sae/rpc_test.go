@@ -1025,15 +1025,14 @@ func TestResend(t *testing.T) {
 		method: "eth_resend",
 		args: []any{
 			map[string]any{
-				"from":                 addr,
-				"to":                   zeroAddr,
-				"nonce":                hexutil.Uint64(0),
-				"gas":                  hexutil.Uint64(params.TxGas),
-				"maxFeePerGas":         hexBig(1),
-				"maxPriorityFeePerGas": hexBig(0),
+				"from":                 sut.wallet.Addresses()[0],
+				"nonce":                hexutil.Uint64(tx.Nonce()),
+				"to":                   tx.To(),
+				"gas":                  hexutil.Uint64(tx.Gas()),
+				"maxFeePerGas":         (*hexutil.Big)(tx.GasFeeCap()),
+				"maxPriorityFeePerGas": (*hexutil.Big)(tx.GasTipCap()),
 			},
-			hexutil.Big(*big.NewInt(2)),
-			hexutil.Uint64(params.TxGas),
+			hexBig(2), // arbitrary
 		},
 		wantErr: testerr.Contains("unknown account"),
 	})
