@@ -1011,7 +1011,6 @@ func TestFillTransaction(t *testing.T) {
 // and we verify that the RPC fails in an expected way.
 func TestResend(t *testing.T) {
 	ctx, sut := newSUT(t, 1)
-	addr := sut.wallet.Addresses()[0]
 
 	// Submit a pending tx so Resend can find it in the pool.
 	tx := sut.wallet.SetNonceAndSign(t, 0, &types.DynamicFeeTx{
