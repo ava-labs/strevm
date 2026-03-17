@@ -73,8 +73,6 @@ func NewTracker(db ethdb.Database, c Config, lastExecuted common.Hash, log loggi
 //
 // This state will be available in memory until [Tracker.Untrack] has been
 // called for the root as many times as [Tracker.Track] has been called.
-//
-// Note: Snapshot memory leaks are avoided internally by [state.StateDB.Commit].
 func (t *Tracker) Track(root common.Hash, height uint64) error {
 	// Because [Tracker.Untrack] is always expected to be called (whether the state root changed or not),
 	// we must always add an additional reference
