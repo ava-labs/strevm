@@ -24,22 +24,23 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/ava-labs/strevm/blocks"
 	saeparams "github.com/ava-labs/strevm/params"
-	saerpc "github.com/ava-labs/strevm/sae/rpc"
 	"github.com/ava-labs/strevm/saetest/escrow"
 )
 
-// TestStateQueryOnUnexecutedBlock verifies that state-dependent RPC calls
-// (e.g. eth_getBalance) on a verified-but-unexecuted in-memory block return an
-// error instead of reading zero-valued execution artifacts.
-func TestStateQueryOnUnexecutedBlock(t *testing.T) {
+// TestStateQueryOnNonCanonicalBlock verifies that state-dependent RPC calls
+// (e.g. eth_getBalance) on a verified-but-not-accepted in-memory block return
+// an error instead of blocking indefinitely on execution artefacts that may
+// never materialise.
+func TestStateQueryOnNonCanonicalBlock(t *testing.T) {
 	ctx, sut := newSUT(t, 1)
 	b := unwrap(t, sut.createAndVerifyBlock(t, sut.lastAcceptedBlock(t)))
 
 	sut.testRPC(ctx, t, rpcTest{
 		method:  "eth_getBalance",
 		args:    []any{sut.wallet.Addresses()[0], rpc.BlockNumberOrHashWithHash(b.Hash(), false)},
-		wantErr: testerr.Contains(saerpc.ErrNotExecuted.Error()),
+		wantErr: testerr.Contains(blocks.ErrNonCanonicalBlock.Error()),
 	})
 }
 

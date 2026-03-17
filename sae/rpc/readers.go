@@ -31,7 +31,7 @@ func readByNumber[T any](c Chain, n rpc.BlockNumber, read blocks.DBReader[T]) (*
 }
 
 func readByHash[T any](c Chain, hash common.Hash, fromMem blocks.Extractor[T], fromDB blocks.DBReader[T]) (*T, error) {
-	return notFoundIsNil(blocks.FromHash(c, hash, fromMem, fromDB.WithNilErr()))
+	return notFoundIsNil(blocks.FromHash(c, hash, true, fromMem, fromDB.WithNilErr()))
 }
 
 func readByNumberOrHash[T any](c Chain, blockNrOrHash rpc.BlockNumberOrHash, fromMem blocks.Extractor[T], fromDB blocks.DBReaderWithErr[T]) (*T, error) {

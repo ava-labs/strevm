@@ -75,26 +75,20 @@ func TestMarkExecuted(t *testing.T) {
 		defer cancel()
 		require.ErrorIs(t, context.DeadlineExceeded, b.WaitUntilExecuted(ctx), "WaitUntilExecuted()")
 
-		rec := saetest.NewLogRecorder(logging.Warn)
-		b.log = rec
-		assertNumErrorLogs := func(t *testing.T, want int) {
-			t.Helper()
-			assert.Len(t, rec.At(logging.Error), want, "Number of ERROR logs")
+		// Execution-artefact methods block until MarkExecuted is called.
+		// Verify that PostExecutionStateRoot does not return immediately.
+		done := make(chan common.Hash, 1)
+		go func() {
+			done <- b.PostExecutionStateRoot()
+		}()
+		select {
+		case <-done:
+			t.Fatal("PostExecutionStateRoot() returned before MarkExecuted()")
+		case <-time.After(100 * time.Millisecond):
+			// Expected: the method is blocked waiting for execution.
 		}
-
-		tests := []struct {
-			method string
-			call   func() any
-		}{
-			{"ExecutedByGasTime()", func() any { return b.ExecutedByGasTime() }},
-			{"BaseFee()", func() any { return b.BaseFee() }},
-			{"Receipts()", func() any { return b.Receipts() }},
-			{"PostExecutionStateRoot()", func() any { return b.PostExecutionStateRoot() }},
-		}
-		for i, tt := range tests {
-			assert.Zero(t, tt.call(), tt.method)
-			assertNumErrorLogs(t, i+1)
-		}
+		// The goroutine will unblock when MarkExecuted is called below.
+		_ = done
 	})
 
 	gasTime := mustNewGasTime(t, time.Unix(42, 0), 1e6, 42, gastime.DefaultGasPriceConfig())
