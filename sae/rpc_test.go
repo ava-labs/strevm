@@ -975,13 +975,15 @@ func TestFillTransaction(t *testing.T) {
 		want:   wantFilled(t, 0),
 	})
 
-	pendingTx := sut.wallet.SetNonceAndSign(t, 0, &types.DynamicFeeTx{
+	// Placing a transaction in the mempool to confirm that the filled nonce is
+	// incremented accordingly.
+	tx := sut.wallet.SetNonceAndSign(t, 0, &types.DynamicFeeTx{
 		To:        &zeroAddr,
 		Gas:       params.TxGas,
 		GasFeeCap: big.NewInt(1),
 	})
-	sut.mustSendTx(t, pendingTx)
-	sut.requireInMempool(t, pendingTx.Hash())
+	sut.mustSendTx(t, tx)
+	sut.requireInMempool(t, tx.Hash())
 
 	sut.testRPC(ctx, t, rpcTest{
 		method: "eth_fillTransaction",
