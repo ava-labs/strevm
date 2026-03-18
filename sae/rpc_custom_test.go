@@ -67,9 +67,9 @@ func TestNewPriceOptions(t *testing.T) {
 			tip:     tip,
 			baseFee: baseFee,
 			want: &saerpc.PriceOptions{
-				Slow:   saerpc.NewPrice(big.NewInt(tip*.95), big.NewInt(baseFee)),
+				Slow:   saerpc.NewPrice(big.NewInt(tip*saerpc.SlowTipPercent/100), big.NewInt(baseFee)),
 				Normal: saerpc.NewPrice(big.NewInt(tip), big.NewInt(baseFee)),
-				Fast:   saerpc.NewPrice(big.NewInt(tip*1.05), big.NewInt(baseFee)),
+				Fast:   saerpc.NewPrice(big.NewInt(tip*saerpc.FastTipPercent/100), big.NewInt(baseFee)),
 			},
 		},
 	}

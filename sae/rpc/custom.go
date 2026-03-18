@@ -84,17 +84,18 @@ type PriceOptions struct {
 
 var minGasTip = big.NewInt(params.Wei)
 
+const (
+	SlowTipPercent = 95
+	FastTipPercent = 105
+)
+
 // NewPriceOptions returns slow, normal, and fast [PriceOptions] derived from the given tip and base fee.
 // The slow tip is floored at [minGasTip], and normal/fast are floored at the
 // previous tier to guarantee slow <= normal <= fast.
 func NewPriceOptions(tip, baseFee *big.Int) *PriceOptions {
-	const (
-		slowTipPercent = 95
-		fastTipPercent = 105
-	)
-	slowTip := new(big.Int).Set(math.BigMax(scale(tip, slowTipPercent), minGasTip))
+	slowTip := new(big.Int).Set(math.BigMax(scale(tip, SlowTipPercent), minGasTip))
 	normalTip := new(big.Int).Set(math.BigMax(tip, slowTip))
-	fastTip := new(big.Int).Set(math.BigMax(scale(tip, fastTipPercent), normalTip))
+	fastTip := new(big.Int).Set(math.BigMax(scale(tip, FastTipPercent), normalTip))
 	return &PriceOptions{
 		Slow:   NewPrice(slowTip, baseFee),
 		Normal: NewPrice(normalTip, baseFee),
