@@ -84,6 +84,7 @@ type PriceOptions struct {
 
 var minGasTip = big.NewInt(params.Wei)
 
+// Tip scaling percentages for gas price options.
 const (
 	SlowTipPercent = 95
 	FastTipPercent = 105
