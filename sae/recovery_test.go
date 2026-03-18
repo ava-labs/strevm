@@ -164,24 +164,25 @@ func TestRecoverWorstCaseUncommitted(t *testing.T) {
 		})
 	}
 
-	lastSettled := src.lastAcceptedBlock(t) // will be block [saedb.CommitTrieDBEvery] - 1
-	for lastSettled.Height() < saedb.CommitTrieDBEvery-1 {
-		vmTime.advanceToSettle(ctx, t, lastSettled)
-		lastSettled = src.runConsensusLoop(t, newTx())
-		require.Len(t, lastSettled.Transactions(), 1)
+	toBeSettled := src.lastAcceptedBlock(t) // will be block [saedb.CommitTrieDBEvery] - 1
+	for toBeSettled.Height() < saedb.CommitTrieDBEvery-1 {
+		vmTime.advanceToSettle(ctx, t, toBeSettled)
+		toBeSettled = src.runConsensusLoop(t, newTx())
+		require.Len(t, toBeSettled.Transactions(), 1)
 	}
 
-	vmTime.advance(time.Second)                       // < [saeparams.Tau]
+	vmTime.advance(time.Second) // < [saeparams.Tau]
+	// `lastPersisted`'s settled state is persisted.
 	lastPersisted := src.runConsensusLoop(t, newTx()) // height is [saedb.CommitTrieDBEvery]
 
-	vmTime.advanceToSettle(ctx, t, lastSettled)
+	vmTime.advanceToSettle(ctx, t, toBeSettled)
 	unaccepted := src.createAndVerifyBlock(t, lastPersisted, newTx())
 	unacceptedB := unwrap(t, unaccepted)
 
-	// check test invariants
+	// test invariants
 	require.NoError(t, lastPersisted.WaitUntilExecuted(ctx))
-	require.False(t, lastSettled.Settled())
-	require.Equal(t, lastSettled.PostExecutionStateRoot(), unacceptedB.EthBlock().Root())
+	require.False(t, toBeSettled.Settled())
+	require.Equal(t, toBeSettled.NumberU64(), src.hooks.SettledHeight(unacceptedB.Header()))
 
 	t.Run("recover", func(t *testing.T) {
 		newDB := copyDB(t, srcDB)

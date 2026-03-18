@@ -44,50 +44,47 @@ func (rec *recovery) newCanonicalBlock(num uint64, parent *blocks.Block) (*block
 }
 
 func (rec *recovery) lastBlockWithStateRootAvailable() (*blocks.Block, error) {
-	// num represents the last block with the settled state available.
-	num := saedb.LastCommittedTrieDBHeight(
-		rawdb.ReadHeadHeader(rec.db).Number.Uint64(),
-	)
+	// most recently executed block number before shutdown
+	num := rawdb.ReadHeadHeader(rec.db).Number.Uint64()
 	if num <= rec.lastSynchronous.NumberU64() {
 		return rec.lastSynchronous, nil
 	}
 
-	b, err := rec.newCanonicalBlock(num, nil)
-	if err != nil {
-		return nil, err
-	}
-	lookingFor := b.Header().Root // last settled root
-
-	// TODO(alarso16): What if the blocks are too fast to settle within the constant below?
-	// Any number is arbitrary.
-	const maxReexec uint64 = 100
-	sdb := state.NewDatabaseWithConfig(rec.db, rec.config.DBConfig.TrieDBConfig)
-	for h := num; h > 0 && num-h < maxReexec; h-- {
-		b, err := rec.newCanonicalBlock(h, nil)
+	// If the node is not archival, then each block at height [saedb.CommitTrieDBEvery]
+	// will have its settled state available.
+	if !rec.config.DBConfig.Archival {
+		// executionHeight represents the last block with the settled state available.
+		executionHeight := saedb.LastCommittedTrieDBHeight(num)
+		if executionHeight <= rec.lastSynchronous.NumberU64() {
+			return rec.lastSynchronous, nil
+		}
+		b, err := rec.newCanonicalBlock(executionHeight, nil)
 		if err != nil {
 			return nil, err
 		}
-		if err := b.RestoreExecutionArtefacts(rec.db, rec.xdb, rec.chainConfig); err != nil {
-			return nil, err
-		}
-		{
-			// TODO(alarso16): When Firewood is added, the exact root may be unknown.
-			root := b.PostExecutionStateRoot()
-			if root != lookingFor {
-				continue
-			}
 
-			if _, err := sdb.OpenTrie(root); err != nil {
-				return nil, fmt.Errorf(
-					"database corrupted: checking for state root (block %d / %#x): %v",
-					b.NumberU64(), b.Hash(), err,
-				)
-			}
-		}
-		return b, nil
+		num = rec.hooks.SettledHeight(b.Header())
 	}
 
-	return nil, fmt.Errorf("checked %d blocks from %d", maxReexec, num)
+	settled, err := rec.newCanonicalBlock(num, nil)
+	if err != nil {
+		return nil, err
+	}
+	if err := settled.RestoreExecutionArtefacts(rec.db, rec.xdb, rec.chainConfig); err != nil {
+		return nil, err
+	}
+	{
+		// TODO(alarso16): When Firewood is added, the exact root may be unknown.
+		sdb := state.NewDatabaseWithConfig(rec.db, rec.config.DBConfig.TrieDBConfig)
+		root := settled.PostExecutionStateRoot()
+		if _, err := sdb.OpenTrie(root); err != nil {
+			return nil, fmt.Errorf(
+				"database corrupted: checking for state root (block %d / %#x): %v",
+				settled.NumberU64(), settled.Hash(), err,
+			)
+		}
+	}
+	return settled, nil
 }
 
 // recoverFromDB returns the block to be used as the `lastExecuted` argument to

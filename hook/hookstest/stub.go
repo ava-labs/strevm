@@ -130,8 +130,9 @@ func (*Stub) BuildBlock(
 	txs []*types.Transaction,
 	receipts []*types.Receipt,
 	ops []Op,
+	settledHeight uint64,
 ) (*types.Block, error) {
-	return BuildBlock(header, txs, receipts, ops)
+	return BuildBlock(header, txs, receipts, ops, settledHeight)
 }
 
 // BuildBlock encodes ops into [types.Header.Extra] and calls [types.NewBlock]
@@ -141,6 +142,7 @@ func BuildBlock(
 	txs []*types.Transaction,
 	receipts []*types.Receipt,
 	ops []Op,
+	settledHeight uint64,
 ) (*types.Block, error) {
 	var e extra
 	// If the header originally had fractional seconds set, we keep them in the
@@ -150,6 +152,7 @@ func BuildBlock(
 	}
 
 	e.ops = ops
+	e.settledHeight = settledHeight
 	header.Extra = e.MarshalCanoto()
 	return types.NewBlock(header, txs, nil, receipts, saetest.TrieHasher()), nil
 }
@@ -188,6 +191,18 @@ func (s *Stub) SubSecondBlockTime(hdr *types.Header) time.Duration {
 	return e.subSec
 }
 
+// SettledHeight returns the height of the most recently settled block at build time.
+// This corresponds with the block with post-execution state root [types.Header.Root].
+func (*Stub) SettledHeight(hdr *types.Header) uint64 {
+	var e extra
+	if err := e.UnmarshalCanoto(hdr.Extra); err != nil {
+		// This is left as a panic to avoid polluting various functions with
+		// error returns when no error is possible in production.
+		panic(err)
+	}
+	return e.settledHeight
+}
+
 // EndOfBlockOps return the ops included in the block by [BuildBlock].
 func (s *Stub) EndOfBlockOps(b *types.Block) ([]hook.Op, error) {
 	var e extra
@@ -221,8 +236,9 @@ func (*Stub) AfterExecutingBlock(*state.StateDB, *types.Block, types.Receipts) {
 //go:generate go run github.com/StephenButtolph/canoto/canoto $GOFILE
 
 type extra struct {
-	subSec time.Duration `canoto:"int,1"` //nolint:staticcheck // subSec intentionally communicates that the value is < time.Second
-	ops    []Op          `canoto:"repeated value,2"`
+	subSec        time.Duration `canoto:"int,1"` //nolint:staticcheck // subSec intentionally communicates that the value is < time.Second
+	ops           []Op          `canoto:"repeated value,2"`
+	settledHeight uint64        `canoto:"uint,3"`
 
 	canotoData canotoData_extra
 }
