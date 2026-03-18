@@ -4,6 +4,7 @@
 package sae
 
 import (
+	"errors"
 	"fmt"
 	"iter"
 	"math"
@@ -73,18 +74,27 @@ func (rec *recovery) lastBlockWithStateRootAvailable() (*blocks.Block, error) {
 	if err := settled.RestoreExecutionArtefacts(rec.db, rec.xdb, rec.chainConfig); err != nil {
 		return nil, err
 	}
-	{
-		// TODO(alarso16): When Firewood is added, the exact root may be unknown.
-		sdb := state.NewDatabaseWithConfig(rec.db, rec.config.DBConfig.TrieDBConfig)
-		root := settled.PostExecutionStateRoot()
-		if _, err := sdb.OpenTrie(root); err != nil {
-			return nil, fmt.Errorf(
-				"database corrupted: checking for state root (block %d / %#x): %v",
-				settled.NumberU64(), settled.Hash(), err,
-			)
-		}
+	// TODO(alarso16): When Firewood is added, the exact root may be unknown.
+	if err := rec.checkForState(settled); err != nil {
+		return nil, err
 	}
 	return settled, nil
+}
+
+func (rec *recovery) checkForState(b *blocks.Block) (err error) {
+	sdb := state.NewDatabaseWithConfig(rec.db, rec.config.DBConfig.TrieDBConfig())
+	defer func() {
+		err = errors.Join(err, sdb.TrieDB().Close())
+	}()
+
+	root := b.PostExecutionStateRoot()
+	if _, err := sdb.OpenTrie(root); err != nil {
+		return fmt.Errorf(
+			"database corrupted: checking for state root (block %d / %#x): %v",
+			b.NumberU64(), b.Hash(), err,
+		)
+	}
+	return nil
 }
 
 // recoverFromDB returns the block to be used as the `lastExecuted` argument to
