@@ -61,6 +61,7 @@ func (rec *recovery) lastBlockWithStateRootAvailable() (*blocks.Block, error) {
 	// TODO(alarso16): What if the blocks are too fast to settle within the constant below?
 	// Any number is arbitrary.
 	const maxReexec uint64 = 100
+	sdb := state.NewDatabaseWithConfig(rec.db, rec.config.DBConfig.TrieDBConfig)
 	for h := num; h > 0 && num-h < maxReexec; h-- {
 		b, err := rec.newCanonicalBlock(h, nil)
 		if err != nil {
@@ -76,8 +77,7 @@ func (rec *recovery) lastBlockWithStateRootAvailable() (*blocks.Block, error) {
 				continue
 			}
 
-			_, err := state.NewDatabaseWithConfig(rec.db, rec.config.DBConfig.TrieDBConfig).OpenTrie(root)
-			if err != nil {
+			if _, err := sdb.OpenTrie(root); err != nil {
 				return nil, fmt.Errorf(
 					"database corrupted: checking for state root (block %d / %#x): %v",
 					b.NumberU64(), b.Hash(), err,
