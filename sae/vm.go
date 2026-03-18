@@ -165,13 +165,13 @@ func NewVM[T hook.Transaction](
 
 	rec := &recovery{db, xdb, chainConfig, snowCtx.Log, hooks, cfg, lastSync}
 	{ // ==========  Executor  ==========
-		lastExecuted, unexecuted, err := rec.recoverFromDB()
+		lastCommitted, unexecuted, err := rec.recoverFromDB()
 		if err != nil {
 			return nil, err
 		}
 
 		exec, err := saexec.New(
-			lastExecuted,
+			lastCommitted,
 			vm.headerSource,
 			chainConfig,
 			db,
@@ -186,18 +186,26 @@ func NewVM[T hook.Transaction](
 		vm.exec = exec
 		vm.toClose = append(vm.toClose, exec)
 
-		last := lastExecuted
+		lastExecuted := lastCommitted
 		for b, err := range unexecuted {
 			if err != nil {
 				return nil, err
 			}
+			exec.Track(b.Header().Root) // hold settled state
 			if err := exec.Enqueue(ctx, b); err != nil {
 				return nil, err
 			}
-			last = b
+			if err := b.WaitUntilExecuted(ctx); err != nil {
+				return nil, err
+			}
+			lastExecuted = b
 		}
-		if err := last.WaitUntilExecuted(ctx); err != nil {
-			return nil, err
+		// Remove in-memory state between lastCommitted and lastSettled
+		settledHeight := hooks.SettledHeight(lastExecuted.Header())
+		for b := lastExecuted; b.NumberU64() > lastCommitted.NumberU64(); b = b.ParentBlock() {
+			if b.NumberU64() < settledHeight {
+				exec.Untrack(b.PostExecutionStateRoot())
+			}
 		}
 	}
 
