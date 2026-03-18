@@ -11,8 +11,11 @@ import (
 	"github.com/ava-labs/libevm/libevm/debug"
 	"github.com/ava-labs/libevm/libevm/ethapi"
 	"github.com/ava-labs/libevm/rpc"
+
+	_ "github.com/ava-labs/libevm/node"
 )
 
+// Taken as the defaults in [node.DefaultConfig]
 const (
 	batchLimit           = 1000
 	batchResponseMaxSize = 25 * 1000 * 1000 // 25 MB
