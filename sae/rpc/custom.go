@@ -5,6 +5,7 @@ package rpc
 
 import (
 	"context"
+	"errors"
 	"math/big"
 
 	"github.com/ava-labs/libevm/common/hexutil"
@@ -30,20 +31,27 @@ func (c *customAPI) GetChainConfig(ctx context.Context) *params.ChainConfig {
 }
 
 // BaseFee returns an upper-bound estimate of the base fee for the next block.
-// It returns nil if the estimate is unavailable.
-func (c *customAPI) BaseFee(ctx context.Context) *hexutil.Big {
-	return (*hexutil.Big)(c.estimateNextBaseFee())
+func (c *customAPI) BaseFee(ctx context.Context) (*hexutil.Big, error) {
+	fee, err := c.estimateNextBaseFee()
+	if err != nil {
+		return nil, err
+	}
+	return (*hexutil.Big)(fee), nil
 }
 
+// ErrMissingWorstCaseBounds is returned when the last accepted block has no
+// worst-case bounds, which happens before any blocks are executed.
+var ErrMissingWorstCaseBounds = errors.New("worst-case bounds not available yet")
+
 // estimateNextBaseFee returns the worst-case upper bound on the next block's
-// base fee. It returns nil when the last accepted block has no worst-case
-// bounds, which happens on startup.
-func (c *customAPI) estimateNextBaseFee() *big.Int {
+// base fee. It returns [ErrMissingWorstCaseBounds] when the last accepted
+// block has no worst-case bounds, which happens before any blocks are executed.
+func (c *customAPI) estimateNextBaseFee() (*big.Int, error) {
 	bounds := c.b.LastAccepted().WorstCaseBounds()
 	if bounds == nil {
-		return nil
+		return nil, ErrMissingWorstCaseBounds
 	}
-	return bounds.LatestEndTime.BaseFee().ToBig()
+	return bounds.LatestEndTime.BaseFee().ToBig(), nil
 }
 
 // detailedExecutionResult is the response for eth_callDetailed.
@@ -119,9 +127,9 @@ func (c *customAPI) SuggestPriceOptions(ctx context.Context) (*PriceOptions, err
 	if err != nil {
 		return nil, err
 	}
-	doubleBaseFee := c.estimateNextBaseFee()
-	if doubleBaseFee == nil {
-		return nil, nil
+	doubleBaseFee, err := c.estimateNextBaseFee()
+	if err != nil {
+		return nil, err
 	}
 	// Double the base fee estimate so the suggested maxFeePerGas remains
 	// valid even if the base fee rises for several consecutive

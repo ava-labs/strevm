@@ -7,6 +7,7 @@ import (
 	"math/big"
 	"testing"
 
+	"github.com/arr4n/shed/testerr"
 	"github.com/ava-labs/libevm/common/hexutil"
 	"github.com/ava-labs/libevm/params"
 	"github.com/stretchr/testify/require"
@@ -26,8 +27,9 @@ func TestGetChainConfig(t *testing.T) {
 func TestBaseFee(t *testing.T) {
 	ctx, sut := newSUT(t, 0)
 	sut.testRPC(ctx, t, rpcTest{
-		method: "eth_baseFee",
-		want:   (*hexutil.Big)(nil),
+		method:  "eth_baseFee",
+		want:    (*hexutil.Big)(nil),
+		wantErr: testerr.Contains(saerpc.ErrMissingWorstCaseBounds.Error()),
 	})
 
 	b := sut.runConsensusLoop(t)
@@ -86,8 +88,9 @@ func TestNewPriceOptions(t *testing.T) {
 func TestSuggestPriceOptions(t *testing.T) {
 	ctx, sut := newSUT(t, 0)
 	sut.testRPC(ctx, t, rpcTest{
-		method: "eth_suggestPriceOptions",
-		want:   (*saerpc.PriceOptions)(nil),
+		method:  "eth_suggestPriceOptions",
+		want:    (*saerpc.PriceOptions)(nil),
+		wantErr: testerr.Contains(saerpc.ErrMissingWorstCaseBounds.Error()),
 	})
 
 	b := sut.runConsensusLoop(t)
