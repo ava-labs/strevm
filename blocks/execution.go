@@ -206,12 +206,9 @@ func executionArtefact[T any](b *Block, desc string, get func(*executionResults)
 		return get(e)
 	}
 
-	timer := time.NewTimer(saeparams.MaxQueueWallTime)
-	defer timer.Stop()
-
 	select {
 	case <-b.executed:
-	case <-timer.C:
+	case <-time.After(saeparams.MaxQueueWallTime):
 		b.log.Warn("blocking on execution artefact longer than expected",
 			zap.String("artefact", desc),
 			zap.Duration("waited", saeparams.MaxQueueWallTime),
