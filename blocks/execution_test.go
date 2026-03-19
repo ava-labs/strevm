@@ -87,8 +87,6 @@ func TestMarkExecuted(t *testing.T) {
 		case <-time.After(100 * time.Millisecond):
 			// Expected: the method is blocked waiting for execution.
 		}
-		// The goroutine will unblock when MarkExecuted is called below.
-		_ = done
 	})
 
 	gasTime := mustNewGasTime(t, time.Unix(42, 0), 1e6, 42, gastime.DefaultGasPriceConfig())
