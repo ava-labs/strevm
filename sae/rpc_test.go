@@ -955,14 +955,14 @@ func TestFillTransaction(t *testing.T) {
 	want := func(t *testing.T, nonce uint64) ethapi.SignTransactionResult {
 		t.Helper()
 
-		// libevm's internal setDefaults fills: nonce from pool, ChainID from config (1), and
+		// libevm's internal setDefaults fills: nonce from pool, ChainID from config, and
 		// London fee fields from SuggestGasTipCap (MinSuggestedTip=1 wei) and
 		// the last block's base fee. geth sets maxFeePerGas to 2*baseFee + tip
 		// as "slack" to avoid invalidation if the base fee is rising.
 		tip := big.NewInt(1)
 		feeCap := new(big.Int).Add(
 			tip,
-			new(big.Int).Mul(b.BaseFee().ToBig(), big.NewInt(2)),
+			new(big.Int).Mul(b.Header().BaseFee, big.NewInt(2)),
 		)
 
 		tx := types.NewTx(&types.DynamicFeeTx{
