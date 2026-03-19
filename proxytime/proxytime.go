@@ -167,9 +167,16 @@ func (tm *Time[D]) SetRate(hertz D) {
 	// If this happens then there is a bug in the implementation. The
 	// invariant that `tm.fraction < tm.hertz` makes overflow impossible as
 	// the scaled fraction will be less than the new rate.
-	frac, _ := tm.Scale(tm.fraction, hertz)
-	if frac == hertz {
-		frac = 0
+	frac, err := tm.Scale(tm.fraction, hertz)
+	if err != nil {
+		// A broken invariant MUST be detected in tests, hence not just dropping
+		// the error.
+		panic(fmt.Sprintf("broken invariant: %v", err))
+	}
+	// Although the > case is technically impossible, breaking the above
+	// invariant will panic, so we defensively protect against everything.
+	if frac >= hertz {
+		frac -= hertz
 		tm.seconds++
 	}
 	tm.fraction = frac

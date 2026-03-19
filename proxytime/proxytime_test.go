@@ -492,3 +492,32 @@ func TestCompareDifferentRates(t *testing.T) {
 		assert.Equalf(t, -want, b.Compare(a), "Time{%s}.Compare(%s)", b, a)
 	}
 }
+
+func FuzzFractionLessThanHertz(f *testing.F) {
+	// Breaking this invariant could result in a panic. All methods that set
+	// [Time.fraction] have been inspected and here they're exercised.
+	f.Fuzz(func(t *testing.T, unix, hertz, tick, to, toFrac, sub, newRate uint64) {
+		if hertz == 0 || newRate == 0 {
+			t.Skip("zero rate")
+		}
+
+		tm := New(unix, hertz)
+		req := func(t *testing.T, after string) {
+			t.Helper()
+			require.Lessf(t, tm.fraction, tm.hertz, "after %s", after)
+		}
+		req(t, "New()")
+
+		tm.FastForwardTo(to, toFrac)
+		req(t, "FastForwardTo()")
+
+		tm.Tick(tick)
+		req(t, "Tick()")
+
+		tm.Sub(sub)
+		req(t, "Sub()")
+
+		tm.SetRate(newRate)
+		req(t, "SetRate()")
+	})
+}
