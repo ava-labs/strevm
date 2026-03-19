@@ -77,12 +77,12 @@ func TestMarkExecuted(t *testing.T) {
 
 		// Execution-artefact methods block until MarkExecuted is called.
 		// Verify that PostExecutionStateRoot does not return immediately.
-		done := make(chan common.Hash, 1)
+		resultCh := make(chan common.Hash, 1)
 		go func() {
-			done <- b.PostExecutionStateRoot()
+			resultCh <- b.PostExecutionStateRoot()
 		}()
 		select {
-		case <-done:
+		case <-resultCh:
 			t.Fatal("PostExecutionStateRoot() returned before MarkExecuted()")
 		case <-time.After(100 * time.Millisecond):
 			// Expected: the method is blocked waiting for execution.
