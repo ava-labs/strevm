@@ -202,10 +202,6 @@ func (b *Block) Executed() bool {
 // returns the requested value. A warning is logged if the caller is blocked for
 // longer than [saeparams.MaxQueueWallTime].
 func executionArtefact[T any](b *Block, desc string, get func(*executionResults) T) T {
-	if e := b.execution.Load(); e != nil {
-		return get(e)
-	}
-
 	select {
 	case <-b.executed:
 	case <-time.After(saeparams.MaxQueueWallTime):
