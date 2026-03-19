@@ -147,9 +147,10 @@ func (b *Block) markExecutedOnDisk(batch ethdb.Batch, xdb saedb.ExecutionResults
 	if err := xdb.Sync(n, n); err != nil {
 		return err
 	}
-	if setAsHeadBlock {
-		b.SetAsHeadBlock(batch)
+	if !setAsHeadBlock {
+		return nil
 	}
+	b.SetAsHeadBlock(batch)
 	return batch.Write()
 }
 
