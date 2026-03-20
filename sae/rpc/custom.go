@@ -5,7 +5,6 @@ package rpc
 
 import (
 	"context"
-	"errors"
 	"math/big"
 
 	"github.com/ava-labs/libevm/common/hexutil"
@@ -31,27 +30,21 @@ func (c *customAPI) GetChainConfig(ctx context.Context) *params.ChainConfig {
 }
 
 // BaseFee returns an upper-bound estimate of the base fee for the next block.
-func (c *customAPI) BaseFee(ctx context.Context) (*hexutil.Big, error) {
-	fee, err := c.estimateNextBaseFee()
-	if err != nil {
-		return nil, err
-	}
-	return (*hexutil.Big)(fee), nil
+func (c *customAPI) BaseFee(ctx context.Context) *hexutil.Big {
+	fee := c.estimateNextBaseFee()
+	return (*hexutil.Big)(fee)
 }
 
-// ErrMissingWorstCaseBounds is returned when the last accepted block has no
-// worst-case bounds, which happens before any blocks are executed.
-var ErrMissingWorstCaseBounds = errors.New("worst-case bounds not available yet")
-
 // estimateNextBaseFee returns the worst-case upper bound on the next block's
-// base fee. It returns [ErrMissingWorstCaseBounds] when the last accepted
-// block has no worst-case bounds, which happens before any blocks are executed.
-func (c *customAPI) estimateNextBaseFee() (*big.Int, error) {
+// base fee. Before any blocks are executed it falls back to the last accepted
+// block's base fee.
+func (c *customAPI) estimateNextBaseFee() *big.Int {
 	bounds := c.b.LastAccepted().WorstCaseBounds()
 	if bounds == nil {
-		return nil, ErrMissingWorstCaseBounds
+		// If the worst-case bounds are not available yet, return the current base fee.
+		return c.b.LastAccepted().BaseFee().ToBig()
 	}
-	return bounds.LatestEndTime.BaseFee().ToBig(), nil
+	return bounds.LatestEndTime.BaseFee().ToBig()
 }
 
 // detailedExecutionResult is the response for eth_callDetailed.
@@ -127,10 +120,8 @@ func (c *customAPI) SuggestPriceOptions(ctx context.Context) (*PriceOptions, err
 	if err != nil {
 		return nil, err
 	}
-	doubleBaseFee, err := c.estimateNextBaseFee()
-	if err != nil {
-		return nil, err
-	}
+	doubleBaseFee := c.estimateNextBaseFee()
+
 	// Double the base fee estimate so the suggested maxFeePerGas remains
 	// valid even if the base fee rises for several consecutive
 	// blocks before the transaction is included.

@@ -7,7 +7,6 @@ import (
 	"math/big"
 	"testing"
 
-	"github.com/arr4n/shed/testerr"
 	"github.com/ava-labs/libevm/common/hexutil"
 	"github.com/ava-labs/libevm/params"
 	"github.com/stretchr/testify/require"
@@ -27,9 +26,8 @@ func TestGetChainConfig(t *testing.T) {
 func TestBaseFee(t *testing.T) {
 	ctx, sut := newSUT(t, 0)
 	sut.testRPC(ctx, t, rpcTest{
-		method:  "eth_baseFee",
-		want:    (*hexutil.Big)(nil),
-		wantErr: testerr.Contains(saerpc.ErrMissingWorstCaseBounds.Error()),
+		method: "eth_baseFee",
+		want:   (*hexutil.Big)(big.NewInt(params.InitialBaseFee)),
 	})
 
 	b := sut.runConsensusLoop(t)
@@ -87,10 +85,11 @@ func TestNewPriceOptions(t *testing.T) {
 
 func TestSuggestPriceOptions(t *testing.T) {
 	ctx, sut := newSUT(t, 0)
+	// Before any blocks with worst-case bounds, the base fee falls back to the
+	// genesis base fee and the tip defaults to the minimum (no txs yet).
 	sut.testRPC(ctx, t, rpcTest{
-		method:  "eth_suggestPriceOptions",
-		want:    (*saerpc.PriceOptions)(nil),
-		wantErr: testerr.Contains(saerpc.ErrMissingWorstCaseBounds.Error()),
+		method: "eth_suggestPriceOptions",
+		want:   saerpc.NewPriceOptions(big.NewInt(params.Wei), big.NewInt(2*params.InitialBaseFee)),
 	})
 
 	b := sut.runConsensusLoop(t)
