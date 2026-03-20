@@ -253,11 +253,12 @@ func (b *blockBuilderG[T]) buildWithTxs(
 	}
 
 	hdr.GasLimit = state.GasLimit()
-	hdr.BaseFee = state.BaseFee().ToBig()
+	bf := state.BaseFee()
+	hdr.BaseFee = bf.ToBig()
 
 	var (
 		candidates = pendingTxs(txpool.PendingFilter{
-			BaseFee: state.BaseFee(),
+			BaseFee: &bf,
 		})
 		included []*types.Transaction
 	)

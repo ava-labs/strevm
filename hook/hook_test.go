@@ -38,7 +38,7 @@ func TestOp_ApplyTo(t *testing.T) {
 			name: "mint_to_eoa",
 			op: &Op{
 				Mint: map[common.Address]uint256.Int{
-					eoa: *uint256.NewInt(1_000_000),
+					eoa: {1_000_000},
 				},
 			},
 			wantAccounts: []account{
@@ -64,7 +64,7 @@ func TestOp_ApplyTo(t *testing.T) {
 					},
 				},
 				Mint: map[common.Address]uint256.Int{
-					eoaMaxNonce: *uint256.NewInt(100_000),
+					eoaMaxNonce: {100_000},
 				},
 			},
 			wantAccounts: []account{
@@ -123,7 +123,7 @@ func TestOp_ApplyTo(t *testing.T) {
 			name: "fund_eoa_for_min_balance_tests",
 			op: &Op{
 				Mint: map[common.Address]uint256.Int{
-					eoa: *uint256.NewInt(500),
+					eoa: {500},
 				},
 			},
 			wantAccounts: []account{

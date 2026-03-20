@@ -201,7 +201,7 @@ func TestSubscriptions(t *testing.T) {
 
 	sender := sut.wallet.Addresses()[senderIndex]
 	contractAddr := crypto.CreateAddress(sender, deployTx.Nonce())
-	amount := uint256.NewInt(100)
+	amount := *uint256.NewInt(100)
 	depositTx := sut.wallet.SetNonceAndSign(t, senderIndex, &types.LegacyTx{
 		To:       &contractAddr,
 		Value:    amount.ToBig(),

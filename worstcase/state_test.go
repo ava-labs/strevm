@@ -119,7 +119,7 @@ func TestMultipleBlocks(t *testing.T) {
 		hooks                 *hookstest.Stub
 		time                  uint64
 		wantGasLimit          uint64
-		wantBaseFee           *uint256.Int
+		wantBaseFee           uint256.Int
 		ops                   []op
 		txsAfterOps           []*types.Transaction
 		wantMinSenderBalances []map[common.Address]uint64 // transformed to uint256.Int
@@ -127,7 +127,7 @@ func TestMultipleBlocks(t *testing.T) {
 		{
 			hooks:        hookstest.NewStub(2 * initialGasTarget), // Will double the target _after_ this block.
 			wantGasLimit: initialMaxBlockSize,
-			wantBaseFee:  uint256.NewInt(1),
+			wantBaseFee:  *uint256.NewInt(1),
 			ops: []op{
 				{
 					name: "include_small_operation",
@@ -166,7 +166,7 @@ func TestMultipleBlocks(t *testing.T) {
 		{
 			hooks:        hookstest.NewStub(initialGasTarget), // Restore the target _after_ this block.
 			wantGasLimit: 2 * initialMaxBlockSize,
-			wantBaseFee:  uint256.NewInt(2),
+			wantBaseFee:  *uint256.NewInt(2),
 			ops: []op{
 				{
 					name: "import",
@@ -174,7 +174,7 @@ func TestMultipleBlocks(t *testing.T) {
 						Gas:       1,
 						GasFeeCap: *uint256.NewInt(2),
 						Mint: map[common.Address]uint256.Int{
-							eoaNoBalance: *uint256.NewInt(importedAmount),
+							eoaNoBalance: {importedAmount},
 						},
 					},
 					wantErr: nil,
@@ -216,7 +216,7 @@ func TestMultipleBlocks(t *testing.T) {
 		},
 		{
 			wantGasLimit: initialMaxBlockSize,
-			wantBaseFee:  uint256.NewInt(2),
+			wantBaseFee:  *uint256.NewInt(2),
 			txsAfterOps: []*types.Transaction{
 				wallet.SetNonceAndSign(t, 0, &types.LegacyTx{
 					To:       &common.Address{},
@@ -264,7 +264,7 @@ func TestMultipleBlocks(t *testing.T) {
 			// fee.
 			time:         21,
 			wantGasLimit: initialMaxBlockSize,
-			wantBaseFee:  uint256.NewInt(1),
+			wantBaseFee:  *uint256.NewInt(1),
 		},
 	}
 	for i, block := range tests {
@@ -299,9 +299,9 @@ func TestMultipleBlocks(t *testing.T) {
 			LatestEndTime: wantLatestEndTime.Clone(),
 		}
 		for _, bals := range block.wantMinSenderBalances {
-			uBals := make(map[common.Address]*uint256.Int)
+			uBals := make(map[common.Address]uint256.Int)
 			for addr, b := range bals {
-				uBals[addr] = uint256.NewInt(b)
+				uBals[addr] = *uint256.NewInt(b)
 			}
 			want.MinOpBurnerBalances = append(want.MinOpBurnerBalances, uBals)
 		}

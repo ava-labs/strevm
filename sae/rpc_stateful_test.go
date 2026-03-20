@@ -92,7 +92,7 @@ func TestDebugTrace(t *testing.T) {
 					Op:    vm.LOG1.String(),
 					Depth: 1,
 					Stack: utils.PointerTo([]string{
-						escrow.DepositEvent(recv, uint256.NewInt(depositVal)).Topics[0].String(),
+						escrow.DepositEvent(recv, *uint256.NewInt(depositVal)).Topics[0].String(),
 						"0x40", "0x80", // arbitrary memory locations selected by Solidity
 					}),
 				}},
