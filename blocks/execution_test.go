@@ -100,7 +100,7 @@ func TestMarkExecuted(t *testing.T) {
 	gasTime := mustNewGasTime(t, time.Unix(42, 0), 1e6, 42, gastime.DefaultGasPriceConfig())
 	wallTime := time.Unix(42, 100)
 	stateRoot := common.Hash{'s', 't', 'a', 't', 'e'}
-	baseFee := uint256.Int{314159}
+	baseFee := *uint256.NewInt(314159)
 	var (
 		receipts      types.Receipts
 		cumulativeGas uint64

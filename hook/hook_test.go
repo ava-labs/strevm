@@ -59,8 +59,8 @@ func TestOp_ApplyTo(t *testing.T) {
 			op: &Op{
 				Burn: map[common.Address]AccountDebit{
 					eoa: {
-						Amount:     uint256.Int{100_000},
-						MinBalance: uint256.Int{100_000},
+						Amount:     *uint256.NewInt(100_000),
+						MinBalance: *uint256.NewInt(100_000),
 					},
 				},
 				Mint: map[common.Address]uint256.Int{
@@ -85,12 +85,12 @@ func TestOp_ApplyTo(t *testing.T) {
 			op: &Op{
 				Burn: map[common.Address]AccountDebit{
 					eoa: {
-						Amount:     uint256.Int{900_000},
-						MinBalance: uint256.Int{900_000},
+						Amount:     *uint256.NewInt(900_000),
+						MinBalance: *uint256.NewInt(900_000),
 					},
 					eoaMaxNonce: {
-						Amount:     uint256.Int{100_000},
-						MinBalance: uint256.Int{100_000},
+						Amount:     *uint256.NewInt(100_000),
+						MinBalance: *uint256.NewInt(100_000),
 					},
 				},
 			},
@@ -112,8 +112,8 @@ func TestOp_ApplyTo(t *testing.T) {
 			op: &Op{
 				Burn: map[common.Address]AccountDebit{
 					eoa: {
-						Amount:     uint256.Int{1},
-						MinBalance: uint256.Int{1},
+						Amount:     *uint256.NewInt(1),
+						MinBalance: *uint256.NewInt(1),
 					},
 				},
 			},
@@ -139,8 +139,8 @@ func TestOp_ApplyTo(t *testing.T) {
 			op: &Op{
 				Burn: map[common.Address]AccountDebit{
 					eoa: {
-						Amount:     uint256.Int{100},
-						MinBalance: uint256.Int{1000},
+						Amount:     *uint256.NewInt(100),
+						MinBalance: *uint256.NewInt(1000),
 					},
 				},
 			},
@@ -151,8 +151,8 @@ func TestOp_ApplyTo(t *testing.T) {
 			op: &Op{
 				Burn: map[common.Address]AccountDebit{
 					eoa: {
-						Amount:     uint256.Int{100},
-						MinBalance: uint256.Int{500},
+						Amount:     *uint256.NewInt(100),
+						MinBalance: *uint256.NewInt(500),
 					},
 				},
 			},
@@ -169,7 +169,7 @@ func TestOp_ApplyTo(t *testing.T) {
 			op: &Op{
 				Burn: map[common.Address]AccountDebit{
 					eoa: {
-						Amount: uint256.Int{500},
+						Amount: *uint256.NewInt(500),
 					},
 				},
 			},
@@ -187,8 +187,8 @@ func TestOp_ApplyTo(t *testing.T) {
 			op: &Op{
 				Burn: map[common.Address]AccountDebit{
 					eoa: {
-						Amount:     uint256.Int{500},
-						MinBalance: uint256.Int{300},
+						Amount:     *uint256.NewInt(500),
+						MinBalance: *uint256.NewInt(300),
 					},
 				},
 			},

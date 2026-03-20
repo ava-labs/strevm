@@ -297,7 +297,7 @@ func TestExecution(t *testing.T) {
 		t.Logf("Depositing %d", val)
 
 		txs = append(txs, tx)
-		ev := escrow.DepositEvent(eoa, uint256.Int{val})
+		ev := escrow.DepositEvent(eoa, *uint256.NewInt(val))
 		ev.Address = contract
 		ev.TxHash = tx.Hash()
 		want = append(want, &types.Receipt{
@@ -383,8 +383,8 @@ func TestEndOfBlockOps(t *testing.T) {
 			Burn: []saehookstest.AccountDebit{
 				{
 					Address:    exportEOA,
-					Amount:     uint256.Int{10},
-					MinBalance: uint256.Int{10},
+					Amount:     *uint256.NewInt(10),
+					MinBalance: *uint256.NewInt(10),
 				},
 			},
 		},
@@ -393,7 +393,7 @@ func TestEndOfBlockOps(t *testing.T) {
 			Mint: []saehookstest.AccountCredit{
 				{
 					Address: importEOA,
-					Amount:  uint256.Int{100},
+					Amount:  *uint256.NewInt(100),
 				},
 			},
 		},
