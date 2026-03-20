@@ -27,6 +27,7 @@ import (
 	"github.com/ava-labs/strevm/intmath"
 	saeparams "github.com/ava-labs/strevm/params"
 	"github.com/ava-labs/strevm/saedb"
+	saetypes "github.com/ava-labs/strevm/types"
 )
 
 // PointsG define user-injected hook points.
@@ -72,7 +73,7 @@ type Points interface {
 	// BeforeExecutingBlock is called immediately prior to executing the block.
 	BeforeExecutingBlock(params.Rules, *state.StateDB, *types.Block) error
 	// AfterExecutingBlock is called immediately after executing the block.
-	AfterExecutingBlock(*state.StateDB, *types.Block, types.Receipts)
+	AfterExecutingBlock(*state.StateDB, *types.Block, types.Receipts) error
 }
 
 // BlockBuilder constructs a block given its components.
@@ -93,7 +94,11 @@ type BlockBuilder[T Transaction] interface {
 	//
 	// SAE will filter any transactions whose [Op] can not be safely applied to
 	// the state.
-	PotentialEndOfBlockOps() iter.Seq[T]
+	PotentialEndOfBlockOps(
+		header *types.Header,
+		settledHash common.Hash,
+		source saetypes.BlockSource,
+	) iter.Seq[T]
 	// BuildBlock constructs a block with the given components.
 	//
 	// SAE always uses this method instead of [types.NewBlock], to ensure any
