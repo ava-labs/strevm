@@ -92,6 +92,10 @@ type BlockBuilder[T Transaction] interface {
 	// PotentialEndOfBlockOps returns an iterator of custom transactions that
 	// would be valid to include into a block.
 	//
+	// The header of the block being built, the hash of the last block to
+	// settle, and a block source are provided to allow end of block ops to be
+	// filtered based on the worst-case queue.
+	//
 	// SAE will filter any transactions whose [Op] can not be safely applied to
 	// the state.
 	PotentialEndOfBlockOps(
