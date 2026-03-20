@@ -11,16 +11,11 @@ import (
 	"github.com/ava-labs/avalanchego/vms/components/gas"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/google/go-cmp/cmp"
-	"github.com/stretchr/testify/require"
 
 	"github.com/ava-labs/strevm/gastime"
 	"github.com/ava-labs/strevm/hook/hookstest"
 	"github.com/ava-labs/strevm/proxytime"
 )
-
-func gasExtractionCmpOpt() cmp.Option {
-	return proxytime.CmpOpt[gas.Gas](proxytime.IgnoreRateInvariants)
-}
 
 func TestGasTime(t *testing.T) {
 	const (
@@ -44,7 +39,7 @@ func TestGasTime(t *testing.T) {
 	want := proxytime.New(unix, rate)
 	want.Tick(frac)
 
-	if diff := cmp.Diff(want, got, gasExtractionCmpOpt()); diff != "" {
+	if diff := cmp.Diff(want, got, proxytime.CmpOpt[gas.Gas]()); diff != "" {
 		t.Errorf("GasTime(...) diff (-want +got):\n%s", diff)
 	}
 }
@@ -87,9 +82,9 @@ func FuzzTimeExtraction(f *testing.F) {
 
 			want := proxytime.Of[gas.Gas](hooks.Now())
 			rate := gastime.SafeRateOfTarget(gas.Gas(target))
-			require.NoErrorf(t, want.SetRate(rate), "%T.SetRate(%d)", want, rate)
+			want.SetRate(rate)
 
-			if diff := cmp.Diff(want, got, gasExtractionCmpOpt()); diff != "" {
+			if diff := cmp.Diff(want, got, proxytime.CmpOpt[gas.Gas]()); diff != "" {
 				t.Errorf("diff (-proxytime.Of +GasTime):\n%s", diff)
 			}
 		})

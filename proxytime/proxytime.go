@@ -30,17 +30,13 @@ type Time[D Duration] struct {
 	fraction D `canoto:"uint,2"`
 	hertz    D `canoto:"uint,3"`
 
-	rateInvariants []*D
-
 	canotoData canotoData_Time `canoto:"nocopy"`
 }
 
 // IMPORTANT: keep [Time.Clone] next to the struct definition to make it easier
 // to check that all fields are copied.
 
-// Clone returns a copy of the time. Note that it does NOT copy the pointers
-// passed to [Time.SetRateInvariants] as this risks coupling the clone with the
-// wrong invariants.
+// Clone returns a copy of the time.
 func (tm *Time[D]) Clone() *Time[D] {
 	return &Time[D]{
 		seconds:  tm.seconds,
@@ -167,56 +163,29 @@ func ConvertMilliseconds[D Duration](rate D, ms uint64) (sec uint64, _ Fractiona
 // SetRate changes the unit rate at which time passes. The requisite integer
 // division may result in rounding up of the fractional-second component of
 // time. Rounding up instead of down achieves monotonicity of the clock.
-//
-// If no values have been registered with [Time.SetRateInvariants] then SetRate
-// will always return a nil error. A non-nil error will only be returned if any
-// of the rate-invariant values overflows a uint64 due to the scaling.
-func (tm *Time[D]) SetRate(hertz D) error {
-	frac, err := tm.scale(tm.fraction, hertz)
+func (tm *Time[D]) SetRate(hertz D) {
+	// If this happens then there is a bug in the implementation. The
+	// invariant that `tm.fraction < tm.hertz` makes overflow impossible as
+	// the scaled fraction will be less than the new rate.
+	frac, err := tm.Scale(tm.fraction, hertz)
 	if err != nil {
-		// If this happens then there is a bug in the implementation. The
-		// invariant that `tm.fraction < tm.hertz` makes overflow impossible as
-		// the scaled fraction will be less than the new rate.
-		return fmt.Errorf("fractional-second time: %w", err)
+		// A broken invariant MUST be detected in tests, hence not just dropping
+		// the error.
+		panic(fmt.Sprintf("broken invariant: %v", err))
 	}
-
-	// Avoid scaling some but not all rate invariants if one results in an
-	// error.
-	scaled := make([]D, len(tm.rateInvariants))
-	for i, v := range tm.rateInvariants {
-		scaled[i], err = tm.scale(*v, hertz)
-		if err != nil {
-			return fmt.Errorf("rate invariant [%d]: %w", i, err)
-		}
-	}
-	for i, v := range tm.rateInvariants {
-		*v = scaled[i]
-	}
-
-	if frac == hertz {
-		frac = 0
+	// Although the > case is technically impossible, breaking the above
+	// invariant will panic, so we defensively protect against everything.
+	if frac >= hertz {
+		frac -= hertz
 		tm.seconds++
 	}
 	tm.fraction = frac
 	tm.hertz = hertz
-	return nil
 }
 
-// SetRateInvariants sets units that, whenever [Time.SetRate] is called, will be
-// scaled relative to the change in rate. Scaling may be affected by the same
-// rounding described for [Time.SetRate]. Rounding aside, the rational numbers
-// formed by the invariants divided by the rate will each remain equal despite
-// their change in denominator.
-//
-// The pointers MUST NOT be nil.
-func (tm *Time[D]) SetRateInvariants(inv ...*D) {
-	tm.rateInvariants = inv
-}
-
-// scale returns `val`, scaled from the existing [Time.Rate] to the newly
-// specified one. See [Time.SetRate] for details about overflow errors and
-// rounding.
-func (tm *Time[D]) scale(val, newRate D) (D, error) {
+// Scale returns `val`, scaled from the existing [Time.Rate] to the newly
+// specified one. See [intmath.MulDivCeil] for error cases.
+func (tm *Time[D]) Scale(val, newRate D) (D, error) {
 	scaled, _, err := intmath.MulDivCeil(val, newRate, tm.hertz)
 	if err != nil {
 		return 0, fmt.Errorf("scaling %d from rate of %d to %d: %w", val, tm.hertz, newRate, err)
@@ -224,8 +193,7 @@ func (tm *Time[D]) scale(val, newRate D) (D, error) {
 	return scaled, nil
 }
 
-// Sub returns a new [Time], `s` seconds earlier. Rate invariants are NOT copied
-// and no underflow protection is provided.
+// Sub returns a new [Time], `s` seconds earlier.
 func (tm *Time[D]) Sub(s uint64) *Time[D] {
 	return &Time[D]{
 		seconds:  tm.seconds - s,
@@ -269,7 +237,7 @@ func (tm *Time[D]) AsTime() time.Time {
 	}
 	// The error can be ignored as the fraction is always less than the rate and
 	// therefore the scaled value can never overflow.
-	nsec, _ := tm.scale(tm.fraction, 1e9)
+	nsec, _ := tm.Scale(tm.fraction, 1e9)
 	return time.Unix(int64(tm.seconds), int64(nsec)).In(time.UTC)
 }
 
