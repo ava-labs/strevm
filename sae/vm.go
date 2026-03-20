@@ -164,8 +164,8 @@ func NewVM[T hook.Transaction](
 	}
 
 	rec := &recovery{db, xdb, chainConfig, snowCtx.Log, hooks, cfg, lastSync}
-	{ // ==========  Executor  ==========
-		lastCommitted, unexecuted, err := rec.recoverFromDB()
+	{ // ==========  Block State  ==========
+		lastCommitted, err := rec.findLastCommitted()
 		if err != nil {
 			return nil, err
 		}
@@ -186,38 +186,13 @@ func NewVM[T hook.Transaction](
 		vm.exec = exec
 		vm.toClose = append(vm.toClose, exec)
 
-		lastExecuted := lastCommitted
-		for b, err := range unexecuted {
-			if err != nil {
-				return nil, err
-			}
-			exec.Track(b.Header().Root) // hold settled state
-			if err := exec.Enqueue(ctx, b); err != nil {
-				return nil, err
-			}
-			if err := b.WaitUntilExecuted(ctx); err != nil {
-				return nil, err
-			}
-			lastExecuted = b
-		}
-		// Remove in-memory state between lastCommitted and lastSettled
-		settledHeight := hooks.SettledHeight(lastExecuted.Header())
-		for b := lastExecuted; b.NumberU64() > lastCommitted.NumberU64(); b = b.ParentBlock() {
-			if b.NumberU64() < settledHeight {
-				exec.Untrack(b.PostExecutionStateRoot())
-			}
-		}
-	}
-
-	{ // ==========  Blocks in memory  ==========
-		head := vm.exec.LastExecuted()
-
-		bMap, lastSettled, err := rec.rebuildBlocksInMemory(head)
+		bMap, lastSettled, err := rec.executeCritical(ctx, exec)
 		if err != nil {
 			return nil, err
 		}
 		vm.consensusCritical = bMap
 
+		head := exec.LastExecuted()
 		vm.last.settled.Store(lastSettled)
 		vm.last.accepted.Store(head)
 		vm.preference.Store(head)
