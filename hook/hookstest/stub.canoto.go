@@ -27,11 +27,13 @@ var (
 )
 
 const (
-	canoto__extra__subSec = 1
-	canoto__extra__ops    = 2
+	canoto__extra__subSec        = 1
+	canoto__extra__ops           = 2
+	canoto__extra__settledHeight = 3
 
-	canoto__extra__subSec__tag = "\x08" // canoto.Tag(canoto__extra__subSec, canoto.Varint)
-	canoto__extra__ops__tag    = "\x12" // canoto.Tag(canoto__extra__ops, canoto.Len)
+	canoto__extra__subSec__tag        = "\x08" // canoto.Tag(canoto__extra__subSec, canoto.Varint)
+	canoto__extra__ops__tag           = "\x12" // canoto.Tag(canoto__extra__ops, canoto.Len)
+	canoto__extra__settledHeight__tag = "\x18" // canoto.Tag(canoto__extra__settledHeight, canoto.Varint)
 )
 
 type canotoData_extra struct {
@@ -60,6 +62,12 @@ func (*extra) CanotoSpec(types ...reflect.Type) *canoto.Spec {
 				/*OneOf:         */ "",
 				/*types:         */ types,
 			),
+			{
+				FieldNumber: canoto__extra__settledHeight,
+				Name:        "settledHeight",
+				OneOf:       "",
+				TypeUint:    canoto.SizeOf(zero.settledHeight),
+			},
 		},
 	}
 	s.CalculateCanotoCache()
@@ -166,6 +174,17 @@ func (c *extra) UnmarshalCanotoFrom(r canoto.Reader) error {
 				}
 				r.B = remainingBytes
 			}
+		case canoto__extra__settledHeight:
+			if wireType != canoto.Varint {
+				return canoto.ErrUnexpectedWireType
+			}
+
+			if err := canoto.ReadUint(&r, &c.settledHeight); err != nil {
+				return err
+			}
+			if canoto.IsZero(c.settledHeight) {
+				return canoto.ErrZeroValue
+			}
 		default:
 			return canoto.ErrUnknownField
 		}
@@ -216,6 +235,9 @@ func (c *extra) CalculateCanotoCache() {
 			fieldSize := (&field[i]).CachedCanotoSize()
 			size += uint64(len(canoto__extra__ops__tag)) + canoto.SizeUint(fieldSize) + fieldSize
 		}
+	}
+	if !canoto.IsZero(c.settledHeight) {
+		size += uint64(len(canoto__extra__settledHeight__tag)) + canoto.SizeUint(c.settledHeight)
 	}
 	atomic.StoreUint64(&c.canotoData.size, size)
 }
@@ -272,6 +294,10 @@ func (c *extra) MarshalCanotoInto(w canoto.Writer) canoto.Writer {
 			canoto.AppendUint(&w, (&field[i]).CachedCanotoSize())
 			w = (&field[i]).MarshalCanotoInto(w)
 		}
+	}
+	if !canoto.IsZero(c.settledHeight) {
+		canoto.Append(&w, canoto__extra__settledHeight__tag)
+		canoto.AppendUint(&w, c.settledHeight)
 	}
 	return w
 }

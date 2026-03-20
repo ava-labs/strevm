@@ -37,12 +37,11 @@ var _ StateDBOpener = (*Tracker)(nil)
 // All methods are safe to be called even after [Tracker.Close], but state
 // will be unavailable.
 type Tracker struct {
-	snaps       *snapshot.Tree
-	cache       state.Database
-	isHashDB    bool
-	isArchival  bool
-	log         logging.Logger
-	currentRoot common.Hash
+	snaps      *snapshot.Tree
+	cache      state.Database
+	isHashDB   bool
+	isArchival bool
+	log        logging.Logger
 }
 
 // NewTracker provides a new [Tracker] on the underlying database.
@@ -58,12 +57,11 @@ func NewTracker(db ethdb.Database, c Config, lastExecuted common.Hash, log loggi
 		return nil, err
 	}
 	return &Tracker{
-		snaps:       snaps,
-		cache:       cache,
-		currentRoot: lastExecuted,
-		isHashDB:    isHashDB,
-		isArchival:  c.Archival,
-		log:         log,
+		snaps:      snaps,
+		cache:      cache,
+		isHashDB:   isHashDB,
+		isArchival: c.Archival,
+		log:        log,
 	}, nil
 }
 
@@ -73,24 +71,7 @@ func NewTracker(db ethdb.Database, c Config, lastExecuted common.Hash, log loggi
 //
 // This state will be available in memory until [Tracker.Untrack] has been
 // called for the root as many times as [Tracker.Track] has been called.
-func (t *Tracker) Track(root common.Hash, height uint64) error {
-	// Because [Tracker.Untrack] is always expected to be called (whether the state root changed or not),
-	// we must always add an additional reference
-	t.reference(root) // keepalive until dereference
-	t.currentRoot = root
-
-	if !t.isArchival && !ShouldCommitTrieDB(height) {
-		return nil
-	}
-
-	tdb := t.cache.TrieDB()
-	if err := tdb.Commit(root, false /* log */); err != nil {
-		return fmt.Errorf("%T.Commit(%#x) at end of block %d: %v", tdb, root, height, err)
-	}
-	return nil
-}
-
-func (t *Tracker) reference(root common.Hash) {
+func (t *Tracker) Track(root common.Hash) {
 	if !t.isHashDB {
 		return
 	}
@@ -99,6 +80,33 @@ func (t *Tracker) reference(root common.Hash) {
 	if err := t.cache.TrieDB().Reference(root, common.Hash{}); err != nil {
 		log.Error("*triedb.Database.Reference()", zap.Error(err))
 	}
+}
+
+// CheckCommit uses the provided height to decide if any root needs committed, following
+// the below rules (in order):
+//
+// 1. If [Config.Archival] is true, then `executionRoot` will be committed.
+// 2. If [ShouldCommitTrieDB] based on `height`, `settledRoot` is committed.
+// 3. Otherwise, nothing is committed.
+//
+// This does NOT change in-memory tracking.
+func (t *Tracker) CheckCommit(settledRoot, executionRoot common.Hash, height uint64) error {
+	tdb := t.cache.TrieDB()
+	if t.isArchival {
+		if err := tdb.Commit(executionRoot, false /* log */); err != nil {
+			return fmt.Errorf("%T.Commit(%#x) post-execution at end of block %d :%v", tdb, executionRoot, height, err)
+		}
+		return nil
+	}
+
+	if !ShouldCommitTrieDB(height) {
+		return nil
+	}
+
+	if err := tdb.Commit(settledRoot, false /* log */); err != nil {
+		return fmt.Errorf("%T.Commit(%#x) settled at end of block %d: %v", tdb, settledRoot, height, err)
+	}
+	return nil
 }
 
 // Untrack informs the [Tracker] that the state corresponding
@@ -129,7 +137,7 @@ func (t *Tracker) StateDB(root common.Hash) (*state.StateDB, error) {
 }
 
 // Close commits the most recent state to the database for shutdown.
-func (t *Tracker) Close() (errs error) {
+func (t *Tracker) Close(root common.Hash) (errs error) {
 	defer func() {
 		t.snaps.Release()
 		if err := t.cache.TrieDB().Close(); err != nil {
@@ -141,16 +149,11 @@ func (t *Tracker) Close() (errs error) {
 	// SAE so we don't mind flattening all snapshot layers to disk. Note that
 	// calling `Cap([disk root], 0)` returns an error when it's actually a
 	// no-op, so we ensure there are changes.
-	if t.currentRoot != t.snaps.DiskRoot() {
-		if err := t.snaps.Cap(t.currentRoot, 0); err != nil {
+	if root != t.snaps.DiskRoot() {
+		if err := t.snaps.Cap(root, 0); err != nil {
 			errs = errors.Join(errs, fmt.Errorf("snapshot.Tree.Cap([last post-execution state root], 0): %v", err))
 		}
 	}
 
-	// If we have new state, commit changes to database for easier startup.
-	// If there's no changes, this is a no-op.
-	if err := t.cache.TrieDB().Commit(t.currentRoot, true /* log */); err != nil {
-		errs = errors.Join(errs, fmt.Errorf("triedb.Database.Commit() for %#x: %v", t.currentRoot, err))
-	}
 	return errs
 }

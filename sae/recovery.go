@@ -4,6 +4,7 @@
 package sae
 
 import (
+	"context"
 	"fmt"
 	"iter"
 	"math"
@@ -43,52 +44,58 @@ func (rec *recovery) newCanonicalBlock(num uint64, parent *blocks.Block) (*block
 	return blocks.New(ethB, parent, nil, rec.log)
 }
 
-func (rec *recovery) lastBlockWithStateRootAvailable() (*blocks.Block, error) {
-	// TODO(alarso16): unless there was an ungraceful shutdown, we can use the last executed block.
-	num := saedb.LastCommittedTrieDBHeight(
-		rawdb.ReadHeadHeader(rec.db).Number.Uint64(),
-	)
+// findLastCommitted uses the database to find the last expected state, and
+// returns the block with that post-execution state.
+func (rec *recovery) findLastCommitted() (*blocks.Block, error) {
+	// most recently executed block number before shutdown
+	num := rawdb.ReadHeadHeader(rec.db).Number.Uint64()
 	if num <= rec.lastSynchronous.NumberU64() {
 		return rec.lastSynchronous, nil
 	}
 
-	b, err := rec.newCanonicalBlock(num, nil)
+	// If the node is not archival, then each block at height [saedb.CommitTrieDBEvery]
+	// will have its settled state available.
+	if !rec.config.DBConfig.Archival {
+		// executionHeight represents the last block with the settled state available.
+		executionHeight := saedb.LastCommittedTrieDBHeight(num)
+		if executionHeight <= rec.lastSynchronous.NumberU64() {
+			return rec.lastSynchronous, nil
+		}
+		b, err := rec.newCanonicalBlock(executionHeight, nil)
+		if err != nil {
+			return nil, err
+		}
+
+		num = rec.hooks.SettledHeight(b.Header())
+	}
+
+	settled, err := rec.newCanonicalBlock(num, nil)
 	if err != nil {
 		return nil, err
 	}
-	if err := b.RestoreExecutionArtefacts(rec.db, rec.xdb, rec.chainConfig); err != nil {
+	if err := settled.RestoreExecutionArtefacts(rec.db, rec.xdb, rec.chainConfig); err != nil {
 		return nil, err
 	}
 	{
-		// TODO(alarso16) This error can only occur once we support Firewood.
-		// Reassess the likelihood of occurrence vs the need for a preemptive
-		// fix, which would require trying the root [params.CommitTrieDBEvery]
-		// blocks earlier.
-		root := b.PostExecutionStateRoot()
-		if _, err := state.NewDatabaseWithConfig(rec.db, rec.config.DBConfig.TrieDBConfig).OpenTrie(root); err != nil {
-			return nil, fmt.Errorf("database corrupted: latest expected state root (block %d / %#x) unavailable: %v", b.NumberU64(), b.Hash(), err)
+		// TODO(alarso16): When Firewood is added, the exact root may be unknown.
+		sdb := state.NewDatabaseWithConfig(rec.db, rec.config.DBConfig.TrieDBConfig)
+		root := settled.PostExecutionStateRoot()
+		if _, err := sdb.OpenTrie(root); err != nil {
+			return nil, fmt.Errorf(
+				"database corrupted: checking for state root (block %d / %#x): %v",
+				settled.NumberU64(), settled.Hash(), err,
+			)
 		}
 	}
-	return b, nil
+	return settled, nil
 }
 
-// recoverFromDB returns the block to be used as the `lastExecuted` argument to
-// [saexec.New], along with an iterator of blocks to pass to
-// [saexec.Executor.Enqueue]. Enqueuing of all blocks and waiting for the last
-// one to be executed will leave the [saexec.Executor] in almost the same state
-// as before shutdown. [VM.rebuildBlocksInMemory] MUST then be called to fully
-// reinstate internal invariants.
-func (rec *recovery) recoverFromDB() (*blocks.Block, iter.Seq2[*blocks.Block, error], error) {
-	var _ = saexec.New // protect the import to allow comment linking
+// canonicalAfter returns an iterator over all canonical blocks after `start`.
+func (rec *recovery) canonicalAfter(start *blocks.Block) iter.Seq2[*blocks.Block, error] {
+	toExecute, _ := rawdb.ReadAllCanonicalHashes(rec.db, start.NumberU64()+1, math.MaxUint64, math.MaxInt)
 
-	execAfter, err := rec.lastBlockWithStateRootAvailable()
-	if err != nil {
-		return nil, nil, err
-	}
-	toExecute, _ := rawdb.ReadAllCanonicalHashes(rec.db, execAfter.NumberU64()+1, math.MaxUint64, math.MaxInt)
-
-	return execAfter, func(yield func(*blocks.Block, error) bool) {
-		parent := execAfter
+	return func(yield func(*blocks.Block, error) bool) {
+		parent := start
 		for _, num := range toExecute {
 			b, err := rec.newCanonicalBlock(num, parent)
 			if !yield(b, err) || err != nil {
@@ -96,7 +103,39 @@ func (rec *recovery) recoverFromDB() (*blocks.Block, iter.Seq2[*blocks.Block, er
 			}
 			parent = b
 		}
-	}, nil
+	}
+}
+
+// executeCritical executes all canonical blocks after `exec`'s last executed state.
+// The map returned stores all blocks in the inclusive range between`lastSettled`
+// and the `exec`'s new last executed block.
+// All post-execution states in that range are guaranteed to be accessible.
+func (rec *recovery) executeCritical(ctx context.Context, exec *saexec.Executor) (_ *syncMap[common.Hash, *blocks.Block], lastSettled *blocks.Block, _e error) {
+	start := exec.LastExecuted()
+	for b, err := range rec.canonicalAfter(start) {
+		if err != nil {
+			return nil, nil, err
+		}
+		exec.Track(b.Header().Root) // hold settled state, if exists.
+		if err := exec.Enqueue(ctx, b); err != nil {
+			return nil, nil, err
+		}
+		// Avoid race with untracking by ensuring state is available.
+		if err := b.WaitUntilExecuted(ctx); err != nil {
+			return nil, nil, err
+		}
+	}
+
+	// in-memory state between start and last settled isn't needed by consensus
+	lastExecuted := exec.LastExecuted()
+	settledHeight := rec.hooks.SettledHeight(lastExecuted.Header())
+	for b := lastExecuted; b.NumberU64() > start.NumberU64(); b = b.ParentBlock() {
+		if b.NumberU64() < settledHeight {
+			exec.Untrack(b.PostExecutionStateRoot())
+		}
+	}
+
+	return rec.rebuildBlocksInMemory(lastExecuted)
 }
 
 // lastOf returns the lastOf element in a slice, which MUST NOT be empty.

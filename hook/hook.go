@@ -61,6 +61,9 @@ type Points interface {
 	// which MUST be non-negative and strictly shorter than a second; i.e. a
 	// value d such that 0 <= d < [time.Second].
 	SubSecondBlockTime(h *types.Header) time.Duration
+	// SettledHeight returns the block height which [types.Header.Root] corresponds
+	// with as the post-execution state root.
+	SettledHeight(*types.Header) uint64
 	// EndOfBlockOps returns operations outside of the normal EVM state changes
 	// to perform while executing the block, after regular EVM transactions.
 	// These operations will be performed during both worst-case and actual
@@ -103,6 +106,7 @@ type BlockBuilder[T Transaction] interface {
 		txs []*types.Transaction,
 		receipts []*types.Receipt,
 		endOfBlockOps []T,
+		settledHeight uint64,
 	) (*types.Block, error)
 }
 
