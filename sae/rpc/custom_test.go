@@ -13,7 +13,7 @@ import (
 )
 
 func TestNewPriceOptions(t *testing.T) {
-	minimumPrice := &price{
+	minimumPrice := &Price{
 		GasTip: (*hexutil.Big)(big.NewInt(params.Wei)),
 		GasFee: (*hexutil.Big)(big.NewInt(2 * params.Wei)),
 	}
@@ -25,13 +25,13 @@ func TestNewPriceOptions(t *testing.T) {
 		name    string
 		tip     uint64
 		baseFee uint64
-		want    *priceOptions
+		want    *PriceOptions
 	}{
 		{
 			name:    "minimum",
 			tip:     params.Wei,
 			baseFee: params.Wei,
-			want: &priceOptions{
+			want: &PriceOptions{
 				Slow:   minimumPrice,
 				Normal: minimumPrice,
 				Fast:   minimumPrice,
@@ -41,7 +41,7 @@ func TestNewPriceOptions(t *testing.T) {
 			name:    "percentages",
 			tip:     tip,
 			baseFee: baseFee,
-			want: &priceOptions{
+			want: &PriceOptions{
 				Slow:   newPrice(big.NewInt(tip*slowTipPercent/100), big.NewInt(baseFee)),
 				Normal: newPrice(big.NewInt(tip), big.NewInt(baseFee)),
 				Fast:   newPrice(big.NewInt(tip*fastTipPercent/100), big.NewInt(baseFee)),
