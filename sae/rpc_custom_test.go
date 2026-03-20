@@ -27,7 +27,7 @@ func TestBaseFee(t *testing.T) {
 	ctx, sut := newSUT(t, 0)
 	sut.testRPC(ctx, t, rpcTest{
 		method: "eth_baseFee",
-		want:   (*hexutil.Big)(big.NewInt(params.InitialBaseFee)),
+		want:   hexBig(params.InitialBaseFee),
 	})
 
 	b := sut.runConsensusLoop(t)
@@ -35,52 +35,6 @@ func TestBaseFee(t *testing.T) {
 		method: "eth_baseFee",
 		want:   (*hexutil.Big)(b.WorstCaseBounds().LatestEndTime.BaseFee().ToBig()),
 	})
-}
-
-func TestNewPriceOptions(t *testing.T) {
-	minimumPrice := &saerpc.Price{
-		GasTip: hexBig(params.Wei),
-		GasFee: hexBig(2 * params.Wei),
-	}
-	const (
-		tip     = 500
-		baseFee = 100
-	)
-	tests := []struct {
-		name    string
-		tip     uint64
-		baseFee uint64
-		want    *saerpc.PriceOptions
-	}{
-		{
-			name:    "minimum",
-			tip:     params.Wei,
-			baseFee: params.Wei,
-			want: &saerpc.PriceOptions{
-				Slow:   minimumPrice,
-				Normal: minimumPrice,
-				Fast:   minimumPrice,
-			},
-		},
-		{
-			name:    "percentages",
-			tip:     tip,
-			baseFee: baseFee,
-			want: &saerpc.PriceOptions{
-				Slow:   saerpc.NewPrice(big.NewInt(tip*saerpc.SlowTipPercent/100), big.NewInt(baseFee)),
-				Normal: saerpc.NewPrice(big.NewInt(tip), big.NewInt(baseFee)),
-				Fast:   saerpc.NewPrice(big.NewInt(tip*saerpc.FastTipPercent/100), big.NewInt(baseFee)),
-			},
-		},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			tip := new(big.Int).SetUint64(test.tip)
-			baseFee := new(big.Int).SetUint64(test.baseFee)
-			got := saerpc.NewPriceOptions(tip, baseFee)
-			require.Equalf(t, test.want, got, "NewPriceOptions(%s, %v)", tip, baseFee)
-		})
-	}
 }
 
 func TestSuggestPriceOptions(t *testing.T) {

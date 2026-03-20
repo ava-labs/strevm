@@ -59,47 +59,47 @@ func (c *customAPI) CallDetailed(ctx context.Context, args any, blockNrOrHash rp
 	panic(errUnimplemented)
 }
 
-// Price represents a single gas-price suggestion.
-type Price struct {
+// price represents a single gas-price suggestion.
+type price struct {
 	GasTip *hexutil.Big `json:"maxPriorityFeePerGas"`
 	GasFee *hexutil.Big `json:"maxFeePerGas"`
 }
 
-// NewPrice returns a [Price] with the given tip and a max fee of tip + baseFee.
+// newPrice returns a [price] with the given tip and a max fee of tip + baseFee.
 // It allocates new big.Ints so the caller retains ownership of the inputs.
-func NewPrice(tip, baseFee *big.Int) *Price {
-	return &Price{
+func newPrice(tip, baseFee *big.Int) *price {
+	return &price{
 		GasTip: (*hexutil.Big)(new(big.Int).Set(tip)),
 		GasFee: (*hexutil.Big)(new(big.Int).Add(tip, baseFee)),
 	}
 }
 
-// PriceOptions groups slow/normal/fast gas-price suggestions.
-type PriceOptions struct {
-	Slow   *Price `json:"slow"`
-	Normal *Price `json:"normal"`
-	Fast   *Price `json:"fast"`
+// priceOptions groups slow/normal/fast gas-price suggestions.
+type priceOptions struct {
+	Slow   *price `json:"slow"`
+	Normal *price `json:"normal"`
+	Fast   *price `json:"fast"`
 }
 
 var minGasTip = big.NewInt(params.Wei)
 
 // Tip scaling percentages for gas price options.
 const (
-	SlowTipPercent = 95
-	FastTipPercent = 105
+	slowTipPercent = 95
+	fastTipPercent = 105
 )
 
-// NewPriceOptions returns slow, normal, and fast [PriceOptions] derived from the given tip and base fee.
+// NewPriceOptions returns slow, normal, and fast [priceOptions] derived from the given tip and base fee.
 // The slow tip is floored at [minGasTip], and normal/fast are floored at the
 // previous tier to guarantee slow <= normal <= fast.
-func NewPriceOptions(tip, baseFee *big.Int) *PriceOptions {
-	slowTip := new(big.Int).Set(math.BigMax(scale(tip, SlowTipPercent), minGasTip))
+func NewPriceOptions(tip, baseFee *big.Int) *priceOptions {
+	slowTip := new(big.Int).Set(math.BigMax(scale(tip, slowTipPercent), minGasTip))
 	normalTip := new(big.Int).Set(math.BigMax(tip, slowTip))
-	fastTip := new(big.Int).Set(math.BigMax(scale(tip, FastTipPercent), normalTip))
-	return &PriceOptions{
-		Slow:   NewPrice(slowTip, baseFee),
-		Normal: NewPrice(normalTip, baseFee),
-		Fast:   NewPrice(fastTip, baseFee),
+	fastTip := new(big.Int).Set(math.BigMax(scale(tip, fastTipPercent), normalTip))
+	return &priceOptions{
+		Slow:   newPrice(slowTip, baseFee),
+		Normal: newPrice(normalTip, baseFee),
+		Fast:   newPrice(fastTip, baseFee),
 	}
 }
 
@@ -113,7 +113,7 @@ func scale(v *big.Int, percent uint64) *big.Int {
 }
 
 // SuggestPriceOptions returns gas-price suggestions at three speed tiers.
-func (c *customAPI) SuggestPriceOptions(ctx context.Context) (*PriceOptions, error) {
+func (c *customAPI) SuggestPriceOptions(ctx context.Context) (*priceOptions, error) {
 	tip, err := c.b.SuggestGasTipCap(ctx)
 	if err != nil {
 		return nil, err
