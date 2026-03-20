@@ -49,7 +49,7 @@ func TestSuggestPriceOptions(t *testing.T) {
 	b := sut.runConsensusLoop(t)
 
 	// This just asserts the round-tripping of the PriceOptions through the RPC.
-	// See rpc.TestNewPriceOptions for behavioral tests.
+	// See testing of [saerpc.NewPriceOptions] for behavioral tests.
 	tip, err := sut.rawVM.GethRPCBackends().SuggestGasTipCap(t.Context())
 	require.NoErrorf(t, err, "SuggestGasTipCap()")
 	doubleBaseFee := b.WorstCaseBounds().LatestEndTime.BaseFee().ToBig()
