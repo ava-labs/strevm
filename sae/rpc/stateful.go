@@ -79,6 +79,7 @@ func (b *backend) StateAndHeaderByNumberOrHash(ctx context.Context, numOrHash rp
 		return nil, nil, errors.New("state not available for pending block")
 	}
 
+	numOrHash.RequireCanonical = true
 	num, hash, err := blocks.ResolveRPCNumberOrHash(b, numOrHash)
 	if err != nil {
 		return nil, nil, err
@@ -93,6 +94,8 @@ func (b *backend) StateAndHeaderByNumberOrHash(ctx context.Context, numOrHash rp
 	var hdr *types.Header
 	if bl, ok := b.ConsensusCriticalBlock(hash); ok {
 		hdr = bl.Header()
+		// These methods block until the block has been executed, which is
+		// guaranteed to happen because we enforce RequireCanonical above.
 		hdr.Root = bl.PostExecutionStateRoot()
 		hdr.BaseFee = bl.BaseFee().ToBig()
 	} else {
@@ -209,14 +212,11 @@ func (b *backend) StateAtTransaction(ctx context.Context, ethB *types.Block, txI
 
 // postExecutionStateRoot returns the post-execution state root for the block
 // identified by hash and number, checking in-memory blocks first, then falling
-// back to disk.
+// back to disk. For in-memory blocks, [blocks.Block.PostExecutionStateRoot]
+// blocks until execution completes.
 func (b *backend) postExecutionStateRoot(hash common.Hash, num uint64) (common.Hash, error) {
-	switch bl, ok := b.ConsensusCriticalBlock(hash); {
-	case !ok:
-		return blocks.PostExecutionStateRoot(b.XDB(), num)
-	case bl.Executed():
+	if bl, ok := b.ConsensusCriticalBlock(hash); ok {
 		return bl.PostExecutionStateRoot(), nil
-	default:
-		return common.Hash{}, fmt.Errorf("post-execution state root unavailable for block %d (%#x)", num, hash)
 	}
+	return blocks.PostExecutionStateRoot(b.XDB(), num)
 }
