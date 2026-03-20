@@ -227,8 +227,8 @@ func (e *Estimator) SuggestGasTipCap(ctx context.Context) (tip *big.Int, _ error
 }
 
 var (
-	errHistoryDepthExhausted  = errors.New("requested block is too far behind accepted head")
-	errMissingBlock           = errors.New("missing block")
+	errHistoryDepthExhausted = errors.New("requested block is too far behind accepted head")
+	errMissingBlock          = errors.New("missing block")
 )
 
 // FeeHistory returns data relevant for fee estimation based on the specified
