@@ -92,10 +92,10 @@ func (b *backend) server(filter *filters.FilterAPI) (*rpc.Server, error) {
 		// - eth_resend
 		{
 			"eth",
-			immediateReceipts{
-				b.RecentReceipt,
-				ethapi.NewTransactionAPI(b, new(ethapi.AddrLocker)),
-			},
+			// immediateReceipts{
+			// 	b.RecentReceipt,
+			ethapi.NewTransactionAPI(b, new(ethapi.AddrLocker)),
+			// },
 		},
 		// Standard Ethereum node APIS:
 		// - eth_getFilterChanges
