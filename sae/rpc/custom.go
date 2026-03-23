@@ -9,8 +9,11 @@ import (
 
 	"github.com/ava-labs/libevm/common/hexutil"
 	"github.com/ava-labs/libevm/common/math"
+	"github.com/ava-labs/libevm/libevm/ethapi"
 	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/rpc"
+
+	"github.com/ava-labs/strevm/blocks"
 )
 
 // customAPI implements Avalanche-custom RPCs. These are not part of the
@@ -131,5 +134,45 @@ func (c *customAPI) SuggestPriceOptions(ctx context.Context) (*PriceOptions, err
 // transaction is accepted by consensus (prior to execution). If fullTx is true
 // the full tx is sent to the client, otherwise only the hash is sent.
 func (c *customAPI) NewAcceptedTransactions(ctx context.Context, fullTx *bool) (*rpc.Subscription, error) {
-	panic(errUnimplemented)
+	notifier, supported := rpc.NotifierFromContext(ctx)
+	if !supported {
+		return &rpc.Subscription{}, rpc.ErrNotificationsUnsupported
+	}
+
+	rpcSub := notifier.CreateSubscription()
+
+	// [event.FeedOf.Send] blocks until all subscribers receive the value, so a
+	// slow reader can stall the sender. An ample buffer avoids this in practice.
+	// See https://github.com/ava-labs/libevm/blob/3d7f8934ee6c/event/feedof.go#L49-L50
+	const acceptedBlocksBuf = 128
+
+	ch := make(chan *blocks.Block, acceptedBlocksBuf)
+	sub := c.b.SubscribeAcceptedBlocks(ch)
+	chainConfig := c.b.ChainConfig()
+
+	go func() {
+		defer sub.Unsubscribe()
+		for {
+			select {
+			case block := <-ch:
+				hash := block.Hash()
+				num := block.NumberU64()
+				buildTime := block.BuildTime()
+				baseFee := block.Header().BaseFee
+				for i, tx := range block.Transactions() {
+					if fullTx != nil && *fullTx {
+						rpcTx := ethapi.NewRPCTransaction(tx, hash, num, buildTime, uint64(i), baseFee, chainConfig) //nolint:gosec // i is non-negative
+						_ = notifier.Notify(rpcSub.ID, rpcTx)
+					} else {
+						_ = notifier.Notify(rpcSub.ID, tx.Hash())
+					}
+				}
+			case <-rpcSub.Err():
+				return
+			case <-notifier.Closed():
+				return
+			}
+		}
+	}()
+	return rpcSub, nil
 }

@@ -4,15 +4,19 @@
 package sae
 
 import (
+	"encoding/json"
 	"math/big"
 	"testing"
 
+	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/common/hexutil"
+	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/params"
 	"github.com/stretchr/testify/require"
 
 	saerpc "github.com/ava-labs/strevm/sae/rpc"
 	"github.com/ava-labs/strevm/saetest"
+	"github.com/ava-labs/strevm/saetest/escrow"
 )
 
 func TestGetChainConfig(t *testing.T) {
@@ -57,5 +61,47 @@ func TestSuggestPriceOptions(t *testing.T) {
 	sut.testRPC(ctx, t, rpcTest{
 		method: "eth_suggestPriceOptions",
 		want:   saerpc.NewPriceOptions(tip, doubleBaseFee),
+	})
+}
+
+func TestNewAcceptedTransactions(t *testing.T) {
+	ctx, sut := newSUT(t, 1)
+
+	t.Run("hash_only", func(t *testing.T) {
+		hashes := make(chan common.Hash, 16)
+		sub, err := sut.rpcClient.EthSubscribe(ctx, hashes, "newAcceptedTransactions")
+		require.NoErrorf(t, err, "EthSubscribe(newAcceptedTransactions)")
+		t.Cleanup(sub.Unsubscribe)
+
+		sign := sut.wallet.SetNonceAndSign
+		tx := sign(t, 0, &types.LegacyTx{
+			Gas:      1e6,
+			GasPrice: big.NewInt(1),
+			Data:     escrow.CreationCode(),
+		})
+		sut.runConsensusLoop(t, tx)
+
+		got := <-hashes
+		require.Equalf(t, tx.Hash(), got, "accepted tx hash")
+	})
+
+	t.Run("full_tx", func(t *testing.T) {
+		txs := make(chan json.RawMessage, 16)
+		sub, err := sut.rpcClient.EthSubscribe(ctx, txs, "newAcceptedTransactions", true)
+		require.NoErrorf(t, err, "EthSubscribe(newAcceptedTransactions, true)")
+		t.Cleanup(sub.Unsubscribe)
+
+		sign := sut.wallet.SetNonceAndSign
+		tx := sign(t, 0, &types.LegacyTx{
+			Gas:      1e6,
+			GasPrice: big.NewInt(1),
+			Data:     escrow.CreationCode(),
+		})
+		sut.runConsensusLoop(t, tx)
+
+		raw := <-txs
+		var got map[string]any
+		require.NoErrorf(t, json.Unmarshal(raw, &got), "json.Unmarshal(fullTx)")
+		require.Equalf(t, tx.Hash().Hex(), got["hash"], "full tx hash")
 	})
 }
