@@ -5,8 +5,10 @@ package saetest
 
 import (
 	"context"
+	"os"
 	"runtime"
 	"slices"
+	"sync/atomic"
 	"testing"
 
 	"github.com/ava-labs/avalanchego/utils/logging"
@@ -168,17 +170,38 @@ func (l *TBLogger) log(lvl logging.Level, msg string, fields ...zap.Field) {
 	to("[Log@%s] %s %v - %s:%d", lvl, msg, enc.Fields, file, line)
 }
 
+// libevmLogConfigured ensures only the first call to set the global libevm
+// logger takes effect. Reset in `tb` cleanup.
+var libevmLogConfigured atomic.Bool
+
+func setLibEVMLogger(tb testing.TB, handler slog.Handler) {
+	tb.Helper()
+	if !libevmLogConfigured.CompareAndSwap(false, true) {
+		return
+	}
+	old := log.Root()
+	tb.Cleanup(func() {
+		log.SetDefault(old)
+		libevmLogConfigured.Store(false)
+	})
+	log.SetDefault(log.NewLogger(handler))
+}
+
 // EnableLibEVMTBLogger redirects all libevm logs to tb. Logs at error level
 // and above are treated as test failures. The original logger is restored
 // during `tb` cleanup.
 //
-// WARNING: sets a global logger so it must NOT be used in parallel tests.
+// Safe to call from parallel tests - only the first call takes effect.
 func EnableLibEVMTBLogger(tb testing.TB) {
 	tb.Helper()
+	setLibEVMLogger(tb, ethtest.NewTBLogHandler(tb, slog.LevelError))
+}
 
-	old := log.Root()
-	tb.Cleanup(func() {
-		log.SetDefault(old)
-	})
-	log.SetDefault(log.NewLogger(ethtest.NewTBLogHandler(tb, slog.LevelError)))
+// EnableLibEVMTerminalLogger sets the global libevm logger to write errors
+// to stderr. Use before [testing.F.Fuzz] so parallel sub-tests' calls to
+// [EnableLibEVMTBLogger] are no-ops (Go forbids [testing.F.Logf] inside
+// fuzz targets).
+func EnableLibEVMTerminalLogger(tb testing.TB) {
+	tb.Helper()
+	setLibEVMLogger(tb, log.NewTerminalHandlerWithLevel(os.Stderr, log.LevelError, true))
 }
