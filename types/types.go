@@ -1,8 +1,8 @@
 // Copyright (C) 2025-2026, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
-// Package types defines common types that are used throughout the repository
-// which otherwise do not have a clear package to originate from.
+// Package types defines common types that are used throughout the SAE
+// repository which otherwise do not have a clear package to originate from.
 //
 // Imports of other packages should be extremely limited to avoid circular
 // dependencies.

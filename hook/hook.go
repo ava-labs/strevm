@@ -100,7 +100,7 @@ type BlockBuilder[T Transaction] interface {
 	// the state.
 	PotentialEndOfBlockOps(
 		header *types.Header,
-		settledHash common.Hash,
+		lastSettledBlock common.Hash,
 		source saetypes.BlockSource,
 	) iter.Seq[T]
 	// BuildBlock constructs a block with the given components.
