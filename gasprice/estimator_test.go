@@ -5,6 +5,7 @@ package gasprice
 
 import (
 	"math/big"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 	"github.com/ava-labs/libevm/common/math"
 	"github.com/ava-labs/libevm/core/rawdb"
 	"github.com/ava-labs/libevm/core/types"
+	"github.com/ava-labs/libevm/ethdb"
 	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/rpc"
 	"github.com/stretchr/testify/assert"
@@ -22,6 +24,7 @@ import (
 	"github.com/ava-labs/strevm/blocks"
 	"github.com/ava-labs/strevm/blocks/blockstest"
 	"github.com/ava-labs/strevm/gastime"
+	"github.com/ava-labs/strevm/saedb"
 	"github.com/ava-labs/strevm/saetest"
 )
 
@@ -89,6 +92,8 @@ func TestConfigValidate(t *testing.T) {
 type SUT struct {
 	*Estimator
 
+	db    ethdb.Database
+	xdb   saedb.ExecutionResults
 	chain *blockstest.ChainBuilder
 }
 
@@ -110,6 +115,8 @@ func newSUT(tb testing.TB, c Config) *SUT {
 
 	return &SUT{
 		Estimator: e,
+		db:        db,
+		xdb:       xdb,
 		chain:     chain,
 	}
 }
@@ -499,4 +506,34 @@ func TestFeeHistory(t *testing.T) {
 			assert.Equal(t, want.portionFull, portionFull)
 		})
 	}
+}
+
+// TestFeeHistoryNoBoundsUsesWorstCaseBaseFee verifies that when the last
+// accepted block has no worst-case bounds, FeeHistory reports the header
+// (worst-case) base fee, not the execution (actual) base fee.
+func TestFeeHistoryNoBoundsUsesWorstCaseBaseFee(t *testing.T) {
+	sut := newSUT(t, DefaultConfig())
+
+	want := big.NewInt(100)
+	blk := sut.chain.NewBlock(t, nil, blockstest.WithEthBlockOptions(
+		blockstest.ModifyHeader(func(h *types.Header) {
+			h.GasLimit = gasLimit
+			h.BaseFee = want
+		}),
+	))
+
+	gt, err := gastime.New(time.Now(), 1, 0, gastime.DefaultGasPriceConfig())
+	require.NoError(t, err, "gastime.New()")
+	require.NoError(t, blk.MarkExecuted(
+		sut.db, sut.xdb, gt, time.Time{}, big.NewInt(50), nil,
+		common.Hash{}, new(atomic.Pointer[blocks.Block]),
+	), "MarkExecuted()")
+
+	_, _, baseFees, _, err := sut.FeeHistory(t.Context(), 1, rpc.LatestBlockNumber, nil)
+	require.NoError(t, err, "FeeHistory()")
+
+	got := baseFees[len(baseFees)-1]
+	require.Zero(t, want.Cmp(got),
+		"FeeHistory() next-block base fee: want worst-case %s, got %s", want, got,
+	)
 }
