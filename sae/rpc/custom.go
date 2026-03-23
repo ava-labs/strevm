@@ -58,8 +58,27 @@ type DetailedExecutionResult struct {
 
 // CallDetailed performs the same call as eth_call, but returns gas usage and
 // error details instead of just the return data.
-func (c *customAPI) CallDetailed(ctx context.Context, args any, blockNrOrHash rpc.BlockNumberOrHash, overrides any) (*DetailedExecutionResult, error) {
-	panic(errUnimplemented)
+func (c *customAPI) CallDetailed(ctx context.Context, args ethapi.TransactionArgs, blockNrOrHash rpc.BlockNumberOrHash, overrides *ethapi.StateOverride) (*DetailedExecutionResult, error) {
+	result, err := ethapi.DoCall(ctx, c.b, args, blockNrOrHash, overrides, nil, c.b.RPCEVMTimeout(), c.b.RPCGasCap())
+	if err != nil {
+		return nil, err
+	}
+	reply := &DetailedExecutionResult{
+		UsedGas:    result.UsedGas,
+		ReturnData: result.ReturnData,
+	}
+	if result.Err != nil {
+		if rpcErr, ok := result.Err.(rpc.Error); ok {
+			reply.ErrCode = rpcErr.ErrorCode()
+		}
+		reply.Err = result.Err.Error()
+	}
+	if revert := result.Revert(); len(revert) > 0 {
+		revErr := ethapi.NewRevertError(revert)
+		reply.ErrCode = revErr.ErrorCode()
+		reply.Err = revErr.Error()
+	}
+	return reply, nil
 }
 
 // Price represents a single gas-Price suggestion.
