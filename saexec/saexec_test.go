@@ -640,7 +640,7 @@ func FuzzOpCodes(f *testing.F) {
 	// Although it's tempting to run multiple `code` slices in a block, to
 	// amortise the fixed setup cost of the SUT, this stops the Go fuzzer from
 	// knowing about their independence, resulting in a lot of empty inputs.
-	saetest.EnableLibEVMTBLogger(f)
+	saetest.EnableLibEVMTerminalLogger(f)
 
 	f.Fuzz(func(t *testing.T, code []byte) {
 		t.Parallel() // for corpus in ./testdata/
