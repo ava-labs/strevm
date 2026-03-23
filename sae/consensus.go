@@ -79,7 +79,7 @@ func (vm *VM) AcceptBlock(ctx context.Context, b *blocks.Block) error {
 
 	// This state root must be available to the executor, since it may need persisted.
 	// The [saexec.Executor] will untrack after execution finishes for the block.
-	vm.exec.Track(b.Header().Root)
+	vm.exec.Track(b.SettledStateRoot())
 
 	// I(s ∈ S) above, before I(b ∈ A) before X(b ∈ A)
 	vm.last.accepted.Store(b)

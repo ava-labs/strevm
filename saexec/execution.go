@@ -280,11 +280,15 @@ func (e *Executor) afterExecution(b *blocks.Block, r *ExecutionResults) error {
 	if err != nil {
 		return fmt.Errorf("%T.Commit() at end of block %d: %w", r.StateDB, b.NumberU64(), err)
 	}
-	if err := e.Tracker.CheckCommit(b.Header().Root, root, b.NumberU64()); err != nil {
+	if err := e.Tracker.CheckCommit(b.SettledStateRoot(), root, b.NumberU64()); err != nil {
 		return err
 	}
+
+	// The settled state root is no longer needed (as the state is either committed or dropped
+	// in [saedb.Tracker.CheckCommit]), but the next executed block depends on `root`, so
+	// we must ensure it is not released.
 	e.Tracker.Track(root)
-	e.Tracker.Untrack(b.Header().Root)
+	e.Tracker.Untrack(b.SettledStateRoot())
 
 	// The strict ordering of the next 3 calls guarantees invariants that MUST
 	// NOT be broken:

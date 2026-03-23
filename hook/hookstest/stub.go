@@ -182,38 +182,33 @@ func (s *Stub) GasConfigAfter(*types.Header) (gas.Gas, hook.GasPriceConfig) {
 // [Stub.BuildHeader] in the header's `Extra` field. If said field is empty,
 // SubSecondBlockTime returns 0.
 func (s *Stub) SubSecondBlockTime(hdr *types.Header) time.Duration {
-	var e extra
-	if err := e.UnmarshalCanoto(hdr.Extra); err != nil {
-		// This is left as a panic to avoid polluting various functions with
-		// error returns when no error is possible in production.
-		panic(err)
-	}
-	return e.subSec
+	return getHeaderExtra(hdr, (extra).SubSec)
 }
 
-// SettledHeight returns the height of the most recently settled block at build time.
-// This corresponds with the block with post-execution state root [types.Header.Root].
+// SettledHeight returns the height encoded in the Header by [Stub.BuildBlock]
+// or [BuildBlock].
 func (*Stub) SettledHeight(hdr *types.Header) uint64 {
-	var e extra
-	if err := e.UnmarshalCanoto(hdr.Extra); err != nil {
-		// This is left as a panic to avoid polluting various functions with
-		// error returns when no error is possible in production.
-		panic(err)
-	}
-	return e.settledHeight
+	return getHeaderExtra(hdr, (extra).SettledHeight)
 }
 
 // EndOfBlockOps return the ops included in the block by [BuildBlock].
 func (s *Stub) EndOfBlockOps(b *types.Block) ([]hook.Op, error) {
+	eOps := getHeaderExtra(b.Header(), (extra).Ops)
+	hookOps := make([]hook.Op, len(eOps))
+	for i, op := range eOps {
+		hookOps[i] = op.AsOp()
+	}
+	return hookOps, nil
+}
+
+func getHeaderExtra[T any](hdr *types.Header, get func(extra) T) T {
 	var e extra
-	if err := e.UnmarshalCanoto(b.Extra()); err != nil {
-		return nil, err
+	if err := e.UnmarshalCanoto(hdr.Extra); err != nil {
+		// This is left as a panic to avoid polluting various functions with
+		// error returns when no error is possible in production.
+		panic(err)
 	}
-	ops := make([]hook.Op, len(e.ops))
-	for i, op := range e.ops {
-		ops[i] = op.AsOp()
-	}
-	return ops, nil
+	return get(e)
 }
 
 // CanExecuteTransaction proxies to [Stub.CanExecuteTransactionFn] if non-nil,
@@ -241,6 +236,18 @@ type extra struct {
 	settledHeight uint64        `canoto:"uint,3"`
 
 	canotoData canotoData_extra
+}
+
+func (e extra) SubSec() time.Duration {
+	return e.subSec
+}
+
+func (e extra) SettledHeight() uint64 {
+	return e.settledHeight
+}
+
+func (e extra) Ops() []Op {
+	return e.ops
 }
 
 // Op is a serializable representation of [hook.Op].

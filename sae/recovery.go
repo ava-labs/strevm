@@ -116,7 +116,7 @@ func (rec *recovery) executeCritical(ctx context.Context, exec *saexec.Executor)
 		if err != nil {
 			return nil, nil, err
 		}
-		exec.Track(b.Header().Root) // hold settled state, if exists.
+		exec.Track(b.SettledStateRoot()) // may be needed for another block post-catch-up
 		if err := exec.Enqueue(ctx, b); err != nil {
 			return nil, nil, err
 		}

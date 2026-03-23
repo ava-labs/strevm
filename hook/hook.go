@@ -62,7 +62,8 @@ type Points interface {
 	// value d such that 0 <= d < [time.Second].
 	SubSecondBlockTime(h *types.Header) time.Duration
 	// SettledHeight returns the block height which [types.Header.Root] corresponds
-	// with as the post-execution state root.
+	// with as the post-execution state root. It MUST match the value passed to
+	// [BlockBuilder.BuildBlock], from which the [types.Header] will be sourced.
 	SettledHeight(*types.Header) uint64
 	// EndOfBlockOps returns operations outside of the normal EVM state changes
 	// to perform while executing the block, after regular EVM transactions.

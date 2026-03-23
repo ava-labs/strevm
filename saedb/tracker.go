@@ -91,20 +91,24 @@ func (t *Tracker) Track(root common.Hash) {
 //
 // This does NOT change in-memory tracking.
 func (t *Tracker) CheckCommit(settledRoot, executionRoot common.Hash, height uint64) error {
+	var (
+		commit  common.Hash
+		because string
+	)
+	switch {
+	case t.isArchival:
+		commit = executionRoot
+		because = "post-execution archive"
+	case ShouldCommitTrieDB(height):
+		commit = settledRoot
+		because = "settled"
+	default:
+		return nil
+	}
+
 	tdb := t.cache.TrieDB()
-	if t.isArchival {
-		if err := tdb.Commit(executionRoot, false /* log */); err != nil {
-			return fmt.Errorf("%T.Commit(%#x) post-execution at end of block %d :%v", tdb, executionRoot, height, err)
-		}
-		return nil
-	}
-
-	if !ShouldCommitTrieDB(height) {
-		return nil
-	}
-
-	if err := tdb.Commit(settledRoot, false /* log */); err != nil {
-		return fmt.Errorf("%T.Commit(%#x) settled at end of block %d: %v", tdb, settledRoot, height, err)
+	if err := tdb.Commit(commit, false /* log */); err != nil {
+		return fmt.Errorf("%T.Commit(%#x) %s at end of block %d: %v", tdb, settledRoot, because, height, err)
 	}
 	return nil
 }
@@ -136,7 +140,9 @@ func (t *Tracker) StateDB(root common.Hash) (*state.StateDB, error) {
 	return state.New(root, t.cache, t.snaps)
 }
 
-// Close commits the most recent state to the database for shutdown.
+// Close releases all resources associated with the `[triedb.Database]`
+// and persists `root` to the snapshot layer. `root` should be a
+// recent state root.
 func (t *Tracker) Close(root common.Hash) (errs error) {
 	defer func() {
 		t.snaps.Release()
