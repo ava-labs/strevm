@@ -329,6 +329,7 @@ func (b *blockBuilderG[T]) buildWithTxs(
 
 	ethB, err := builder.BuildBlock(
 		hdr,
+		bCtx,
 		included,
 		receipts,
 		includedOps,
