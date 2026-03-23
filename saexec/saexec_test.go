@@ -9,7 +9,6 @@ import (
 	"math"
 	"math/big"
 	"math/rand/v2"
-	"os"
 	"slices"
 	"testing"
 
@@ -26,7 +25,6 @@ import (
 	"github.com/ava-labs/libevm/ethdb"
 	"github.com/ava-labs/libevm/libevm"
 	libevmhookstest "github.com/ava-labs/libevm/libevm/hookstest"
-	"github.com/ava-labs/libevm/log"
 	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/triedb"
 	"github.com/google/go-cmp/cmp"
@@ -642,8 +640,7 @@ func FuzzOpCodes(f *testing.F) {
 	// Although it's tempting to run multiple `code` slices in a block, to
 	// amortise the fixed setup cost of the SUT, this stops the Go fuzzer from
 	// knowing about their independence, resulting in a lot of empty inputs.
-	// Use a terminal logger instead of EnableLibEVMTBLogger because fuzz sub-tests run in parallel and cannot safely set a global logger.
-	log.SetDefault(log.NewLogger(log.NewTerminalHandlerWithLevel(os.Stderr, log.LevelError, true)))
+	saetest.EnableLibEVMTBLogger(f)
 
 	f.Fuzz(func(t *testing.T, code []byte) {
 		t.Parallel() // for corpus in ./testdata/
