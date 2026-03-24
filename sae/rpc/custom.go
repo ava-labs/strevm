@@ -136,10 +136,10 @@ func (c *customAPI) SuggestPriceOptions(ctx context.Context) (*PriceOptions, err
 func (c *customAPI) NewAcceptedTransactions(ctx context.Context, fullTx *bool) (*rpc.Subscription, error) {
 	notifier, supported := rpc.NotifierFromContext(ctx)
 	if !supported {
-		return &rpc.Subscription{}, rpc.ErrNotificationsUnsupported
+		return nil, rpc.ErrNotificationsUnsupported
 	}
 
-	rpcSub := notifier.CreateSubscription()
+	sub := notifier.CreateSubscription()
 
 	// [event.FeedOf.Send] blocks until all subscribers receive the value, so a
 	// slow reader can stall the sender. An ample buffer avoids this in practice.
