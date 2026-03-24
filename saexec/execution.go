@@ -156,13 +156,15 @@ func Execute(
 	receiptStore ReceiptStore,
 	log logging.Logger,
 ) (*ExecutionResults, error) {
-	log.Debug("Executing block")
-
 	parent := b.ParentBlock()
 
 	gasClock := parent.ExecutedByGasTime().Clone()
 	gasClock.BeforeBlock(hooks, b.Header())
 	perTxClock := gasClock.Time.Clone()
+
+	log.Info("Executing block",
+		zap.Stringer("startGasClock", gasClock),
+	)
 
 	stateDB, err := sdbo.StateDB(parent.PostExecutionStateRoot())
 	if err != nil {
