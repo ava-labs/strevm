@@ -188,9 +188,11 @@ func TestCallDetailed(t *testing.T) {
 			want: saerpc.DetailedExecutionResult{
 				UsedGas: 23451,
 				ErrCode: 3,
-				Err:     "execution reverted",
-				// InsufficientBalance(uint256) with balance=0
-				ReturnData: common.FromHex("0xb5a1ab380000000000000000000000000000000000000000000000000000000000000000"),
+				Err:     vm.ErrExecutionReverted.Error(),
+				ReturnData: slices.Concat(
+					crypto.Keccak256([]byte("ZeroBalance(address)"))[:4],
+					make([]byte, 32),
+				),
 			},
 		})
 	})
