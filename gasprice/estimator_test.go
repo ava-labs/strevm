@@ -13,7 +13,6 @@ import (
 	"github.com/ava-labs/libevm/common/math"
 	"github.com/ava-labs/libevm/core/rawdb"
 	"github.com/ava-labs/libevm/core/types"
-	"github.com/ava-labs/libevm/ethdb"
 	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/rpc"
 	"github.com/stretchr/testify/assert"
@@ -23,7 +22,6 @@ import (
 	"github.com/ava-labs/strevm/blocks"
 	"github.com/ava-labs/strevm/blocks/blockstest"
 	"github.com/ava-labs/strevm/gastime"
-	"github.com/ava-labs/strevm/saedb"
 	"github.com/ava-labs/strevm/saetest"
 )
 
@@ -112,8 +110,6 @@ func newSUT(tb testing.TB, c Config) *SUT {
 
 	return &SUT{
 		Estimator: e,
-		db:        db,
-		xdb:       xdb,
 		chain:     chain,
 	}
 }
