@@ -158,11 +158,13 @@ func Execute(
 ) (*ExecutionResults, error) {
 	parent := b.ParentBlock()
 
-	gasClock := parent.ExecutedByGasTime().Clone()
+	parentClock := parent.ExecutedByGasTime()
+	gasClock := parentClock.Clone()
 	gasClock.BeforeBlock(hooks, b.Header())
 	perTxClock := gasClock.Time.Clone()
 
 	log.Info("Executing block",
+		zap.Stringer("parentGasClock", parentClock),
 		zap.Stringer("startGasClock", gasClock),
 	)
 
