@@ -5,12 +5,14 @@ package sae
 
 import (
 	"math/big"
+	"slices"
 	"testing"
 	"time"
 
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/common/hexutil"
 	"github.com/ava-labs/libevm/core/types"
+	"github.com/ava-labs/libevm/core/vm"
 	"github.com/ava-labs/libevm/crypto"
 	"github.com/ava-labs/libevm/libevm/ethapi"
 	"github.com/ava-labs/libevm/params"
@@ -181,7 +183,7 @@ func TestCallDetailed(t *testing.T) {
 			args: []any{
 				map[string]any{
 					"to":   escrowAddr,
-					"data": hexutil.Encode(escrow.CallDataForWithdraw()),
+					"data": hexutil.Encode(escrow.CallDataToWithdraw()),
 				},
 				rpc.LatestBlockNumber.String(),
 			},
