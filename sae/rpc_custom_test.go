@@ -68,40 +68,36 @@ func TestNewAcceptedTransactions(t *testing.T) {
 	ctx, sut := newSUT(t, 1)
 
 	t.Run("hash_only", func(t *testing.T) {
-		hashes := make(chan common.Hash, 16)
-		sub, err := sut.rpcClient.EthSubscribe(ctx, hashes, "newAcceptedTransactions")
+		ch := make(chan common.Hash, 16)
+		sub, err := sut.rpcClient.EthSubscribe(ctx, ch, "newAcceptedTransactions")
 		require.NoErrorf(t, err, "EthSubscribe(newAcceptedTransactions)")
 		t.Cleanup(sub.Unsubscribe)
 
-		sign := sut.wallet.SetNonceAndSign
-		tx := sign(t, 0, &types.LegacyTx{
+		tx := sut.wallet.SetNonceAndSign(t, 0, &types.LegacyTx{
 			Gas:      1e6,
 			GasPrice: big.NewInt(1),
 			Data:     escrow.CreationCode(),
 		})
 		sut.runConsensusLoop(t, tx)
 
-		got := <-hashes
-		require.Equalf(t, tx.Hash(), got, "accepted tx hash")
+		require.Equalf(t, tx.Hash(), <-ch, "accepted tx hash")
 	})
 
 	t.Run("full_tx", func(t *testing.T) {
-		txs := make(chan json.RawMessage, 16)
-		sub, err := sut.rpcClient.EthSubscribe(ctx, txs, "newAcceptedTransactions", true)
+		ch := make(chan json.RawMessage, 16)
+		sub, err := sut.rpcClient.EthSubscribe(ctx, ch, "newAcceptedTransactions", true)
 		require.NoErrorf(t, err, "EthSubscribe(newAcceptedTransactions, true)")
 		t.Cleanup(sub.Unsubscribe)
 
-		sign := sut.wallet.SetNonceAndSign
-		tx := sign(t, 0, &types.LegacyTx{
+		tx := sut.wallet.SetNonceAndSign(t, 0, &types.LegacyTx{
 			Gas:      1e6,
 			GasPrice: big.NewInt(1),
 			Data:     escrow.CreationCode(),
 		})
 		sut.runConsensusLoop(t, tx)
 
-		raw := <-txs
 		var got map[string]any
-		require.NoErrorf(t, json.Unmarshal(raw, &got), "json.Unmarshal(fullTx)")
+		require.NoErrorf(t, json.Unmarshal(<-ch, &got), "json.Unmarshal(fullTx)")
 		require.Equalf(t, tx.Hash().Hex(), got["hash"], "full tx hash")
 	})
 }
