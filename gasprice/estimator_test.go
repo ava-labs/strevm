@@ -416,7 +416,6 @@ func TestFeeHistory(t *testing.T) {
 		},
 		{
 			name: "query_genesis",
-
 			blocks: []blockSpec{
 				{
 					newDynamicFeeTx(21_000, nAVAX),
