@@ -147,11 +147,11 @@ func (c *customAPI) NewAcceptedTransactions(ctx context.Context, fullTx *bool) (
 	const acceptedBlocksBuf = 128
 
 	ch := make(chan *blocks.Block, acceptedBlocksBuf)
-	sub := c.b.SubscribeAcceptedBlocks(ch)
+	blockSub := c.b.SubscribeAcceptedBlocks(ch)
 	chainConfig := c.b.ChainConfig()
 
 	go func() {
-		defer sub.Unsubscribe()
+		defer blockSub.Unsubscribe()
 		for {
 			select {
 			case block := <-ch:
@@ -162,19 +162,19 @@ func (c *customAPI) NewAcceptedTransactions(ctx context.Context, fullTx *bool) (
 				for i, tx := range block.Transactions() {
 					if fullTx != nil && *fullTx {
 						rpcTx := ethapi.NewRPCTransaction(tx, hash, num, buildTime, uint64(i), baseFee, chainConfig) //nolint:gosec // i is non-negative
-						if err := notifier.Notify(rpcSub.ID, rpcTx); err != nil {
+						if err := notifier.Notify(sub.ID, rpcTx); err != nil {
 							return
 						}
-					} else if err := notifier.Notify(rpcSub.ID, tx.Hash()); err != nil {
+					} else if err := notifier.Notify(sub.ID, tx.Hash()); err != nil {
 						return
 					}
 				}
-			case <-rpcSub.Err():
+			case <-sub.Err():
 				return
 			case <-notifier.Closed():
 				return
 			}
 		}
 	}()
-	return rpcSub, nil
+	return sub, nil
 }
