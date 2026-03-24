@@ -55,9 +55,9 @@ func callDataWithAddr(sig string, addr common.Address) []byte {
 	)
 }
 
-// CallDataForWithdraw returns the transaction call data to withdraw the
+// CallDataToWithdraw returns the transaction call data to withdraw the
 // caller's escrowed balance.
-func CallDataForWithdraw() []byte {
+func CallDataToWithdraw() []byte {
 	return crypto.Keccak256([]byte("withdraw()"))[:4]
 }
 
