@@ -87,7 +87,7 @@ func TestMarkExecuted(t *testing.T) {
 			call   func() any
 		}{
 			{"ExecutedByGasTime()", func() any { return b.ExecutedByGasTime() }},
-			{"BaseFee()", func() any { return b.ExecutedBaseFee() }},
+			{"ExecutedBaseFee()", func() any { return b.ExecutedBaseFee() }},
 			{"Receipts()", func() any { return b.Receipts() }},
 			{"PostExecutionStateRoot()", func() any { return b.PostExecutionStateRoot() }},
 		}
