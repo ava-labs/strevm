@@ -138,7 +138,11 @@ func (b *blockBuilderG[T]) buildWithTxs(
 	pendingTxs func(txpool.PendingFilter) []*txgossip.LazyTransaction,
 	builder hook.BlockBuilder[T],
 ) (*blocks.Block, error) {
-	hdr := builder.BuildHeader(parent.Header())
+	hdr, err := builder.BuildHeader(parent.Header())
+	if err != nil {
+		return nil, err
+	}
+
 	log := b.log.With(
 		zap.Uint64("parent_height", parent.Height()),
 		zap.Stringer("parent_hash", parent.Hash()),
@@ -183,6 +187,7 @@ func (b *blockBuilderG[T]) buildWithTxs(
 	log = log.With(
 		zap.Uint64("last_settled_height", lastSettled.Height()),
 		zap.Stringer("last_settled_hash", lastSettled.Hash()),
+		zap.Stringer("last_settled_gas_time", lastSettled.ExecutedByGasTime()),
 	)
 
 	state, err := worstcase.NewState(b.hooks, b.exec.ChainConfig(), lastSettled, b.exec)
