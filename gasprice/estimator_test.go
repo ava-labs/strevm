@@ -91,8 +91,6 @@ func TestConfigValidate(t *testing.T) {
 type SUT struct {
 	*Estimator
 
-	db    ethdb.Database
-	xdb   saedb.ExecutionResults
 	chain *blockstest.ChainBuilder
 }
 
