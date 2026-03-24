@@ -11,9 +11,12 @@ import (
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/common/hexutil"
 	"github.com/ava-labs/libevm/core/types"
+	"github.com/ava-labs/libevm/libevm/ethapi"
 	"github.com/ava-labs/libevm/params"
+	"github.com/google/go-cmp/cmp"
 	"github.com/stretchr/testify/require"
 
+	"github.com/ava-labs/strevm/cmputils"
 	saerpc "github.com/ava-labs/strevm/sae/rpc"
 	"github.com/ava-labs/strevm/saetest"
 	"github.com/ava-labs/strevm/saetest/escrow"
@@ -94,10 +97,14 @@ func TestNewAcceptedTransactions(t *testing.T) {
 			GasPrice: big.NewInt(1),
 			Data:     escrow.CreationCode(),
 		})
-		sut.runConsensusLoop(t, tx)
+		block := sut.runConsensusLoop(t, tx)
 
-		var got map[string]any
+		var got ethapi.RPCTransaction
 		require.NoErrorf(t, json.Unmarshal(<-ch, &got), "json.Unmarshal(fullTx)")
-		require.Equalf(t, tx.Hash().Hex(), got["hash"], "full tx hash")
+
+		want := ethapi.NewRPCTransaction(tx, block.Hash(), block.NumberU64(), block.BuildTime(), 0, block.Header().BaseFee, saetest.ChainConfig())
+		if diff := cmp.Diff(want, &got, cmputils.HexutilBigs(), cmputils.NilSlicesAreEmpty[hexutil.Bytes]()); diff != "" {
+			t.Errorf("full tx diff (-want +got):\n%s", diff)
+		}
 	})
 }
