@@ -47,7 +47,7 @@ func NewEthBlock(tb testing.TB, parent *types.Block, txs types.Transactions, opt
 		settledHeight: parent.NumberU64() + 1, // synchronoous
 	}
 	props = options.ApplyTo(props, opts...)
-	block, err := hookstest.BuildBlock(props.header, txs, props.receipts, props.ops, props.settledHeight)
+	block, err := hookstest.BuildBlock(props.header, nil, txs, props.receipts, props.ops, props.settledHeight)
 	require.NoError(tb, err, "hookstest.BuildBlock()")
 	return block
 }
