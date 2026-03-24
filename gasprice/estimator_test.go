@@ -5,7 +5,6 @@ package gasprice
 
 import (
 	"math/big"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -319,10 +318,11 @@ func TestFeeHistory(t *testing.T) {
 		}
 	)
 	tests := []struct {
-		name   string
-		blocks []blockSpec
-		args   args
-		want   results
+		name     string
+		noBounds bool
+		blocks   []blockSpec
+		args     args
+		want     results
 	}{
 		{
 			name: "too_many_percentiles",
@@ -374,7 +374,8 @@ func TestFeeHistory(t *testing.T) {
 			},
 		},
 		{
-			name: "no_worst_case_bounds",
+			name:     "nil_bounds_genesis_only",
+			noBounds: true,
 			args: args{
 				numBlocks: 1,
 				lastBlock: rpc.LatestBlockNumber,
@@ -391,7 +392,31 @@ func TestFeeHistory(t *testing.T) {
 			},
 		},
 		{
+			name:     "nil_bounds_with_block",
+			noBounds: true,
+			blocks: []blockSpec{
+				{
+					newDynamicFeeTx(21_000, nAVAX),
+				},
+			},
+			args: args{
+				numBlocks: 1,
+				lastBlock: rpc.LatestBlockNumber,
+			},
+			want: results{
+				height: common.Big1,
+				baseFees: []*big.Int{
+					big.NewInt(1),
+					big.NewInt(1), // no bounds falls back to header base fee
+				},
+				portionFull: []float64{
+					21_000. / gasLimit,
+				},
+			},
+		},
+		{
 			name: "query_genesis",
+
 			blocks: []blockSpec{
 				{
 					newDynamicFeeTx(21_000, nAVAX),
@@ -492,8 +517,12 @@ func TestFeeHistory(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			sut := newSUT(t, cfg)
+			b := bounds
+			if tt.noBounds {
+				b = nil
+			}
 			for _, txSpecs := range tt.blocks {
-				sut.newBlock(t, 0, bounds, txSpecs...)
+				sut.newBlock(t, 0, b, txSpecs...)
 			}
 
 			a := tt.args
@@ -506,34 +535,4 @@ func TestFeeHistory(t *testing.T) {
 			assert.Equal(t, want.portionFull, portionFull)
 		})
 	}
-}
-
-// TestFeeHistoryNoBoundsUsesWorstCaseBaseFee verifies that when the last
-// accepted block has no worst-case bounds, FeeHistory reports the header
-// (worst-case) base fee, not the execution (actual) base fee.
-func TestFeeHistoryNoBoundsUsesWorstCaseBaseFee(t *testing.T) {
-	sut := newSUT(t, DefaultConfig())
-
-	want := big.NewInt(100)
-	blk := sut.chain.NewBlock(t, nil, blockstest.WithEthBlockOptions(
-		blockstest.ModifyHeader(func(h *types.Header) {
-			h.GasLimit = gasLimit
-			h.BaseFee = want
-		}),
-	))
-
-	gt, err := gastime.New(time.Now(), 1, 0, gastime.DefaultGasPriceConfig())
-	require.NoError(t, err, "gastime.New()")
-	require.NoError(t, blk.MarkExecuted(
-		sut.db, sut.xdb, gt, time.Time{}, big.NewInt(50), nil,
-		common.Hash{}, new(atomic.Pointer[blocks.Block]),
-	), "MarkExecuted()")
-
-	_, _, baseFees, _, err := sut.FeeHistory(t.Context(), 1, rpc.LatestBlockNumber, nil)
-	require.NoError(t, err, "FeeHistory()")
-
-	got := baseFees[len(baseFees)-1]
-	require.Zero(t, want.Cmp(got),
-		"FeeHistory() next-block base fee: want worst-case %s, got %s", want, got,
-	)
 }
