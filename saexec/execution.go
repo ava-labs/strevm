@@ -283,7 +283,7 @@ func (e *Executor) afterExecution(b *blocks.Block, r *ExecutionResults) error {
 	if err != nil {
 		return fmt.Errorf("%T.Commit() at end of block %d: %w", r.StateDB, b.NumberU64(), err)
 	}
-	if err := e.Tracker.CheckCommit(b.SettledStateRoot(), root, b.NumberU64()); err != nil {
+	if err := e.Tracker.MaybeCommit(b.SettledStateRoot(), root, b.NumberU64()); err != nil {
 		return err
 	}
 

@@ -82,7 +82,7 @@ func (t *Tracker) Track(root common.Hash) {
 	}
 }
 
-// CheckCommit uses the provided height to decide if any root needs committed, following
+// MaybeCommit uses the provided height to decide if any root needs committed, following
 // the below rules (in order):
 //
 // 1. If [Config.Archival] is true, then `executionRoot` will be committed.
@@ -90,7 +90,7 @@ func (t *Tracker) Track(root common.Hash) {
 // 3. Otherwise, nothing is committed.
 //
 // This does NOT change in-memory tracking.
-func (t *Tracker) CheckCommit(settledRoot, executionRoot common.Hash, height uint64) error {
+func (t *Tracker) MaybeCommit(settledRoot, executionRoot common.Hash, height uint64) error {
 	var (
 		commit  common.Hash
 		because string
@@ -141,9 +141,9 @@ func (t *Tracker) StateDB(root common.Hash) (*state.StateDB, error) {
 }
 
 // Close releases all resources associated with the `[triedb.Database]`
-// and persists `root` to the snapshot layer. `root` should be a
+// and persists `lastRoot` to the snapshot layer. `lastRoot` should be a
 // recent state root.
-func (t *Tracker) Close(root common.Hash) (errs error) {
+func (t *Tracker) Close(lastRoot common.Hash) (errs error) {
 	defer func() {
 		t.snaps.Release()
 		if err := t.cache.TrieDB().Close(); err != nil {
@@ -155,8 +155,8 @@ func (t *Tracker) Close(root common.Hash) (errs error) {
 	// SAE so we don't mind flattening all snapshot layers to disk. Note that
 	// calling `Cap([disk root], 0)` returns an error when it's actually a
 	// no-op, so we ensure there are changes.
-	if root != t.snaps.DiskRoot() {
-		if err := t.snaps.Cap(root, 0); err != nil {
+	if lastRoot != t.snaps.DiskRoot() {
+		if err := t.snaps.Cap(lastRoot, 0); err != nil {
 			errs = errors.Join(errs, fmt.Errorf("snapshot.Tree.Cap([last post-execution state root], 0): %v", err))
 		}
 	}
