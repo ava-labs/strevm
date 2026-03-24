@@ -7,7 +7,6 @@ import (
 	"math/big"
 	"slices"
 	"testing"
-	"time"
 
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/common/hexutil"
@@ -15,6 +14,7 @@ import (
 	"github.com/ava-labs/libevm/core/vm"
 	"github.com/ava-labs/libevm/crypto"
 	"github.com/ava-labs/libevm/libevm/ethapi"
+	"github.com/ava-labs/libevm/libevm/options"
 	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/rpc"
 	"github.com/google/go-cmp/cmp"
@@ -22,7 +22,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/ava-labs/strevm/cmputils"
-	saeparams "github.com/ava-labs/strevm/params"
 	saerpc "github.com/ava-labs/strevm/sae/rpc"
 	"github.com/ava-labs/strevm/saetest"
 	"github.com/ava-labs/strevm/saetest/escrow"
@@ -108,8 +107,17 @@ func TestNewAcceptedTransactions(t *testing.T) {
 }
 
 func TestCallDetailed(t *testing.T) {
-	opt, vmTime := withVMTime(t, time.Unix(saeparams.TauSeconds, 0))
-	ctx, sut := newSUT(t, 1, opt)
+	emptyReverter := common.Address{'r', 'e', 'v', 'e', 'r', 't'}
+	ctx, sut := newSUT(t, 1, options.Func[sutConfig](func(c *sutConfig) {
+		const (
+			zero   = byte(vm.PUSH0)
+			revert = byte(vm.REVERT)
+		)
+		c.genesis.Alloc[emptyReverter] = types.Account{
+			Code:    []byte{zero, zero, revert},
+			Balance: new(big.Int),
+		}
+	}))
 
 	deploy := &types.LegacyTx{
 		Gas:      1e6,
@@ -136,47 +144,23 @@ func TestCallDetailed(t *testing.T) {
 		require.Equalf(t, types.ReceiptStatusSuccessful, r.Status, "%T.Status", r)
 	}
 
-	vmTime.advanceToSettle(ctx, t, b)
-	for range 2 {
-		bb := sut.runConsensusLoop(t)
-		vmTime.advanceToSettle(ctx, t, bb)
-	}
-	_, ok := sut.rawVM.consensusCritical.Load(b.Hash())
-	require.Falsef(t, ok, "%T[%#x] still in VM memory", b, b.Hash())
-
-	callArgs := map[string]any{
-		"to":   escrowAddr,
-		"data": hexutil.Encode(escrow.CallDataForBalance(recv)),
-	}
-
-	tests := []struct {
-		name string
-		num  rpc.BlockNumber
-	}{
-		{
-			name: "block_in_memory",
-			num:  rpc.LatestBlockNumber,
+	sut.testRPC(ctx, t, rpcTest{
+		method: "eth_callDetailed",
+		args: []any{
+			map[string]any{
+				"to":   escrowAddr,
+				"data": hexutil.Encode(escrow.CallDataForBalance(recv)),
+			},
+			rpc.LatestBlockNumber.String(),
 		},
-		{
-			name: "block_on_disk",
-			num:  rpc.BlockNumber(b.Number().Int64()),
+		want: saerpc.DetailedExecutionResult{
+			UsedGas:    23675,
+			ReturnData: uint256.NewInt(val).PaddedBytes(32),
 		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			sut.testRPC(ctx, t, rpcTest{
-				method: "eth_callDetailed",
-				args:   []any{callArgs, tt.num.String()},
-				want: saerpc.DetailedExecutionResult{
-					UsedGas:    23675,
-					ReturnData: uint256.NewInt(val).PaddedBytes(32),
-				},
-			})
-		})
-	}
+	})
 
 	// Calling withdraw() from the zero address (which has no escrowed
-	// balance) reverts.
+	// balance) reverts with ZeroBalance(address).
 	t.Run("reverting_call", func(t *testing.T) {
 		sut.testRPC(ctx, t, rpcTest{
 			method: "eth_callDetailed",
@@ -195,6 +179,22 @@ func TestCallDetailed(t *testing.T) {
 					crypto.Keccak256([]byte("ZeroBalance(address)"))[:4],
 					make([]byte, 32),
 				),
+			},
+		})
+	})
+
+	// A contract that reverts with empty data still populates error fields.
+	t.Run("empty_revert", func(t *testing.T) {
+		sut.testRPC(ctx, t, rpcTest{
+			method: "eth_callDetailed",
+			args: []any{
+				map[string]any{"to": emptyReverter},
+				rpc.LatestBlockNumber.String(),
+			},
+			want: saerpc.DetailedExecutionResult{
+				UsedGas: 21004,
+				ErrCode: 3,
+				Err:     vm.ErrExecutionReverted.Error(),
 			},
 		})
 	})

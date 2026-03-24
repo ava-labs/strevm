@@ -5,10 +5,12 @@ package rpc
 
 import (
 	"context"
+	"errors"
 	"math/big"
 
 	"github.com/ava-labs/libevm/common/hexutil"
 	"github.com/ava-labs/libevm/common/math"
+	"github.com/ava-labs/libevm/core/vm"
 	"github.com/ava-labs/libevm/libevm/ethapi"
 	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/rpc"
@@ -48,6 +50,10 @@ func (c *customAPI) estimateNextBaseFee() *big.Int {
 	return bounds.LatestEndTime.BaseFee().ToBig()
 }
 
+// revertErrCode is the JSON-RPC error code for execution reverts, matching the
+// value returned by [ethapi.RevertError.ErrorCode].
+const revertErrCode = 3
+
 // DetailedExecutionResult is the response for eth_callDetailed.
 type DetailedExecutionResult struct {
 	UsedGas    uint64        `json:"gas"`
@@ -67,16 +73,19 @@ func (c *customAPI) CallDetailed(ctx context.Context, args ethapi.TransactionArg
 		UsedGas:    result.UsedGas,
 		ReturnData: result.ReturnData,
 	}
-	if result.Err != nil {
-		if rpcErr, ok := result.Err.(rpc.Error); ok {
-			reply.ErrCode = rpcErr.ErrorCode()
-		}
-		reply.Err = result.Err.Error()
-	}
+	// Revert data is checked first because NewRevertError ABI-decodes the
+	// reason, which we should as provide.
 	if revert := result.Revert(); len(revert) > 0 {
 		revErr := ethapi.NewRevertError(revert)
 		reply.ErrCode = revErr.ErrorCode()
 		reply.Err = revErr.Error()
+	} else if result.Err != nil {
+		reply.Err = result.Err.Error()
+		if rpcErr, ok := result.Err.(rpc.Error); ok {
+			reply.ErrCode = rpcErr.ErrorCode()
+		} else if errors.Is(result.Err, vm.ErrExecutionReverted) {
+			reply.ErrCode = revertErrCode
+		}
 	}
 	return reply, nil
 }
