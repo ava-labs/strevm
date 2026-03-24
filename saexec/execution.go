@@ -284,11 +284,9 @@ func (e *Executor) afterExecution(b *blocks.Block, r *ExecutionResults) error {
 		return err
 	}
 
-	// The settled state root is no longer needed (as the state is either committed or dropped
-	// in [saedb.Tracker.CheckCommit]), but the next executed block depends on `root`, so
-	// we must ensure it is not released.
+	// The post-execution state has not yet been tracked, and will be untracked
+	// once the block is no longer needed.
 	e.Tracker.Track(root)
-	e.Tracker.Untrack(b.SettledStateRoot())
 
 	// The strict ordering of the next 3 calls guarantees invariants that MUST
 	// NOT be broken:

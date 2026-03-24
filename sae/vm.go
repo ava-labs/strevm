@@ -122,12 +122,11 @@ func NewVM[T hook.Transaction](
 		cfg.Now = time.Now
 	}
 	vm := &VM{
-		hooks:             hooks,
-		config:            cfg,
-		snowCtx:           snowCtx,
-		metrics:           prometheus.NewRegistry(),
-		db:                db,
-		consensusCritical: newSyncMap[common.Hash, *blocks.Block](),
+		hooks:   hooks,
+		config:  cfg,
+		snowCtx: snowCtx,
+		metrics: prometheus.NewRegistry(),
+		db:      db,
 	}
 	defer func() {
 		if retErr != nil {

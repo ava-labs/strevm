@@ -37,11 +37,16 @@ func uint256FromBig(b *big.Int) (*uint256.Int, error) {
 type syncMap[K comparable, V any] struct {
 	m  map[K]V
 	mu sync.RWMutex
+
+	onStore  func(V)
+	onDelete func(V)
 }
 
-func newSyncMap[K comparable, V any]() *syncMap[K, V] {
+func newSyncMap[K comparable, V any](onStore func(V), onDelete func(V)) *syncMap[K, V] {
 	return &syncMap[K, V]{
-		m: make(map[K]V),
+		m:        make(map[K]V),
+		onStore:  onStore,
+		onDelete: onDelete,
 	}
 }
 
@@ -53,6 +58,7 @@ func (m *syncMap[K, V]) Load(k K) (V, bool) {
 }
 
 func (m *syncMap[K, V]) Store(k K, v V) {
+	m.onStore(v)
 	m.mu.Lock()
 	m.m[k] = v
 	m.mu.Unlock()
@@ -60,6 +66,9 @@ func (m *syncMap[K, V]) Store(k K, v V) {
 
 func (m *syncMap[K, V]) Delete(k K) {
 	m.mu.Lock()
+	if v, ok := m.m[k]; ok {
+		m.onDelete(v)
+	}
 	delete(m.m, k)
 	m.mu.Unlock()
 }

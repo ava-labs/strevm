@@ -110,13 +110,12 @@ func (rec *recovery) canonicalAfter(start *blocks.Block) iter.Seq2[*blocks.Block
 // The map returned stores all blocks in the inclusive range between`lastSettled`
 // and the `exec`'s new last executed block.
 // All post-execution states in that range are guaranteed to be accessible.
-func (rec *recovery) executeCritical(ctx context.Context, exec *saexec.Executor) (_ *syncMap[common.Hash, *blocks.Block], lastSettled *blocks.Block, _e error) {
+func (rec *recovery) executeCritical(ctx context.Context, exec *saexec.Executor) (_ *syncMap[common.Hash, *blocks.Block], lastSettled *blocks.Block, _ error) {
 	start := exec.LastExecuted()
 	for b, err := range rec.canonicalAfter(start) {
 		if err != nil {
 			return nil, nil, err
 		}
-		exec.Track(b.SettledStateRoot()) // may be needed for another block post-catch-up
 		if err := exec.Enqueue(ctx, b); err != nil {
 			return nil, nil, err
 		}
@@ -126,16 +125,19 @@ func (rec *recovery) executeCritical(ctx context.Context, exec *saexec.Executor)
 		}
 	}
 
-	// in-memory state between start and last settled isn't needed by consensus
+	// post-execution state between `start` and last settled isn't needed by consensus.
+	// All remaining state will be appropriately tracked in [recovery.rebuildBlocksInMemory]
+	// since the post-execution state was tracked by the executor.
+	tr := exec.Tracker
 	lastExecuted := exec.LastExecuted()
 	settledHeight := rec.hooks.SettledHeight(lastExecuted.Header())
 	for b := lastExecuted; b.NumberU64() > start.NumberU64(); b = b.ParentBlock() {
 		if b.NumberU64() < settledHeight {
-			exec.Untrack(b.PostExecutionStateRoot())
+			tr.Untrack(b.PostExecutionStateRoot())
 		}
 	}
 
-	return rec.rebuildBlocksInMemory(lastExecuted)
+	return rec.rebuildBlocksInMemory(lastExecuted, tr)
 }
 
 // lastOf returns the lastOf element in a slice, which MUST NOT be empty.
@@ -146,7 +148,7 @@ func lastOf[E any](s []E) E {
 // rebuildBlocksInMemory returns a block-hash-keyed map of all blocks from the
 // last executed back to, and including, the block that it settled. It returns
 // said settled block separately, for convenience.
-func (rec *recovery) rebuildBlocksInMemory(lastExecuted *blocks.Block) (_ *syncMap[common.Hash, *blocks.Block], lastSettled *blocks.Block, _ error) {
+func (rec *recovery) rebuildBlocksInMemory(lastExecuted *blocks.Block, tracker *saedb.Tracker) (_ *syncMap[common.Hash, *blocks.Block], lastSettled *blocks.Block, _ error) {
 	chain := []*blocks.Block{lastExecuted} // reverse height order
 	blackhole := new(atomic.Pointer[blocks.Block])
 
@@ -194,8 +196,21 @@ func (rec *recovery) rebuildBlocksInMemory(lastExecuted *blocks.Block) (_ *syncM
 		return nil, nil, err
 	}
 	lastSettled = lastOf(chain)
-	bMap := newSyncMap[common.Hash, *blocks.Block]()
+	bMap := newSyncMap[common.Hash, *blocks.Block](
+		func(b *blocks.Block) {
+			tracker.Track(b.SettledStateRoot())
+			// Post-execution root not yet known.
+		},
+		func(b *blocks.Block) {
+			tracker.Untrack(b.SettledStateRoot())
+			if b.Executed() {
+				tracker.Untrack(b.PostExecutionStateRoot())
+			}
+		},
+	)
 	for _, b := range chain {
+		// `rec` already tracked all post-execution state roots for blocks that belong in this map,
+		// and deleted all others in [recovery.executeCritical].
 		bMap.Store(b.Hash(), b)
 	}
 

@@ -194,11 +194,11 @@ func TestRecoverSimple(t *testing.T) {
 			// must not be accessible, except at CommitTrieDBEvery boundaries
 			// where the settled state was written to disk.
 			t.Run("unavailable_outside_window", func(t *testing.T) {
-				stop := sut.rawVM.last.settled.Load().NumberU64()
-				executionHeight := saedb.LastCommittedTrieDBHeight(stop)
-				ethB, err := canonicalBlock(sut.rawVM.db, executionHeight)
+				lastSettled := sut.rawVM.last.settled.Load().NumberU64()
+				executionHeight := saedb.LastCommittedTrieDBHeight(lastSettled)
+				lastOnDisk, err := canonicalBlock(sut.rawVM.db, executionHeight)
 				require.NoErrorf(t, err, "canonicalBlock(): %d", executionHeight)
-				for i := sut.hooks.SettledHeight(ethB.Header()) + 1; i < stop; i++ {
+				for i := sut.hooks.SettledHeight(lastOnDisk.Header()) + 1; i < lastSettled; i++ {
 					ethB, err := canonicalBlock(sut.rawVM.db, i)
 					require.NoErrorf(t, err, "canonicalBlock(%d)", i)
 					b, err := blocks.New(ethB, nil, nil, sut.logger)
