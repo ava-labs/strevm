@@ -13,6 +13,7 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/ava-labs/avalanchego/snow/engine/snowman/block"
 	"github.com/ava-labs/avalanchego/utils/logging"
 	"github.com/ava-labs/avalanchego/vms/components/gas"
 	"github.com/ava-labs/libevm/core"
@@ -46,7 +47,7 @@ func NewEthBlock(tb testing.TB, parent *types.Block, txs types.Transactions, opt
 		},
 	}
 	props = options.ApplyTo(props, opts...)
-	block, err := hookstest.BuildBlock(props.header, nil, txs, props.receipts, props.ops)
+	block, err := hookstest.BuildBlock(props.header, props.blockCtx, txs, props.receipts, props.ops)
 	require.NoError(tb, err, "hookstest.BuildBlock()")
 	return block
 }
@@ -55,6 +56,15 @@ type ethBlockProperties struct {
 	header   *types.Header
 	receipts types.Receipts
 	ops      []hookstest.Op
+	blockCtx *block.Context
+}
+
+// WithBlockContext returns an option to set the block context of a block
+// constructed by [NewEthBlock].
+func WithBlockContext(blockCtx *block.Context) EthBlockOption {
+	return options.Func[ethBlockProperties](func(p *ethBlockProperties) {
+		p.blockCtx = blockCtx
+	})
 }
 
 // ModifyHeader returns an option to modify the [types.Header] constructed by
