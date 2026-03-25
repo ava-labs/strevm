@@ -296,6 +296,8 @@ func TestFeeHistory(t *testing.T) {
 	bounds := &blocks.WorstCaseBounds{
 		LatestEndTime: gt,
 	}
+	nextBF := bounds.LatestEndTime.BaseFee()
+	nextBaseFee := nextBF.ToBig()
 	type (
 		blockSpec struct {
 			bounds *blocks.WorstCaseBounds
@@ -447,7 +449,7 @@ func TestFeeHistory(t *testing.T) {
 				height: common.Big1,
 				baseFees: []*big.Int{
 					big.NewInt(1),
-					bounds.LatestEndTime.BaseFee().ToBig(),
+					nextBaseFee,
 				},
 				portionFull: []float64{
 					21_000. / gasLimit,
@@ -506,7 +508,7 @@ func TestFeeHistory(t *testing.T) {
 				baseFees: []*big.Int{
 					big.NewInt(1),
 					big.NewInt(2),
-					bounds.LatestEndTime.BaseFee().ToBig(),
+					nextBaseFee,
 				},
 				portionFull: []float64{
 					21_000. / gasLimit,

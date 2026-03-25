@@ -149,7 +149,7 @@ func TestMarkExecuted(t *testing.T) {
 			require.NoError(t, b.WaitUntilExecuted(context.Background()), "WaitUntilExecuted()")
 
 			assert.Zero(t, b.ExecutedByGasTime().Compare(gasTime.Time), "ExecutedByGasTime().Compare([original input])")
-			assert.Zero(t, b.ExecutedBaseFee().Cmp(baseFee), "ExecutedBaseFee().Cmp([original input])")
+			assert.Equal(t, *baseFee, b.ExecutedBaseFee(), "ExecutedBaseFee()")
 			assert.Empty(t, cmp.Diff(receipts, b.Receipts(), cmputils.Receipts(), cmputils.NilSlicesAreEmpty[[]*types.Log]()), "Receipts()")
 
 			assert.Equal(t, stateRoot, b.PostExecutionStateRoot(), "PostExecutionStateRoot()") // i.e. this block
