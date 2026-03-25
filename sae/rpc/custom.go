@@ -73,18 +73,16 @@ func (c *customAPI) CallDetailed(ctx context.Context, args ethapi.TransactionArg
 		UsedGas:    result.UsedGas,
 		ReturnData: result.ReturnData,
 	}
-	// Revert data is checked first because NewRevertError ABI-decodes the
-	// reason, which we should as provide.
-	if revert := result.Revert(); len(revert) > 0 {
-		revErr := ethapi.NewRevertError(revert)
-		reply.ErrCode = revErr.ErrorCode()
-		reply.Err = revErr.Error()
+	// Revert data is checked first because [ethapi.NewRevertError] ABI-decodes
+	// the reason, which we provide.
+	if errors.Is(result.Err, vm.ErrExecutionReverted) {
+		e := ethapi.NewRevertError(result.Revert())
+		reply.Err = e.Error()
+		reply.ErrCode = e.ErrorCode()
 	} else if result.Err != nil {
 		reply.Err = result.Err.Error()
 		if rpcErr, ok := result.Err.(rpc.Error); ok {
 			reply.ErrCode = rpcErr.ErrorCode()
-		} else if errors.Is(result.Err, vm.ErrExecutionReverted) {
-			reply.ErrCode = RevertErrCode
 		}
 	}
 	return reply, nil
