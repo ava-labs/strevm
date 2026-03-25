@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/ava-labs/avalanchego/ids"
+	"github.com/ava-labs/avalanchego/snow/engine/snowman/block"
 	"github.com/ava-labs/avalanchego/vms/components/gas"
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core/state"
@@ -100,7 +101,7 @@ func (s *Stub) ExecutionResultsDB(dataDir string) (saedb.ExecutionResults, error
 // BuildHeader constructs a header that builds on top of the parent header. The
 // `Extra` field SHOULD NOT be modified as it encodes the sub-second block time
 // and end-of-block ops.
-func (s *Stub) BuildHeader(parent *types.Header) *types.Header {
+func (s *Stub) BuildHeader(parent *types.Header) (*types.Header, error) {
 	var now time.Time
 	if s.Now != nil {
 		now = s.Now()
@@ -117,7 +118,7 @@ func (s *Stub) BuildHeader(parent *types.Header) *types.Header {
 		Time:       uint64(now.Unix()), //nolint:gosec // Known non-negative
 		Extra:      e.MarshalCanoto(),
 	}
-	return hdr
+	return hdr, nil
 }
 
 // PotentialEndOfBlockOps ignores its arguments and returns [Stub.Ops] as a
@@ -129,17 +130,19 @@ func (s *Stub) PotentialEndOfBlockOps(header *types.Header, lastSettledBlock com
 // BuildBlock calls [BuildBlock] with its arguments.
 func (*Stub) BuildBlock(
 	header *types.Header,
+	blockCtx *block.Context,
 	txs []*types.Transaction,
 	receipts []*types.Receipt,
 	ops []Op,
 ) (*types.Block, error) {
-	return BuildBlock(header, txs, receipts, ops)
+	return BuildBlock(header, blockCtx, txs, receipts, ops)
 }
 
 // BuildBlock encodes ops into [types.Header.Extra] and calls [types.NewBlock]
 // with the other arguments.
 func BuildBlock(
 	header *types.Header,
+	blockCtx *block.Context,
 	txs []*types.Transaction,
 	receipts []*types.Receipt,
 	ops []Op,
