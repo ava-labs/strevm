@@ -26,10 +26,8 @@ func notFoundIsNil[T any](x *T, err error) (*T, error) {
 	return x, err
 }
 
-// Note that these readers will only work for canonical blocks. A canonical block
-// has been accepted by consensus so is guaranteed to exceute eventually.
-//
-// Non-canonical (so verified-but-not-accepted) blocks are rejected with
+// Note that these readers will only work for canonical blocks (see
+// docs/invariants.md). Non-canonical blocks are rejected with
 // [blocks.ErrNonCanonicalBlock].
 
 func readByNumber[T any](c Chain, n rpc.BlockNumber, read blocks.DBReader[T]) (*T, error) {

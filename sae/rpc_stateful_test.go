@@ -37,11 +37,19 @@ func TestStateQueryOnNonCanonicalBlock(t *testing.T) {
 	ctx, sut := newSUT(t, 1)
 	b := unwrap(t, sut.createAndVerifyBlock(t, sut.lastAcceptedBlock(t)))
 
-	sut.testRPC(ctx, t, rpcTest{
-		method:  "eth_getBalance",
-		args:    []any{sut.wallet.Addresses()[0], rpc.BlockNumberOrHashWithHash(b.Hash(), false)},
-		wantErr: testerr.Contains(blocks.ErrNonCanonicalBlock.Error()),
-	})
+	ncbErr := testerr.Contains(blocks.ErrNonCanonicalBlock.Error())
+	sut.testRPC(ctx, t,
+		rpcTest{
+			method:  "eth_getBalance",
+			args:    []any{sut.wallet.Addresses()[0], rpc.BlockNumberOrHashWithHash(b.Hash(), false)},
+			wantErr: ncbErr,
+		},
+		rpcTest{
+			method:  "eth_getBlockByHash",
+			args:    []any{b.Hash(), false},
+			wantErr: ncbErr,
+		},
+	)
 }
 
 func TestDebugTrace(t *testing.T) {
