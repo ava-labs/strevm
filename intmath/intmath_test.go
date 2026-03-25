@@ -6,6 +6,7 @@ package intmath
 import (
 	"errors"
 	"math"
+	"math/bits"
 	"math/rand/v2"
 	"testing"
 )
@@ -30,6 +31,37 @@ func TestBoundedSubtract(t *testing.T) {
 			t.Errorf("BoundedSubtract[%T](%[1]d, %d, %d) got %d; want %d", tt.a, tt.b, tt.floor, got, tt.want)
 		}
 	}
+}
+
+func FuzzBoundedAdd(f *testing.F) {
+	corpus := []struct {
+		a, b, ceil uint64
+	}{
+		{a: 0, b: 10, ceil: 0},
+		{a: 0, b: 10, ceil: 9},
+		{a: 1, b: 10, ceil: 9},
+		{a: 1, b: 10, ceil: 10},
+		{a: 1, b: 10, ceil: 11},
+		{a: 1, b: 10, ceil: 12},
+		{a: max, b: 0, ceil: 100},
+		{a: max, b: 1, ceil: 100},
+		{a: max, b: max, ceil: 0},
+	}
+
+	for _, tt := range corpus {
+		f.Add(tt.a, tt.b, tt.ceil)
+		f.Add(tt.b, tt.a, tt.ceil)
+	}
+
+	f.Fuzz(func(t *testing.T, a, b, ceil uint64) {
+		want, carry := bits.Add64(a, b, 0)
+		if carry > 0 || want > ceil {
+			want = ceil
+		}
+		if got := BoundedAdd(a, b, ceil); got != want {
+			t.Errorf("BoundedAdd[%T](%[1]d, %d, %d) got %d; want %d", a, b, ceil, got, want)
+		}
+	})
 }
 
 func TestBoundedMultiply(t *testing.T) {
