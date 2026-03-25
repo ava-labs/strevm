@@ -248,7 +248,10 @@ func Execute(
 		}
 	}
 
-	hooks.AfterExecutingBlock(stateDB, b.EthBlock(), receipts)
+	if err := hooks.AfterExecutingBlock(stateDB, b.EthBlock(), receipts); err != nil {
+		return nil, fmt.Errorf("after-block hook: %v", err)
+	}
+
 	endTime := time.Now()
 	if err := gasClock.AfterBlock(blockGasConsumed, hooks, b.Header()); err != nil {
 		return nil, fmt.Errorf("after-block gas time update: %w", err)
@@ -280,12 +283,10 @@ func (e *Executor) afterExecution(b *blocks.Block, r *ExecutionResults) error {
 	if err != nil {
 		return fmt.Errorf("%T.Commit() at end of block %d: %w", r.StateDB, b.NumberU64(), err)
 	}
-	if num := b.NumberU64(); saedb.ShouldCommitTrieDB(num) {
-		tdb := e.stateCache.TrieDB()
-		if err := tdb.Commit(root, false /* log */); err != nil {
-			return fmt.Errorf("%T.Commit(%#x) at end of block %d: %v", tdb, root, num, err)
-		}
+	if err := e.Tracker.Track(root, b.NumberU64()); err != nil {
+		return err
 	}
+
 	// The strict ordering of the next 3 calls guarantees invariants that MUST
 	// NOT be broken:
 	//

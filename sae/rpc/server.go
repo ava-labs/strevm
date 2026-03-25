@@ -13,6 +13,12 @@ import (
 	"github.com/ava-labs/libevm/rpc"
 )
 
+// Taken as the defaults from geth / libevm's `node.DefaultConfig`.
+const (
+	batchLimit           = 1000
+	batchResponseMaxSize = 25 * 1000 * 1000 // 25 MB
+)
+
 // Server returns the Provider's [rpc.Server], with all configured JSON-RPC
 // namespace handlers registered.
 func (p *Provider) Server() *rpc.Server {
@@ -70,6 +76,7 @@ func (b *backend) server(filter *filters.FilterAPI) (*rpc.Server, error) {
 		// - eth_getTransactionByBlockHashAndIndex
 		// - eth_getTransactionByBlockNumberAndIndex
 		// - eth_getTransactionByHash
+		// - eth_getTransactionCount
 		// - eth_getTransactionReceipt
 		// - eth_sendRawTransaction
 		// - eth_sendTransaction
@@ -77,10 +84,12 @@ func (b *backend) server(filter *filters.FilterAPI) (*rpc.Server, error) {
 		// - eth_signTransaction
 		//
 		// Undocumented APIs:
+		// - eth_fillTransaction
 		// - eth_getRawTransactionByBlockHashAndIndex
 		// - eth_getRawTransactionByBlockNumberAndIndex
 		// - eth_getRawTransactionByHash
 		// - eth_pendingTransactions
+		// - eth_resend
 		{
 			"eth",
 			immediateReceipts{
@@ -162,6 +171,7 @@ func (b *backend) server(filter *filters.FilterAPI) (*rpc.Server, error) {
 	}
 
 	s := rpc.NewServer()
+	s.SetBatchLimits(batchLimit, batchResponseMaxSize)
 	for _, api := range apis {
 		if err := s.RegisterName(api.namespace, api.api); err != nil {
 			return nil, fmt.Errorf("%T.RegisterName(%q, %T): %v", s, api.namespace, api.api, err)

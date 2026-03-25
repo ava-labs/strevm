@@ -23,6 +23,7 @@ import (
 	saeparams "github.com/ava-labs/strevm/params"
 	"github.com/ava-labs/strevm/saexec"
 	"github.com/ava-labs/strevm/txgossip"
+	saetypes "github.com/ava-labs/strevm/types"
 	"github.com/ava-labs/strevm/worstcase"
 )
 
@@ -48,6 +49,7 @@ type blockBuilderG[T hook.Transaction] struct {
 	log     logging.Logger
 	exec    *saexec.Executor
 	mempool *txgossip.Set
+	source  saetypes.BlockSource
 }
 
 func (b *blockBuilderG[_]) new(eth *types.Block, parent, lastSettled *blocks.Block) (*blocks.Block, error) {
@@ -136,7 +138,11 @@ func (b *blockBuilderG[T]) buildWithTxs(
 	pendingTxs func(txpool.PendingFilter) []*txgossip.LazyTransaction,
 	builder hook.BlockBuilder[T],
 ) (*blocks.Block, error) {
-	hdr := builder.BuildHeader(parent.Header())
+	hdr, err := builder.BuildHeader(parent.Header())
+	if err != nil {
+		return nil, err
+	}
+
 	log := b.log.With(
 		zap.Uint64("parent_height", parent.Height()),
 		zap.Stringer("parent_hash", parent.Hash()),
@@ -181,9 +187,10 @@ func (b *blockBuilderG[T]) buildWithTxs(
 	log = log.With(
 		zap.Uint64("last_settled_height", lastSettled.Height()),
 		zap.Stringer("last_settled_hash", lastSettled.Hash()),
+		zap.Stringer("last_settled_gas_time", lastSettled.ExecutedByGasTime()),
 	)
 
-	state, err := worstcase.NewState(b.hooks, b.exec.ChainConfig(), b.exec.StateCache(), lastSettled, b.exec.SnapshotTree())
+	state, err := worstcase.NewState(b.hooks, b.exec.ChainConfig(), lastSettled, b.exec)
 	if err != nil {
 		log.Warn("Worst-case state not able to be created",
 			zap.Error(err),
@@ -290,7 +297,7 @@ func (b *blockBuilderG[T]) buildWithTxs(
 		included = append(included, tx)
 	}
 	var includedOps []T
-	for tx := range builder.PotentialEndOfBlockOps() {
+	for tx := range builder.PotentialEndOfBlockOps(hdr, lastSettled.Hash(), b.source) {
 		// TODO(StephenButtolph): Return additional information from
 		// [hook.PointsG.PotentialEndOfBlockOps] to terminate the loop early
 		// when there is insufficient block space remaining.
@@ -326,6 +333,7 @@ func (b *blockBuilderG[T]) buildWithTxs(
 
 	ethB, err := builder.BuildBlock(
 		hdr,
+		bCtx,
 		included,
 		receipts,
 		includedOps,

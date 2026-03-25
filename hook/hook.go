@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/ava-labs/avalanchego/ids"
+	"github.com/ava-labs/avalanchego/snow/engine/snowman/block"
 	"github.com/ava-labs/avalanchego/vms/components/gas"
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core"
@@ -27,6 +28,7 @@ import (
 	"github.com/ava-labs/strevm/intmath"
 	saeparams "github.com/ava-labs/strevm/params"
 	"github.com/ava-labs/strevm/saedb"
+	saetypes "github.com/ava-labs/strevm/types"
 )
 
 // PointsG define user-injected hook points.
@@ -72,7 +74,7 @@ type Points interface {
 	// BeforeExecutingBlock is called immediately prior to executing the block.
 	BeforeExecutingBlock(params.Rules, *state.StateDB, *types.Block) error
 	// AfterExecutingBlock is called immediately after executing the block.
-	AfterExecutingBlock(*state.StateDB, *types.Block, types.Receipts)
+	AfterExecutingBlock(*state.StateDB, *types.Block, types.Receipts) error
 }
 
 // BlockBuilder constructs a block given its components.
@@ -87,19 +89,28 @@ type BlockBuilder[T Transaction] interface {
 	//
 	// SAE always uses this method instead of directly constructing a header, to
 	// ensure any libevm header extras are properly populated.
-	BuildHeader(parent *types.Header) *types.Header
+	BuildHeader(parent *types.Header) (*types.Header, error)
 	// PotentialEndOfBlockOps returns an iterator of custom transactions that
 	// would be valid to include into a block.
 	//
+	// The header of the block being built, the hash of the last block to
+	// settle, and a block source are provided to allow end of block ops to be
+	// filtered based on the worst-case queue.
+	//
 	// SAE will filter any transactions whose [Op] can not be safely applied to
 	// the state.
-	PotentialEndOfBlockOps() iter.Seq[T]
+	PotentialEndOfBlockOps(
+		header *types.Header,
+		lastSettledBlock common.Hash,
+		source saetypes.BlockSource,
+	) iter.Seq[T]
 	// BuildBlock constructs a block with the given components.
 	//
 	// SAE always uses this method instead of [types.NewBlock], to ensure any
 	// libevm block extras are properly populated.
 	BuildBlock(
 		header *types.Header,
+		blockCtx *block.Context,
 		txs []*types.Transaction,
 		receipts []*types.Receipt,
 		endOfBlockOps []T,
