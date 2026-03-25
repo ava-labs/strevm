@@ -4,6 +4,7 @@
 package sae
 
 import (
+	"fmt"
 	"math/big"
 	"slices"
 	"testing"
