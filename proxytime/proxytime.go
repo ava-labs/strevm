@@ -164,17 +164,10 @@ func ConvertMilliseconds[D Duration](rate D, ms uint64) (sec uint64, _ Fractiona
 // division may result in rounding up of the fractional-second component of
 // time. Rounding up instead of down achieves monotonicity of the clock.
 func (tm *Time[D]) SetRate(hertz D) {
-	// If this happens then there is a bug in the implementation. The
-	// invariant that `tm.fraction < tm.hertz` makes overflow impossible as
-	// the scaled fraction will be less than the new rate.
-	frac, err := tm.Scale(tm.fraction, hertz)
-	if err != nil {
-		// A broken invariant MUST be detected in tests, hence not just dropping
-		// the error.
-		panic(fmt.Sprintf("broken invariant: %v", err))
-	}
-	// Although the > case is technically impossible, breaking the above
-	// invariant will panic, so we defensively protect against everything.
+	frac := tm.scaleFraction(hertz)
+	// Although the > case is technically impossible, breaking the invariant
+	// documented in [Time.scaleFraction] would be catastrophic, so we
+	// defensively protect against it.
 	if frac >= hertz {
 		frac -= hertz
 		tm.seconds++
@@ -191,6 +184,20 @@ func (tm *Time[D]) Scale(val, newRate D) (D, error) {
 		return 0, fmt.Errorf("scaling %d from rate of %d to %d: %w", val, tm.hertz, newRate, err)
 	}
 	return scaled, nil
+}
+
+// scaleFraction is a special case of [Time.Scale], as if [Time.fraction] was
+// passed as the value for scaling. The invariant that [Time.fraction] is less
+// than [Time.hertz] makes overflow impossible as the scaled fraction will
+// always be less than `newRate`.
+func (tm *Time[D]) scaleFraction(newRate D) D {
+	f, err := tm.Scale(tm.fraction, newRate)
+	if err != nil {
+		// A broken invariant MUST be detected in tests, hence not just dropping
+		// the error.
+		panic(fmt.Sprintf("broken invariant: %v", err))
+	}
+	return f
 }
 
 // Sub returns a new [Time], `s` seconds earlier, without underflow protection.
@@ -235,10 +242,10 @@ func (tm *Time[D]) AsTime() time.Time {
 	if tm.seconds > math.MaxInt64 { // keeps gosec linter happy
 		return time.Unix(math.MaxInt64, math.MaxInt64)
 	}
-	// The error can be ignored as the fraction is always less than the rate and
-	// therefore the scaled value can never overflow.
-	nsec, _ := tm.Scale(tm.fraction, 1e9)
-	return time.Unix(int64(tm.seconds), int64(nsec)).In(time.UTC)
+	return time.Unix(
+		int64(tm.seconds),
+		int64(tm.scaleFraction(1e9)),
+	).UTC()
 }
 
 // String returns the time as a human-readable string. It is not intended for
