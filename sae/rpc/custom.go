@@ -50,9 +50,9 @@ func (c *customAPI) estimateNextBaseFee() *big.Int {
 	return bounds.LatestEndTime.BaseFee().ToBig()
 }
 
-// revertErrCode is the JSON-RPC error code for execution reverts, matching the
+// RevertErrCode is the JSON-RPC error code for execution reverts, matching the
 // value returned by [ethapi.RevertError.ErrorCode].
-const revertErrCode = 3
+const RevertErrCode = 3
 
 // DetailedExecutionResult is the response for eth_callDetailed.
 type DetailedExecutionResult struct {
@@ -84,7 +84,7 @@ func (c *customAPI) CallDetailed(ctx context.Context, args ethapi.TransactionArg
 		if rpcErr, ok := result.Err.(rpc.Error); ok {
 			reply.ErrCode = rpcErr.ErrorCode()
 		} else if errors.Is(result.Err, vm.ErrExecutionReverted) {
-			reply.ErrCode = revertErrCode
+			reply.ErrCode = RevertErrCode
 		}
 	}
 	return reply, nil
