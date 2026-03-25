@@ -193,7 +193,7 @@ func (tm *Time[D]) Scale(val, newRate D) (D, error) {
 	return scaled, nil
 }
 
-// Sub returns a new [Time], `s` seconds earlier.
+// Sub returns a new [Time], `s` seconds earlier, without underflow protection.
 func (tm *Time[D]) Sub(s uint64) *Time[D] {
 	return &Time[D]{
 		seconds:  tm.seconds - s,
