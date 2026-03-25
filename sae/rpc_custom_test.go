@@ -107,14 +107,19 @@ func TestNewAcceptedTransactions(t *testing.T) {
 }
 
 func TestCallDetailed(t *testing.T) {
-	emptyReverter := common.Address{'r', 'e', 'v', 'e', 'r', 't'}
+	echoReverter := common.Address{'e', 'c', 'h', 'o'}
 	ctx, sut := newSUT(t, 1, options.Func[sutConfig](func(c *sutConfig) {
 		const (
+			size   = byte(vm.CALLDATASIZE)
+			cp     = byte(vm.CALLDATACOPY)
 			zero   = byte(vm.PUSH0)
 			revert = byte(vm.REVERT)
 		)
-		c.genesis.Alloc[emptyReverter] = types.Account{
-			Code:    []byte{zero, zero, revert},
+		c.genesis.Alloc[echoReverter] = types.Account{
+			Code: []byte{
+				size, zero, zero, cp, // https://www.evm.codes/#37
+				size, zero, revert,
+			},
 			Balance: new(big.Int),
 		}
 	}))
@@ -127,13 +132,13 @@ func TestCallDetailed(t *testing.T) {
 
 	escrowAddr := crypto.CreateAddress(sut.wallet.Addresses()[0], 0)
 	recv := common.Address{'r', 'e', 'c', 'v'}
-	const val = 42
+	const depositVal = 42
 	deposit := &types.LegacyTx{
 		To:       &escrowAddr,
 		Gas:      1e6,
 		GasPrice: big.NewInt(1),
 		Data:     escrow.CallDataToDeposit(recv),
-		Value:    big.NewInt(val),
+		Value:    big.NewInt(depositVal),
 	}
 
 	sign := sut.wallet.SetNonceAndSign
@@ -144,58 +149,82 @@ func TestCallDetailed(t *testing.T) {
 		require.Equalf(t, types.ReceiptStatusSuccessful, r.Status, "%T.Status", r)
 	}
 
-	sut.testRPC(ctx, t, rpcTest{
-		method: "eth_callDetailed",
-		args: []any{
-			map[string]any{
-				"to":   escrowAddr,
-				"data": hexutil.Encode(escrow.CallDataForBalance(recv)),
-			},
-			rpc.LatestBlockNumber.String(),
-		},
-		want: saerpc.DetailedExecutionResult{
-			UsedGas:    23675,
-			ReturnData: uint256.NewInt(val).PaddedBytes(32),
-		},
-	})
+	const revertWith = 12345
+	revertAsPanic := slices.Concat(
+		crypto.Keccak256([]byte("Panic(uint256)"))[:4],
+		uint256.NewInt(revertWith).PaddedBytes(32),
+	)
 
-	// Calling withdraw() from the zero address (which has no escrowed
-	// balance) reverts with ZeroBalance(address).
-	t.Run("reverting_call", func(t *testing.T) {
-		sut.testRPC(ctx, t, rpcTest{
+	noBalance := common.Address{'b', 'a', 'n', 'k', 'r', 'u', 'p', 't'}
+	latest := rpc.LatestBlockNumber.String()
+
+	sut.testRPC(ctx, t, []rpcTest{
+		{
 			method: "eth_callDetailed",
 			args: []any{
 				map[string]any{
 					"to":   escrowAddr,
+					"data": hexutil.Encode(escrow.CallDataForBalance(recv)),
+				},
+				latest,
+			},
+			want: saerpc.DetailedExecutionResult{
+				UsedGas:    23675,
+				ReturnData: uint256.NewInt(depositVal).PaddedBytes(32),
+			},
+		},
+		{
+			method: "eth_callDetailed",
+			args: []any{
+				map[string]any{
+					"to":   escrowAddr,
+					"from": noBalance,
 					"data": hexutil.Encode(escrow.CallDataToWithdraw()),
 				},
-				rpc.LatestBlockNumber.String(),
+				latest,
 			},
 			want: saerpc.DetailedExecutionResult{
 				UsedGas: 23451,
-				ErrCode: 3,
+				ErrCode: saerpc.RevertErrCode,
 				Err:     vm.ErrExecutionReverted.Error(),
 				ReturnData: slices.Concat(
 					crypto.Keccak256([]byte("ZeroBalance(address)"))[:4],
-					make([]byte, 32),
+					make([]byte, common.HashLength-common.AddressLength),
+					noBalance.Bytes(),
 				),
 			},
-		})
-	})
-
-	// A contract that reverts with empty data still populates error fields.
-	t.Run("empty_revert", func(t *testing.T) {
-		sut.testRPC(ctx, t, rpcTest{
+		},
+		{
 			method: "eth_callDetailed",
 			args: []any{
-				map[string]any{"to": emptyReverter},
-				rpc.LatestBlockNumber.String(),
+				map[string]any{
+					"to":   echoReverter,
+					"data": hexutil.Bytes{42},
+				},
+				latest,
 			},
 			want: saerpc.DetailedExecutionResult{
-				UsedGas: 21004,
-				ErrCode: 3,
-				Err:     vm.ErrExecutionReverted.Error(),
+				UsedGas:    21035,
+				ErrCode:    saerpc.RevertErrCode,
+				Err:        vm.ErrExecutionReverted.Error(),
+				ReturnData: hexutil.Bytes{42},
 			},
-		})
-	})
+		},
+		{
+			method: "eth_callDetailed",
+			args: []any{
+				map[string]any{
+					"to":   echoReverter,
+					"data": hexutil.Bytes(revertAsPanic),
+				},
+				latest,
+			},
+			want: saerpc.DetailedExecutionResult{
+				UsedGas:    21241,
+				ErrCode:    saerpc.RevertErrCode,
+				Err:        fmt.Sprintf("%v: unknown panic code: %#x", vm.ErrExecutionReverted, revertWith),
+				ReturnData: hexutil.Bytes(revertAsPanic),
+			},
+		},
+	}...)
 }
