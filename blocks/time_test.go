@@ -11,6 +11,7 @@ import (
 	"github.com/ava-labs/avalanchego/vms/components/gas"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/google/go-cmp/cmp"
+	"github.com/stretchr/testify/require"
 
 	"github.com/ava-labs/strevm/gastime"
 	"github.com/ava-labs/strevm/hook/hookstest"
