@@ -20,6 +20,9 @@ func neverErrs[T any](r blocks.DBReader[T]) blocks.DBReaderWithErr[T] {
 }
 
 func notFoundIsNil[T any](x *T, err error) (*T, error) {
+	if errors.Is(err, blocks.ErrNonCanonicalBlock) {
+		return nil, err
+	}
 	if errors.Is(err, blocks.ErrNotFound) {
 		return nil, nil
 	}
