@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/ava-labs/avalanchego/ids"
+	"github.com/ava-labs/avalanchego/snow/engine/snowman/block"
 	"github.com/ava-labs/avalanchego/vms/components/gas"
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core"
@@ -88,7 +89,7 @@ type BlockBuilder[T Transaction] interface {
 	//
 	// SAE always uses this method instead of directly constructing a header, to
 	// ensure any libevm header extras are properly populated.
-	BuildHeader(parent *types.Header) *types.Header
+	BuildHeader(parent *types.Header) (*types.Header, error)
 	// PotentialEndOfBlockOps returns an iterator of custom transactions that
 	// would be valid to include into a block.
 	//
@@ -109,6 +110,7 @@ type BlockBuilder[T Transaction] interface {
 	// libevm block extras are properly populated.
 	BuildBlock(
 		header *types.Header,
+		blockCtx *block.Context,
 		txs []*types.Transaction,
 		receipts []*types.Receipt,
 		endOfBlockOps []T,

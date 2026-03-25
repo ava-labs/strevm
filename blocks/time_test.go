@@ -18,10 +18,6 @@ import (
 	"github.com/ava-labs/strevm/proxytime"
 )
 
-func gasExtractionCmpOpt() cmp.Option {
-	return proxytime.CmpOpt[gas.Gas](proxytime.IgnoreRateInvariants)
-}
-
 func TestGasTime(t *testing.T) {
 	const (
 		unix   = 42
@@ -38,13 +34,14 @@ func TestGasTime(t *testing.T) {
 	parent := &types.Header{
 		Number: big.NewInt(1),
 	}
-	hdr := hooks.BuildHeader(parent)
+	hdr, err := hooks.BuildHeader(parent)
+	require.NoErrorf(t, err, "%T.BuildHeader()", hooks)
 
 	got := GasTime(hooks, hdr, parent)
 	want := proxytime.New(unix, rate)
 	want.Tick(frac)
 
-	if diff := cmp.Diff(want, got, gasExtractionCmpOpt()); diff != "" {
+	if diff := cmp.Diff(want, got, proxytime.CmpOpt[gas.Gas]()); diff != "" {
 		t.Errorf("GasTime(...) diff (-want +got):\n%s", diff)
 	}
 }
@@ -72,7 +69,8 @@ func FuzzTimeExtraction(f *testing.F) {
 		parent := &types.Header{
 			Number: big.NewInt(1),
 		}
-		hdr := hooks.BuildHeader(parent)
+		hdr, err := hooks.BuildHeader(parent)
+		require.NoErrorf(t, err, "%T.BuildHeader()", hooks)
 
 		t.Run("PreciseTime", func(t *testing.T) {
 			got := PreciseTime(hooks, hdr)
@@ -87,9 +85,9 @@ func FuzzTimeExtraction(f *testing.F) {
 
 			want := proxytime.Of[gas.Gas](hooks.Now())
 			rate := gastime.SafeRateOfTarget(gas.Gas(target))
-			require.NoErrorf(t, want.SetRate(rate), "%T.SetRate(%d)", want, rate)
+			want.SetRate(rate)
 
-			if diff := cmp.Diff(want, got, gasExtractionCmpOpt()); diff != "" {
+			if diff := cmp.Diff(want, got, proxytime.CmpOpt[gas.Gas]()); diff != "" {
 				t.Errorf("diff (-proxytime.Of +GasTime):\n%s", diff)
 			}
 		})
