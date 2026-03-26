@@ -77,6 +77,7 @@ func TestNewAcceptedTransactions(t *testing.T) {
 		t.Cleanup(sub.Unsubscribe)
 
 		tx := sut.wallet.SetNonceAndSign(t, 0, &types.LegacyTx{
+			To:       &zeroAddr,
 			Gas:      params.TxGas,
 			GasPrice: big.NewInt(1),
 		})
