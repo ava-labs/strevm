@@ -5,7 +5,6 @@ package sae
 
 import (
 	"context"
-	"fmt"
 	"iter"
 	"math"
 	"sync/atomic"
@@ -14,7 +13,6 @@ import (
 	"github.com/ava-labs/avalanchego/vms/components/gas"
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core/rawdb"
-	"github.com/ava-labs/libevm/core/state"
 	"github.com/ava-labs/libevm/ethdb"
 	"github.com/ava-labs/libevm/params"
 
@@ -44,50 +42,25 @@ func (rec *recovery) newCanonicalBlock(num uint64, parent *blocks.Block) (*block
 	return blocks.New(ethB, parent, nil, rec.log)
 }
 
-// findLastCommitted uses the database to find the last expected state, and
-// returns the block with that post-execution state.
-func (rec *recovery) findLastCommitted() (*blocks.Block, error) {
-	// most recently executed block number before shutdown
-	num := rawdb.ReadHeadHeader(rec.db).Number.Uint64()
-	if num <= rec.lastSynchronous.NumberU64() {
-		return rec.lastSynchronous, nil
+func (rec *recovery) lastCommittedBlock() (*blocks.Block, error) {
+	num := saedb.LastHeightWithExecutionRootCommitted(
+		rec.db,
+		rec.config.DBConfig,
+		rec.hooks,
+		rec.lastSynchronous.Height(),
+	)
+	if ls := rec.lastSynchronous; num == ls.Height() {
+		return ls, nil
 	}
 
-	// If the node is not archival, then each block at height [saedb.CommitTrieDBEvery]
-	// will have its settled state available.
-	if !rec.config.DBConfig.Archival {
-		// executionHeight represents the last block with the settled state available.
-		executionHeight := saedb.LastCommittedTrieDBHeight(num)
-		if executionHeight <= rec.lastSynchronous.NumberU64() {
-			return rec.lastSynchronous, nil
-		}
-		b, err := rec.newCanonicalBlock(executionHeight, nil)
-		if err != nil {
-			return nil, err
-		}
-
-		num = rec.hooks.SettledHeight(b.Header())
-	}
-
-	settled, err := rec.newCanonicalBlock(num, nil)
+	b, err := rec.newCanonicalBlock(num, nil)
 	if err != nil {
 		return nil, err
 	}
-	if err := settled.RestoreExecutionArtefacts(rec.db, rec.xdb, rec.chainConfig); err != nil {
+	if err := b.RestoreExecutionArtefacts(rec.db, rec.xdb, rec.chainConfig); err != nil {
 		return nil, err
 	}
-	{
-		// TODO(alarso16): When Firewood is added, the exact root may be unknown.
-		sdb := state.NewDatabaseWithConfig(rec.db, rec.config.DBConfig.TrieDBConfig)
-		root := settled.PostExecutionStateRoot()
-		if _, err := sdb.OpenTrie(root); err != nil {
-			return nil, fmt.Errorf(
-				"database corrupted: checking for state root (block %d / %#x): %v",
-				settled.NumberU64(), settled.Hash(), err,
-			)
-		}
-	}
-	return settled, nil
+	return b, nil
 }
 
 // canonicalAfter returns an iterator over all canonical blocks after `start`.

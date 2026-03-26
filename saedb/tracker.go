@@ -9,11 +9,13 @@ import (
 
 	"github.com/ava-labs/avalanchego/utils/logging"
 	"github.com/ava-labs/libevm/common"
+	"github.com/ava-labs/libevm/core/rawdb"
 	"github.com/ava-labs/libevm/core/state"
 	"github.com/ava-labs/libevm/core/state/snapshot"
 	"github.com/ava-labs/libevm/ethdb"
 	"github.com/ava-labs/libevm/log"
 	"github.com/ava-labs/libevm/triedb"
+	"github.com/ava-labs/strevm/hook"
 	"go.uber.org/zap"
 )
 
@@ -82,8 +84,8 @@ func (t *Tracker) Track(root common.Hash) {
 	}
 }
 
-// MaybeCommit uses the provided height to decide if any root needs committed, following
-// the below rules (in order):
+// MaybeCommit potentially calls [triedb.Database.Commit], based on the
+// following priorities:
 //
 // 1. If [Config.Archival] is true, then `executionRoot` will be committed.
 // 2. If [ShouldCommitTrieDB] based on `height`, `settledRoot` is committed.
@@ -111,6 +113,32 @@ func (t *Tracker) MaybeCommit(settledRoot, executionRoot common.Hash, height uin
 		return fmt.Errorf("%T.Commit(%#x) %s at end of block %d: %v", tdb, settledRoot, because, height, err)
 	}
 	return nil
+}
+
+// LastHeightWithExecutionRootCommitted returns the greatest block height for
+// which [Tracker.MaybeCommit] called [triedb.Database.Commit] with the
+// post-execution state root of the block.
+func LastHeightWithExecutionRootCommitted(db ethdb.Database, c Config, hooks hook.Points, lastSynchronous uint64) uint64 {
+	switch head := rawdb.ReadHeadHeader(db).Number.Uint64(); {
+	case head <= lastSynchronous:
+		return lastSynchronous
+
+	case c.Archival:
+		return head
+
+	default:
+		num := LastCommittedTrieDBHeight(head)
+		if num <= lastSynchronous {
+			return lastSynchronous
+		}
+		return hooks.SettledHeight(
+			rawdb.ReadHeader(
+				db,
+				rawdb.ReadCanonicalHash(db, num),
+				num,
+			),
+		)
+	}
 }
 
 // Untrack informs the [Tracker] that the state corresponding

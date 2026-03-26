@@ -164,7 +164,7 @@ func NewVM[T hook.Transaction](
 
 	rec := &recovery{db, xdb, chainConfig, snowCtx.Log, hooks, cfg, lastSync}
 	{ // ==========  Block State  ==========
-		lastCommitted, err := rec.findLastCommitted()
+		lastCommitted, err := rec.lastCommittedBlock()
 		if err != nil {
 			return nil, err
 		}

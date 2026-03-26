@@ -27,7 +27,6 @@ import (
 
 	"github.com/ava-labs/strevm/intmath"
 	saeparams "github.com/ava-labs/strevm/params"
-	"github.com/ava-labs/strevm/saedb"
 	saetypes "github.com/ava-labs/strevm/types"
 )
 
@@ -54,7 +53,7 @@ type Points interface {
 	// ExecutionResultsDB opens and returns a height-indexed database, which
 	// will be closed by the VM when no longer needed. It MAY use the provided
 	// directory for persistence and MUST NOT write data outside of it.
-	ExecutionResultsDB(dataDir string) (saedb.ExecutionResults, error)
+	ExecutionResultsDB(dataDir string) (saetypes.ExecutionResults, error)
 
 	// GasConfigAfter returns the gas target and configuration that should go
 	// into effect immediately after the provided block.

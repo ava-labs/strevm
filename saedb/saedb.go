@@ -8,9 +8,9 @@
 package saedb
 
 import (
-	"github.com/ava-labs/avalanchego/database"
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core/state"
+	"github.com/ava-labs/strevm/types"
 )
 
 const (
@@ -37,9 +37,9 @@ type StateDBOpener interface {
 	StateDB(root common.Hash) (*state.StateDB, error)
 }
 
-// ExecutionResults provides type safety for a [database.HeightIndex], to be
-// used for persistence of SAE-specific execution results, avoiding possible
-// collision with `rawdb` keys.
-type ExecutionResults struct {
-	database.HeightIndex
-}
+// ExecutionResults is a temporary alias to minimise PR invasiveness.
+//
+// Deprecated: use [types.ExecutionResults] directly.
+//
+// TODO(arr4n) remove this.
+type ExecutionResults = types.ExecutionResults
