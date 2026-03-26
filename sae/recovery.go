@@ -63,13 +63,11 @@ func (rec *recovery) lastCommittedBlock() (*blocks.Block, error) {
 	return b, nil
 }
 
-// canonicalAfter returns an iterator over all canonical blocks after `start`.
-func (rec *recovery) canonicalAfter(start *blocks.Block) iter.Seq2[*blocks.Block, error] {
-	toExecute, _ := rawdb.ReadAllCanonicalHashes(rec.db, start.NumberU64()+1, math.MaxUint64, math.MaxInt)
+func (rec *recovery) canonicalAfter(parent *blocks.Block) iter.Seq2[*blocks.Block, error] {
+	nums, _ := rawdb.ReadAllCanonicalHashes(rec.db, parent.NumberU64()+1, math.MaxUint64, math.MaxInt)
 
 	return func(yield func(*blocks.Block, error) bool) {
-		parent := start
-		for _, num := range toExecute {
+		for _, num := range nums {
 			b, err := rec.newCanonicalBlock(num, parent)
 			if !yield(b, err) || err != nil {
 				return
