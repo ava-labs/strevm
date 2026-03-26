@@ -189,7 +189,7 @@ func NewVM[T hook.Transaction](
 			return nil, err
 		}
 
-		bMap, lastSettled, err := rec.rebuildBlocksInMemory(exec)
+		bMap, lastSettled, err := rec.consensusCriticalBlocks(exec)
 		if err != nil {
 			return nil, err
 		}

@@ -95,9 +95,9 @@ func (rec *recovery) executeAllAccepted(ctx context.Context, exec *saexec.Execut
 
 	// Consensus only requires post-execution state after and including the
 	// last-settled block.
-	keepAfter := rec.hooks.SettledHeight(last.Header())
+	keepFrom := rec.hooks.SettledHeight(last.Header())
 	for b := last; b.NumberU64() > after.NumberU64(); b = b.ParentBlock() {
-		if b.NumberU64() < keepAfter {
+		if b.NumberU64() < keepFrom {
 			exec.Tracker.Untrack(b.PostExecutionStateRoot())
 		}
 	}
@@ -109,10 +109,10 @@ func lastOf[E any](s []E) E {
 	return s[len(s)-1]
 }
 
-// rebuildBlocksInMemory returns a block-hash-keyed map of all blocks from the
-// last executed back to, and including, the block that it settled. It returns
-// said settled block separately, for convenience.
-func (rec *recovery) rebuildBlocksInMemory(exec *saexec.Executor) (_ *syncMap[common.Hash, *blocks.Block], lastSettled *blocks.Block, _ error) {
+// consensusCriticalBlocks returns a block-hash-keyed map of all blocks from the
+// last executed back to, and including, the block that it settled. Said settled
+// block is returned separately, for convenience.
+func (rec *recovery) consensusCriticalBlocks(exec *saexec.Executor) (_ *syncMap[common.Hash, *blocks.Block], lastSettled *blocks.Block, _ error) {
 	chain := []*blocks.Block{exec.LastExecuted()} // reverse height order
 	blackhole := new(atomic.Pointer[blocks.Block])
 
@@ -164,18 +164,18 @@ func (rec *recovery) rebuildBlocksInMemory(exec *saexec.Executor) (_ *syncMap[co
 	bMap := newSyncMap[common.Hash, *blocks.Block](
 		func(b *blocks.Block) {
 			tr.Track(b.SettledStateRoot())
-			// Post-execution root not yet known.
+			// The post-execution root is tracked by the [saexec.Executor] as
+			// soon as it's known. In the case of database recovery, this
+			// occurred in [recovery.executeAllAccepted].
 		},
 		func(b *blocks.Block) {
 			tr.Untrack(b.SettledStateRoot())
-			if b.Executed() {
+			if b.Executed() { // i.e. deleted due to settlement not rejection
 				tr.Untrack(b.PostExecutionStateRoot())
 			}
 		},
 	)
 	for _, b := range chain {
-		// `rec` already tracked all post-execution state roots for blocks that belong in this map,
-		// and deleted all others in [recovery.executeCritical].
 		bMap.Store(b.Hash(), b)
 	}
 
