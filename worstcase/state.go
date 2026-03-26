@@ -129,7 +129,8 @@ func (s *State) StartBlock(h *types.Header) error {
 		return fmt.Errorf("%w: current size %d exceeds maximum size for accepting new blocks %d", ErrQueueFull, s.qSize, maxOpenQSize)
 	}
 
-	s.baseFee = s.clock.BaseFee()
+	bf := s.clock.BaseFee()
+	s.baseFee = &bf
 	clear(s.minOpBurnerBalances) // [State.FinishBlock] returns a clone so we can reuse the alloc here
 	s.minOpBurnerBalances = s.minOpBurnerBalances[:0]
 
@@ -166,8 +167,8 @@ func (s *State) GasLimit() uint64 {
 }
 
 // BaseFee returns the worst-case base fee for the current block.
-func (s *State) BaseFee() *uint256.Int {
-	return s.baseFee
+func (s *State) BaseFee() uint256.Int {
+	return *s.baseFee
 }
 
 var errCostOverflow = errors.New("Cost() overflows uint256")

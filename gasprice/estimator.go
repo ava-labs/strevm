@@ -303,7 +303,7 @@ func (e *Estimator) FeeHistory(
 		if len(rewardPercentiles) != 0 {
 			reward = append(reward, b.tipPercentiles(rewardPercentiles))
 		}
-		baseFee = append(baseFee, b.baseFee)
+		baseFee = append(baseFee, new(big.Int).Set(b.baseFee))
 		gasUsedRatio = append(gasUsedRatio, float64(b.gasUsed)/float64(b.gasLimit))
 	}
 	if last == lastAcceptedNumber {
@@ -311,10 +311,11 @@ func (e *Estimator) FeeHistory(
 		if bounds == nil {
 			baseFee = append(baseFee, lastAccepted.EthBlock().BaseFee())
 		} else {
-			baseFee = append(baseFee, bounds.LatestEndTime.BaseFee().ToBig())
+			bf := bounds.LatestEndTime.BaseFee()
+			baseFee = append(baseFee, bf.ToBig())
 		}
 	} else if b := e.blockCache.getBlock(last + 1); b != nil {
-		baseFee = append(baseFee, b.baseFee)
+		baseFee = append(baseFee, new(big.Int).Set(b.baseFee))
 	} else {
 		return nil, nil, nil, nil, fmt.Errorf("%w: %d", errMissingBlock, last+1)
 	}

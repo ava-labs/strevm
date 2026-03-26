@@ -38,7 +38,10 @@ func TestBaseFee(t *testing.T) {
 	b := sut.runConsensusLoop(t)
 	sut.testRPC(ctx, t, rpcTest{
 		method: "eth_baseFee",
-		want:   (*hexutil.Big)(b.WorstCaseBounds().LatestEndTime.BaseFee().ToBig()),
+		want: func() *hexutil.Big {
+			bf := b.WorstCaseBounds().LatestEndTime.BaseFee()
+			return (*hexutil.Big)(bf.ToBig())
+		}(),
 	})
 }
 
@@ -57,7 +60,8 @@ func TestSuggestPriceOptions(t *testing.T) {
 	// See testing of [saerpc.NewPriceOptions] for behavioral tests.
 	tip, err := sut.rawVM.GethRPCBackends().SuggestGasTipCap(t.Context())
 	require.NoErrorf(t, err, "SuggestGasTipCap()")
-	doubleBaseFee := b.WorstCaseBounds().LatestEndTime.BaseFee().ToBig()
+	nextBF := b.WorstCaseBounds().LatestEndTime.BaseFee()
+	doubleBaseFee := nextBF.ToBig()
 	doubleBaseFee.Lsh(doubleBaseFee, 1)
 	sut.testRPC(ctx, t, rpcTest{
 		method: "eth_suggestPriceOptions",

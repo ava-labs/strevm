@@ -175,7 +175,7 @@ func Execute(
 	}
 
 	baseFee := gasClock.BaseFee()
-	b.CheckBaseFeeBound(baseFee)
+	b.CheckBaseFeeBound(&baseFee)
 	header := types.CopyHeader(b.Header())
 	header.BaseFee = baseFee.ToBig()
 
@@ -265,7 +265,7 @@ func Execute(
 	)
 
 	r := &ExecutionResults{
-		BaseFee:  baseFee,
+		BaseFee:  &baseFee,
 		StateDB:  stateDB,
 		Signer:   signer,
 		BlockCtx: core.NewEVMBlockContext(header, chainCtx, &header.Coinbase),

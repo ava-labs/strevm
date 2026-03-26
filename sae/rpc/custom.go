@@ -45,7 +45,8 @@ func (c *customAPI) estimateNextBaseFee() *big.Int {
 	if bounds == nil {
 		return c.b.LastAccepted().EthBlock().BaseFee()
 	}
-	return bounds.LatestEndTime.BaseFee().ToBig()
+	bf := bounds.LatestEndTime.BaseFee()
+	return bf.ToBig()
 }
 
 // DetailedExecutionResult is the response for eth_callDetailed.
