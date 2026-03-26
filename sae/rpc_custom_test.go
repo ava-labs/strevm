@@ -70,40 +70,31 @@ func TestSuggestPriceOptions(t *testing.T) {
 func TestNewAcceptedTransactions(t *testing.T) {
 	ctx, sut := newSUT(t, 1)
 
-	t.Run("hash_only", func(t *testing.T) {
-		ch := make(chan common.Hash, 16)
-		sub, err := sut.rpcClient.EthSubscribe(ctx, ch, "newAcceptedTransactions")
+	hashes := make(chan common.Hash, 1)
+	{
+		sub, err := sut.rpcClient.EthSubscribe(ctx, hashes, "newAcceptedTransactions")
 		require.NoErrorf(t, err, "EthSubscribe(newAcceptedTransactions)")
 		t.Cleanup(sub.Unsubscribe)
-
-		tx := sut.wallet.SetNonceAndSign(t, 0, &types.LegacyTx{
-			To:       &zeroAddr,
-			Gas:      params.TxGas,
-			GasPrice: big.NewInt(1),
-		})
-		sut.runConsensusLoop(t, tx)
-
-		require.Equalf(t, tx.Hash(), <-ch, "accepted tx hash")
-	})
-
-	t.Run("full_tx", func(t *testing.T) {
-		ch := make(chan json.RawMessage, 16)
-		sub, err := sut.rpcClient.EthSubscribe(ctx, ch, "newAcceptedTransactions", true)
+	}
+	txs := make(chan *ethapi.RPCTransaction, 1)
+	{
+		sub, err := sut.rpcClient.EthSubscribe(ctx, txs, "newAcceptedTransactions", true)
 		require.NoErrorf(t, err, "EthSubscribe(newAcceptedTransactions, true)")
 		t.Cleanup(sub.Unsubscribe)
+	}
 
-		tx := sut.wallet.SetNonceAndSign(t, 0, &types.LegacyTx{
-			Gas:      1e6,
-			GasPrice: big.NewInt(1),
-			Data:     escrow.CreationCode(),
-		})
-		block := sut.runConsensusLoop(t, tx)
+	tx := sut.wallet.SetNonceAndSign(t, 0, &types.LegacyTx{
+		Gas:      params.TxGas,
+		GasPrice: big.NewInt(1),
+	})
+	block := sut.runConsensusLoop(t, tx)
 
-		var got ethapi.RPCTransaction
-		require.NoErrorf(t, json.Unmarshal(<-ch, &got), "json.Unmarshal(fullTx)")
-
+	t.Run("hash_only", func(t *testing.T) {
+		require.Equalf(t, tx.Hash(), <-hashes, "accepted tx hash")
+	})
+	t.Run("full_tx", func(t *testing.T) {
 		want := ethapi.NewRPCTransaction(tx, block.Hash(), block.NumberU64(), block.BuildTime(), 0, block.Header().BaseFee, saetest.ChainConfig())
-		if diff := cmp.Diff(want, &got, cmputils.HexutilBigs(), cmputils.NilSlicesAreEmpty[hexutil.Bytes]()); diff != "" {
+		if diff := cmp.Diff(want, <-txs, cmputils.HexutilBigs(), cmputils.NilSlicesAreEmpty[hexutil.Bytes]()); diff != "" {
 			t.Errorf("full tx diff (-want +got):\n%s", diff)
 		}
 	})
