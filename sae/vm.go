@@ -185,7 +185,11 @@ func NewVM[T hook.Transaction](
 		vm.exec = exec
 		vm.toClose = append(vm.toClose, exec)
 
-		bMap, lastSettled, err := rec.executeCritical(ctx, exec)
+		if err := rec.executeAllAccepted(ctx, exec); err != nil {
+			return nil, err
+		}
+
+		bMap, lastSettled, err := rec.rebuildBlocksInMemory(exec)
 		if err != nil {
 			return nil, err
 		}
