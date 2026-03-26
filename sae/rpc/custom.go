@@ -158,14 +158,15 @@ func (c *customAPI) NewAcceptedTransactions(ctx context.Context, fullTx *bool) (
 				hash := block.Hash()
 				num := block.NumberU64()
 				buildTime := block.BuildTime()
-				baseFee := block.Header().BaseFee
+				baseFee := block.EthBlock().BaseFee()
 				for i, tx := range block.Transactions() {
+					var data any
 					if fullTx != nil && *fullTx {
-						rpcTx := ethapi.NewRPCTransaction(tx, hash, num, buildTime, uint64(i), baseFee, chainConfig) //nolint:gosec // i is non-negative
-						if err := notifier.Notify(sub.ID, rpcTx); err != nil {
-							return
-						}
-					} else if err := notifier.Notify(sub.ID, tx.Hash()); err != nil {
+						data = ethapi.NewRPCTransaction(tx, hash, num, buildTime, uint64(i), baseFee, chainConfig) //nolint:gosec // i is non-negative
+					} else {
+						data = tx.Hash()
+					}
+					if err := notifier.Notify(sub.ID, data); err != nil {
 						return
 					}
 				}
