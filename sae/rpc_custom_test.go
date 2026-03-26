@@ -77,9 +77,8 @@ func TestNewAcceptedTransactions(t *testing.T) {
 		t.Cleanup(sub.Unsubscribe)
 
 		tx := sut.wallet.SetNonceAndSign(t, 0, &types.LegacyTx{
-			Gas:      1e6,
+			Gas:      params.TxGas,,
 			GasPrice: big.NewInt(1),
-			Data:     escrow.CreationCode(),
 		})
 		sut.runConsensusLoop(t, tx)
 
