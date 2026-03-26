@@ -4,7 +4,6 @@
 package sae
 
 import (
-	"encoding/json"
 	"math/big"
 	"testing"
 
@@ -19,7 +18,6 @@ import (
 	"github.com/ava-labs/strevm/cmputils"
 	saerpc "github.com/ava-labs/strevm/sae/rpc"
 	"github.com/ava-labs/strevm/saetest"
-	"github.com/ava-labs/strevm/saetest/escrow"
 )
 
 func TestGetChainConfig(t *testing.T) {
@@ -84,6 +82,7 @@ func TestNewAcceptedTransactions(t *testing.T) {
 	}
 
 	tx := sut.wallet.SetNonceAndSign(t, 0, &types.LegacyTx{
+		To:       &zeroAddr,
 		Gas:      params.TxGas,
 		GasPrice: big.NewInt(1),
 	})
