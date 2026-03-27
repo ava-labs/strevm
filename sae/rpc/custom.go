@@ -72,7 +72,7 @@ func (c *customAPI) CallDetailed(ctx context.Context, args ethapi.TransactionArg
 	// Revert data is checked first because [ethapi.NewRevertError] ABI-decodes
 	// the reason, which we provide.
 	if errors.Is(result.Err, vm.ErrExecutionReverted) {
-		e := ethapi.NewRevertError(result.Revert())
+		e := ethapi.NewRevertError(slices.Clone(result.ReturnData))
 		reply.Err = e.Error()
 		reply.ErrCode = e.ErrorCode()
 	} else if result.Err != nil {
