@@ -111,7 +111,10 @@ func TestNewAcceptedTransactions(t *testing.T) {
 func TestCallDetailed(t *testing.T) {
 	echoReverter := common.Address{'e', 'c', 'h', 'o'}
 	invalidJumper := common.Address{'i', 'n', 'v', 'a', 'l', 'i', 'd'}
+	const gasCap = 100e6
 	ctx, sut := newSUT(t, 1, options.Func[sutConfig](func(c *sutConfig) {
+		c.vmConfig.RPCConfig.GasCap = gasCap
+		
 		const (
 			size   = byte(vm.CALLDATASIZE)
 			cp     = byte(vm.CALLDATACOPY)
