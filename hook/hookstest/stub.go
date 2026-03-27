@@ -186,18 +186,18 @@ func (s *Stub) GasConfigAfter(*types.Header) (gas.Gas, hook.GasPriceConfig) {
 // [Stub.BuildHeader] in the header's `Extra` field. If said field is empty,
 // SubSecondBlockTime returns 0.
 func (s *Stub) SubSecondBlockTime(hdr *types.Header) time.Duration {
-	return getHeaderExtra(hdr, (extra).SubSec)
+	return getHeaderExtra(hdr, func(e extra) time.Duration { return e.subSec })
 }
 
 // SettledHeight returns the height encoded in the Header by [Stub.BuildBlock]
 // or [BuildBlock].
 func (*Stub) SettledHeight(hdr *types.Header) uint64 {
-	return getHeaderExtra(hdr, (extra).SettledHeight)
+	return getHeaderExtra(hdr, func(e extra) uint64 { return e.settledHeight })
 }
 
 // EndOfBlockOps return the ops included in the block by [BuildBlock].
 func (s *Stub) EndOfBlockOps(b *types.Block) ([]hook.Op, error) {
-	eOps := getHeaderExtra(b.Header(), (extra).Ops)
+	eOps := getHeaderExtra(b.Header(), func(e extra) []Op { return e.ops })
 	hookOps := make([]hook.Op, len(eOps))
 	for i, op := range eOps {
 		hookOps[i] = op.AsOp()
@@ -242,18 +242,6 @@ type extra struct {
 	settledHeight uint64        `canoto:"uint,3"`
 
 	canotoData canotoData_extra
-}
-
-func (e extra) SubSec() time.Duration {
-	return e.subSec
-}
-
-func (e extra) SettledHeight() uint64 {
-	return e.settledHeight
-}
-
-func (e extra) Ops() []Op {
-	return e.ops
 }
 
 // Op is a serializable representation of [hook.Op].

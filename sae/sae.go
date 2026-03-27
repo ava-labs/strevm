@@ -44,7 +44,8 @@ type syncMap[K comparable, V any] struct {
 
 // newSyncMap creates a concurrent-safe map, which automatically performs
 // `onStore` and `onDelete` if [syncMap.Store] and [syncMap.Delete] are called,
-// respectively. If either function is nil, no operation will be performed.
+// respectively. If either function is nil, or the key to be deleted doesn't
+// exist, no operation will be performed.
 func newSyncMap[K comparable, V any](onStore func(V), onDelete func(V)) *syncMap[K, V] {
 	if onStore == nil {
 		onStore = func(V) {}

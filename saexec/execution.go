@@ -287,8 +287,8 @@ func (e *Executor) afterExecution(b *blocks.Block, r *ExecutionResults) error {
 		return err
 	}
 
-	// The post-execution state has not yet been tracked, and will be untracked
-	// once the block is no longer needed.
+	// Responsibility for untracking lies with the VM once it deems this block's
+	// post-execution state to no longer be consensus-critical.
 	e.Tracker.Track(root)
 
 	// The strict ordering of the next 3 calls guarantees invariants that MUST
