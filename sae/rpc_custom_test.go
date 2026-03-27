@@ -110,14 +110,14 @@ func TestNewAcceptedTransactions(t *testing.T) {
 
 func TestCallDetailed(t *testing.T) {
 	echoReverter := common.Address{'e', 'c', 'h', 'o'}
-	invalidOpCoder := common.Address{'i', 'n', 'v', 'a', 'l', 'i', 'd'}
+	invalidJumper := common.Address{'i', 'n', 'v', 'a', 'l', 'i', 'd'}
 	ctx, sut := newSUT(t, 1, options.Func[sutConfig](func(c *sutConfig) {
 		const (
-			size    = byte(vm.CALLDATASIZE)
-			cp      = byte(vm.CALLDATACOPY)
-			zero    = byte(vm.PUSH0)
-			revert  = byte(vm.REVERT)
-			invalid = byte(vm.INVALID)
+			size   = byte(vm.CALLDATASIZE)
+			cp     = byte(vm.CALLDATACOPY)
+			zero   = byte(vm.PUSH0)
+			revert = byte(vm.REVERT)
+			jump   = byte(vm.JUMP)
 		)
 		c.genesis.Alloc[echoReverter] = types.Account{
 			Code: []byte{
@@ -126,8 +126,9 @@ func TestCallDetailed(t *testing.T) {
 			},
 			Balance: new(big.Int),
 		}
-		c.genesis.Alloc[invalidOpCoder] = types.Account{
-			Code:    []byte{invalid},
+		c.genesis.Alloc[invalidJumper] = types.Account{
+			// Jumping back to PC=0 is invalid because it's not a [vm.JUMPDEST]
+			Code:    []byte{zero, jump},
 			Balance: new(big.Int),
 		}
 	}))
