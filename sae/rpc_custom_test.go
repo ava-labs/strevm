@@ -108,10 +108,6 @@ func TestNewAcceptedTransactions(t *testing.T) {
 	})
 }
 
-// revertErrCode is the JSON-RPC error code for execution reverts, matching the
-// value returned by [ethapi.RevertError.ErrorCode].
-const revertErrCode = 3
-
 func TestCallDetailed(t *testing.T) {
 	echoReverter := common.Address{'e', 'c', 'h', 'o'}
 	invalidOpCoder := common.Address{'i', 'n', 'v', 'a', 'l', 'i', 'd'}
@@ -169,6 +165,10 @@ func TestCallDetailed(t *testing.T) {
 
 	noBalance := common.Address{'b', 'a', 'n', 'k', 'r', 'u', 'p', 't'}
 	latest := rpc.LatestBlockNumber.String()
+
+	// revertErrCode is the JSON-RPC error code for execution reverts, matching the
+	// value returned by [ethapi.RevertError.ErrorCode].
+	const revertErrCode = 3
 
 	sut.testRPC(ctx, t, []rpcTest{
 		{
