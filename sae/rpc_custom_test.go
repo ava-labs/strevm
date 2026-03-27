@@ -5,7 +5,6 @@ package sae
 
 import (
 	"fmt"
-	"math"
 	"math/big"
 	"slices"
 	"testing"
@@ -251,8 +250,8 @@ func TestCallDetailed(t *testing.T) {
 				latest,
 			},
 			want: saerpc.DetailedExecutionResult{
-				UsedGas: math.MaxInt64,
-				Err:     fmt.Sprintf("invalid opcode: %s", vm.INVALID),
+				UsedGas: gasCap,
+				Err:     vm.ErrInvalidJump.Error(),
 			},
 		},
 	}...)
