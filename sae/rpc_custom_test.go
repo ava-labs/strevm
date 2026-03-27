@@ -5,6 +5,7 @@ package sae
 
 import (
 	"fmt"
+	"math"
 	"math/big"
 	"slices"
 	"testing"
@@ -107,20 +108,30 @@ func TestNewAcceptedTransactions(t *testing.T) {
 	})
 }
 
+// revertErrCode is the JSON-RPC error code for execution reverts, matching the
+// value returned by [ethapi.RevertError.ErrorCode].
+const revertErrCode = 3
+
 func TestCallDetailed(t *testing.T) {
 	echoReverter := common.Address{'e', 'c', 'h', 'o'}
+	invalidOpCoder := common.Address{'i', 'n', 'v', 'a', 'l', 'i', 'd'}
 	ctx, sut := newSUT(t, 1, options.Func[sutConfig](func(c *sutConfig) {
 		const (
-			size   = byte(vm.CALLDATASIZE)
-			cp     = byte(vm.CALLDATACOPY)
-			zero   = byte(vm.PUSH0)
-			revert = byte(vm.REVERT)
+			size    = byte(vm.CALLDATASIZE)
+			cp      = byte(vm.CALLDATACOPY)
+			zero    = byte(vm.PUSH0)
+			revert  = byte(vm.REVERT)
+			invalid = byte(vm.INVALID)
 		)
 		c.genesis.Alloc[echoReverter] = types.Account{
 			Code: []byte{
 				size, zero, zero, cp, // https://www.evm.codes/#37
 				size, zero, revert,
 			},
+			Balance: new(big.Int),
+		}
+		c.genesis.Alloc[invalidOpCoder] = types.Account{
+			Code:    []byte{invalid},
 			Balance: new(big.Int),
 		}
 	}))
@@ -186,7 +197,7 @@ func TestCallDetailed(t *testing.T) {
 			},
 			want: saerpc.DetailedExecutionResult{
 				UsedGas: 23451,
-				ErrCode: saerpc.RevertErrCode,
+				ErrCode: revertErrCode,
 				Err:     vm.ErrExecutionReverted.Error(),
 				ReturnData: slices.Concat(
 					crypto.Keccak256([]byte("ZeroBalance(address)"))[:4],
@@ -206,7 +217,7 @@ func TestCallDetailed(t *testing.T) {
 			},
 			want: saerpc.DetailedExecutionResult{
 				UsedGas:    21035,
-				ErrCode:    saerpc.RevertErrCode,
+				ErrCode:    revertErrCode,
 				Err:        vm.ErrExecutionReverted.Error(),
 				ReturnData: hexutil.Bytes{42},
 			},
@@ -222,9 +233,22 @@ func TestCallDetailed(t *testing.T) {
 			},
 			want: saerpc.DetailedExecutionResult{
 				UsedGas:    21241,
-				ErrCode:    saerpc.RevertErrCode,
+				ErrCode:    revertErrCode,
 				Err:        fmt.Sprintf("%v: unknown panic code: %#x", vm.ErrExecutionReverted, revertWith),
 				ReturnData: hexutil.Bytes(revertAsPanic),
+			},
+		},
+		{
+			method: "eth_callDetailed",
+			args: []any{
+				map[string]any{
+					"to": invalidOpCoder,
+				},
+				latest,
+			},
+			want: saerpc.DetailedExecutionResult{
+				UsedGas: math.MaxInt64,
+				Err:     fmt.Sprintf("invalid opcode: %s", vm.INVALID),
 			},
 		},
 	}...)
