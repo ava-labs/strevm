@@ -114,7 +114,7 @@ func TestCallDetailed(t *testing.T) {
 	const gasCap = 100e6
 	ctx, sut := newSUT(t, 1, options.Func[sutConfig](func(c *sutConfig) {
 		c.vmConfig.RPCConfig.GasCap = gasCap
-		
+
 		const (
 			size   = byte(vm.CALLDATASIZE)
 			cp     = byte(vm.CALLDATACOPY)
@@ -246,7 +246,7 @@ func TestCallDetailed(t *testing.T) {
 			method: "eth_callDetailed",
 			args: []any{
 				map[string]any{
-					"to": invalidOpCoder,
+					"to": invalidJumper,
 				},
 				latest,
 			},

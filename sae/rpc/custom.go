@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"math/big"
+	"slices"
 
 	"github.com/ava-labs/libevm/common/hexutil"
 	"github.com/ava-labs/libevm/common/math"
