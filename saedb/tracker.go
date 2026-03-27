@@ -13,7 +13,6 @@ import (
 	"github.com/ava-labs/libevm/core/state"
 	"github.com/ava-labs/libevm/core/state/snapshot"
 	"github.com/ava-labs/libevm/ethdb"
-	"github.com/ava-labs/libevm/log"
 	"github.com/ava-labs/libevm/triedb"
 	"go.uber.org/zap"
 
@@ -81,7 +80,7 @@ func (t *Tracker) Track(root common.Hash) {
 
 	// Never returns an error because of the above check.
 	if err := t.cache.TrieDB().Reference(root, common.Hash{}); err != nil {
-		log.Error("*triedb.Database.Reference()", zap.Error(err))
+		t.log.Error("*triedb.Database.Reference()", zap.Error(err))
 	}
 }
 
@@ -155,7 +154,7 @@ func (t *Tracker) Untrack(root common.Hash) {
 
 	// Never returns an error because of the above check.
 	if err := t.cache.TrieDB().Dereference(root); err != nil {
-		log.Error("*triedb.Database.Dereference()", zap.Error(err))
+		t.log.Error("*triedb.Database.Dereference()", zap.Error(err))
 	}
 }
 
