@@ -31,23 +31,22 @@ import (
 
 // TestStateQueryOnNonCanonicalBlock verifies that state-dependent RPC calls
 // (e.g. eth_getBalance) on a verified-but-not-accepted in-memory block return
-// an error instead of blocking indefinitely on execution artefacts that may
-// never materialise.
+// [blocks.ErrNonCanonicalBlock], while non-state lookups return nil (not found).
 func TestStateQueryOnNonCanonicalBlock(t *testing.T) {
 	ctx, sut := newSUT(t, 1)
 	b := unwrap(t, sut.createAndVerifyBlock(t, sut.lastAcceptedBlock(t)))
 
-	want := testerr.Contains(blocks.ErrNonCanonicalBlock.Error())
+	wantErr := testerr.Contains(blocks.ErrNonCanonicalBlock.Error())
 	sut.testRPC(ctx, t, []rpcTest{
 		{
 			method:  "eth_getBalance",
 			args:    []any{sut.wallet.Addresses()[0], rpc.BlockNumberOrHashWithHash(b.Hash(), false)},
-			wantErr: want,
+			wantErr: wantErr,
 		},
 		{
-			method:  "eth_getBlockByHash",
-			args:    []any{b.Hash(), false},
-			wantErr: want,
+			method: "eth_getBlockByHash",
+			args:   []any{b.Hash(), false},
+			want:   (*types.Header)(nil),
 		},
 	}...)
 }
