@@ -22,6 +22,7 @@ import (
 	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/trie"
 	"github.com/google/go-cmp/cmp"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/ava-labs/strevm/blocks"
@@ -32,6 +33,8 @@ import (
 )
 
 func TestRecoverFromDatabase(t *testing.T) {
+	t.Parallel()
+
 	sutOpt, vmTime := withVMTime(t, time.Unix(saeparams.TauSeconds, 0))
 
 	var srcDB database.Database
@@ -82,56 +85,52 @@ func TestRecoverFromDatabase(t *testing.T) {
 				c.logLevel = logging.Warn
 			}))
 
-			if final {
-				t.Run("build_on_recovered_VM", func(t *testing.T) {
-					srcLast := src.lastAcceptedBlock(t)
-					sutLast := sut.lastAcceptedBlock(t)
-					if diff := cmp.Diff(srcLast, sutLast, blocks.CmpOpt()); diff != "" {
-						t.Fatal(diff)
-					}
-					srcSDB := src.stateAt(t, srcLast.PostExecutionStateRoot())
-					sutSDB := sut.stateAt(t, sutLast.PostExecutionStateRoot())
-					if diff := cmp.Diff(srcSDB, sutSDB, cmputils.StateDBs()); diff != "" {
-						t.Fatal(diff)
-					}
-
-					tx := src.wallet.SetNonceAndSign(t, 0, &types.LegacyTx{
-						To:       &common.Address{},
-						Gas:      params.TxGas,
-						GasPrice: big.NewInt(100),
-					})
-
-					for _, sys := range []struct {
-						name string
-						ctx  context.Context //nolint:containedctx // Ephemeral so not in contravention of https://go.dev/blog/context-and-structs
-						*SUT
-					}{
-						{"source", srcCtx, src},
-						{"recovered", sutCtx, sut},
-					} {
-						t.Run(sys.name, func(t *testing.T) {
-							sys.mustSendTx(t, tx)
-							b := sys.runConsensusLoop(t)
-							require.Len(t, b.Transactions(), 1)
-							require.NoError(t, b.WaitUntilExecuted(sys.ctx))
-						})
-					}
-				})
-				if t.Failed() {
-					t.FailNow()
-				}
-			}
-
 			requireConsensusCriticalBlocks(t, src, sut)
 
-			if diff := cmp.Diff(src.rawVM.consensusCritical.m, sut.rawVM.consensusCritical.m, blocks.CmpOpt()); diff != "" {
-				t.Errorf("%T.inConsensus diff (-source +recovered):\n%s", src.rawVM, diff)
+			if !final {
+				return
 			}
+			t.Run("build_on_recovered_VM", func(t *testing.T) {
+				srcLast := src.lastAcceptedBlock(t)
+				sutLast := sut.lastAcceptedBlock(t)
+				if diff := cmp.Diff(srcLast, sutLast, blocks.CmpOpt()); diff != "" {
+					t.Fatal(diff)
+				}
+				srcSDB := src.stateAt(t, srcLast.PostExecutionStateRoot())
+				sutSDB := sut.stateAt(t, sutLast.PostExecutionStateRoot())
+				if diff := cmp.Diff(srcSDB, sutSDB, cmputils.StateDBs()); diff != "" {
+					t.Fatal(diff)
+				}
+
+				tx := src.wallet.SetNonceAndSign(t, 0, &types.LegacyTx{
+					To:       &common.Address{},
+					Gas:      params.TxGas,
+					GasPrice: big.NewInt(100),
+				})
+
+				for _, sys := range []struct {
+					name string
+					ctx  context.Context //nolint:containedctx // Ephemeral so not in contravention of https://go.dev/blog/context-and-structs
+					*SUT
+				}{
+					{"source", srcCtx, src},
+					{"recovered", sutCtx, sut},
+				} {
+					t.Run(sys.name, func(t *testing.T) {
+						sys.mustSendTx(t, tx)
+						b := sys.runConsensusLoop(t)
+						require.Len(t, b.Transactions(), 1)
+						require.NoError(t, b.WaitUntilExecuted(sys.ctx))
+					})
+				}
+			})
 		})
 	}
 }
 
 func TestRecoverSimple(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name      string
 		numBlocks int
@@ -147,16 +146,18 @@ func TestRecoverSimple(t *testing.T) {
 			numBlocks: 10, // << [saedb.CommitTrieDBEvery]
 		},
 		{
-			name:      "non_archival_past_commit",
+			name:      "non_archival_after_trie_commit",
 			numBlocks: saedb.CommitTrieDBEvery + 15, // ensure another settled block
 		},
 		{
-			name:      "non_archival_commit_interval",
+			name:      "non_archival_commit_interval_exactly",
 			numBlocks: saedb.CommitTrieDBEvery,
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			var srcDB database.Database
 			srcHDB := saetest.NewHeightIndexDB()
 
@@ -175,7 +176,7 @@ func TestRecoverSimple(t *testing.T) {
 					GasFeeCap: big.NewInt(1),
 				}))
 			}
-			require.NoError(t, src.lastAcceptedBlock(t).WaitUntilExecuted(ctx), "waiting for block execution")
+			require.NoError(t, src.lastAcceptedBlock(t).WaitUntilExecuted(ctx), "last-accepted block WaitUntilExecuted()")
 
 			newDB := copyDB(t, srcDB)
 			_, sut := newSUT(t, 1, sutOpt, withExecResultsDB(srcHDB.Clone()), options.Func[sutConfig](func(c *sutConfig) {
@@ -195,9 +196,10 @@ func TestRecoverSimple(t *testing.T) {
 			// where the settled state was written to disk.
 			t.Run("unavailable_outside_window", func(t *testing.T) {
 				lastSettled := sut.rawVM.last.settled.Load().NumberU64()
-				executionHeight := saedb.LastCommittedTrieDBHeight(lastSettled)
-				lastOnDisk, err := canonicalBlock(sut.rawVM.db, executionHeight)
-				require.NoErrorf(t, err, "canonicalBlock(): %d", executionHeight)
+				committedHeight := saedb.LastCommittedTrieDBHeight(lastSettled)
+				lastOnDisk, err := canonicalBlock(sut.rawVM.db, committedHeight)
+				require.NoErrorf(t, err, "canonicalBlock(): %d", committedHeight)
+
 				for i := sut.hooks.SettledHeight(lastOnDisk.Header()) + 1; i < lastSettled; i++ {
 					ethB, err := canonicalBlock(sut.rawVM.db, i)
 					require.NoErrorf(t, err, "canonicalBlock(%d)", i)
@@ -205,7 +207,8 @@ func TestRecoverSimple(t *testing.T) {
 					require.NoErrorf(t, err, "blocks.New(): height %d", ethB.NumberU64())
 					require.NoErrorf(t, b.RestoreExecutionArtefacts(sut.rawVM.db, sut.rawVM.xdb, sut.rawVM.exec.ChainConfig()), "%T.RestoreExecutionArtifacts(): %d", b, b.NumberU64())
 
-					// don't expect the state to be available
+					// If these states were available they would eventually
+					// result in an OOM as the triedb leaked memory.
 					root := b.PostExecutionStateRoot()
 					_, err = sut.rawVM.exec.StateDB(root)
 					want := testerr.As(func(got *trie.MissingNodeError) string {
@@ -225,6 +228,18 @@ func TestRecoverSimple(t *testing.T) {
 
 func requireConsensusCriticalBlocks(t *testing.T, src, sut *SUT) {
 	t.Helper()
+
+	t.Run("consensus_critical", func(t *testing.T) {
+		if diff := cmp.Diff(src.rawVM.consensusCritical.m, sut.rawVM.consensusCritical.m, blocks.CmpOpt()); diff != "" {
+			t.Errorf("%T.consensusCritical diff (-source +recovered):\n%s", src.rawVM, diff)
+		}
+		for _, b := range sut.rawVM.consensusCritical.m {
+			root := b.PostExecutionStateRoot()
+			_, err := sut.rawVM.exec.StateDB(root)
+			assert.NoErrorf(t, err, "post-execution state root %#x of consensus-critical block[%d] with hash %#x", root, b.Height(), b.Hash())
+		}
+	})
+
 	t.Run("last", func(t *testing.T) {
 		for name, fn := range map[string](func(vm *VM) *blocks.Block){
 			"accepted": func(vm *VM) *blocks.Block { return vm.last.accepted.Load() },
@@ -239,23 +254,6 @@ func requireConsensusCriticalBlocks(t *testing.T, src, sut *SUT) {
 				}
 			})
 		}
-
-		// State for all blocks between settled and executed should be available.
-		b := sut.rawVM.exec.LastExecuted()
-		hash := b.Hash()
-		height := b.NumberU64() // for logging
-		for {
-			b, ok := sut.rawVM.consensusCritical.Load(hash)
-			require.Truef(t, ok, "block %d not found", height)
-			_, err := sut.rawVM.exec.StateDB(b.PostExecutionStateRoot())
-			require.NoErrorf(t, err, "%T.StateDB() for block %d", sut.rawVM.exec, height)
-
-			if hash == sut.rawVM.last.settled.Load().Hash() {
-				break
-			}
-			height--
-			hash = b.ParentHash()
-		}
 	})
 }
 
@@ -265,9 +263,9 @@ func copyDB(t *testing.T, srcDB database.Database) database.Database {
 	newDB := memdb.New()
 	it := srcDB.NewIterator()
 	for it.Next() {
-		require.NoError(t, newDB.Put(it.Key(), it.Value()))
+		require.NoErrorf(t, newDB.Put(it.Key(), it.Value()), "%T.Put() during database copy", newDB)
 	}
-	require.NoError(t, it.Error())
+	require.NoErrorf(t, it.Error(), "%T.Error() after database copy", it)
 
 	return newDB
 }
