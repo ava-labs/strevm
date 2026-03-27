@@ -15,8 +15,9 @@ import (
 	"github.com/ava-labs/libevm/ethdb"
 	"github.com/ava-labs/libevm/log"
 	"github.com/ava-labs/libevm/triedb"
-	"github.com/ava-labs/strevm/hook"
 	"go.uber.org/zap"
+
+	"github.com/ava-labs/strevm/hook"
 )
 
 // Config allows parameterization of the TrieDB and when
