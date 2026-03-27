@@ -22,11 +22,12 @@ import (
 	"github.com/ava-labs/strevm/proxytime"
 	"github.com/ava-labs/strevm/saedb"
 	"github.com/ava-labs/strevm/saexec"
+	"github.com/ava-labs/strevm/types"
 )
 
 type recovery struct {
 	db              ethdb.Database
-	xdb             saedb.ExecutionResults
+	xdb             types.ExecutionResults
 	chainConfig     *params.ChainConfig
 	log             logging.Logger
 	hooks           hook.Points
