@@ -9,12 +9,14 @@ import (
 
 	"github.com/ava-labs/avalanchego/utils/logging"
 	"github.com/ava-labs/libevm/common"
+	"github.com/ava-labs/libevm/core/rawdb"
 	"github.com/ava-labs/libevm/core/state"
 	"github.com/ava-labs/libevm/core/state/snapshot"
 	"github.com/ava-labs/libevm/ethdb"
-	"github.com/ava-labs/libevm/log"
 	"github.com/ava-labs/libevm/triedb"
 	"go.uber.org/zap"
+
+	"github.com/ava-labs/strevm/hook"
 )
 
 // Config allows parameterization of the TrieDB and when
@@ -78,12 +80,12 @@ func (t *Tracker) Track(root common.Hash) {
 
 	// Never returns an error because of the above check.
 	if err := t.cache.TrieDB().Reference(root, common.Hash{}); err != nil {
-		log.Error("*triedb.Database.Reference()", zap.Error(err))
+		t.log.Error("*triedb.Database.Reference()", zap.Error(err))
 	}
 }
 
-// MaybeCommit uses the provided height to decide if any root needs committed, following
-// the below rules (in order):
+// MaybeCommit potentially calls [triedb.Database.Commit], based on the
+// following priorities:
 //
 // 1. If [Config.Archival] is true, then `executionRoot` will be committed.
 // 2. If [ShouldCommitTrieDB] based on `height`, `settledRoot` is committed.
@@ -113,6 +115,32 @@ func (t *Tracker) MaybeCommit(settledRoot, executionRoot common.Hash, height uin
 	return nil
 }
 
+// LastHeightWithExecutionRootCommitted returns the greatest block height for
+// which [Tracker.MaybeCommit] called [triedb.Database.Commit] with the
+// post-execution state root of the block.
+func LastHeightWithExecutionRootCommitted(db ethdb.Database, c Config, hooks hook.Points, lastSynchronous uint64) uint64 {
+	switch head := rawdb.ReadHeadHeader(db).Number.Uint64(); {
+	case head <= lastSynchronous:
+		return lastSynchronous
+
+	case c.Archival:
+		return head
+
+	default:
+		num := LastCommittedTrieDBHeight(head)
+		if num <= lastSynchronous {
+			return lastSynchronous
+		}
+		return hooks.SettledHeight(
+			rawdb.ReadHeader(
+				db,
+				rawdb.ReadCanonicalHash(db, num),
+				num,
+			),
+		)
+	}
+}
+
 // Untrack informs the [Tracker] that the state corresponding
 // with `root` can have its reference count reduced. If the reference
 // count is 0, the state will be removed from memory.
@@ -126,7 +154,7 @@ func (t *Tracker) Untrack(root common.Hash) {
 
 	// Never returns an error because of the above check.
 	if err := t.cache.TrieDB().Dereference(root); err != nil {
-		log.Error("*triedb.Database.Dereference()", zap.Error(err))
+		t.log.Error("*triedb.Database.Dereference()", zap.Error(err))
 	}
 }
 

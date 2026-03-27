@@ -40,6 +40,7 @@ import (
 	"github.com/ava-labs/strevm/saedb"
 	"github.com/ava-labs/strevm/saexec"
 	"github.com/ava-labs/strevm/txgossip"
+	saetypes "github.com/ava-labs/strevm/types"
 )
 
 // VM implements all of [adaptor.ChainVM] except for the `Initialize` method,
@@ -56,7 +57,7 @@ type VM struct {
 	metrics *prometheus.Registry
 
 	db  ethdb.Database
-	xdb saedb.ExecutionResults
+	xdb saetypes.ExecutionResults
 
 	consensusState utils.Atomic[snow.State]
 
@@ -164,7 +165,7 @@ func NewVM[T hook.Transaction](
 
 	rec := &recovery{db, xdb, chainConfig, snowCtx.Log, hooks, cfg, lastSync}
 	{ // ==========  Block State  ==========
-		lastCommitted, err := rec.findLastCommitted()
+		lastCommitted, err := rec.lastCommittedBlock()
 		if err != nil {
 			return nil, err
 		}
@@ -185,7 +186,11 @@ func NewVM[T hook.Transaction](
 		vm.exec = exec
 		vm.toClose = append(vm.toClose, exec)
 
-		bMap, lastSettled, err := rec.executeCritical(ctx, exec)
+		if err := rec.executeAllAccepted(ctx, exec); err != nil {
+			return nil, err
+		}
+
+		bMap, lastSettled, err := rec.consensusCriticalBlocks(exec)
 		if err != nil {
 			return nil, err
 		}

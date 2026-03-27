@@ -22,7 +22,6 @@ import (
 	"github.com/holiman/uint256"
 
 	"github.com/ava-labs/strevm/hook"
-	"github.com/ava-labs/strevm/saedb"
 	"github.com/ava-labs/strevm/saetest"
 	saetypes "github.com/ava-labs/strevm/types"
 )
@@ -32,7 +31,7 @@ type Stub struct {
 	Now                     func() time.Time
 	Target                  gas.Gas
 	Ops                     []Op
-	ExecutionResultsDBFn    func(string) (saedb.ExecutionResults, error)
+	ExecutionResultsDBFn    func(string) (saetypes.ExecutionResults, error)
 	CanExecuteTransactionFn func(common.Address, *common.Address, libevm.StateReader) error
 	GasPriceConfig          hook.GasPriceConfig
 }
@@ -64,7 +63,7 @@ func WithOps(ops []Op) HookOption {
 }
 
 // WithExecutionResultsDBFn overrides the default ExecutionResultsDB function.
-func WithExecutionResultsDBFn(fn func(string) (saedb.ExecutionResults, error)) HookOption {
+func WithExecutionResultsDBFn(fn func(string) (saetypes.ExecutionResults, error)) HookOption {
 	return options.Func[Stub](func(s *Stub) {
 		s.ExecutionResultsDBFn = fn
 	})
@@ -89,11 +88,11 @@ func NewStub(target gas.Gas, opts ...HookOption) *Stub {
 // ExecutionResultsDB propagates arguments to and from
 // [Stub.ExecutionResultsDBFn] if non-nil, otherwise it returns a fresh
 // [saetest.NewHeightIndexDB] on every call.
-func (s *Stub) ExecutionResultsDB(dataDir string) (saedb.ExecutionResults, error) {
+func (s *Stub) ExecutionResultsDB(dataDir string) (saetypes.ExecutionResults, error) {
 	if fn := s.ExecutionResultsDBFn; fn != nil {
 		return fn(dataDir)
 	}
-	return saedb.ExecutionResults{
+	return saetypes.ExecutionResults{
 		HeightIndex: saetest.NewHeightIndexDB(),
 	}, nil
 }
