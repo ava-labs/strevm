@@ -170,13 +170,13 @@ func TestRecoverSimple(t *testing.T) {
 
 			for range tt.numBlocks {
 				vmTime.advance(850 * time.Millisecond)
-				src.runConsensusLoop(t, src.wallet.SetNonceAndSign(t, 0, &types.DynamicFeeTx{
+				b := src.runConsensusLoop(t, src.wallet.SetNonceAndSign(t, 0, &types.DynamicFeeTx{
 					To:        &common.Address{},
 					Gas:       params.TxGas,
 					GasFeeCap: big.NewInt(1),
 				}))
+				require.NoErrorf(t, b.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", b)
 			}
-			require.NoError(t, src.lastAcceptedBlock(t).WaitUntilExecuted(ctx), "last-accepted block WaitUntilExecuted()")
 
 			newDB := copyDB(t, srcDB)
 			_, sut := newSUT(t, 1, sutOpt, withExecResultsDB(srcHDB.Clone()), options.Func[sutConfig](func(c *sutConfig) {
