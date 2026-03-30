@@ -23,7 +23,6 @@ import (
 	"github.com/ava-labs/avalanchego/utils/logging"
 	"github.com/ava-labs/avalanchego/version"
 	"github.com/ava-labs/avalanchego/vms/components/gas"
-	"github.com/ava-labs/libevm/accounts"
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core"
 	"github.com/ava-labs/libevm/core/rawdb"
@@ -33,15 +32,15 @@ import (
 	"github.com/ava-labs/libevm/ethdb"
 	"github.com/ava-labs/libevm/event"
 	"github.com/ava-labs/libevm/params"
-	"github.com/ava-labs/libevm/triedb"
 	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/ava-labs/strevm/blocks"
-	"github.com/ava-labs/strevm/gasprice"
 	"github.com/ava-labs/strevm/hook"
+	"github.com/ava-labs/strevm/sae/rpc"
 	"github.com/ava-labs/strevm/saedb"
 	"github.com/ava-labs/strevm/saexec"
 	"github.com/ava-labs/strevm/txgossip"
+	saetypes "github.com/ava-labs/strevm/types"
 )
 
 // VM implements all of [adaptor.ChainVM] except for the `Initialize` method,
@@ -49,29 +48,35 @@ import (
 // provide a last-synchronous block, which MAY be the genesis.
 type VM struct {
 	*p2p.Network
-	peers *p2p.Peers
+	Peers          *p2p.Peers
+	ValidatorPeers *p2p.Validators
 
 	hooks   hook.Points
 	config  Config
 	snowCtx *snow.Context
 	metrics *prometheus.Registry
 
-	db     ethdb.Database
-	xdb    saedb.ExecutionResults
-	blocks *syncMap[common.Hash, *blocks.Block]
+	db  ethdb.Database
+	xdb saetypes.ExecutionResults
 
 	consensusState utils.Atomic[snow.State]
-	preference     atomic.Pointer[blocks.Block]
-	last           struct {
+
+	preference atomic.Pointer[blocks.Block]
+	last       struct {
 		accepted, settled atomic.Pointer[blocks.Block]
 		synchronous       uint64
 	}
 	acceptedBlocks event.FeedOf[*blocks.Block]
+	// Consensus-critical blocks are those either (a) undergoing a consensus
+	// decision; or (b) informing consensus invariants (e.g. artefacts to
+	// settle). The latter is defined as the history of accepted blocks up to,
+	// and including, the last-settled block.
+	consensusCritical *syncMap[common.Hash, *blocks.Block]
 
 	exec         *saexec.Executor
 	mempool      *txgossip.Set
 	blockBuilder blockBuilder
-	apiBackend   *apiBackend
+	rpcProvider  *rpc.Provider
 	newTxs       chan struct{}
 
 	// toClose are closed in reverse order during [VM.Shutdown]. If a resource
@@ -90,23 +95,12 @@ func (f closerFunc) Close() error { return f() }
 // A Config configures construction of a new [VM].
 type Config struct {
 	MempoolConfig legacypool.Config
-	RPCConfig     RPCConfig
-	TrieDBConfig  *triedb.Config
+	DBConfig      saedb.Config
+	RPCConfig     rpc.Config
 
 	ExcessAfterLastSynchronous gas.Gas
 
 	Now func() time.Time // defaults to [time.Now] if nil
-}
-
-// RPCConfig provides options for initialization of RPCs for the node.
-type RPCConfig struct {
-	BlocksPerBloomSection uint64
-	EnableDBInspecting    bool
-	EnableProfiling       bool
-	DisableTracing        bool
-	EVMTimeout            time.Duration
-	GasCap                uint64
-	TxFeeCap              float64 // 0 = no cap
 }
 
 // NewVM returns a new [VM] that is ready for use immediately upon return.
@@ -134,7 +128,6 @@ func NewVM[T hook.Transaction](
 		snowCtx: snowCtx,
 		metrics: prometheus.NewRegistry(),
 		db:      db,
-		blocks:  newSyncMap[common.Hash, *blocks.Block](),
 	}
 	defer func() {
 		if retErr != nil {
@@ -171,19 +164,19 @@ func NewVM[T hook.Transaction](
 	}
 
 	rec := &recovery{db, xdb, chainConfig, snowCtx.Log, hooks, cfg, lastSync}
-	{ // ==========  Executor  ==========
-		lastExecuted, unexecuted, err := rec.recoverFromDB()
+	{ // ==========  Block State  ==========
+		lastCommitted, err := rec.lastCommittedBlock()
 		if err != nil {
 			return nil, err
 		}
 
 		exec, err := saexec.New(
-			lastExecuted,
+			lastCommitted,
 			vm.headerSource,
 			chainConfig,
 			db,
 			xdb,
-			cfg.TrieDBConfig,
+			cfg.DBConfig,
 			hooks,
 			snowCtx.Log,
 		)
@@ -193,30 +186,17 @@ func NewVM[T hook.Transaction](
 		vm.exec = exec
 		vm.toClose = append(vm.toClose, exec)
 
-		last := lastExecuted
-		for b, err := range unexecuted {
-			if err != nil {
-				return nil, err
-			}
-			if err := exec.Enqueue(ctx, b); err != nil {
-				return nil, err
-			}
-			last = b
-		}
-		if err := last.WaitUntilExecuted(ctx); err != nil {
+		if err := rec.executeAllAccepted(ctx, exec); err != nil {
 			return nil, err
 		}
-	}
 
-	{ // ==========  Blocks in memory  ==========
-		head := vm.exec.LastExecuted()
-
-		bMap, lastSettled, err := rec.rebuildBlocksInMemory(head)
+		bMap, lastSettled, err := rec.consensusCriticalBlocks(exec)
 		if err != nil {
 			return nil, err
 		}
-		vm.blocks = bMap
+		vm.consensusCritical = bMap
 
+		head := exec.LastExecuted()
 		vm.last.settled.Store(lastSettled)
 		vm.last.accepted.Store(head)
 		vm.preference.Store(head)
@@ -253,6 +233,7 @@ func NewVM[T hook.Transaction](
 			snowCtx.Log,
 			vm.exec,
 			vm.mempool,
+			vm.ethBlockSource,
 		}
 	}
 
@@ -299,7 +280,8 @@ func NewVM[T hook.Transaction](
 		}()
 
 		vm.Network = network
-		vm.peers = peers
+		vm.Peers = peers
+		vm.ValidatorPeers = validatorPeers
 		vm.mempool.RegisterPushGossiper(pushGossiper)
 		vm.toClose = append(vm.toClose, closerFunc(func() error {
 			cancel()
@@ -308,35 +290,13 @@ func NewVM[T hook.Transaction](
 		}))
 	}
 
-	{ // ==========  API Backend  ==========
-		// Empty account manager provides graceful errors for signing
-		// RPCs (e.g. eth_sign) instead of nil-pointer panics. No
-		// actual account functionality is expected.
-		accountManager := accounts.NewManager(&accounts.Config{})
-		vm.toClose = append(vm.toClose, accountManager)
-
-		chainIdx := chainIndexer{vm.exec}
-		override := bloomOverrider{vm.db}
-		// TODO(alarso16): if we are state syncing, we need to provide the first
-		// block available to the indexer via [core.ChainIndexer.AddCheckpoint].
-		bloomIdx := newBloomIndexer(vm.db, chainIdx, override, cfg.RPCConfig.BlocksPerBloomSection)
-		vm.toClose = append(vm.toClose, bloomIdx)
-
-		estimator, err := gasprice.NewEstimator(&estimatorBackend{vm}, snowCtx.Log, gasprice.DefaultConfig())
+	{ // ==========  RPC Provider  ==========
+		r, err := rpc.New(chain{vm, vm.exec}, cfg.RPCConfig)
 		if err != nil {
-			return nil, fmt.Errorf("gasprice.NewEstimator(...): %v", err)
+			return nil, err
 		}
-		vm.toClose = append(vm.toClose, estimator)
-
-		vm.apiBackend = &apiBackend{
-			vm:             vm,
-			accountManager: accountManager,
-			Set:            vm.mempool,
-			chainIndexer:   chainIdx,
-			Estimator:      estimator,
-			bloomIndexer:   bloomIdx,
-			bloomOverrider: override,
-		}
+		vm.toClose = append(vm.toClose, r)
+		vm.rpcProvider = r
 	}
 
 	return vm, nil

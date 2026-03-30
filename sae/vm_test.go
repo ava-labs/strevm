@@ -59,8 +59,8 @@ import (
 	"github.com/ava-labs/strevm/cmputils"
 	"github.com/ava-labs/strevm/hook/hookstest"
 	saeparams "github.com/ava-labs/strevm/params"
-	"github.com/ava-labs/strevm/saedb"
 	"github.com/ava-labs/strevm/saetest"
+	saetypes "github.com/ava-labs/strevm/types"
 )
 
 func TestMain(m *testing.M) {
@@ -124,7 +124,7 @@ func newSUT(tb testing.TB, numAccounts uint, opts ...sutOption) (context.Context
 
 	xdb := saetest.NewExecutionResultsDB()
 	conf := options.ApplyTo(&sutConfig{
-		hooks: hookstest.NewStub(100e6, hookstest.WithExecutionResultsDBFn(func(string) (saedb.ExecutionResults, error) {
+		hooks: hookstest.NewStub(100e6, hookstest.WithExecutionResultsDBFn(func(string) (saetypes.ExecutionResults, error) {
 			return xdb, nil
 		})),
 		vmConfig: Config{
@@ -284,8 +284,8 @@ func withVMTime(tb testing.TB, startTime time.Time) (sutOption, *vmTime) {
 // execution-results database with the provided one.
 func withExecResultsDB(hdb database.HeightIndex) sutOption {
 	return options.Func[sutConfig](func(c *sutConfig) {
-		c.hooks.ExecutionResultsDBFn = func(string) (saedb.ExecutionResults, error) {
-			return saedb.ExecutionResults{HeightIndex: hdb}, nil
+		c.hooks.ExecutionResultsDBFn = func(string) (saetypes.ExecutionResults, error) {
+			return saetypes.ExecutionResults{HeightIndex: hdb}, nil
 		}
 	})
 }
@@ -483,7 +483,7 @@ func (s *SUT) waitUntilExecuted(tb testing.TB, b *blocks.Block) {
 
 func (s *SUT) stateAt(tb testing.TB, root common.Hash) *state.StateDB {
 	tb.Helper()
-	sdb, err := state.New(root, s.rawVM.exec.StateCache(), nil)
+	sdb, err := s.rawVM.exec.StateDB(root)
 	require.NoErrorf(tb, err, "state.New(%#x, %T.StateCache())", root, s.rawVM.exec)
 	return sdb
 }

@@ -26,13 +26,13 @@ import (
 	"github.com/ava-labs/strevm/cmputils"
 	"github.com/ava-labs/strevm/gastime"
 	"github.com/ava-labs/strevm/hook"
-	"github.com/ava-labs/strevm/saedb"
 	"github.com/ava-labs/strevm/saetest"
+	saetypes "github.com/ava-labs/strevm/types"
 )
 
 // markExecutedForTests calls [Block.MarkExecuted] with zero-value
 // post-execution artefacts (other than the gas time).
-func (b *Block) markExecutedForTests(tb testing.TB, db ethdb.Database, xdb saedb.ExecutionResults, tm *gastime.Time) {
+func (b *Block) markExecutedForTests(tb testing.TB, db ethdb.Database, xdb saetypes.ExecutionResults, tm *gastime.Time) {
 	tb.Helper()
 	require.NoError(tb, b.MarkExecuted(db, xdb, tm, time.Time{}, new(big.Int), nil, common.Hash{}, new(atomic.Pointer[Block])), "MarkExecuted()")
 }
@@ -87,7 +87,7 @@ func TestMarkExecuted(t *testing.T) {
 			call   func() any
 		}{
 			{"ExecutedByGasTime()", func() any { return b.ExecutedByGasTime() }},
-			{"BaseFee()", func() any { return b.BaseFee() }},
+			{"ExecutedBaseFee()", func() any { return b.ExecutedBaseFee() }},
 			{"Receipts()", func() any { return b.Receipts() }},
 			{"PostExecutionStateRoot()", func() any { return b.PostExecutionStateRoot() }},
 		}
@@ -149,7 +149,7 @@ func TestMarkExecuted(t *testing.T) {
 			require.NoError(t, b.WaitUntilExecuted(context.Background()), "WaitUntilExecuted()")
 
 			assert.Zero(t, b.ExecutedByGasTime().Compare(gasTime.Time), "ExecutedByGasTime().Compare([original input])")
-			assert.Zero(t, b.BaseFee().Cmp(baseFee), "BaseFee().Cmp([original input])")
+			assert.Zero(t, b.ExecutedBaseFee().Cmp(baseFee), "ExecutedBaseFee().Cmp([original input])")
 			assert.Empty(t, cmp.Diff(receipts, b.Receipts(), cmputils.Receipts(), cmputils.NilSlicesAreEmpty[[]*types.Log]()), "Receipts()")
 
 			assert.Equal(t, stateRoot, b.PostExecutionStateRoot(), "PostExecutionStateRoot()") // i.e. this block

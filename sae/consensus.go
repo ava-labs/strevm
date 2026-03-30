@@ -103,15 +103,19 @@ func (vm *VM) AcceptBlock(ctx context.Context, b *blocks.Block) error {
 
 	// Same rationale as the invariant described in [blocks.Block]. Praised be
 	// the GC!
+	// The executor's [saedb.Tracker] handles removing state roots once the reference
+	// count is 0. Since on execution, each root has a reference added,
+	// this count is decremented once the block's state is no longer needed by
+	// consensus.
 	keep := b.LastSettled().Hash()
 	for _, s := range settles {
 		if s.Hash() == keep {
 			continue
 		}
-		vm.blocks.Delete(s.Hash())
+		vm.consensusCritical.Delete(s.Hash())
 	}
 	if h := parentLastSettled.Hash(); h != keep { // i.e. `parentLastSettled` was the last block's `keep`
-		vm.blocks.Delete(h)
+		vm.consensusCritical.Delete(h)
 	}
 	return nil
 }
@@ -123,7 +127,7 @@ func (vm *VM) LastAccepted(context.Context) (ids.ID, error) {
 
 // RejectBlock is a no-op in SAE because execution only occurs after acceptance.
 func (vm *VM) RejectBlock(ctx context.Context, b *blocks.Block) error {
-	vm.blocks.Delete(b.Hash())
+	vm.consensusCritical.Delete(b.Hash())
 	return nil
 }
 

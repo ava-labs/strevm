@@ -18,8 +18,10 @@ import (
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/ethdb"
 	"github.com/ava-labs/libevm/rlp"
+	"go.uber.org/zap"
 
 	"github.com/ava-labs/strevm/blocks"
+	saetypes "github.com/ava-labs/strevm/types"
 )
 
 // maxFutureBlockDuration is the maximum time from the current time allowed for
@@ -89,6 +91,10 @@ func (vm *VM) VerifyBlock(ctx context.Context, bCtx *block.Context, b *blocks.Bl
 	// key to the purpose of this method so included here to be defensive. It
 	// also provides a clearer failure message.
 	if reH, verH := rebuilt.Hash(), b.Hash(); reH != verH {
+		vm.log().Debug("block verification failed",
+			zap.Reflect("block", b.Header()),
+			zap.Reflect("rebuilt", rebuilt.Header()),
+		)
 		return fmt.Errorf("%w; rebuilt as %#x when verifying %#x", errHashMismatch, reH, verH)
 	}
 	if err := b.CopyAncestorsFrom(rebuilt); err != nil {
@@ -96,7 +102,7 @@ func (vm *VM) VerifyBlock(ctx context.Context, bCtx *block.Context, b *blocks.Bl
 	}
 	b.SetWorstCaseBounds(rebuilt.WorstCaseBounds())
 
-	vm.blocks.Store(b.Hash(), b)
+	vm.consensusCritical.Store(b.Hash(), b)
 	return nil
 }
 
@@ -159,15 +165,18 @@ func (vm *VM) settledBlockFromDB(db ethdb.Reader, hash common.Hash, num uint64) 
 func (vm *VM) GetBlock(ctx context.Context, id ids.ID) (*blocks.Block, error) {
 	var _ snowman.Block // protect the input to allow comment linking
 
-	return readByHash(
-		vm,
+	b, err := blocks.FromHash(
+		vm.chain(),
 		common.Hash(id),
 		func(b *blocks.Block) *blocks.Block {
 			return b
 		},
 		vm.settledBlockFromDB,
-		database.ErrNotFound,
 	)
+	if errors.Is(err, blocks.ErrNotFound) {
+		return nil, database.ErrNotFound
+	}
+	return b, nil
 }
 
 // GetBlockIDAtHeight returns the accepted block at the given height, or
@@ -181,8 +190,8 @@ func (vm *VM) GetBlockIDAtHeight(ctx context.Context, height uint64) (ids.ID, er
 }
 
 var (
-	_ blocks.EthBlockSource = (*VM)(nil).ethBlockSource
-	_ blocks.HeaderSource   = (*VM)(nil).headerSource
+	_ saetypes.BlockSource  = (*VM)(nil).ethBlockSource
+	_ saetypes.HeaderSource = (*VM)(nil).headerSource
 )
 
 func (vm *VM) ethBlockSource(hash common.Hash, num uint64) (*types.Block, bool) {
@@ -193,8 +202,8 @@ func (vm *VM) headerSource(hash common.Hash, num uint64) (*types.Header, bool) {
 	return source(vm, hash, num, (*blocks.Block).Header, rawdb.ReadHeader)
 }
 
-func source[T any](vm *VM, hash common.Hash, num uint64, fromMem blockAccessor[T], fromDB canonicalReader[T]) (*T, bool) {
-	if b, ok := vm.blocks.Load(hash); ok {
+func source[T any](vm *VM, hash common.Hash, num uint64, fromMem blocks.Extractor[T], fromDB blocks.DBReader[T]) (*T, bool) {
+	if b, ok := vm.consensusCritical.Load(hash); ok {
 		if b.NumberU64() != num {
 			return nil, false
 		}

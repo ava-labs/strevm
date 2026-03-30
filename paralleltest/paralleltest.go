@@ -19,13 +19,13 @@ import (
 	"github.com/ava-labs/libevm/libevm/hookstest"
 	"github.com/ava-labs/libevm/libevm/precompiles/parallel"
 	"github.com/ava-labs/libevm/params"
-	"github.com/ava-labs/libevm/triedb"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/ava-labs/strevm/blocks"
 	"github.com/ava-labs/strevm/blocks/blockstest"
 	saehookstest "github.com/ava-labs/strevm/hook/hookstest"
+	"github.com/ava-labs/strevm/saedb"
 	"github.com/ava-labs/strevm/saetest"
 	"github.com/ava-labs/strevm/saexec"
 )
@@ -65,12 +65,13 @@ func NewExecutor[CommonData, Prefetch any, R parallel.PrecompileResult, Aggregat
 	hooks.BeforeExecutingBlockFn = func(rules params.Rules, sdb *state.StateDB, b *types.Block) error {
 		return par.StartBlock(sdb, rules, b)
 	}
-	hooks.AfterExecutingBlockFn = func(sdb *state.StateDB, b *types.Block, rs types.Receipts) {
+	hooks.AfterExecutingBlockFn = func(sdb *state.StateDB, b *types.Block, rs types.Receipts) error {
 		par.FinishBlock(sdb, b, rs)
+		return nil
 	}
 
 	src := blocks.Source(chain.GetBlock).AsHeaderSource()
-	exec, err := saexec.New(gen, src, config, db, xdb, &triedb.Config{}, hooks, logger)
+	exec, err := saexec.New(gen, src, config, db, xdb, saedb.Config{}, hooks, logger)
 	require.NoError(tb, err, "saexec.New()")
 	tb.Cleanup(func() {
 		ctx := context.WithoutCancel(tb.Context())

@@ -22,7 +22,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/ava-labs/strevm/proxytime"
-	"github.com/ava-labs/strevm/saedb"
+	saetypes "github.com/ava-labs/strevm/types"
 )
 
 // A Block extends a [types.Block] to track SAE-defined concepts of async
@@ -102,7 +102,7 @@ func New(eth *types.Block, parent, lastSettled *Block, log logging.Logger) (*Blo
 // RestoreSettledBlock constructs a new block with [New] and restores it to an
 // settled state before returning it. By definition of being settled, the
 // returned block also includes post-execution artefacts.
-func RestoreSettledBlock(eth *types.Block, log logging.Logger, db ethdb.Database, xdb saedb.ExecutionResults, config *params.ChainConfig) (*Block, error) {
+func RestoreSettledBlock(eth *types.Block, log logging.Logger, db ethdb.Database, xdb saetypes.ExecutionResults, config *params.ChainConfig) (*Block, error) {
 	b, err := New(eth, nil, nil, log)
 	if err != nil {
 		return nil, err
@@ -157,20 +157,23 @@ func (b *Block) CopyAncestorsFrom(c *Block) error {
 	return b.SetAncestors(a.parent, a.lastSettled)
 }
 
-type (
-	// A Source returns a [Block] that matches both a hash and number, and a
-	// boolean indicating if such a block was found.
-	Source func(hash common.Hash, number uint64) (*Block, bool)
-	// An EthBlockSource is equivalent to a [Source] except that it returns the
-	// raw Ethereum block.
-	EthBlockSource func(hash common.Hash, number uint64) (*types.Block, bool)
-	// A HeaderSource is equivalent to a [Source] except that it only returns
-	// the block header.
-	HeaderSource func(hash common.Hash, number uint64) (*types.Header, bool)
-)
+// Signer returns the transaction signer for the block.
+func (b *Block) Signer(c *params.ChainConfig) types.Signer {
+	return Signer(b.EthBlock(), c)
+}
 
-// AsEthBlockSource returns an [EthBlockSource] backed by the original [Source].
-func (s Source) AsEthBlockSource() EthBlockSource {
+// Signer returns the transaction signer for the block.
+func Signer(b *types.Block, c *params.ChainConfig) types.Signer {
+	return types.MakeSigner(c, b.Number(), b.Time())
+}
+
+// A Source returns a [Block] that matches both a hash and number, and a
+// boolean indicating if such a block was found.
+type Source func(hash common.Hash, number uint64) (*Block, bool)
+
+// AsEthBlockSource returns a [saetypes.BlockSource] backed by the original
+// [Source].
+func (s Source) AsEthBlockSource() saetypes.BlockSource {
 	return func(h common.Hash, n uint64) (*types.Block, bool) {
 		b, ok := s(h, n)
 		if !ok {
@@ -180,8 +183,9 @@ func (s Source) AsEthBlockSource() EthBlockSource {
 	}
 }
 
-// AsHeaderSource returns a [HeaderSource] backed by the original [Source].
-func (s Source) AsHeaderSource() HeaderSource {
+// AsHeaderSource returns a [saetypes.HeaderSource] backed by the original
+// [Source].
+func (s Source) AsHeaderSource() saetypes.HeaderSource {
 	return func(h common.Hash, n uint64) (*types.Header, bool) {
 		b, ok := s(h, n)
 		if !ok {
