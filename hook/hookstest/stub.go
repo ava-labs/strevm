@@ -21,6 +21,7 @@ import (
 	"github.com/ava-labs/libevm/params"
 	"github.com/holiman/uint256"
 
+	"github.com/ava-labs/strevm/gastime"
 	"github.com/ava-labs/strevm/hook"
 	"github.com/ava-labs/strevm/saetest"
 	saetypes "github.com/ava-labs/strevm/types"
@@ -72,16 +73,9 @@ func WithExecutionResultsDBFn(fn func(string) (saetypes.ExecutionResults, error)
 // NewStub returns a stub with defaults applied.
 // It uses [gastime.DefaultGasPriceConfig] unless overridden by [WithGasPriceConfig].
 func NewStub(target gas.Gas, opts ...HookOption) *Stub {
-	// defaultGasPriceConfig is the same as [gastime.DefaultGasPriceConfig]. It is defined
-	// here to avoid a circular dependency between [gastime] and [hookstest].
-	defaultGasPriceConfig := saetypes.GasPriceConfig{
-		TargetToExcessScaling: 87,
-		MinPrice:              1,
-		StaticPricing:         false,
-	}
 	return options.ApplyTo(&Stub{
 		Target:         target,
-		GasPriceConfig: defaultGasPriceConfig,
+		GasPriceConfig: gastime.DefaultGasPriceConfig(),
 	}, opts...)
 }
 
