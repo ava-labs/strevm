@@ -20,14 +20,14 @@ const (
 	commitTrieDBMask      = CommitTrieDBEvery - 1
 )
 
-// ShouldCommitTrieDB returns whether or not to commit the state trie to disk.
-func ShouldCommitTrieDB(blockNum uint64) bool {
+// shouldCommitSettled returns whether or not to commit the state trie to disk.
+func shouldCommitSettled(blockNum uint64) bool {
 	return blockNum&commitTrieDBMask == 0
 }
 
-// LastCommittedTrieDBHeight returns the largest value <= the argument at which
-// [ShouldCommitTrieDB] would have returned true.
-func LastCommittedTrieDBHeight(atOrBefore uint64) uint64 {
+// lastCommittedSettledHeight returns the largest value <= the argument at which
+// [shouldCommitTrieDB] would have returned true.
+func lastCommittedSettledHeight(atOrBefore uint64) uint64 {
 	return atOrBefore &^ commitTrieDBMask
 }
 

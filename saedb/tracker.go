@@ -68,7 +68,7 @@ func NewTracker(db ethdb.Database, c Config, lastExecuted common.Hash, log loggi
 }
 
 // Track tracks the root and may commit the trie associated with the root
-// to the database if [ShouldCommitTrieDB] returns true, or the [Config]
+// to the database if [shouldCommitTrieDB] returns true, or the [Config]
 // specifies that the node is archival.
 //
 // This state will be available in memory until [Tracker.Untrack] has been
@@ -88,7 +88,7 @@ func (t *Tracker) Track(root common.Hash) {
 // following priorities:
 //
 // 1. If [Config.Archival] is true, then `executionRoot` will be committed.
-// 2. If [ShouldCommitTrieDB] based on `height`, `settledRoot` is committed.
+// 2. Every [CommitTrieDBEvery] blocks, `settledRoot` is committed.
 // 3. Otherwise, nothing is committed.
 //
 // This does NOT change in-memory tracking.
@@ -101,7 +101,7 @@ func (t *Tracker) MaybeCommit(settledRoot, executionRoot common.Hash, height uin
 	case t.isArchival:
 		commit = executionRoot
 		because = "post-execution archive"
-	case ShouldCommitTrieDB(height):
+	case shouldCommitSettled(height):
 		commit = settledRoot
 		because = "settled"
 	default:
@@ -127,7 +127,7 @@ func LastHeightWithExecutionRootCommitted(db ethdb.Database, c Config, hooks hoo
 		return head
 
 	default:
-		num := LastCommittedTrieDBHeight(head)
+		num := lastCommittedSettledHeight(head)
 		if num <= lastSynchronous {
 			return lastSynchronous
 		}

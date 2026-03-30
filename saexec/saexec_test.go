@@ -959,7 +959,7 @@ func TestStateRootAvailability(t *testing.T) {
 
 			var want testerr.Want
 			switch {
-			case saedb.ShouldCommitTrieDB(b.NumberU64()):
+			case sut.hooks.SettledHeight(b.Header())%saedb.CommitTrieDBEvery == 0:
 				// on disk
 			case expectReferenced(b.NumberU64()):
 				// still referenced
