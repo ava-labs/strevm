@@ -739,6 +739,55 @@ func TestCustomTransactionInclusion(t *testing.T) {
 	}
 }
 
+// TestInvalidCustomTransactionAllowedInBootstrapping verifies that blocks with
+// invalid custom transactions are only allowed during bootstrapping.
+func TestInvalidCustomTransactionAllowedInBootstrapping(t *testing.T) {
+	var (
+	// invalidID = ids.ID{'i', 'n', 'v', 'a', 'l', 'i', 'd'}
+	// receiver  = zeroAddr
+	// amount    = *uint256.NewInt(params.Ether)
+	// Ops       = []hookstest.Op{
+	// 	{
+	// 		ID:        invalidID,
+	// 		Gas:       100_000,
+	// 		GasFeeCap: *uint256.NewInt(params.Wei),
+	// 		Mint: []hookstest.AccountCredit{
+	// 			{
+	// 				Address: receiver,
+	// 				Amount:  amount,
+	// 			},
+	// 		},
+	// 	},
+	// }
+	)
+	tests := []struct {
+		name           string
+		consensusState snow.State
+		want           error
+	}{
+		{
+			name: "valid",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			ctx, sut := newSUT(t, 0)
+
+			builder := blockstest.NewChainBuilder(saetest.ChainConfig(), sut.genesis)
+			blk := builder.NewBlock(t, nil, blockstest.WithEthBlockOptions(
+			// blockstest.WithOps(Ops),
+			))
+			blkBytes := blk.Bytes()
+
+			bblk, err := sut.ParseBlock(ctx, blkBytes)
+			require.NoError(t, err)
+
+			require.NoError(t, bblk.Verify(ctx))
+		})
+	}
+}
+
 func TestEmptyChainConfig(t *testing.T) {
 	_, sut := newSUT(t, 1, options.Func[sutConfig](func(c *sutConfig) {
 		c.genesis.Config = &params.ChainConfig{

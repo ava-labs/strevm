@@ -39,10 +39,10 @@ func NewEthBlock(tb testing.TB, parent *types.Block, txs types.Transactions, opt
 	tb.Helper()
 	props := &ethBlockProperties{
 		header: &types.Header{
-			Number:        new(big.Int).Add(parent.Number(), big.NewInt(1)),
-			ParentHash:    parent.Hash(),
-			BaseFee:       big.NewInt(0),
-			ExcessBlobGas: new(uint64),
+			Number:     new(big.Int).Add(parent.Number(), big.NewInt(1)),
+			ParentHash: parent.Hash(),
+			BaseFee:    big.NewInt(0),
+			// ExcessBlobGas: new(uint64),
 		},
 		settledHeight: parent.NumberU64() + 1, // synchronoous
 	}
