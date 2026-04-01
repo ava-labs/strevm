@@ -11,6 +11,7 @@ import (
 
 	"github.com/ava-labs/avalanchego/database"
 	"github.com/ava-labs/avalanchego/ids"
+	"github.com/ava-labs/avalanchego/snow"
 	"github.com/ava-labs/avalanchego/snow/consensus/snowman"
 	"github.com/ava-labs/avalanchego/snow/engine/snowman/block"
 	"github.com/ava-labs/libevm/common"
@@ -21,6 +22,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/ava-labs/strevm/blocks"
+	saeparams "github.com/ava-labs/strevm/params"
 	saetypes "github.com/ava-labs/strevm/types"
 )
 
@@ -81,6 +83,27 @@ func (vm *VM) VerifyBlock(ctx context.Context, bCtx *block.Context, b *blocks.Bl
 	// Sanity check that we aren't verifying an accepted block.
 	if height, accepted := b.Height(), vm.last.accepted.Load().Height(); height <= accepted {
 		return fmt.Errorf("%w at height %d <= last-accepted (%d)", errBlockHeightTooLow, height, accepted)
+	}
+
+	// Blocks are verified by their hash during bootstrapping in the consensus
+	// engine. Additionally, hook.Points in Coreth/Subnet-EVM are unable to
+	// fully verify blocks during bootstrapping. So, we skip verification in its
+	// entirety during bootstrapping.
+	if vm.consensusState.Get() == snow.Bootstrapping {
+		bTime := blocks.PreciseTime(vm.hooks, b.Header())
+		lastSettled, ok, err := blocks.LastToSettleAt(vm.hooks, bTime.Add(-saeparams.Tau), parent)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return errExecutionLagging
+		}
+		if err := b.SetAncestors(parent, lastSettled); err != nil {
+			return err
+		}
+
+		vm.consensusCritical.Store(b.Hash(), b)
+		return nil
 	}
 
 	rebuilt, err := vm.blockBuilder.rebuild(ctx, bCtx, parent, b)
