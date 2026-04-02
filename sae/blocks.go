@@ -22,7 +22,6 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/ava-labs/strevm/blocks"
-	saeparams "github.com/ava-labs/strevm/params"
 	saetypes "github.com/ava-labs/strevm/types"
 )
 
@@ -67,21 +66,16 @@ func (vm *VM) BuildBlock(ctx context.Context, bCtx *block.Context) (*blocks.Bloc
 }
 
 var (
-	errUnknownParent     = errors.New("unknown parent")
-	errBlockHeightTooLow = errors.New("block height too low")
-	errHashMismatch      = errors.New("hash mismatch")
+	errUnknownParent         = errors.New("unknown parent")
+	errBlockHeightTooLow     = errors.New("block height too low")
+	errSettledRootMismatch   = errors.New("settled root mismatch")
+	errSettledHeightMismatch = errors.New("settled height mismatch")
+	errHashMismatch          = errors.New("hash mismatch")
 )
 
 // VerifyBlock validates the block and, if successful, populates its ancestry.
 // The block context MAY be nil.
 func (vm *VM) VerifyBlock(ctx context.Context, bCtx *block.Context, b *blocks.Block) error {
-	// During bootstrapping, blocks are verified by their hash in the consensus
-	// engine. Additionally, hook.Points in Coreth/Subnet-EVM are unable to
-	// fully verify blocks. So, we skip verification in its entirety.
-	if vm.consensusState.Get() == snow.Bootstrapping {
-		return vm.markBlockVerified(ctx, b)
-	}
-
 	parent, err := vm.GetBlock(ctx, b.Parent())
 	if err != nil {
 		return fmt.Errorf("%w %#x: %w", errUnknownParent, b.ParentHash(), err)
@@ -90,6 +84,31 @@ func (vm *VM) VerifyBlock(ctx context.Context, bCtx *block.Context, b *blocks.Bl
 	// Sanity check that we aren't verifying an accepted block.
 	if height, accepted := b.Height(), vm.last.accepted.Load().Height(); height <= accepted {
 		return fmt.Errorf("%w at height %d <= last-accepted (%d)", errBlockHeightTooLow, height, accepted)
+	}
+
+	// During bootstrapping, blocks are verified by their hash in the consensus
+	// engine. Additionally, hook.Points in Coreth/Subnet-EVM are unable to
+	// fully verify blocks. So, we skip verification in its entirety.
+	if vm.consensusState.Get() == snow.Bootstrapping {
+		header := b.Header()
+		lastSettled, err := lastToSettle(vm.hooks, header, parent, vm.config.Now(), vm.log())
+		if err != nil {
+			return err
+		}
+
+		// Sanity checks to ensure the in-memory settled block matches the expected
+		// settled block.
+		if got, want := lastSettled.PostExecutionStateRoot(), b.SettledStateRoot(); got != want {
+			return fmt.Errorf("%w: got %#x ; want %#x", errSettledRootMismatch, got, want)
+		}
+		if got, want := lastSettled.NumberU64(), vm.hooks.SettledHeight(header); got != want {
+			return fmt.Errorf("%w:got %d ; want %d", errSettledHeightMismatch, got, want)
+		}
+
+		if err := b.SetAncestors(parent, lastSettled); err != nil {
+			return err
+		}
+		vm.consensusCritical.Store(b.Hash(), b)
 	}
 
 	rebuilt, err := vm.blockBuilder.rebuild(ctx, bCtx, parent, b)
@@ -111,43 +130,6 @@ func (vm *VM) VerifyBlock(ctx context.Context, bCtx *block.Context, b *blocks.Bl
 	}
 	b.SetWorstCaseBounds(rebuilt.WorstCaseBounds())
 
-	vm.consensusCritical.Store(b.Hash(), b)
-	return nil
-}
-
-var (
-	errSettledRootMismatch   = errors.New("settled root mismatch")
-	errSettledHeightMismatch = errors.New("settled height mismatch")
-)
-
-func (vm *VM) markBlockVerified(ctx context.Context, b *blocks.Block) error {
-	parent, err := vm.GetBlock(ctx, b.Parent())
-	if err != nil {
-		return fmt.Errorf("%w %#x: %w", errUnknownParent, b.ParentHash(), err)
-	}
-
-	header := b.Header()
-	bTime := blocks.PreciseTime(vm.hooks, header)
-	lastSettled, ok, err := blocks.LastToSettleAt(vm.hooks, bTime.Add(-saeparams.Tau), parent)
-	if err != nil {
-		return err
-	}
-	if !ok {
-		return errExecutionLagging
-	}
-
-	// Sanity checks to ensure the in-memory settled block matches the expected
-	// settled block.
-	if got, want := lastSettled.PostExecutionStateRoot(), b.SettledStateRoot(); got != want {
-		return fmt.Errorf("%w: got %#x ; want %#x", errSettledRootMismatch, got, want)
-	}
-	if got, want := lastSettled.NumberU64(), vm.hooks.SettledHeight(header); got != want {
-		return fmt.Errorf("%w:got %d ; want %d", errSettledHeightMismatch, got, want)
-	}
-
-	if err := b.SetAncestors(parent, lastSettled); err != nil {
-		return err
-	}
 	vm.consensusCritical.Store(b.Hash(), b)
 	return nil
 }
