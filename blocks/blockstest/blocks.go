@@ -40,14 +40,11 @@ func NewEthBlock(tb testing.TB, parent *types.Block, txs types.Transactions, opt
 	tb.Helper()
 	props := &ethBlockProperties{
 		header: &types.Header{
-			Number:     new(big.Int).Add(parent.Number(), big.NewInt(1)),
-			ParentHash: parent.Hash(),
-			BaseFee:    big.NewInt(0),
-			// WithdrawalsHash must be included when either BlobGasUsed or
-			// ExcessBlobGas are provided. This ensures RLP serialization
-			// doesn't encode an empty string, which would cause deserialization
-			// to fail.
+			Number:          new(big.Int).Add(parent.Number(), big.NewInt(1)),
+			ParentHash:      parent.Hash(),
+			BaseFee:         big.NewInt(0),
 			WithdrawalsHash: &common.Hash{},
+			BlobGasUsed:     new(uint64),
 			ExcessBlobGas:   new(uint64),
 		},
 		settledHeight: parent.NumberU64() + 1, // synchronoous
