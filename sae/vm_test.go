@@ -57,6 +57,7 @@ import (
 	"github.com/ava-labs/strevm/blocks"
 	"github.com/ava-labs/strevm/blocks/blockstest"
 	"github.com/ava-labs/strevm/cmputils"
+	"github.com/ava-labs/strevm/hook"
 	"github.com/ava-labs/strevm/hook/hookstest"
 	saeparams "github.com/ava-labs/strevm/params"
 	"github.com/ava-labs/strevm/saetest"
@@ -743,40 +744,43 @@ func TestCustomTransactionInclusion(t *testing.T) {
 // invalid custom transactions are only allowed during bootstrapping.
 func TestInvalidCustomTransactionAllowedInBootstrapping(t *testing.T) {
 	var (
-		opID     = ids.ID{'o', 'p'}
-		receiver = zeroAddr
-		amount   = *uint256.NewInt(params.Ether)
-		Ops      = []hookstest.Op{
-			{
-				ID:        opID,
-				Gas:       100_000,
-				GasFeeCap: *uint256.NewInt(params.Wei),
-				Mint: []hookstest.AccountCredit{
-					{
-						Address: receiver,
-						Amount:  amount,
-					},
-				},
-			},
+		invalidID = ids.ID{'i', 'n', 'v', 'a', 'l', 'i', 'd'}
+		op        = hookstest.Op{
+			ID:        invalidID,
+			Gas:       100_000,
+			GasFeeCap: *uint256.NewInt(params.Wei),
 		}
 	)
+	ctx, sut := newSUT(t, 0, options.Func[sutConfig](func(c *sutConfig) {
+		c.hooks.Ops = []hookstest.Op{op}
+	}))
+
+	blk := sut.buildAndParseBlock(t, sut.lastAcceptedBlock(t))
+
+	// Sanity check that the op was included in the block.
+	ops, err := sut.hooks.EndOfBlockOps(unwrap(t, blk).EthBlock())
+	require.NoErrorf(t, err, "%T.EndOfBlockOps()", err)
+	require.Equal(t, []hook.Op{op.AsOp()}, ops, "ops included in block")
+
+	sut.hooks.InvalidOps = set.Of(invalidID)
+
 	tests := []struct {
-		name           string
 		consensusState snow.State
 		want           error
 	}{
 		{
-			name: "valid",
+			consensusState: snow.NormalOp,
+			want:           errHashMismatch,
+		},
+		{
+			consensusState: snow.Bootstrapping,
+			want:           nil,
 		},
 	}
-
 	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			ctx, sut := newSUT(t, 0)
-
-			blk, err := sut.BuildBlock(ctx)
-			require.NoErrorf(t, err, "%T.BuildBlock()", sut)
-			require.NoError(t, blk.Verify(ctx))
+		require.NoErrorf(t, sut.SetState(ctx, test.consensusState), "%T.SetState(%s)", sut, test.consensusState)
+		t.Run(test.consensusState.String(), func(t *testing.T) {
+			assert.ErrorIsf(t, blk.Verify(ctx), test.want, "%T.Verify()", blk)
 		})
 	}
 }
