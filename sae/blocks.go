@@ -104,11 +104,12 @@ func (vm *VM) VerifyBlock(ctx context.Context, bCtx *block.Context, b *blocks.Bl
 		if got, want := lastSettled.NumberU64(), vm.hooks.SettledHeight(header); got != want {
 			return fmt.Errorf("%w:got %d ; want %d", errSettledHeightMismatch, got, want)
 		}
-
 		if err := b.SetAncestors(parent, lastSettled); err != nil {
 			return err
 		}
+
 		vm.consensusCritical.Store(b.Hash(), b)
+		return nil
 	}
 
 	rebuilt, err := vm.blockBuilder.rebuild(ctx, bCtx, parent, b)
