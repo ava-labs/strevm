@@ -30,7 +30,7 @@ import (
 type Stub struct {
 	Now                     func() time.Time
 	Target                  gas.Gas
-	InvalidOps              set.Set[ids.ID]
+	InvalidOpIDs            set.Set[ids.ID]
 	Ops                     []Op
 	ExecutionResultsDBFn    func(string) (saetypes.ExecutionResults, error)
 	CanExecuteTransactionFn func(common.Address, *common.Address, libevm.StateReader) error
@@ -56,10 +56,10 @@ func WithNow(now func() time.Time) HookOption {
 	})
 }
 
-// WithInvalidOps overrides the default invalid end-of-block ops.
-func WithInvalidOps(invalidOps set.Set[ids.ID]) HookOption {
+// WithInvalidOpIDs overrides the default invalid end-of-block opIDs.
+func WithInvalidOpIDs(invalidOps set.Set[ids.ID]) HookOption {
 	return options.Func[Stub](func(s *Stub) {
-		s.InvalidOps = invalidOps
+		s.InvalidOpIDs = invalidOps
 	})
 }
 
@@ -129,11 +129,11 @@ func (s *Stub) BuildHeader(parent *types.Header) (*types.Header, error) {
 }
 
 // PotentialEndOfBlockOps ignores its arguments and returns a sequence of ops
-// taken from [Stub.Ops] after removing [Stub.InvalidOps].
+// taken from [Stub.Ops] after removing [Stub.InvalidOpIDs].
 func (s *Stub) PotentialEndOfBlockOps(header *types.Header, lastSettledBlock common.Hash, source saetypes.BlockSource) iter.Seq[Op] {
 	return func(yield func(Op) bool) {
 		for _, op := range s.Ops {
-			if s.InvalidOps.Contains(op.ID) {
+			if s.InvalidOpIDs.Contains(op.ID) {
 				continue
 			}
 			if !yield(op) {
@@ -186,7 +186,7 @@ func (s *Stub) BlockRebuilderFrom(b *types.Block) (hook.BlockBuilder[Op], error)
 		return nil, err
 	}
 
-	return NewStub(s.Target, WithInvalidOps(s.InvalidOps), WithOps(e.ops), WithNow(func() time.Time {
+	return NewStub(s.Target, WithInvalidOpIDs(s.InvalidOpIDs), WithOps(e.ops), WithNow(func() time.Time {
 		return time.Unix(
 			int64(b.Time()), //nolint:gosec // Won't overflow for a few millennia
 			int64(e.subSec),

@@ -762,7 +762,7 @@ func TestInvalidCustomTransactionAllowedInBootstrapping(t *testing.T) {
 	require.NoErrorf(t, err, "%T.EndOfBlockOps()", err)
 	require.Equal(t, []hook.Op{op.AsOp()}, ops, "ops included in block")
 
-	sut.hooks.InvalidOps = set.Of(invalidID)
+	sut.hooks.InvalidOpIDs = set.Of(invalidID)
 
 	tests := []struct {
 		consensusState snow.State
