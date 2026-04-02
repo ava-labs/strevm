@@ -39,6 +39,7 @@ import (
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/core/vm"
 	"github.com/ava-labs/libevm/ethclient"
+	"github.com/ava-labs/libevm/ethclient/gethclient"
 	"github.com/ava-labs/libevm/ethdb"
 	"github.com/ava-labs/libevm/libevm"
 	libevmhookstest "github.com/ava-labs/libevm/libevm/hookstest"
@@ -86,6 +87,7 @@ type SUT struct {
 	block.ChainVM
 	*ethclient.Client
 	rpcClient *rpc.Client
+	gethClient
 
 	rawVM   *VM
 	genesis *blocks.Block
@@ -97,6 +99,12 @@ type SUT struct {
 
 	validators *validatorstest.State
 	sender     *enginetest.Sender
+}
+
+// gethClient embeds a [gethclient.Client] to allow embedding alongside an
+// [ethclient.Client] without conflicting field names.
+type gethClient struct {
+	*gethclient.Client
 }
 
 type (
@@ -187,11 +195,12 @@ func newSUT(tb testing.TB, numAccounts uint, opts ...sutOption) (context.Context
 	validators, ok := snowCtx.ValidatorState.(*validatorstest.State)
 	require.Truef(tb, ok, "unexpected type %T for snowCtx.ValidatorState", snowCtx.ValidatorState)
 	return ctx, &SUT{
-		ChainVM:   snow,
-		Client:    ethClient,
-		rpcClient: rpcClient,
-		rawVM:     vm.VM,
-		genesis:   vm.last.settled.Load(),
+		ChainVM:    snow,
+		Client:     ethClient,
+		rpcClient:  rpcClient,
+		gethClient: gethClient{gethclient.New(rpcClient)},
+		rawVM:      vm.VM,
+		genesis:    vm.last.settled.Load(),
 		wallet: saetest.NewWalletWithKeyChain(
 			keys,
 			types.LatestSigner(conf.genesis.Config),

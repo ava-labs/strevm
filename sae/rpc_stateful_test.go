@@ -25,6 +25,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/ava-labs/strevm/cmputils"
 	saeparams "github.com/ava-labs/strevm/params"
 	"github.com/ava-labs/strevm/saetest/escrow"
 )
@@ -151,13 +152,13 @@ func TestStatefulRPCs(t *testing.T) {
 
 	escrowAddr := crypto.CreateAddress(sut.wallet.Addresses()[0], 0)
 	recv := common.Address{'r', 'e', 'c', 'v'}
-	const val = 42
+	const depositVal = 42
 	deposit := &types.LegacyTx{
 		To:       &escrowAddr,
 		Gas:      1e6,
 		GasPrice: big.NewInt(1),
 		Data:     escrow.CallDataToDeposit(recv),
-		Value:    big.NewInt(val),
+		Value:    big.NewInt(depositVal),
 	}
 
 	sign := sut.wallet.SetNonceAndSign
@@ -167,6 +168,7 @@ func TestStatefulRPCs(t *testing.T) {
 	for _, r := range b.Receipts() {
 		require.Equalf(t, types.ReceiptStatusSuccessful, r.Status, "%T.Status", r)
 	}
+	deploymentGasUsed := b.Receipts()[0].GasUsed
 
 	vmTime.advanceToSettle(ctx, t, b)
 	for range 2 {
@@ -176,25 +178,11 @@ func TestStatefulRPCs(t *testing.T) {
 	_, ok := sut.rawVM.consensusCritical.Load(b.Hash())
 	require.Falsef(t, ok, "%T[%#x] still in VM memory", b, b.Hash())
 
-	// Storage key for balances[recv] at mapping slot 0:
-	// keccak256(abi.encode(address, uint256(0)))
-	storageKey := crypto.Keccak256Hash(
-		common.LeftPadBytes(recv.Bytes(), 32),
-		common.Hash{}.Bytes(),
-	)
-	storageKeyHex := storageKey.Hex()
-
-	callMsg := ethereum.CallMsg{
+	balanceCallMsg := ethereum.CallMsg{
 		From: sut.wallet.Addresses()[0],
 		To:   &escrowAddr,
 		Data: escrow.CallDataForBalance(recv),
 	}
-
-	gc := gethclient.New(sut.rpcClient)
-
-	wantBig := big.NewInt(val)
-	wantBytes := uint256.NewInt(val).PaddedBytes(32)
-	wantCode := escrow.ByteCode()
 
 	tests := []struct {
 		name string
@@ -213,58 +201,82 @@ func TestStatefulRPCs(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			blockNum := big.NewInt(int64(tt.num))
 
+			// Some methods aren't simple to call directly so we use the
+			// [ethclient.Client], but prefer [SUT.testRPC] where possible.
 			t.Run("eth_call", func(t *testing.T) {
-				got, err := sut.CallContract(ctx, callMsg, blockNum)
-				require.NoError(t, err, "CallContract()")
-				assert.Equal(t, wantBytes, got, "CallContract() result")
-			})
-
-			t.Run("eth_getBalance", func(t *testing.T) {
-				got, err := sut.BalanceAt(ctx, escrowAddr, blockNum)
-				require.NoError(t, err, "BalanceAt()")
-				require.Zero(t, wantBig.Cmp(got), "BalanceAt(): want %d, got %s", val, got)
-			})
-
-			t.Run("eth_getCode", func(t *testing.T) {
-				got, err := sut.CodeAt(ctx, escrowAddr, blockNum)
-				require.NoError(t, err, "CodeAt()")
-				assert.Equal(t, wantCode, got, "CodeAt() result")
-			})
-
-			t.Run("eth_getStorageAt", func(t *testing.T) {
-				got, err := sut.StorageAt(ctx, escrowAddr, storageKey, blockNum)
-				require.NoError(t, err, "StorageAt()")
-				assert.Equal(t, wantBytes, got, "StorageAt() result")
+				got, err := sut.CallContract(ctx, balanceCallMsg, blockNum)
+				require.NoErrorf(t, err, "%T.CallContract()", sut.Client)
+				want := uint256.NewInt(depositVal).PaddedBytes(32)
+				assert.Equal(t, want, got, "Return value from balance()")
 			})
 
 			t.Run("eth_getProof", func(t *testing.T) {
-				got, err := gc.GetProof(ctx, escrowAddr, []string{storageKeyHex}, blockNum)
-				require.NoError(t, err, "GetProof()")
-				require.NotNil(t, got, "GetProof() result")
+				got, err := sut.GetProof(ctx, escrowAddr, nil, blockNum)
+				require.NoErrorf(t, err, "%T.GetProof()", sut.gethClient.Client)
 
-				assert.NotEmpty(t, got.AccountProof, "GetProof() accountProof")
-				require.Zero(t, wantBig.Cmp(got.Balance), "GetProof() balance: want %d, got %s", val, got.Balance)
-
-				require.Len(t, got.StorageProof, 1, "GetProof() storageProof length")
-				assert.NotEmpty(t, got.StorageProof[0].Proof, "GetProof() storageProof[0].Proof")
-				require.Zero(t, wantBig.Cmp(got.StorageProof[0].Value), "GetProof() storageProof[0].Value: want %d, got %s", val, got.StorageProof[0].Value)
+				opts := cmp.Options{
+					cmputils.BigInts(),
+					cmpopts.EquateEmpty(),
+					cmpopts.IgnoreFields(
+						gethclient.AccountResult{},
+						// As we didn't implement the API endpoint itself we're
+						// only testing plumbing. Although we could demonstrate
+						// correctness of these fields it would be overkill.
+						"AccountProof",
+						"StorageHash",
+					),
+				}
+				want := &gethclient.AccountResult{
+					Address:  escrowAddr,
+					Balance:  big.NewInt(depositVal),
+					Nonce:    1,
+					CodeHash: crypto.Keccak256Hash(escrow.ByteCode()),
+				}
+				if diff := cmp.Diff(want, got, opts); diff != "" {
+					t.Errorf("Diff (-want +got):\n%s", diff)
+				}
 			})
+
+			sut.testRPC(ctx, t, []rpcTest{
+				{
+					method: "eth_getCode",
+					args:   []any{escrowAddr, tt.num},
+					want:   hexutil.Bytes(escrow.ByteCode()),
+				},
+				{
+					method: "eth_getBalance",
+					args:   []any{escrowAddr, tt.num},
+					want:   hexBigU(depositVal),
+				},
+				{
+					method: "eth_getStorageAt",
+					args: []any{
+						escrowAddr,
+						escrow.BalanceStorageSlot(recv),
+						tt.num,
+					},
+					want: hexutil.Bytes(uint256.NewInt(depositVal).PaddedBytes(32)),
+				},
+			}...)
 		})
 	}
 
-	// eth_estimateGas and eth_createAccessList don't accept a block number
-	// parameter via ethclient/gethclient, so they always run against latest.
 	t.Run("eth_estimateGas", func(t *testing.T) {
-		got, err := sut.EstimateGas(ctx, callMsg)
-		require.NoError(t, err, "EstimateGas()")
-		assert.Positive(t, got, "EstimateGas() result")
+		got, err := sut.EstimateGas(ctx, ethereum.CallMsg{Data: escrow.CreationCode()})
+		require.NoError(t, err)
+		assert.InEpsilon(t, deploymentGasUsed, got, 0.015)
 	})
 
+	// Always runs against the latest block.
 	t.Run("eth_createAccessList", func(t *testing.T) {
-		al, gas, errMsg, err := gc.CreateAccessList(ctx, callMsg)
-		require.NoError(t, err, "CreateAccessList()")
-		assert.Empty(t, errMsg, "CreateAccessList() error message")
-		assert.NotNil(t, al, "CreateAccessList() access list")
-		assert.Positive(t, gas, "CreateAccessList() gasUsed")
+		got, _, _, err := sut.CreateAccessList(ctx, balanceCallMsg)
+		require.NoErrorf(t, err, "%T.CreateAccessList()", sut.gethClient.Client)
+		want := &types.AccessList{{
+			Address:     escrowAddr,
+			StorageKeys: []common.Hash{escrow.BalanceStorageSlot(recv)},
+		}}
+		if diff := cmp.Diff(want, got); diff != "" {
+			t.Errorf("Diff (-want +got):\n%s", diff)
+		}
 	})
 }

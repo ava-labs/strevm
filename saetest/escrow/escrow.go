@@ -7,7 +7,7 @@
 // Copyright 2024 Divergence Tech Ltd.
 
 // Package escrow provides bytecode and helpers for the [Escrow.sol] contract
-// deployed to 0x370F21541173E8B773571c135e3b5617d7f38C54 on Ethereum mainnet.
+// deployed to 0xf92186Fc58dA366431e98f3Ddd563d0A3cdf4f59 on Ethereum mainnet.
 //
 // [Escrow.sol]: https://github.com/ARR4N/SWAP2/blob/fe724e87bdc998c3b497c16e35fed354e53dc3e9/src/Escrow.sol
 package escrow
@@ -52,6 +52,17 @@ func callDataWithAddr(sig string, addr common.Address) []byte {
 	return slices.Concat(
 		crypto.Keccak256([]byte(sig))[:4],
 		make([]byte, 12), addr[:],
+	)
+}
+
+// BalanceStorageSlot returns the slot at which the balance of the given
+// beneficiary is stored.
+func BalanceStorageSlot(beneficiary common.Address) common.Hash {
+	// https://docs.soliditylang.org/en/v0.8.25/internals/layout_in_storage.html#mappings-and-dynamic-arrays
+	var mappingStorageSlot common.Hash
+	return crypto.Keccak256Hash(
+		make([]byte, common.HashLength-common.AddressLength), beneficiary.Bytes(),
+		mappingStorageSlot.Bytes(),
 	)
 }
 
