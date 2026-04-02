@@ -144,20 +144,20 @@ func TestNewEthBlockParsing(t *testing.T) {
 	parent := types.NewBlockWithHeader(&types.Header{
 		Number: big.NewInt(0),
 	})
-	builtBlock := NewEthBlock(t, parent, nil)
+	built := NewEthBlock(t, parent, nil)
 
-	bytes, err := rlp.EncodeToBytes(builtBlock)
+	bytes, err := rlp.EncodeToBytes(built)
 	require.NoError(t, err, "rlp.EncodeToBytes()")
 
-	parsedBlock := new(types.Block)
-	require.NoError(t, rlp.DecodeBytes(bytes, parsedBlock), "rlp.DecodeBytes()")
+	parsed := new(types.Block)
+	require.NoError(t, rlp.DecodeBytes(bytes, parsed), "rlp.DecodeBytes()")
 
 	opts := cmp.Options{
 		cmputils.Blocks(),
 		cmputils.Headers(),
 		cmpopts.EquateEmpty(),
 	}
-	if diff := cmp.Diff(builtBlock, parsedBlock, opts); diff != "" {
+	if diff := cmp.Diff(built, parsed, opts); diff != "" {
 		t.Errorf("rlp.DecodeBytes(...) diff (-want +got)\n%s", diff)
 	}
 }
