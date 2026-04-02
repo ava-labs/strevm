@@ -67,9 +67,11 @@ func (vm *VM) BuildBlock(ctx context.Context, bCtx *block.Context) (*blocks.Bloc
 }
 
 var (
-	errUnknownParent     = errors.New("unknown parent")
-	errBlockHeightTooLow = errors.New("block height too low")
-	errHashMismatch      = errors.New("hash mismatch")
+	errUnknownParent         = errors.New("unknown parent")
+	errBlockHeightTooLow     = errors.New("block height too low")
+	errSettledRootMismatch   = errors.New("settled root mismatch")
+	errSettledHeightMismatch = errors.New("settled height mismatch")
+	errHashMismatch          = errors.New("hash mismatch")
 )
 
 // VerifyBlock validates the block and, if successful, populates its ancestry.
@@ -90,7 +92,8 @@ func (vm *VM) VerifyBlock(ctx context.Context, bCtx *block.Context, b *blocks.Bl
 	// fully verify blocks during bootstrapping. So, we skip verification in its
 	// entirety during bootstrapping.
 	if vm.consensusState.Get() == snow.Bootstrapping {
-		bTime := blocks.PreciseTime(vm.hooks, b.Header())
+		header := b.Header()
+		bTime := blocks.PreciseTime(vm.hooks, header)
 		lastSettled, ok, err := blocks.LastToSettleAt(vm.hooks, bTime.Add(-saeparams.Tau), parent)
 		if err != nil {
 			return err
@@ -98,10 +101,17 @@ func (vm *VM) VerifyBlock(ctx context.Context, bCtx *block.Context, b *blocks.Bl
 		if !ok {
 			return errExecutionLagging
 		}
+		// Sanity checks to ensure the in-memory settled block matches the
+		// claimed settled block.
+		if got, want := lastSettled.PostExecutionStateRoot(), b.SettledStateRoot(); got != want {
+			return fmt.Errorf("%w: got %#x ; want %#x", errSettledRootMismatch, got, want)
+		}
+		if got, want := lastSettled.NumberU64(), vm.hooks.SettledHeight(header); got != want {
+			return fmt.Errorf("%w:got %d ; want %d", errSettledHeightMismatch, got, want)
+		}
 		if err := b.SetAncestors(parent, lastSettled); err != nil {
 			return err
 		}
-
 		vm.consensusCritical.Store(b.Hash(), b)
 		return nil
 	}
