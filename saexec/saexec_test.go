@@ -76,8 +76,9 @@ type SUT struct {
 
 type (
 	sutConfig struct {
-		hooks    *saehookstest.Stub
-		archival bool
+		hooks          *saehookstest.Stub
+		archival       bool
+		commitInterval uint64
 	}
 	sutOption = options.Option[sutConfig]
 )
@@ -112,6 +113,9 @@ func newSUT(tb testing.TB, opts ...sutOption) (context.Context, *SUT) {
 	saedbConfig := saedb.Config{
 		TrieDBConfig: tdbConfig,
 		Archival:     sutCfg.archival,
+	}
+	if sutCfg.commitInterval != 0 {
+		saedbConfig.SetCommitIntervalForTesting(sutCfg.commitInterval)
 	}
 	e, err := New(genesis, src.AsHeaderSource(), config, db, xdb, saedbConfig, sutCfg.hooks, logger)
 	require.NoError(tb, err, "New()")
@@ -933,11 +937,16 @@ func TestSnapshotPersistence(t *testing.T) {
 }
 
 func TestStateRootAvailability(t *testing.T) {
-	ctx, sut := newSUT(t)
+	const commitInterval = 16
+
+	ctx, sut := newSUT(t, options.Func[sutConfig](func(c *sutConfig) {
+		c.commitInterval = commitInterval
+	}))
 	e, chain := sut.Executor, sut.chain
 	cfg := saedb.Config{}
+	cfg.SetCommitIntervalForTesting(commitInterval)
 
-	const numBlocks = uint64(saedb.CommitTrieDBEvery) + 10
+	const numBlocks = uint64(commitInterval) + 10
 	for range numBlocks {
 		b := chain.NewBlock(t, types.Transactions{
 			sut.wallet.SetNonceAndSign(t, 0, &types.LegacyTx{
@@ -998,12 +1007,15 @@ func TestStateRootAvailability(t *testing.T) {
 }
 
 func TestArchivalStoresAll(t *testing.T) {
+	const commitInterval = 16
+
 	ctx, sut := newSUT(t, options.Func[sutConfig](func(c *sutConfig) {
 		c.archival = true
+		c.commitInterval = commitInterval
 	}))
 	e, chain := sut.Executor, sut.chain
 
-	const numBlocks = uint64(saedb.CommitTrieDBEvery) + 10
+	const numBlocks = uint64(commitInterval) + 10
 	for range numBlocks {
 		b := chain.NewBlock(t, types.Transactions{
 			sut.wallet.SetNonceAndSign(t, 0, &types.LegacyTx{
@@ -1027,7 +1039,9 @@ func TestArchivalStoresAll(t *testing.T) {
 	t.Run("recover", func(t *testing.T) {
 		// Restart the chain to remove the TrieDB cache.
 		src := blocks.Source(chain.GetBlock)
-		e, err := New(chain.Last(), src.AsHeaderSource(), sut.chainConfig, sut.db, sut.xdb, saedb.Config{Archival: true}, defaultHooks(), sut.log)
+		recoverCfg := saedb.Config{Archival: true}
+		recoverCfg.SetCommitIntervalForTesting(commitInterval)
+		e, err := New(chain.Last(), src.AsHeaderSource(), sut.chainConfig, sut.db, sut.xdb, recoverCfg, defaultHooks(), sut.log)
 		require.NoError(t, err, "New()")
 		t.Cleanup(func() {
 			require.NoErrorf(t, e.Close(), "%T.Close()", e)

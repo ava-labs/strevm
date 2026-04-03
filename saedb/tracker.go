@@ -71,7 +71,7 @@ func NewTracker(db ethdb.Database, c Config, lastExecuted common.Hash, log loggi
 }
 
 // Track tracks the root and may commit the trie associated with the root
-// to the database if [ShouldCommitTrieDB] returns true, or the [Config]
+// to the database if [Config.ShouldCommitTrieDB] returns true, or the [Config]
 // specifies that the node is archival.
 //
 // This state will be available in memory until [Tracker.Untrack] has been
