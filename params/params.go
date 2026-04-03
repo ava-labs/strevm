@@ -21,3 +21,10 @@ const (
 	Tau        = TauSeconds * time.Second
 	TauSeconds = 5
 )
+
+// MaxQueueWallTime is the maximum wall-clock duration a block can remain in the
+// execution queue before processing begins. It is derived from the maximum
+// queue length when adding a block, plus the maximum possible block:
+// (ω_Q+ω_B)/R = 3τλ (see ACP-194). This assumes the executor drains the
+// queue at the gas capacity rate R, which may not be true in practice.
+const MaxQueueWallTime = 3 * Tau * Lambda
