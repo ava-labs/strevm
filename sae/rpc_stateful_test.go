@@ -36,12 +36,11 @@ func TestStateQueryOnNonCanonicalBlock(t *testing.T) {
 	ctx, sut := newSUT(t, 1)
 	b := unwrap(t, sut.createAndVerifyBlock(t, sut.lastAcceptedBlock(t)))
 
-	wantErr := testerr.Contains(blocks.ErrNonCanonicalBlock.Error())
 	sut.testRPC(ctx, t, []rpcTest{
 		{
 			method:  "eth_getBalance",
 			args:    []any{sut.wallet.Addresses()[0], rpc.BlockNumberOrHashWithHash(b.Hash(), false)},
-			wantErr: wantErr,
+			wantErr: testerr.Contains(blocks.ErrNonCanonicalBlock.Error()),
 		},
 		{
 			method: "eth_getBlockByHash",
