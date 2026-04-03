@@ -935,6 +935,7 @@ func TestSnapshotPersistence(t *testing.T) {
 func TestStateRootAvailability(t *testing.T) {
 	ctx, sut := newSUT(t)
 	e, chain := sut.Executor, sut.chain
+	cfg := saedb.Config{}
 
 	const numBlocks = uint64(saedb.CommitTrieDBEvery) + 10
 	for range numBlocks {
@@ -959,7 +960,7 @@ func TestStateRootAvailability(t *testing.T) {
 
 			var want testerr.Want
 			switch {
-			case saedb.ShouldCommitTrieDB(b.NumberU64()):
+			case cfg.ShouldCommitTrieDB(b.NumberU64()):
 				// on disk
 			case expectReferenced(b.NumberU64()):
 				// still referenced

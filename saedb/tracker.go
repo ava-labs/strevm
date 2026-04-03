@@ -23,8 +23,9 @@ import (
 // state is committed.
 type Config struct {
 	// TODO(alarso16): move minimal elements to config and construct in method.
-	TrieDBConfig *triedb.Config
-	Archival     bool // if true, will store every state on disk
+	TrieDBConfig   *triedb.Config
+	Archival       bool // if true, will store every state on disk
+	commitInterval uint64
 }
 
 // SnapshotCacheSizeMB is the snapshot cache size used by a [Tracker].
@@ -43,6 +44,7 @@ type Tracker struct {
 	cache      state.Database
 	isHashDB   bool
 	isArchival bool
+	config     Config
 	log        logging.Logger
 }
 
@@ -63,6 +65,7 @@ func NewTracker(db ethdb.Database, c Config, lastExecuted common.Hash, log loggi
 		cache:      cache,
 		isHashDB:   isHashDB,
 		isArchival: c.Archival,
+		config:     c,
 		log:        log,
 	}, nil
 }
@@ -101,7 +104,7 @@ func (t *Tracker) MaybeCommit(settledRoot, executionRoot common.Hash, height uin
 	case t.isArchival:
 		commit = executionRoot
 		because = "post-execution archive"
-	case ShouldCommitTrieDB(height):
+	case t.config.ShouldCommitTrieDB(height):
 		commit = settledRoot
 		because = "settled"
 	default:
@@ -127,7 +130,7 @@ func LastHeightWithExecutionRootCommitted(db ethdb.Database, c Config, hooks hoo
 		return head
 
 	default:
-		num := LastCommittedTrieDBHeight(head)
+		num := c.LastCommittedTrieDBHeight(head)
 		if num <= lastSynchronous {
 			return lastSynchronous
 		}

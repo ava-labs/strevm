@@ -71,6 +71,7 @@ func New(
 		return nil, err
 	}
 
+	queueCapacity := 2 * saedbConfig.CommitIntervalOrDefault()
 	e := &Executor{
 		Tracker: t,
 		quit:    make(chan struct{}), // closed by [Executor.Close]
@@ -80,7 +81,7 @@ func New(
 		// On startup we enqueue every block since the last time the trie DB was
 		// committed, so the queue needs sufficient capacity to avoid
 		// [Executor.Enqueue] warning about it being too full.
-		queue: make(chan *blocks.Block, 2*saedb.CommitTrieDBEvery),
+		queue: make(chan *blocks.Block, queueCapacity),
 		chainContext: &chainContext{
 			headerSrc,
 			lru.NewCache[uint64, *types.Header](256), // minimum history for BLOCKHASH op
