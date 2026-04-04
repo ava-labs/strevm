@@ -12,41 +12,27 @@ import (
 	"github.com/ava-labs/libevm/core/state"
 )
 
-// CommitTrieDBEvery is the number of blocks between commits of the state
-// trie to disk.
-const CommitTrieDBEvery = 4096
+// defaultCommitInterval is the default number of blocks between commits of the
+// state trie to disk.
+const defaultCommitInterval = 4096
 
-// CommitIntervalOrDefault returns the configured trie commit interval.
-// If no test override was set, it returns [CommitTrieDBEvery].
-func (c Config) CommitIntervalOrDefault() uint64 {
-	if c.commitInterval == 0 {
-		return CommitTrieDBEvery
+// CommitInterval returns the trie commit interval.
+func (c Config) CommitInterval() uint64 {
+	if c.TrieDBCommitInterval == 0 {
+		return defaultCommitInterval
 	}
-	return c.commitInterval
-}
-
-// SetCommitIntervalForTesting overrides the trie commit interval used by this
-// config. This is intended to ONLY be used for tests as production callers
-// should rely on the default.
-func (c *Config) SetCommitIntervalForTesting(interval uint64) {
-	c.commitInterval = interval
+	return c.TrieDBCommitInterval
 }
 
 // ShouldCommitTrieDB returns whether or not to commit the state trie to disk.
 func (c Config) ShouldCommitTrieDB(blockNum uint64) bool {
-	if c.commitInterval == 0 {
-		return blockNum%CommitTrieDBEvery == 0
-	}
-	return blockNum%c.commitInterval == 0
+	return blockNum%c.CommitInterval() == 0
 }
 
 // LastCommittedTrieDBHeight returns the largest value <= the argument at which
 // [Config.ShouldCommitTrieDB] would have returned true.
 func (c Config) LastCommittedTrieDBHeight(atOrBefore uint64) uint64 {
-	if c.commitInterval == 0 {
-		return atOrBefore / CommitTrieDBEvery * CommitTrieDBEvery
-	}
-	return atOrBefore / c.commitInterval * c.commitInterval
+	return atOrBefore - atOrBefore%c.CommitInterval()
 }
 
 // A StateDBOpener opens a [state.StateDB] at the given root.

@@ -23,9 +23,9 @@ import (
 // state is committed.
 type Config struct {
 	// TODO(alarso16): move minimal elements to config and construct in method.
-	TrieDBConfig   *triedb.Config
-	Archival       bool // if true, will store every state on disk
-	commitInterval uint64
+	TrieDBConfig         *triedb.Config
+	Archival             bool // if true, will store every state on disk
+	TrieDBCommitInterval uint64
 }
 
 // SnapshotCacheSizeMB is the snapshot cache size used by a [Tracker].

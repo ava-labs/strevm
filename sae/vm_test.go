@@ -290,9 +290,9 @@ func withExecResultsDB(hdb database.HeightIndex) sutOption {
 	})
 }
 
-func withTestCommitInterval(interval uint64) sutOption {
+func withCommitInterval(interval uint64) sutOption {
 	return options.Func[sutConfig](func(c *sutConfig) {
-		c.vmConfig.DBConfig.SetCommitIntervalForTesting(interval)
+		c.vmConfig.DBConfig.TrieDBCommitInterval = interval
 	})
 }
 

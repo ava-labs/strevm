@@ -28,20 +28,18 @@ import (
 	"github.com/ava-labs/strevm/blocks"
 	"github.com/ava-labs/strevm/cmputils"
 	saeparams "github.com/ava-labs/strevm/params"
-	"github.com/ava-labs/strevm/saedb"
 	"github.com/ava-labs/strevm/saetest"
 )
 
 func TestRecoverFromDatabase(t *testing.T) {
 	t.Parallel()
 
-	const commitInterval = 16
-
 	sutOpt, vmTime := withVMTime(t, time.Unix(saeparams.TauSeconds, 0))
 
 	var srcDB database.Database
 	srcHDB := saetest.NewHeightIndexDB()
-	ctx, src := newSUT(t, 1, sutOpt, withExecResultsDB(srcHDB), withTestCommitInterval(commitInterval), options.Func[sutConfig](func(c *sutConfig) {
+	const commitInterval = 16
+	ctx, src := newSUT(t, 1, sutOpt, withExecResultsDB(srcHDB), withCommitInterval(commitInterval), options.Func[sutConfig](func(c *sutConfig) {
 		srcDB = c.db
 		c.logLevel = logging.Warn
 	}))
@@ -82,7 +80,7 @@ func TestRecoverFromDatabase(t *testing.T) {
 		t.Run("recover", func(t *testing.T) {
 			newDB := copyDB(t, srcDB)
 
-			sutCtx, sut := newSUT(t, 1, sutOpt, withExecResultsDB(srcHDB.Clone()), withTestCommitInterval(commitInterval), options.Func[sutConfig](func(c *sutConfig) {
+			sutCtx, sut := newSUT(t, 1, sutOpt, withExecResultsDB(srcHDB.Clone()), withCommitInterval(commitInterval), options.Func[sutConfig](func(c *sutConfig) {
 				c.db = newDB
 				c.logLevel = logging.Warn
 			}))
@@ -134,9 +132,6 @@ func TestRecoverSimple(t *testing.T) {
 	t.Parallel()
 
 	const commitInterval = 16
-	cfg := saedb.Config{}
-	cfg.SetCommitIntervalForTesting(commitInterval)
-
 	tests := []struct {
 		name      string
 		numBlocks int
@@ -168,7 +163,7 @@ func TestRecoverSimple(t *testing.T) {
 			srcHDB := saetest.NewHeightIndexDB()
 
 			sutOpt, vmTime := withVMTime(t, time.Unix(saeparams.TauSeconds, 0))
-			ctx, src := newSUT(t, 1, sutOpt, withExecResultsDB(srcHDB), withTestCommitInterval(commitInterval), options.Func[sutConfig](func(c *sutConfig) {
+			ctx, src := newSUT(t, 1, sutOpt, withExecResultsDB(srcHDB), withCommitInterval(commitInterval), options.Func[sutConfig](func(c *sutConfig) {
 				srcDB = c.db
 				c.logLevel = logging.Warn
 				c.vmConfig.DBConfig.Archival = tt.archival
@@ -185,7 +180,7 @@ func TestRecoverSimple(t *testing.T) {
 			}
 
 			newDB := copyDB(t, srcDB)
-			_, sut := newSUT(t, 1, sutOpt, withExecResultsDB(srcHDB.Clone()), withTestCommitInterval(commitInterval), options.Func[sutConfig](func(c *sutConfig) {
+			_, sut := newSUT(t, 1, sutOpt, withExecResultsDB(srcHDB.Clone()), withCommitInterval(commitInterval), options.Func[sutConfig](func(c *sutConfig) {
 				c.db = newDB
 				c.logLevel = logging.Warn
 				c.vmConfig.DBConfig.Archival = tt.archival
@@ -202,7 +197,7 @@ func TestRecoverSimple(t *testing.T) {
 			// where the settled state was written to disk.
 			t.Run("unavailable_outside_window", func(t *testing.T) {
 				lastSettled := sut.rawVM.last.settled.Load().NumberU64()
-				committedHeight := cfg.LastCommittedTrieDBHeight(lastSettled)
+				committedHeight := sut.rawVM.config.DBConfig.LastCommittedTrieDBHeight(lastSettled)
 				lastOnDisk, err := canonicalBlock(sut.rawVM.db, committedHeight)
 				require.NoErrorf(t, err, "canonicalBlock(): %d", committedHeight)
 

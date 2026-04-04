@@ -8,9 +8,8 @@ import (
 )
 
 func TestTrieDBCommitHeights(t *testing.T) {
-	const e = CommitTrieDBEvery
-	cfg := Config{}
-
+	c := Config{}
+	e := c.CommitInterval()
 	for num, want := range map[uint64]bool{
 		e - 1:   false,
 		e:       true,
@@ -19,7 +18,7 @@ func TestTrieDBCommitHeights(t *testing.T) {
 		2 * e:   true,
 		2*e + 1: false,
 	} {
-		if got := cfg.ShouldCommitTrieDB(num); got != want {
+		if got := c.ShouldCommitTrieDB(num); got != want {
 			t.Errorf("CommitTrieDB(%d) got %t want %t", num, got, want)
 		}
 	}
@@ -34,17 +33,17 @@ func TestTrieDBCommitHeights(t *testing.T) {
 		2*e + 1: 2 * e,
 		3*e - 1: 2 * e,
 	} {
-		if got := cfg.LastCommittedTrieDBHeight(num); got != want {
+		if got := c.LastCommittedTrieDBHeight(num); got != want {
 			t.Errorf("LastCommitedTrieDBHeight(%d) got %d; want %d", num, got, want)
 		}
 	}
 
 	var last uint64
 	for num := range uint64(20 * e) {
-		if cfg.ShouldCommitTrieDB(num) {
+		if c.ShouldCommitTrieDB(num) {
 			last = num
 		}
-		if got, want := cfg.LastCommittedTrieDBHeight(num), last; got != want {
+		if got, want := c.LastCommittedTrieDBHeight(num), last; got != want {
 			t.Errorf("LastCommitedTrieDBHeight(%d) got %d; want %d", num, got, want)
 		}
 	}
