@@ -19,8 +19,7 @@ import (
 	"github.com/ava-labs/strevm/hook"
 )
 
-// Config allows parameterization of the TrieDB and when
-// state is committed.
+// Config allows parameterization of the TrieDB and when state is committed.
 type Config struct {
 	// TODO(alarso16): move minimal elements to config and construct in method.
 	TrieDBConfig         *triedb.Config
