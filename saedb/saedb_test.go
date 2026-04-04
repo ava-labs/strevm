@@ -39,7 +39,7 @@ func TestTrieDBCommitHeights(t *testing.T) {
 	}
 
 	var last uint64
-	for num := range uint64(20 * e) {
+	for num := range 20 * e {
 		if c.ShouldCommitTrieDB(num) {
 			last = num
 		}
