@@ -112,9 +112,9 @@ func newSUT(tb testing.TB, opts ...sutOption) (context.Context, *SUT) {
 	src := blocks.Source(chain.GetBlock)
 
 	saedbConfig := saedb.Config{
-		TrieDBConfig:         tdbConfig,
-		Archival:             sutCfg.archival,
-		TrieDBCommitInterval: sutCfg.commitInterval,
+		TrieDBConfig:       tdbConfig,
+		Archival:           sutCfg.archival,
+		TrieCommitInterval: sutCfg.commitInterval,
 	}
 	e, err := New(genesis, src.AsHeaderSource(), config, db, xdb, saedbConfig, sutCfg.hooks, logger)
 	require.NoError(tb, err, "New()")

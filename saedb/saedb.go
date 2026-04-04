@@ -18,10 +18,10 @@ const defaultCommitInterval = 4096
 
 // CommitInterval returns the trie commit interval.
 func (c Config) CommitInterval() uint64 {
-	if c.TrieDBCommitInterval == 0 {
+	if c.TrieCommitInterval == 0 {
 		return defaultCommitInterval
 	}
-	return c.TrieDBCommitInterval
+	return c.TrieCommitInterval
 }
 
 // ShouldCommitTrieDB returns whether or not to commit the state trie to disk.
