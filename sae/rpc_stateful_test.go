@@ -4,6 +4,7 @@
 package sae
 
 import (
+	"context"
 	"math/big"
 	"testing"
 	"time"
@@ -17,6 +18,7 @@ import (
 	"github.com/ava-labs/libevm/core/vm"
 	"github.com/ava-labs/libevm/crypto"
 	"github.com/ava-labs/libevm/eth/tracers/logger"
+	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/rpc"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
@@ -48,6 +50,52 @@ func TestStateQueryOnNonCanonicalBlock(t *testing.T) {
 			want:   (*types.Header)(nil),
 		},
 	}...)
+}
+
+// TestStateQueryOnAcceptedUnexecutedBlockBlocksUntilExecuted verifies that
+// state-dependent RPC calls on an accepted-but-unexecuted block block until
+// execution completes, regardless of whether the block is addressed by hash or
+// height.
+func TestStateQueryOnAcceptedUnexecutedBlockBlocksUntilExecuted(t *testing.T) {
+	blockingPrecompile := common.Address{'b', 'l', 'o', 'c', 'k'}
+	precompileOpt, unblock := withBlockingPrecompile(blockingPrecompile)
+	ctx, sut := newSUT(t, 2, precompileOpt)
+	t.Cleanup(unblock)
+
+	addr := sut.wallet.Addresses()[1]
+	want, err := sut.BalanceAt(ctx, addr, nil)
+	require.NoError(t, err, "%T.BalanceAt(latest)", sut.Client)
+
+	b := sut.runConsensusLoop(t, sut.wallet.SetNonceAndSign(t, 0, &types.LegacyTx{
+		To:       &blockingPrecompile,
+		Gas:      params.TxGas,
+		GasPrice: big.NewInt(1),
+	}))
+	require.False(t, b.Executed(), "%T.Executed()", b)
+	_, ok := sut.rawVM.consensusCritical.Load(b.Hash())
+	require.True(t, ok, "accepted-but-unexecuted block should still be in consensusCritical")
+
+	ids := []rpc.BlockNumberOrHash{
+		rpc.BlockNumberOrHashWithHash(b.Hash(), false),
+		rpc.BlockNumberOrHashWithNumber(rpc.BlockNumber(b.Number().Int64())),
+	}
+
+	for _, id := range ids {
+		timeoutCtx, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
+		var timedOut hexutil.Big
+		err = sut.CallContext(timeoutCtx, &timedOut, "eth_getBalance", addr, id)
+		cancel()
+		require.ErrorIs(t, err, context.DeadlineExceeded, "eth_getBalance(%v) should block until execution completes", id)
+	}
+
+	unblock()
+	require.NoError(t, b.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", b)
+
+	for _, id := range ids {
+		var got hexutil.Big
+		require.NoErrorf(t, sut.CallContext(ctx, &got, "eth_getBalance", addr, id), "%T.CallContext(eth_getBalance, %v)", sut.rpcClient, id)
+		assert.Zero(t, want.Cmp((*big.Int)(&got)), "eth_getBalance(%v)", id)
+	}
 }
 
 func TestDebugTrace(t *testing.T) {
