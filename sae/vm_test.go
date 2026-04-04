@@ -12,7 +12,6 @@ import (
 	"math/rand/v2"
 	"net/http/httptest"
 	"os"
-	"runtime"
 	"sync"
 	"testing"
 	"time"
@@ -29,7 +28,6 @@ import (
 	"github.com/ava-labs/avalanchego/snow/snowtest"
 	"github.com/ava-labs/avalanchego/snow/validators/validatorstest"
 	"github.com/ava-labs/avalanchego/utils/logging"
-	"github.com/ava-labs/avalanchego/utils/set"
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core"
 	"github.com/ava-labs/libevm/core/rawdb"
@@ -797,13 +795,6 @@ func TestSyntacticBlockChecks(t *testing.T) {
 }
 
 func TestAcceptBlock(t *testing.T) {
-	// We use a generous timeout because GC finalizers from previous tests take
-	// a long time to run in resource constrained environments.
-	require.EventuallyWithT(t, func(t *assert.CollectT) {
-		runtime.GC()
-		require.Zero(t, blocks.InMemoryBlockCount(), "initial in-memory block count")
-	}, 5*time.Second, 50*time.Millisecond)
-
 	opt, vmTime := withVMTime(t, time.Unix(saeparams.TauSeconds, 0))
 
 	ctx, sut := newSUT(t, 1, opt)
@@ -823,7 +814,6 @@ func TestAcceptBlock(t *testing.T) {
 		sut.assertBlockHashInvariants(ctx, t)
 
 		lastSettled := b.LastSettled().Height()
-		var wantInMemory set.Set[uint64]
 		for i, bb := range unsettled {
 			switch {
 			case bb == nil: // settled earlier
@@ -833,18 +823,20 @@ func TestAcceptBlock(t *testing.T) {
 
 			default:
 				require.Greater(t, bb.Height(), lastSettled, "height of unsettled block")
-				wantInMemory.Add(
-					bb.Height(),
-					bb.ParentBlock().Height(),
-					bb.LastSettled().Height(),
-				)
 			}
 		}
 
-		assert.EventuallyWithT(t, func(t *assert.CollectT) {
-			runtime.GC()
-			require.Equal(t, int64(wantInMemory.Len()), blocks.InMemoryBlockCount(), "in-memory block count")
-		}, 100*time.Millisecond, time.Millisecond)
+		for _, bb := range unsettled {
+			if bb == nil {
+				continue
+			}
+
+			expect := blocks.Executed
+			if bb.Settled() {
+				expect = blocks.Settled
+			}
+			require.NoError(t, bb.CheckInvariants(expect), "block %d lifecycle invariants", bb.Height())
+		}
 	}
 }
 

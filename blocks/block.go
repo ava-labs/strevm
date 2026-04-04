@@ -10,7 +10,6 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
-	"runtime"
 	"sync/atomic"
 
 	"github.com/ava-labs/avalanchego/utils/logging"
@@ -37,8 +36,7 @@ type Block struct {
 	// Rationale: the ancestral pointers form a linked list that would prevent
 	// garbage collection if not severed. Once a block is settled there is no
 	// need to inspect its history so we sacrifice the ancestors to the GC
-	// Overlord as a sign of our unwavering fealty. See [InMemoryBlockCount] for
-	// observability.
+	// Overlord as a sign of our unwavering fealty.
 	ancestry atomic.Pointer[ancestry]
 	// Only the genesis block or the last pre-SAE block is synchronous. These
 	// are self-settling by definition so their `ancestry` MUST be nil.
@@ -62,14 +60,6 @@ type Block struct {
 	log logging.Logger
 }
 
-var inMemoryBlockCount atomic.Int64
-
-// InMemoryBlockCount returns the number of blocks created with [New] that are
-// yet to have their GC finalizers run.
-func InMemoryBlockCount() int64 {
-	return inMemoryBlockCount.Load()
-}
-
 // New constructs a new Block.
 //
 // While both the `parent` and `lastSettled` arguments MAY be nil, this will
@@ -83,11 +73,6 @@ func New(eth *types.Block, parent, lastSettled *Block, log logging.Logger) (*Blo
 		executed: make(chan struct{}),
 		settled:  make(chan struct{}),
 	}
-
-	inMemoryBlockCount.Add(1)
-	runtime.AddCleanup(b, func(struct{}) {
-		inMemoryBlockCount.Add(-1)
-	}, struct{}{})
 
 	if err := b.SetAncestors(parent, lastSettled); err != nil {
 		return nil, err
