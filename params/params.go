@@ -22,9 +22,13 @@ const (
 	TauSeconds = 5
 )
 
-// MaxQueueWallTime is the maximum wall-clock duration a block can remain in the
-// execution queue before processing begins. It is derived from the maximum
-// queue length when adding a block, plus the maximum possible block:
-// (ω_Q+ω_B)/R = 3τλ (see ACP-194). This assumes the executor drains the
-// queue at the gas capacity rate R, which may not be true in practice.
-const MaxQueueWallTime = 3 * Tau * Lambda
+// MaxFullBlocksInOpenQueue is the maximum number of full blocks that can be
+// in the execution queue while it remains open to accepting a new block. An
+// open queue MAY accept an entire, maximal block, which could leave it in an
+// allowed over-threshold (closed) state.
+const MaxFullBlocksInOpenQueue = 2
+
+// MaxQueueWallTime is the maximum wall-clock duration a block should remain in
+// the execution queue before execution finishes. This assumes the executor
+// drains the queue at least as fast as the gas capacity rate R.
+const MaxQueueWallTime = (MaxFullBlocksInOpenQueue + 1) * Tau * Lambda
