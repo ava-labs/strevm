@@ -7,44 +7,52 @@ import (
 	"testing"
 )
 
-func TestTrieDBCommitHeights(t *testing.T) {
-	c := Config{}
-	e := c.CommitInterval()
-	for num, want := range map[uint64]bool{
-		e - 1:   false,
-		e:       true,
-		e + 1:   false,
-		2*e - 1: false,
-		2 * e:   true,
-		2*e + 1: false,
-	} {
-		if got := c.ShouldCommitTrieDB(num); got != want {
-			t.Errorf("CommitTrieDB(%d) got %t want %t", num, got, want)
-		}
-	}
+func FuzzTrieDBCommitHeights(f *testing.F) {
+	f.Fuzz(func(t *testing.T, e uint64) {
+		// Don't include testing for archival mode (committing at every height).
+		e = max(e, 2)
+		// Avoid iterating over very large spaces.
+		e = min(e, 100_000)
 
-	for num, want := range map[uint64]uint64{
-		0:       0,
-		e - 1:   0,
-		e:       e,
-		e + 1:   e,
-		2*e - 1: e,
-		2 * e:   2 * e,
-		2*e + 1: 2 * e,
-		3*e - 1: 2 * e,
-	} {
-		if got := c.LastCommittedTrieDBHeight(num); got != want {
-			t.Errorf("LastCommittedTrieDBHeight(%d) got %d; want %d", num, got, want)
+		c := Config{
+			TrieCommitInterval: e,
 		}
-	}
+		for num, want := range map[uint64]bool{
+			e - 1:   false,
+			e:       true,
+			e + 1:   false,
+			2*e - 1: false,
+			2 * e:   true,
+			2*e + 1: false,
+		} {
+			if got := c.ShouldCommitTrieDB(num); got != want {
+				t.Errorf("CommitTrieDB(%d) got %t want %t", num, got, want)
+			}
+		}
 
-	var last uint64
-	for num := range 20 * e {
-		if c.ShouldCommitTrieDB(num) {
-			last = num
+		for num, want := range map[uint64]uint64{
+			0:       0,
+			e - 1:   0,
+			e:       e,
+			e + 1:   e,
+			2*e - 1: e,
+			2 * e:   2 * e,
+			2*e + 1: 2 * e,
+			3*e - 1: 2 * e,
+		} {
+			if got := c.LastCommittedTrieDBHeight(num); got != want {
+				t.Errorf("LastCommittedTrieDBHeight(%d) got %d; want %d", num, got, want)
+			}
 		}
-		if got, want := c.LastCommittedTrieDBHeight(num), last; got != want {
-			t.Errorf("LastCommittedTrieDBHeight(%d) got %d; want %d", num, got, want)
+
+		var last uint64
+		for num := range 20 * e {
+			if c.ShouldCommitTrieDB(num) {
+				last = num
+			}
+			if got, want := c.LastCommittedTrieDBHeight(num), last; got != want {
+				t.Errorf("LastCommittedTrieDBHeight(%d) got %d; want %d", num, got, want)
+			}
 		}
-	}
+	})
 }
