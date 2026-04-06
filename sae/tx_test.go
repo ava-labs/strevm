@@ -18,7 +18,7 @@ func TestTxTypeSupport(t *testing.T) {
 	ctx, sut := newSUT(t, 1)
 
 	var to common.Address
-	hashes := make([]common.Hash, 0, 3)
+	hashes := make([]common.Hash, 0, len(txs)
 	txs := []types.TxData{
 		&types.LegacyTx{
 			To:       &to,
