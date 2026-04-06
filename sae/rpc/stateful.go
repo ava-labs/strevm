@@ -210,11 +210,14 @@ func (b *backend) StateAtTransaction(ctx context.Context, ethB *types.Block, txI
 
 // postExecutionStateRoot returns the post-execution state root for the block
 // identified by hash and number, checking in-memory blocks first, then falling
-// back to disk. For in-memory blocks, [blocks.Block.PostExecutionStateRoot]
-// blocks until execution completes.
+// back to disk.
 func (b *backend) postExecutionStateRoot(hash common.Hash, num uint64) (common.Hash, error) {
-	if bl, ok := b.ConsensusCriticalBlock(hash); ok {
+	switch bl, ok := b.ConsensusCriticalBlock(hash); {
+	case !ok:
+		return blocks.PostExecutionStateRoot(b.XDB(), num)
+	case bl.Executed():
 		return bl.PostExecutionStateRoot(), nil
+	default:
+		return common.Hash{}, fmt.Errorf("post-execution state root unavailable for block %d (%#x)", num, hash)
 	}
-	return blocks.PostExecutionStateRoot(b.XDB(), num)
 }
