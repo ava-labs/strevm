@@ -198,7 +198,7 @@ func TestRecoverSimple(t *testing.T) {
 			// where the settled state was written to disk.
 			t.Run("unavailable_outside_window", func(t *testing.T) {
 				lastSettled := sut.rawVM.last.settled.Load().NumberU64()
-				committedHeight := saedb.LastCommittedTrieDBHeight(lastSettled, sut.rawVM.config.DBConfig.CommitInterval())
+				committedHeight := saedb.LastCommittedTrieDBHeight(lastSettled, commitInterval)
 				lastOnDisk, err := canonicalBlock(sut.rawVM.db, committedHeight)
 				require.NoErrorf(t, err, "canonicalBlock(): %d", committedHeight)
 
