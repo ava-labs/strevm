@@ -29,9 +29,7 @@ const (
 const MaxFullBlocksInOpenQueue = 2
 
 // MaxFullBlocksInClosedQueue is the maximum number of full blocks that can be
-// in the execution queue after it accepts one final maximal block. Once the
-// queue reaches this threshold, it MUST reject additional blocks until enough
-// work settles to reopen the queue.
+// in the execution queue.
 const MaxFullBlocksInClosedQueue = MaxFullBlocksInOpenQueue + 1
 
 // MaxQueueWallTime is the maximum wall-clock duration a block should remain in
