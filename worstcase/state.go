@@ -142,24 +142,11 @@ func (s *State) StartBlock(h *types.Header) error {
 }
 
 // safeMaxBlockSize returns the maximum block size for the clock's rate,
-// possibly capping it to avoid overflow when calculating the queue size. At the
+// possibly capping it so a full closed queue still fits in [gas.Gas]. At the
 // time of writing, the cap is ~6e17, so capping is exceedingly unlikely.
-//
-// The cap follows from:
-//
-//	maxBlockSize = maxSafeRate * maxGasSecondsPerBlock
-//	maxOpenQSize = saeparams.MaxFullBlocksInOpenQueue * maxBlockSize
-//	maxClosedQSize = maxOpenQSize + maxBlockSize
 func safeMaxBlockSize(clock *gastime.Time) gas.Gas {
-	const maxSafeRate gas.Gas = math.MaxUint64 / maxGasSecondsPerBlock / (saeparams.MaxFullBlocksInOpenQueue + 1)
+	const maxSafeRate gas.Gas = math.MaxUint64 / maxGasSecondsPerBlock / saeparams.MaxFullBlocksInClosedQueue
 	return min(clock.Rate(), maxSafeRate) * maxGasSecondsPerBlock
-func safeMaxBlockSize(clock *gastime.Time) gas.Gas {
-	const (
-		maxGasSecondsInClosedQueue         = saeparams.MaxFullBlocksInClosedQueue * maxGasSecondsPerBlock
-		maxGasInClosedQueue                = math.MaxUint64
-		maxGasPerSecond            gas.Gas = maxGasInClosedQueue / maxGasSecondsInClosedQueue
-	)
-return min(clock.Rate(), maxSafeRate) * maxGasSecondsPerBlock
 }
 
 // GasLimit returns the available gas limit for the current block.

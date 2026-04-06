@@ -28,7 +28,13 @@ const (
 // allowed over-threshold (closed) state.
 const MaxFullBlocksInOpenQueue = 2
 
+// MaxFullBlocksInClosedQueue is the maximum number of full blocks that can be
+// in the execution queue after it accepts one final maximal block. Once the
+// queue reaches this threshold, it MUST reject additional blocks until enough
+// work settles to reopen the queue.
+const MaxFullBlocksInClosedQueue = MaxFullBlocksInOpenQueue + 1
+
 // MaxQueueWallTime is the maximum wall-clock duration a block should remain in
 // the execution queue before execution finishes. This assumes the executor
 // drains the queue at least as fast as the gas capacity rate R.
-const MaxQueueWallTime = (MaxFullBlocksInOpenQueue + 1) * Tau * Lambda
+const MaxQueueWallTime = MaxFullBlocksInClosedQueue * Tau * Lambda
