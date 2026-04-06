@@ -768,10 +768,10 @@ func TestInvalidCustomTransactionAllowedInBootstrapping(t *testing.T) {
 		consensusState snow.State
 		want           error
 	}{
-		// {
-		// 	consensusState: snow.NormalOp,
-		// 	want:           errHashMismatch,
-		// },
+		{
+			consensusState: snow.NormalOp,
+			want:           errHashMismatch,
+		},
 		{
 			consensusState: snow.Bootstrapping,
 			want:           nil,
