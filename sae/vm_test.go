@@ -95,6 +95,8 @@ type SUT struct {
 	hooks   *hookstest.Stub
 	logger  *saetest.TBLogger
 
+	mempoolLock sync.Mutex // must be held when calling [txpool.TxPool.Sync]
+
 	validators *validatorstest.State
 	sender     *enginetest.Sender
 }
@@ -363,21 +365,28 @@ func (s *SUT) addToMempool(tb testing.TB, txs ...*types.Transaction) {
 
 // syncMempool is a convenience wrapper for calling [txpool.TxPool.Sync], which
 // MUST NOT be done in production.
+// Additionally, [txpool.TxPool.Sync] is NOT safe for concurrent use, so this call
+// holds [SUT.mempoolLock].
 func (s *SUT) syncMempool(tb testing.TB) {
 	tb.Helper()
 	var _ txpool.TxPool // maintain import for [comment] rendering
 	p := s.rawVM.mempool.Pool
+
+	s.mempoolLock.Lock()
+	defer s.mempoolLock.Unlock()
 	require.NoErrorf(tb, p.Sync(), "%T.Sync()", p)
 }
 
-// requireInMempool requires that the transaction with the specified hash is
-// eventually in the mempool. It calls [SUT.syncMempool] before every check.
+// requireInMempool requires that each transaction with the specified hashes are
+// eventually in the mempool. Internally calls [SUT.syncMempool], which holds
+// [SUT.mempoolLock].
 func (s *SUT) requireInMempool(tb testing.TB, txs ...common.Hash) {
 	tb.Helper()
+
+	s.syncMempool(tb)
 	require.EventuallyWithTf(
 		tb,
 		func(c *assert.CollectT) {
-			s.syncMempool(tb)
 			for i, tx := range txs {
 				assert.Truef(c, s.rawVM.mempool.Pool.Has(tx), "tx %d:%v not in mempool", i, tx)
 			}

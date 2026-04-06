@@ -12,6 +12,7 @@ import (
 	"math/rand/v2"
 	"path/filepath"
 	"slices"
+	"sync"
 	"testing"
 	"time"
 
@@ -61,6 +62,8 @@ type SUT struct {
 	chain  *blockstest.ChainBuilder
 	wallet *saetest.Wallet
 	exec   *saexec.Executor
+
+	syncLock sync.Mutex // must be held while calling [txpool.TxPool.Sync]
 }
 
 func newWallet(tb testing.TB, numAccounts uint) *saetest.Wallet {
@@ -69,7 +72,7 @@ func newWallet(tb testing.TB, numAccounts uint) *saetest.Wallet {
 	return saetest.NewUNSAFEWallet(tb, numAccounts, signer)
 }
 
-func newSUT(t *testing.T, numAccounts uint) SUT {
+func newSUT(t *testing.T, numAccounts uint) *SUT {
 	t.Helper()
 	logger := saetest.NewTBLogger(t, logging.Warn)
 
@@ -96,7 +99,7 @@ func newSUT(t *testing.T, numAccounts uint) SUT {
 		assert.NoErrorf(t, pool.Close(), "%T.Close()", pool)
 	})
 
-	return SUT{
+	return &SUT{
 		Set:    set,
 		chain:  chain,
 		wallet: wallet,
@@ -114,6 +117,16 @@ func newTxPool(t *testing.T, bc BlockChain) *txpool.TxPool {
 	p, err := txpool.New(1, bc, subs)
 	require.NoError(t, err, "txpool.New()")
 	return p
+}
+
+// syncTxPool calls [txpool.TxPool.Sync] with [SUT.syncLock] held,
+// since it is not safe for concurrent use.
+func (s *SUT) syncTxPool(t require.TestingT) {
+	s.syncLock.Lock()
+	defer s.syncLock.Unlock()
+
+	p := s.set.pool
+	require.NoErrorf(t, p.Sync(), "%T.Sync()", p)
 }
 
 func TestExecutorIntegration(t *testing.T) {
@@ -140,7 +153,7 @@ func TestExecutorIntegration(t *testing.T) {
 
 	t.Run("Iterate_after_Add", func(t *testing.T) {
 		// Note that calls to [txpool.TxPool.Sync] are only necessary in tests,
-		// and MUST NOT be replicated in production.
+		// and MUST NOT be replicated in production, and is NOT concurrent safe.
 		require.NoErrorf(t, s.Pool.Sync(), "%T.Sync()", s.Pool)
 		require.Lenf(t, slices.Collect(s.Iterate), numTxs, "slices.Collect(%T.Iterate)", s.Set)
 	})
@@ -179,7 +192,7 @@ func TestExecutorIntegration(t *testing.T) {
 
 	assert.EventuallyWithTf(
 		t, func(c *assert.CollectT) {
-			require.NoErrorf(c, s.Pool.Sync(), "%T.Sync()", s.Pool)
+			s.syncTxPool(c)
 			assert.Zerof(c, s.Len(), "%T.Len()", s.Set)
 			assert.Emptyf(c, slices.Collect(s.Iterate), "slices.Collect(%T.Iterate)", s.Set)
 			for _, tx := range txs {
@@ -306,7 +319,7 @@ func TestP2PIntegration(t *testing.T) {
 
 			require.NoErrorf(t, send.Add(txViaGossip), "%T.Add()", send.Set)
 			require.NoErrorf(t, send.SendTx(ctx, txViaRPC.Transaction), "%T.SendTx()", send.Set)
-			require.NoErrorf(t, send.Pool.Sync(), "sender %T.Sync()", send.Pool)
+			send.syncTxPool(t)
 
 			t.Run("confirm_setup", func(t *testing.T) {
 				for _, tx := range bothTxs {
@@ -325,7 +338,7 @@ func TestP2PIntegration(t *testing.T) {
 			assert.EventuallyWithTf(
 				t, func(c *assert.CollectT) {
 					require.NoError(t, gossiper.Gossip(ctx))
-					require.NoError(c, recv.Pool.Sync())
+					recv.syncTxPool(t)
 					// Check for the tx from RPC as this is received regardless
 					// of push or pull semantics.
 					require.True(c, recv.Has(txViaRPC.GossipID()))
