@@ -53,7 +53,7 @@ func TestStateQueryOnNonCanonicalBlock(t *testing.T) {
 }
 
 // TestStateQueryOnAcceptedUnexecutedBlockBlocksUntilExecuted verifies that
-// state-dependent RPC calls on an accepted-but-unexecuted block block until
+// state-dependent RPC calls on an accepted-but-unexecuted block will wait until
 // execution completes, regardless of whether the block is addressed by hash or
 // height.
 func TestStateQueryBlocksUntilExecuted(t *testing.T) {
