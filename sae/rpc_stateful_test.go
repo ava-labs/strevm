@@ -51,10 +51,9 @@ func TestStateQueryOnNonCanonicalBlock(t *testing.T) {
 	}...)
 }
 
-// TestStateQueryBlocksUntilExecuted verifies that
-// state-dependent RPC calls on an accepted-but-unexecuted block will wait until
-// execution completes, regardless of whether the block is addressed by hash or
-// height.
+// TestStateQueryBlocksUntilExecuted verifies that state-dependent RPC calls on
+// an accepted-but-unexecuted block will wait until execution completes,
+// regardless of whether the block is addressed by hash or height.
 func TestStateQueryBlocksUntilExecuted(t *testing.T) {
 	blockingPrecompile := common.Address{'b', 'l', 'o', 'c', 'k'}
 	precompileOpt, unblock := withBlockingPrecompile(blockingPrecompile)
