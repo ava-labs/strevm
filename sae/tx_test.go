@@ -4,7 +4,6 @@
 package sae
 
 import (
-	"fmt"
 	"math/big"
 	"testing"
 
@@ -18,7 +17,6 @@ func TestTxTypeSupport(t *testing.T) {
 	ctx, sut := newSUT(t, 1)
 
 	var to common.Address
-	hashes := make([]common.Hash, 0, len(txs)
 	txs := []types.TxData{
 		&types.LegacyTx{
 			To:       &to,
@@ -36,16 +34,13 @@ func TestTxTypeSupport(t *testing.T) {
 			GasFeeCap: big.NewInt(1),
 		},
 	}
+	signedTxs := make([]*types.Transaction, 0, len(txs))
 
 	for _, tx := range txs {
-		t.Run(fmt.Sprintf("%T", tx), func(t *testing.T) {
-			signedTxs = append(signedTxs, sut.wallet.SetNonceAndSign(t, 0, tx))
-})
-if t.Failed() {
-t.FailNow()
-}
-}
-b := sut.runConsensusLoop(t, signedTxs...)
+		signedTxs = append(signedTxs, sut.wallet.SetNonceAndSign(t, 0, tx))
+	}
+
+	b := sut.runConsensusLoop(t, signedTxs...)
 	require.NoErrorf(t, b.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", b)
 
 	sdb := sut.stateAt(t, b.PostExecutionStateRoot())
