@@ -18,6 +18,7 @@ func TestTxTypeSupport(t *testing.T) {
 	ctx, sut := newSUT(t, 1)
 
 	var to common.Address
+	hashes := make([]common.Hash, 0, 3)
 	txs := []types.TxData{
 		&types.LegacyTx{
 			To:       &to,
@@ -38,12 +39,15 @@ func TestTxTypeSupport(t *testing.T) {
 
 	for _, tx := range txs {
 		t.Run(fmt.Sprintf("%T", tx), func(t *testing.T) {
-			sut.mustSendTx(t, sut.wallet.SetNonceAndSign(t, 0, tx))
+			signed := sut.wallet.SetNonceAndSign(t, 0, tx)
+			sut.mustSendTx(t, signed)
+			hashes = append(hashes, signed.Hash())
 		})
 		if t.Failed() {
 			t.FailNow()
 		}
 	}
+	sut.requireInMempool(t, hashes...)
 	b := sut.runConsensusLoop(t)
 	require.NoErrorf(t, b.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", b)
 
