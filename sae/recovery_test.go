@@ -28,6 +28,7 @@ import (
 	"github.com/ava-labs/strevm/blocks"
 	"github.com/ava-labs/strevm/cmputils"
 	saeparams "github.com/ava-labs/strevm/params"
+	"github.com/ava-labs/strevm/saedb"
 	"github.com/ava-labs/strevm/saetest"
 )
 
@@ -197,7 +198,7 @@ func TestRecoverSimple(t *testing.T) {
 			// where the settled state was written to disk.
 			t.Run("unavailable_outside_window", func(t *testing.T) {
 				lastSettled := sut.rawVM.last.settled.Load().NumberU64()
-				committedHeight := sut.rawVM.config.DBConfig.LastCommittedTrieDBHeight(lastSettled)
+				committedHeight := saedb.LastCommittedTrieDBHeight(lastSettled, sut.rawVM.config.DBConfig.CommitInterval())
 				lastOnDisk, err := canonicalBlock(sut.rawVM.db, committedHeight)
 				require.NoErrorf(t, err, "canonicalBlock(): %d", committedHeight)
 

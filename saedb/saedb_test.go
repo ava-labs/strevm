@@ -14,9 +14,6 @@ func FuzzTrieDBCommitHeights(f *testing.F) {
 		// Avoid iterating over very large spaces.
 		e = min(e, 100_000)
 
-		c := Config{
-			TrieCommitInterval: e,
-		}
 		for num, want := range map[uint64]bool{
 			e - 1:   false,
 			e:       true,
@@ -25,8 +22,8 @@ func FuzzTrieDBCommitHeights(f *testing.F) {
 			2 * e:   true,
 			2*e + 1: false,
 		} {
-			if got := c.ShouldCommitTrieDB(num); got != want {
-				t.Errorf("CommitTrieDB(%d) got %t want %t", num, got, want)
+			if got := ShouldCommitTrieDB(num, e); got != want {
+				t.Errorf("ShouldCommitTrieDB(%d, %d) got %t want %t", num, e, got, want)
 			}
 		}
 
@@ -40,18 +37,18 @@ func FuzzTrieDBCommitHeights(f *testing.F) {
 			2*e + 1: 2 * e,
 			3*e - 1: 2 * e,
 		} {
-			if got := c.LastCommittedTrieDBHeight(num); got != want {
-				t.Errorf("LastCommittedTrieDBHeight(%d) got %d; want %d", num, got, want)
+			if got := LastCommittedTrieDBHeight(num, e); got != want {
+				t.Errorf("LastCommittedTrieDBHeight(%d, %d) got %d; want %d", num, e, got, want)
 			}
 		}
 
 		var last uint64
 		for num := range 20 * e {
-			if c.ShouldCommitTrieDB(num) {
+			if ShouldCommitTrieDB(num, e) {
 				last = num
 			}
-			if got, want := c.LastCommittedTrieDBHeight(num), last; got != want {
-				t.Errorf("LastCommittedTrieDBHeight(%d) got %d; want %d", num, got, want)
+			if got, want := LastCommittedTrieDBHeight(num, e), last; got != want {
+				t.Errorf("LastCommittedTrieDBHeight(%d, %d) got %d; want %d", num, e, got, want)
 			}
 		}
 	})

@@ -12,27 +12,15 @@ import (
 	"github.com/ava-labs/libevm/core/state"
 )
 
-// defaultCommitInterval is the default number of blocks between commits of the
-// state trie to disk.
-const defaultCommitInterval = 4096
-
-// CommitInterval returns the trie commit interval.
-func (c Config) CommitInterval() uint64 {
-	if c.TrieCommitInterval == 0 {
-		return defaultCommitInterval
-	}
-	return c.TrieCommitInterval
-}
-
 // ShouldCommitTrieDB returns whether or not to commit the state trie to disk.
-func (c Config) ShouldCommitTrieDB(blockNum uint64) bool {
-	return blockNum%c.CommitInterval() == 0
+func ShouldCommitTrieDB(blockNum, commitInterval uint64) bool {
+	return blockNum%commitInterval == 0
 }
 
 // LastCommittedTrieDBHeight returns the largest value <= the argument at which
-// [Config.ShouldCommitTrieDB] would have returned true.
-func (c Config) LastCommittedTrieDBHeight(atOrBefore uint64) uint64 {
-	return atOrBefore - atOrBefore%c.CommitInterval()
+// [ShouldCommitTrieDB] would have returned true.
+func LastCommittedTrieDBHeight(atOrBefore, commitInterval uint64) uint64 {
+	return atOrBefore - atOrBefore%commitInterval
 }
 
 // A StateDBOpener opens a [state.StateDB] at the given root.

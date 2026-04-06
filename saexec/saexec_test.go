@@ -966,7 +966,7 @@ func TestStateRootAvailability(t *testing.T) {
 
 			var want testerr.Want
 			switch {
-			case sut.saedbConfig.ShouldCommitTrieDB(b.NumberU64()):
+			case saedb.ShouldCommitTrieDB(b.NumberU64(), sut.saedbConfig.CommitInterval()):
 				// on disk
 			case expectReferenced(b.NumberU64()):
 				// still referenced
