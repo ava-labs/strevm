@@ -9,7 +9,7 @@ import (
 
 	"github.com/ava-labs/avalanchego/vms/components/gas"
 
-	"github.com/ava-labs/strevm/hook"
+	saetypes "github.com/ava-labs/strevm/types"
 )
 
 //go:generate go run github.com/StephenButtolph/canoto/canoto $GOFILE
@@ -24,8 +24,8 @@ type config struct {
 
 var errInvalidGasPriceConfig = errors.New("invalid gas price config")
 
-// newConfig builds and validates an internal config from [hook.GasPriceConfig].
-func newConfig(from hook.GasPriceConfig) (config, error) {
+// newConfig builds and validates an internal config from [saetypes.GasPriceConfig].
+func newConfig(from saetypes.GasPriceConfig) (config, error) {
 	if err := from.Validate(); err != nil {
 		return config{}, fmt.Errorf("%w: %w", errInvalidGasPriceConfig, err)
 	}

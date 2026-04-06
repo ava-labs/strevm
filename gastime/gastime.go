@@ -9,12 +9,11 @@ import (
 	"time"
 
 	"github.com/ava-labs/avalanchego/vms/components/gas"
-	"github.com/ava-labs/libevm/core/types"
 	"github.com/holiman/uint256"
 
-	"github.com/ava-labs/strevm/hook"
 	"github.com/ava-labs/strevm/intmath"
 	"github.com/ava-labs/strevm/proxytime"
+	saetypes "github.com/ava-labs/strevm/types"
 )
 
 //go:generate go run github.com/StephenButtolph/canoto/canoto $GOFILE
@@ -44,7 +43,7 @@ type Time struct {
 // New returns a new [Time], derived from a [time.Time]. The consumption of
 // `target` * [TargetToRate] units of [gas.Gas] is equivalent to a tick of 1
 // second.
-func New(at time.Time, target, startingExcess gas.Gas, gasPriceConfig hook.GasPriceConfig) (*Time, error) {
+func New(at time.Time, target, startingExcess gas.Gas, gasPriceConfig saetypes.GasPriceConfig) (*Time, error) {
 	cfg, err := newConfig(gasPriceConfig)
 	if err != nil {
 		return nil, err
@@ -62,15 +61,14 @@ func New(at time.Time, target, startingExcess gas.Gas, gasPriceConfig hook.GasPr
 	}, nil
 }
 
-// SubSecond scales the value returned by [hook.Points.SubSecondBlockTime] to
-// reflect the given gas rate.
-func SubSecond(hooks hook.Points, hdr *types.Header, rate gas.Gas) gas.Gas {
-	// [hook.Points.SubSecondBlockTime] is required to return values in
-	// [0,second). The lower bound guarantees that the conversion to unsigned
+// SubSecond scales [time.Duration] to reflect the given gas rate.
+// `subSec` MUST be in [0, second).
+func SubSecond(subSec time.Duration, rate gas.Gas) gas.Gas { //nolint:staticcheck // subSec intentionally communicates that the value is < time.Second
+	// `subSec` is in [0,second). The lower bound guarantees that the conversion to unsigned
 	// [gas.Gas] is safe while the upper bound guarantees that the mul-div
 	// result can't overflow so we don't have to check the error.
 	g, _, _ := intmath.MulDivCeil(
-		gas.Gas(hooks.SubSecondBlockTime(hdr)), //nolint:gosec // See above
+		gas.Gas(subSec), //nolint:gosec // See above
 		rate,
 		gas.Gas(time.Second),
 	)
@@ -88,9 +86,9 @@ const DefaultTargetToExcessScaling = 87
 // parameter in ACP-176's price calculation.
 const DefaultMinPrice gas.Price = 1
 
-// DefaultGasPriceConfig returns the default [hook.GasPriceConfig] values.
-func DefaultGasPriceConfig() hook.GasPriceConfig {
-	return hook.GasPriceConfig{
+// DefaultGasPriceConfig returns the default [saetypes.GasPriceConfig] values.
+func DefaultGasPriceConfig() saetypes.GasPriceConfig {
+	return saetypes.GasPriceConfig{
 		TargetToExcessScaling: DefaultTargetToExcessScaling,
 		MinPrice:              DefaultMinPrice,
 		StaticPricing:         false,
@@ -138,8 +136,8 @@ func (tm *Time) Excess() gas.Gas {
 }
 
 // Price returns the price of a unit of gas, i.e. the "base fee", determined by
-// [gas.CalculatePrice]. However, when [hook.GasPriceConfig.StaticPricing] is
-// true, Price always returns [hook.GasPriceConfig.MinPrice].
+// [gas.CalculatePrice]. However, when [saetypes.GasPriceConfig.StaticPricing] is
+// true, Price always returns [saetypes.GasPriceConfig.MinPrice].
 func (tm *Time) Price() gas.Price {
 	if tm.config.staticPricing {
 		return tm.config.minPrice

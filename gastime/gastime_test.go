@@ -16,12 +16,12 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/ava-labs/strevm/hook"
 	"github.com/ava-labs/strevm/intmath"
 	"github.com/ava-labs/strevm/proxytime"
+	saetypes "github.com/ava-labs/strevm/types"
 )
 
-func mustNew(tb testing.TB, at time.Time, target, startingExcess gas.Gas, gasPriceConfig hook.GasPriceConfig) *Time {
+func mustNew(tb testing.TB, at time.Time, target, startingExcess gas.Gas, gasPriceConfig saetypes.GasPriceConfig) *Time {
 	tb.Helper()
 	tm, err := New(at, target, startingExcess, gasPriceConfig)
 	require.NoError(tb, err, "New(%v, %d, %d, %v)", at, target, startingExcess, gasPriceConfig)
@@ -36,7 +36,7 @@ func (tm *Time) cloneViaCanotoRoundTrip(tb testing.TB) *Time {
 }
 
 func TestClone(t *testing.T) {
-	tm := mustNew(t, time.Unix(42, 1), 1e6, 1e5, hook.GasPriceConfig{TargetToExcessScaling: 100, MinPrice: 200})
+	tm := mustNew(t, time.Unix(42, 1), 1e6, 1e5, saetypes.GasPriceConfig{TargetToExcessScaling: 100, MinPrice: 200})
 
 	if diff := cmp.Diff(tm, tm.Clone(), CmpOpt()); diff != "" {
 		t.Errorf("%T.Clone() diff (-want +got):\n%s", tm, diff)
