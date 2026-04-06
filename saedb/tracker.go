@@ -42,7 +42,6 @@ type Tracker struct {
 	snaps      *snapshot.Tree
 	cache      state.Database
 	isHashDB   bool
-	isArchival bool
 	config     Config
 	log        logging.Logger
 }
