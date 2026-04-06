@@ -70,6 +70,8 @@ func TestStateQueryBlocksUntilExecuted(t *testing.T) {
 		GasPrice: big.NewInt(1),
 	}))
 
+	// Running in parallel allows the main test to unblock() after the tests are
+	// started.
 	sut.testRPC(ctx, t, []rpcTest{
 		{
 			method:   "eth_getBalance",
