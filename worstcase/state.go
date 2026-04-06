@@ -146,9 +146,9 @@ func (s *State) StartBlock(h *types.Header) error {
 // time of writing, the cap is ~6e17, so capping is exceedingly unlikely.
 func safeMaxBlockSize(clock *gastime.Time) gas.Gas {
 	const (
-		maxGasSecondsInClosedQueue = saeparams.MaxFullBlocksInClosedQueue * maxGasSecondsPerBlock
-		maxGasInClosedQueue gas.Gas = math.MaxUint64
-		maxSafeRate         gas.Gas = maxGasInClosedQueue / maxGasSecondsInClosedQueue
+		maxGasSecondsInClosedQueue         = saeparams.MaxFullBlocksInClosedQueue * maxGasSecondsPerBlock
+		maxGasInClosedQueue        gas.Gas = math.MaxUint64
+		maxSafeRate                gas.Gas = maxGasInClosedQueue / maxGasSecondsInClosedQueue
 	)
 	return min(clock.Rate(), maxSafeRate) * maxGasSecondsPerBlock
 }
