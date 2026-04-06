@@ -70,30 +70,20 @@ func TestStateQueryBlocksUntilExecuted(t *testing.T) {
 		GasPrice: big.NewInt(1),
 	}))
 
-	tests := []struct {
-		name string
-		id   rpc.BlockNumberOrHash
-	}{
+	sut.testRPC(ctx, t, []rpcTest{
 		{
-			name: "hash",
-			id:   rpc.BlockNumberOrHashWithHash(b.Hash(), false),
+			method:   "eth_getBalance",
+			args:     []any{addr, rpc.BlockNumberOrHashWithHash(b.Hash(), false)},
+			want:     (*hexutil.Big)(want),
+			parallel: true,
 		},
 		{
-			name: "number",
-			id:   rpc.BlockNumberOrHashWithNumber(rpc.BlockNumber(b.Number().Int64())),
+			method:   "eth_getBalance",
+			args:     []any{addr, rpc.BlockNumberOrHashWithNumber(rpc.BlockNumber(b.Number().Int64()))},
+			want:     (*hexutil.Big)(want),
+			parallel: true,
 		},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			// Allow the main test to keep running so that unblock() is
-			// eventually called.
-			t.Parallel()
-
-			var got hexutil.Big
-			require.NoErrorf(t, sut.CallContext(ctx, &got, "eth_getBalance", addr, test.id), "%T.CallContext(eth_getBalance, %v)", sut.rpcClient, test.id)
-			assert.Zerof(t, want.Cmp((*big.Int)(&got)), "eth_getBalance(%v)", test.id)
-		})
-	}
+	}...)
 }
 
 func TestDebugTrace(t *testing.T) {
