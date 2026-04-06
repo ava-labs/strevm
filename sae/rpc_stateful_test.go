@@ -4,9 +4,9 @@
 package sae
 
 import (
-	"context"
 	"math/big"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/arr4n/shed/testerr"
@@ -57,45 +57,70 @@ func TestStateQueryOnNonCanonicalBlock(t *testing.T) {
 // execution completes, regardless of whether the block is addressed by hash or
 // height.
 func TestStateQueryOnAcceptedUnexecutedBlockBlocksUntilExecuted(t *testing.T) {
-	blockingPrecompile := common.Address{'b', 'l', 'o', 'c', 'k'}
-	precompileOpt, unblock := withBlockingPrecompile(blockingPrecompile)
-	ctx, sut := newSUT(t, 2, precompileOpt)
-	t.Cleanup(unblock)
+	synctest.Test(t, func(t *testing.T) {
+		blockingPrecompile := common.Address{'b', 'l', 'o', 'c', 'k'}
+		precompileOpt, unblock := withBlockingPrecompile(blockingPrecompile)
+		ctx, sut := newSUT(t, 2, precompileOpt, withInProcRPC())
+		t.Cleanup(unblock)
 
-	addr := sut.wallet.Addresses()[1]
-	want, err := sut.BalanceAt(ctx, addr, nil)
-	require.NoError(t, err, "%T.BalanceAt(latest)", sut.Client)
+		addr := sut.wallet.Addresses()[0]
 
-	b := sut.runConsensusLoop(t, sut.wallet.SetNonceAndSign(t, 0, &types.LegacyTx{
-		To:       &blockingPrecompile,
-		Gas:      params.TxGas,
-		GasPrice: big.NewInt(1),
-	}))
-	require.False(t, b.Executed(), "%T.Executed()", b)
-	_, ok := sut.rawVM.consensusCritical.Load(b.Hash())
-	require.True(t, ok, "accepted-but-unexecuted block should still be in consensusCritical")
+		b := sut.runConsensusLoop(t, sut.wallet.SetNonceAndSign(t, 0, &types.LegacyTx{
+			To:       &blockingPrecompile,
+			Gas:      params.TxGas,
+			GasPrice: big.NewInt(1),
+		}))
+		require.False(t, b.Executed(), "%T.Executed()", b)
+		_, ok := sut.rawVM.consensusCritical.Load(b.Hash())
+		require.True(t, ok, "accepted-but-unexecuted block should still be in consensusCritical")
 
-	ids := []rpc.BlockNumberOrHash{
-		rpc.BlockNumberOrHashWithHash(b.Hash(), false),
-		rpc.BlockNumberOrHashWithNumber(rpc.BlockNumber(b.Number().Int64())),
-	}
+		ids := []rpc.BlockNumberOrHash{
+			rpc.BlockNumberOrHashWithHash(b.Hash(), false),
+			rpc.BlockNumberOrHashWithNumber(rpc.BlockNumber(b.Number().Int64())),
+		}
 
-	for _, id := range ids {
-		timeoutCtx, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
-		var timedOut hexutil.Big
-		err = sut.CallContext(timeoutCtx, &timedOut, "eth_getBalance", addr, id)
-		cancel()
-		require.ErrorIs(t, err, context.DeadlineExceeded, "eth_getBalance(%v) should block until execution completes", id)
-	}
+		type result struct {
+			bal hexutil.Big
+			err error
+		}
+		ch := make([]chan result, len(ids))
 
-	unblock()
-	require.NoError(t, b.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", b)
+		for i, id := range ids {
+			ch[i] = make(chan result, 1)
+			go func() {
+				var r result
+				r.err = sut.CallContext(ctx, &r.bal, "eth_getBalance", addr, id)
+				ch[i] <- r
+			}()
+		}
 
-	for _, id := range ids {
-		var got hexutil.Big
-		require.NoErrorf(t, sut.CallContext(ctx, &got, "eth_getBalance", addr, id), "%T.CallContext(eth_getBalance, %v)", sut.rpcClient, id)
-		assert.Zero(t, want.Cmp((*big.Int)(&got)), "eth_getBalance(%v)", id)
-	}
+		synctest.Wait()
+		for i, id := range ids {
+			select {
+			case <-ch[i]:
+				t.Fatalf("eth_getBalance(%v) returned before execution completed", id)
+			default:
+			}
+		}
+
+		unblock()
+		require.NoError(t, b.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", b)
+
+		want, err := sut.BalanceAt(ctx, addr, nil)
+		require.NoError(t, err, "%T.BalanceAt(latest)", sut.Client)
+
+		synctest.Wait()
+		for i, id := range ids {
+			select {
+			case r := <-ch[i]:
+				require.NoError(t, r.err, "eth_getBalance(%v)", id)
+				got := (*big.Int)(&r.bal)
+				assert.Zero(t, want.Cmp(got), "eth_getBalance(%v)", id)
+			default:
+				t.Fatalf("eth_getBalance(%v) remained blocked after execution completed", id)
+			}
+		}
+	})
 }
 
 func TestDebugTrace(t *testing.T) {
