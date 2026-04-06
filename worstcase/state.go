@@ -145,7 +145,11 @@ func (s *State) StartBlock(h *types.Header) error {
 // possibly capping it so a full closed queue still fits in [gas.Gas]. At the
 // time of writing, the cap is ~6e17, so capping is exceedingly unlikely.
 func safeMaxBlockSize(clock *gastime.Time) gas.Gas {
-	const maxSafeRate gas.Gas = math.MaxUint64 / maxGasSecondsPerBlock / saeparams.MaxFullBlocksInClosedQueue
+	const (
+		maxGasSecondsInClosedQueue = saeparams.MaxFullBlocksInClosedQueue * maxGasSecondsPerBlock
+		maxGasInClosedQueue gas.Gas = math.MaxUint64
+		maxSafeRate         gas.Gas = maxGasInClosedQueue / maxGasSecondsInClosedQueue
+	)
 	return min(clock.Rate(), maxSafeRate) * maxGasSecondsPerBlock
 }
 
