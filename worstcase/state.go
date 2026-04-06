@@ -153,6 +153,13 @@ func (s *State) StartBlock(h *types.Header) error {
 func safeMaxBlockSize(clock *gastime.Time) gas.Gas {
 	const maxSafeRate gas.Gas = math.MaxUint64 / maxGasSecondsPerBlock / (saeparams.MaxFullBlocksInOpenQueue + 1)
 	return min(clock.Rate(), maxSafeRate) * maxGasSecondsPerBlock
+func safeMaxBlockSize(clock *gastime.Time) gas.Gas {
+	const (
+		maxGasSecondsInClosedQueue         = saeparams.MaxFullBlocksInClosedQueue * maxGasSecondsPerBlock
+		maxGasInClosedQueue                = math.MaxUint64
+		maxGasPerSecond            gas.Gas = maxGasInClosedQueue / maxGasSecondsInClosedQueue
+	)
+return min(clock.Rate(), maxSafeRate) * maxGasSecondsPerBlock
 }
 
 // GasLimit returns the available gas limit for the current block.
