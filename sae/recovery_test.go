@@ -145,7 +145,7 @@ func TestRecoverSimple(t *testing.T) {
 		},
 		{
 			name:      "non_archival_before_first_trie_commit",
-			numBlocks: 10, // << commitInterval
+			numBlocks: 10, // < commitInterval
 		},
 		{
 			name:      "non_archival_after_trie_commit",
