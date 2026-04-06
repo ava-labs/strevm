@@ -5,6 +5,7 @@
 package hookstest
 
 import (
+	"context"
 	"iter"
 	"math/big"
 	"time"
@@ -130,7 +131,7 @@ func (s *Stub) BuildHeader(parent *types.Header) (*types.Header, error) {
 
 // PotentialEndOfBlockOps ignores its arguments and returns a sequence of ops
 // taken from [Stub.Ops] after removing [Stub.InvalidOpIDs].
-func (s *Stub) PotentialEndOfBlockOps(header *types.Header, lastSettledBlock common.Hash, source saetypes.BlockSource) iter.Seq[Op] {
+func (s *Stub) PotentialEndOfBlockOps(ctx context.Context, header *types.Header, lastSettledBlock common.Hash, source saetypes.BlockSource) iter.Seq[Op] {
 	return func(yield func(Op) bool) {
 		for _, op := range s.Ops {
 			if s.InvalidOpIDs.Contains(op.ID) {
