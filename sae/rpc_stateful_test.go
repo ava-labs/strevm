@@ -56,7 +56,7 @@ func TestStateQueryOnNonCanonicalBlock(t *testing.T) {
 // state-dependent RPC calls on an accepted-but-unexecuted block block until
 // execution completes, regardless of whether the block is addressed by hash or
 // height.
-func TestStateQueryOnAcceptedUnexecutedBlockBlocksUntilExecuted(t *testing.T) {
+func TestStateQueryBlocksUntilExecuted(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		blockingPrecompile := common.Address{'b', 'l', 'o', 'c', 'k'}
 		precompileOpt, unblock := withBlockingPrecompile(blockingPrecompile)
