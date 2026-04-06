@@ -107,7 +107,6 @@ type (
 		genesis     core.Genesis
 		db          database.Database
 		precompiles map[common.Address]libevm.PrecompiledContract
-		inProcRPC   bool
 	}
 	sutOption = options.Option[sutConfig]
 )
@@ -183,17 +182,7 @@ func newSUT(tb testing.TB, numAccounts uint, opts ...sutOption) (context.Context
 		require.NoError(tb, vm.last.accepted.Load().WaitUntilExecuted(ctx), "{last-accepted block}.WaitUntilExecuted()")
 	})
 
-	var (
-		rpcClient *rpc.Client
-		ethClient *ethclient.Client
-	)
-	if conf.inProcRPC {
-		rpcClient = rpc.DialInProc(vm.rpcProvider.Server())
-		ethClient = ethclient.NewClient(rpcClient)
-		tb.Cleanup(ethClient.Close)
-	} else {
-		rpcClient, ethClient = dialRPC(ctx, tb, snow)
-	}
+	rpcClient, ethClient := dialRPC(ctx, tb, snow)
 
 	validators, ok := snowCtx.ValidatorState.(*validatorstest.State)
 	require.Truef(tb, ok, "unexpected type %T for snowCtx.ValidatorState", snowCtx.ValidatorState)
@@ -289,16 +278,6 @@ func withVMTime(tb testing.TB, startTime time.Time) (sutOption, *vmTime) {
 	})
 
 	return opt, t
-}
-
-// withInProcRPC replaces the default HTTP/WebSocket RPC transport with an
-// in-process pipe ([rpc.DialInProc]). This avoids real network I/O goroutines
-// that would prevent [synctest.Wait] from returning inside a [synctest.Test]
-// bubble.
-func withInProcRPC() sutOption {
-	return options.Func[sutConfig](func(c *sutConfig) {
-		c.inProcRPC = true
-	})
 }
 
 // withExecResultsDB returns an option that replaces the default
