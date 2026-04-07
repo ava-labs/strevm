@@ -364,7 +364,7 @@ func (s *SUT) mustAddToMempool(tb testing.TB, txs ...*types.Transaction) {
 	txgossiptest.MustAddToMempool(tb, s.context(tb), s.rawVM.mempool.Pool, s.mustSendTx, txs...)
 }
 
-// buildAndParseBlock calls [SUT.addToMempool] with the provided transactions,
+// buildAndParseBlock calls [SUT.mustAddToMempool] with the provided transactions,
 // builds a new block and passes its bytes to [VM.ParseBlock], the result of
 // which is returned. This is equivalent to a validator having received valid
 // bytes from a peer, but with no element of consensus performed.
