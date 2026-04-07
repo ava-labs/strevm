@@ -102,7 +102,7 @@ func (vm *VM) VerifyBlock(ctx context.Context, bCtx *block.Context, b *blocks.Bl
 			return fmt.Errorf("%w: got %#x ; want %#x", errSettledRootMismatch, got, want)
 		}
 		if got, want := lastSettled.NumberU64(), vm.hooks.SettledHeight(header); got != want {
-			return fmt.Errorf("%w:got %d ; want %d", errSettledHeightMismatch, got, want)
+			return fmt.Errorf("%w: got %d ; want %d", errSettledHeightMismatch, got, want)
 		}
 		if err := b.SetAncestors(parent, lastSettled); err != nil {
 			return err

@@ -725,7 +725,7 @@ func TestInvalidCustomTransactionAllowedInBootstrapping(t *testing.T) {
 
 	// Sanity check that the op was included in the block.
 	ops, err := sut.hooks.EndOfBlockOps(unwrap(t, blk).EthBlock())
-	require.NoErrorf(t, err, "%T.EndOfBlockOps()", err)
+	require.NoErrorf(t, err, "%T.EndOfBlockOps()", sut.hooks)
 	require.Equal(t, []hook.Op{op.AsOp()}, ops, "ops included in block")
 
 	sut.hooks.InvalidOpIDs = set.Of(invalidID)
