@@ -10,7 +10,6 @@ import (
 	"sync/atomic"
 
 	"github.com/ava-labs/avalanchego/utils/logging"
-	"github.com/ava-labs/avalanchego/vms/components/gas"
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core/rawdb"
 	"github.com/ava-labs/libevm/ethdb"
@@ -18,8 +17,6 @@ import (
 
 	"github.com/ava-labs/strevm/blocks"
 	"github.com/ava-labs/strevm/hook"
-	saeparams "github.com/ava-labs/strevm/params"
-	"github.com/ava-labs/strevm/proxytime"
 	"github.com/ava-labs/strevm/saedb"
 	"github.com/ava-labs/strevm/saexec"
 	"github.com/ava-labs/strevm/types"
@@ -120,15 +117,14 @@ func (rec *recovery) consensusCriticalBlocks(exec *saexec.Executor) (_ *syncMap[
 	// extend appends to the chain all the blocks in settler's ancestry up to
 	// and including the block that it settled.
 	extend := func(settler *blocks.Block) error {
-		settleAt := blocks.PreciseTime(rec.hooks, settler.Header()).Add(-saeparams.Tau)
-		tm := proxytime.Of[gas.Gas](settleAt)
+		settledHeight := rec.hooks.SettledHeight(settler.Header())
 
 		for {
 			switch b := lastOf(chain); {
 			case b.Synchronous():
 				return nil
 
-			case b.ExecutedByGasTime().Compare(tm) <= 0:
+			case b.NumberU64() <= settledHeight:
 				if b.Settled() {
 					return nil
 				}

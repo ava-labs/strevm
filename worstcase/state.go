@@ -86,9 +86,7 @@ func NewState(
 	}, nil
 }
 
-const (
-	maxGasSecondsPerBlock = saeparams.TauSeconds * saeparams.Lambda
-)
+const maxGasSecondsPerBlock = saeparams.Tau * saeparams.Lambda
 
 var (
 	errNonConsecutiveBlocks = errors.New("non-consecutive blocks")

@@ -86,7 +86,7 @@ func TestFeeHistory(t *testing.T) {
 	require.NoError(t, sut.lastAcceptedBlock(t).WaitUntilExecuted(ctx), "last-accepted Block.WaitUntilExecuted()")
 
 	gasRate := sut.hooks.Target * gastime.TargetToRate
-	blockGasLimit := gasRate * saeparams.TauSeconds * saeparams.Lambda // by definition
+	blockGasLimit := gasRate * saeparams.Tau * saeparams.Lambda // by definition
 	gasUsedRatio := float64(params.TxGas) / float64(blockGasLimit)
 
 	baseFee := hexBig(1)

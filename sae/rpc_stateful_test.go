@@ -199,7 +199,7 @@ func TestDebugTrace(t *testing.T) {
 }
 
 func TestEthCall(t *testing.T) {
-	opt, vmTime := withVMTime(t, time.Unix(saeparams.TauSeconds, 0))
+	opt, vmTime := withVMTime(t, time.Unix(saeparams.Tau, 0))
 	ctx, sut := newSUT(t, 1, opt)
 
 	deploy := &types.LegacyTx{
