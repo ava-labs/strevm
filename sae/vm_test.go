@@ -34,7 +34,6 @@ import (
 	"github.com/ava-labs/libevm/core"
 	"github.com/ava-labs/libevm/core/rawdb"
 	"github.com/ava-labs/libevm/core/state"
-	"github.com/ava-labs/libevm/core/txpool"
 	"github.com/ava-labs/libevm/core/txpool/legacypool"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/core/vm"
@@ -60,6 +59,7 @@ import (
 	"github.com/ava-labs/strevm/hook/hookstest"
 	saeparams "github.com/ava-labs/strevm/params"
 	"github.com/ava-labs/strevm/saetest"
+	"github.com/ava-labs/strevm/txgossip/txgossiptest"
 	saetypes "github.com/ava-labs/strevm/types"
 )
 
@@ -344,47 +344,24 @@ func (s *SUT) context(tb testing.TB) context.Context {
 	return s.logger.CancelOnError(tb.Context())
 }
 
-func (s *SUT) mustSendTx(tb testing.TB, tx *types.Transaction) {
+// mustSendTx guarantees all transactions are delivered to the mempool, and triggers
+// an asynchronous reorg to move all possible transactions from the source addresses
+// to the pending label.
+func (s *SUT) mustSendTx(tb testing.TB, txs ...*types.Transaction) {
 	tb.Helper()
-	require.NoErrorf(tb, s.Client.SendTransaction(s.context(tb), tx), "%T.SendTransaction([%#x])", s.Client, tx.Hash())
-}
 
-// addToMempool is a convenience wrapper around [SUT.mustSendTx] (per tx) and
-// [SUT.requireInMempool].
-func (s *SUT) addToMempool(tb testing.TB, txs ...*types.Transaction) {
-	tb.Helper()
-	txHashes := make([]common.Hash, len(txs))
-	for i, tx := range txs {
-		s.mustSendTx(tb, tx)
-		txHashes[i] = tx.Hash()
+	ctx := s.context(tb)
+	for _, tx := range txs {
+		require.NoErrorf(tb, s.Client.SendTransaction(ctx, tx), "%T.SendTransaction([%#x])", s.Client, tx.Hash())
 	}
-	s.requireInMempool(tb, txHashes...)
 }
 
-// syncMempool is a convenience wrapper for calling [txpool.TxPool.Sync], which
-// MUST NOT be done in production.
-func (s *SUT) syncMempool(tb testing.TB) {
+// mustAddToMempool sends all transactions to the mempool, and waits for
+// each transaction to be marked as pending.
+func (s *SUT) mustAddToMempool(tb testing.TB, txs ...*types.Transaction) {
 	tb.Helper()
-	var _ txpool.TxPool // maintain import for [comment] rendering
-	p := s.rawVM.mempool.Pool
-	require.NoErrorf(tb, p.Sync(), "%T.Sync()", p)
-}
 
-// requireInMempool requires that the transaction with the specified hash is
-// eventually in the mempool. It calls [SUT.syncMempool] before every check.
-func (s *SUT) requireInMempool(tb testing.TB, txs ...common.Hash) {
-	tb.Helper()
-	require.EventuallyWithTf(
-		tb,
-		func(c *assert.CollectT) {
-			s.syncMempool(tb)
-			for i, tx := range txs {
-				assert.Truef(c, s.rawVM.mempool.Pool.Has(tx), "tx %d:%v not in mempool", i, tx)
-			}
-		},
-		250*time.Millisecond, 25*time.Millisecond,
-		"all of txs [%v] to in mempool", txs,
-	)
+	txgossiptest.MustAddToMempool(tb, s.context(tb), s.rawVM.mempool.Pool, s.mustSendTx, txs...)
 }
 
 // buildAndParseBlock calls [SUT.addToMempool] with the provided transactions,
@@ -396,7 +373,7 @@ func (s *SUT) requireInMempool(tb testing.TB, txs ...common.Hash) {
 // of a [blocks.Block], hence its return as a [snowman.Block].
 func (s *SUT) buildAndParseBlock(tb testing.TB, preference *blocks.Block, txs ...*types.Transaction) snowman.Block {
 	tb.Helper()
-	s.addToMempool(tb, txs...)
+	s.mustAddToMempool(tb, txs...)
 
 	ctx := s.context(tb)
 	require.NoError(tb, s.SetPreference(ctx, preference.ID()), "SetPreference()")
@@ -572,7 +549,7 @@ func TestIntegration(t *testing.T) {
 			GasFeeCap: big.NewInt(1),
 			Value:     transfer.ToBig(),
 		})
-		sut.mustSendTx(t, tx)
+		sut.mustAddToMempool(t, tx)
 	}
 
 	select {
@@ -589,9 +566,6 @@ func TestIntegration(t *testing.T) {
 	for range numTxs + 1 {
 		t.Run("WaitForEvent_with_existing_txs", testWaitForEvent)
 	}
-
-	sut.syncMempool(t) // technically we've only proven 1 tx added, as unlikely as a race is
-	require.Equal(t, numTxs, sut.rawVM.numPendingTxs(), "number of pending txs")
 
 	b := sut.runConsensusLoopOnPreference(t, sut.genesis)
 	assert.Equal(t, sut.genesis.ID(), b.Parent(), "BuildBlock() builds on preference")

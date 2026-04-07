@@ -161,12 +161,13 @@ func TestWorstCase(t *testing.T) {
 				wantUsed: params.TxGas + 8*params.TxDataNonZeroGasEIP2028,
 			},
 		}
+		txs := make([]*types.Transaction, 0, len(precompileTests))
 		for _, tt := range precompileTests {
 			var data []byte
 			if k := tt.keep; k != nil {
 				data = binary.BigEndian.AppendUint64(nil, *k)
 			}
-			sut.mustSendTx(t, sut.wallet.SetNonceAndSign(t, 0, &types.DynamicFeeTx{
+			txs = append(txs, sut.wallet.SetNonceAndSign(t, 0, &types.DynamicFeeTx{
 				To:        &guzzle,
 				GasFeeCap: big.NewInt(1),
 				Gas:       tt.limit,
@@ -174,7 +175,7 @@ func TestWorstCase(t *testing.T) {
 			}))
 		}
 
-		b := sut.runConsensusLoop(t)
+		b := sut.runConsensusLoop(t, txs...)
 		require.NoError(t, b.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", b)
 		require.Lenf(t, b.Receipts(), len(precompileTests), "%T.Receipts()", b)
 		for i, r := range b.Receipts() {
@@ -234,7 +235,6 @@ func TestWorstCase(t *testing.T) {
 						sut.wallet.DecrementNonce(t, from)
 					}
 				}
-				sut.syncMempool(t)
 
 				for accepted := false; !accepted; {
 					vmTime.advance(time.Millisecond * time.Duration(rng.IntN(1000*3*saeparams.TauSeconds)))
