@@ -56,7 +56,7 @@ func TestStateQueryOnNonCanonicalBlock(t *testing.T) {
 // regardless of whether the block is addressed by hash or height.
 func TestStateQueryBlocksUntilExecuted(t *testing.T) {
 	blockingPrecompile := common.Address{'b', 'l', 'o', 'c', 'k'}
-	precompileOpt, unblock := withBlockingPrecompile(blockingPrecompile)
+	precompileOpt, _, unblock := withBlockingPrecompile(blockingPrecompile)
 	ctx, sut := newSUT(t, 2, precompileOpt)
 	defer unblock()
 

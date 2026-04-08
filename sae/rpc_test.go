@@ -532,7 +532,7 @@ func TestChainID(t *testing.T) {
 func TestEthGetters(t *testing.T) {
 	timeOpt, vmTime := withVMTime(t, time.Unix(saeparams.TauSeconds, 0))
 	blockingPrecompile := common.Address{'b', 'l', 'o', 'c', 'k'}
-	precompileOpt, unblock := withBlockingPrecompile(blockingPrecompile)
+	precompileOpt, _, unblock := withBlockingPrecompile(blockingPrecompile)
 	ctx, sut := newSUT(t, 1, timeOpt, precompileOpt)
 	t.Cleanup(unblock)
 
@@ -791,7 +791,7 @@ func TestGetReceipts(t *testing.T) {
 	blockingPrecompile := common.Address{'b', 'l', 'o', 'c', 'k'}
 
 	timeOpt, vmTime := withVMTime(t, time.Unix(saeparams.TauSeconds, 0))
-	precompileOpt, unblock := withBlockingPrecompile(blockingPrecompile)
+	precompileOpt, _, unblock := withBlockingPrecompile(blockingPrecompile)
 	ctx, sut := newSUT(t, 1, timeOpt, precompileOpt)
 	t.Cleanup(unblock)
 

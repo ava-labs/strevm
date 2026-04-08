@@ -11,11 +11,12 @@ import (
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/params"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestImmediateReceipts(t *testing.T) {
 	blocking := common.Address{'b', 'l', 'o', 'c', 'k'}
-	opt, unblock := withBlockingPrecompile(blocking)
+	opt, entered, unblock := withBlockingPrecompile(blocking)
 	ctx, sut := newSUT(t, 1, opt)
 	t.Cleanup(unblock)
 
@@ -44,5 +45,11 @@ func TestImmediateReceipts(t *testing.T) {
 			BlockNumber:       b.Number(),
 		},
 	})
+	// Ensure execution is blocked inside the precompile before asserting.
+	select {
+	case <-entered:
+	case <-ctx.Done():
+		require.NoError(t, ctx.Err(), "context cancelled before precompile was entered")
+	}
 	assert.Falsef(t, b.Executed(), "%T.Executed()", b)
 }

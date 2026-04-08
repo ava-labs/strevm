@@ -302,17 +302,19 @@ func withBloomSectionSize(size uint64) sutOption {
 	})
 }
 
-// withBlockingPrecompile adds a precompile that will block
-// all execution until the releasing function returned is called.
-// This should be called prior to closing the VM to prevent goroutine
-// leaks. The releaser can be called multiple times.
-func withBlockingPrecompile(addr common.Address) (sutOption, func()) {
+// withBlockingPrecompile adds a precompile that blocks until the returned
+// release func is called. The channel closes when the precompile is entered.
+// Call the releaser before VM shutdown to avoid goroutine leaks.
+func withBlockingPrecompile(addr common.Address) (sutOption, <-chan struct{}, func()) {
 	unblock := make(chan struct{})
+	entered := make(chan struct{})
+	enteredOnce := sync.OnceFunc(func() { close(entered) })
 	p := vm.NewStatefulPrecompile(func(vm.PrecompileEnvironment, []byte) ([]byte, error) {
+		enteredOnce()
 		<-unblock
 		return nil, nil
 	})
-	return withPrecompile(addr, p), sync.OnceFunc(func() { close(unblock) })
+	return withPrecompile(addr, p), entered, sync.OnceFunc(func() { close(unblock) })
 }
 
 // withPrecompile adds any precompile at the specified address.
