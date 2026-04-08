@@ -725,8 +725,8 @@ func TestVerifyWhenBootstrapping(t *testing.T) {
 	require.NoErrorf(t, err, "%T.EndOfBlockOps()", sut.hooks)
 	require.Equal(t, []hook.Op{op.AsOp()}, ops, "ops included in block")
 
-	// Mark the op invalid to distingush whether [snowman.Block.Verify] verifies
-	// the block ops.
+	// Mark the op invalid to distinguish whether [snowman.Block.Verify]
+	// verifies the block ops.
 	sut.hooks.InvalidOpIDs = set.Of(op.ID)
 
 	tests := []struct {
