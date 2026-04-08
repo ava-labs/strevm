@@ -80,7 +80,7 @@ func newSUT(tb testing.TB, alloc types.GenesisAlloc) SUT {
 
 const (
 	targetToMaxBlockSize = gastime.TargetToRate * maxGasSecondsPerBlock
-	initialMaxBlockSize  = initialGasTarget * targetToMaxBlockSize
+	initialMaxBlockSize  = initialGasTarget * gas.Gas(targetToMaxBlockSize)
 )
 
 type (
@@ -118,7 +118,7 @@ func TestMultipleBlocks(t *testing.T) {
 	tests := []struct { // note that they are not independent
 		hooks                 *hookstest.Stub
 		time                  uint64
-		wantGasLimit          uint64
+		wantGasLimit          gas.Gas
 		wantBaseFee           *uint256.Int
 		ops                   []op
 		txsAfterOps           []*types.Transaction
@@ -143,7 +143,7 @@ func TestMultipleBlocks(t *testing.T) {
 				{
 					name: "would_exceed_limit",
 					op: Op{
-						Gas:       gas.Gas(initialMaxBlockSize - params.TxGas + 1),
+						Gas:       initialMaxBlockSize - gas.Gas(params.TxGas) + 1,
 						GasFeeCap: *uint256.NewInt(1),
 					},
 					wantErr: core.ErrGasLimitReached,
@@ -151,7 +151,7 @@ func TestMultipleBlocks(t *testing.T) {
 				{
 					name: "fill_block",
 					op: Op{
-						Gas:       gas.Gas(initialMaxBlockSize - params.TxGas),
+						Gas:       initialMaxBlockSize - gas.Gas(params.TxGas),
 						GasFeeCap: *uint256.NewInt(1),
 					},
 					wantErr: nil,
@@ -280,7 +280,7 @@ func TestMultipleBlocks(t *testing.T) {
 		wantLatestEndTime.BeforeBlock(sut.hooks, header)
 		require.NoErrorf(t, state.StartBlock(header), "StartBlock(%d)", i)
 		require.Equalf(t, block.wantBaseFee, state.BaseFee(), "base fee after StartBlock(%d)", i)
-		require.Equalf(t, block.wantGasLimit, state.GasLimit(), "gas limit after StartBlock(%d)", i)
+		require.Equalf(t, block.wantGasLimit, gas.Gas(state.GasLimit()), "gas limit after StartBlock(%d)", i)
 
 		for _, op := range block.ops {
 			gotErr := state.Apply(op.op)
@@ -415,10 +415,10 @@ func TestTransactionValidation(t *testing.T) {
 		// Clause 3: the amount of gas required is available in the block
 		{
 			name:    "gas_limit_exceeded",
-			balance: initialMaxBlockSize,
+			balance: uint64(initialMaxBlockSize),
 			tx: &types.LegacyTx{
 				GasPrice: big.NewInt(1),
-				Gas:      initialMaxBlockSize + 1,
+				Gas:      uint64(initialMaxBlockSize) + 1,
 				To:       &common.Address{},
 			},
 			wantErr: txpool.ErrGasLimit,
@@ -576,7 +576,7 @@ func TestStartBlockQueueFull(t *testing.T) {
 
 	// Fill the queue with the minimum amount of gas to prevent additional
 	// blocks.
-	for number, gas := range []gas.Gas{initialMaxBlockSize, initialMaxBlockSize, 1} {
+	for number, opGas := range []gas.Gas{initialMaxBlockSize, initialMaxBlockSize, 1} {
 		h := &types.Header{
 			ParentHash: lastHash,
 			Number:     big.NewInt(int64(number)),
@@ -584,7 +584,7 @@ func TestStartBlockQueueFull(t *testing.T) {
 		require.NoError(t, state.StartBlock(h), "StartBlock()")
 
 		err := state.Apply(Op{
-			Gas:       gas,
+			Gas:       opGas,
 			GasFeeCap: *uint256.NewInt(2),
 		})
 		require.NoError(t, err, "Apply()")
@@ -615,7 +615,7 @@ func TestStartBlockQueueFullDueToTargetChanges(t *testing.T) {
 	require.NoError(t, state.StartBlock(h), "StartBlock()")
 
 	err := state.Apply(Op{
-		Gas:       initialMaxBlockSize,
+		Gas:       gas.Gas(initialMaxBlockSize),
 		GasFeeCap: *uint256.NewInt(1),
 	})
 	require.NoError(t, err, "Apply()")

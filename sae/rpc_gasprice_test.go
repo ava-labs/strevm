@@ -8,6 +8,7 @@ import (
 	"math/big"
 	"testing"
 
+	"github.com/ava-labs/avalanchego/vms/components/gas"
 	"github.com/ava-labs/libevm/common/hexutil"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/ethclient"
@@ -86,7 +87,7 @@ func TestFeeHistory(t *testing.T) {
 	require.NoError(t, sut.lastAcceptedBlock(t).WaitUntilExecuted(ctx), "last-accepted Block.WaitUntilExecuted()")
 
 	gasRate := sut.hooks.Target * gastime.TargetToRate
-	blockGasLimit := gasRate * saeparams.Tau * saeparams.Lambda // by definition
+	blockGasLimit := gasRate * gas.Gas(saeparams.Tau) * saeparams.Lambda // by definition
 	gasUsedRatio := float64(params.TxGas) / float64(blockGasLimit)
 
 	baseFee := hexBig(1)

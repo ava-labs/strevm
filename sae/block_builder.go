@@ -163,7 +163,7 @@ func (b *blockBuilderG[T]) buildWithTxs(
 	// It is allowed for [hook.BlockBuilder] to further constrain the allowed
 	// block times. However, every block MUST at least satisfy these basic
 	// sanity checks.
-	if bTime.Unix() < saeparams.Tau {
+	if bTime.Unix() < int64(saeparams.Tau) {
 		return nil, fmt.Errorf("%w: %d < %d", errBlockTimeUnderMinimum, hdr.Time, saeparams.Tau)
 	}
 	if bTime.Compare(pTime) < 0 {
@@ -175,8 +175,7 @@ func (b *blockBuilderG[T]) buildWithTxs(
 	}
 
 	// Underflow of Add(-tau) is prevented by the above check.
-	const timeToSettle = saeparams.Tau * time.Second
-	lastSettled, ok, err := blocks.LastToSettleAt(b.hooks, bTime.Add(-timeToSettle), parent)
+	lastSettled, ok, err := blocks.LastToSettleAt(b.hooks, bTime.Add(-saeparams.Tau.Seconds()), parent)
 	if err != nil {
 		return nil, err
 	}

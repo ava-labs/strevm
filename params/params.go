@@ -6,18 +6,25 @@
 // [Streaming Asynchronous Execution]: https://github.com/avalanche-foundation/ACPs/tree/main/ACPs/194-streaming-asynchronous-execution
 package params
 
-import "time"
+import (
+	"time"
+)
 
 // Lambda is the denominator for computing the minimum gas consumed per
 // transaction. For a transaction with gas limit `g`, the minimum consumption is
 // ceil(g/Lambda).
 const Lambda = 2
 
+type unitless uint32
+
 // Tau is the minimum duration in seconds between a block's execution completing
 // and the resulting state changes being settled in a later block. Note that
 // this period has no effect on the availability nor finality of results, both of
 // which are immediate at the time of executing an individual transaction.
-const Tau = 5
+const Tau = unitless(5)
+
+func (u unitless) Seconds() time.Duration { return time.Duration(u) * time.Second }
+func (u unitless) AsUnixTime() time.Time  { return time.Unix(int64(u), 0) }
 
 // MaxFullBlocksInOpenQueue is the maximum number of full blocks that can be
 // in the execution queue while it remains open to accepting a new block. An
@@ -32,4 +39,4 @@ const MaxFullBlocksInClosedQueue = MaxFullBlocksInOpenQueue + 1
 // MaxQueueWallTime is the maximum wall-clock duration a block should remain in
 // the execution queue before execution finishes. This assumes the executor
 // drains the queue at least as fast as the gas capacity rate R.
-const MaxQueueWallTime = MaxFullBlocksInClosedQueue * Tau * Lambda * time.Second
+const MaxQueueWallTime = MaxFullBlocksInClosedQueue * Tau * Lambda

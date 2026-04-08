@@ -530,7 +530,7 @@ func TestChainID(t *testing.T) {
 }
 
 func TestEthGetters(t *testing.T) {
-	timeOpt, vmTime := withVMTime(t, time.Unix(saeparams.Tau, 0))
+	timeOpt, vmTime := withVMTime(t, saeparams.Tau.AsUnixTime())
 	blockingPrecompile := common.Address{'b', 'l', 'o', 'c', 'k'}
 	precompileOpt, unblock := withBlockingPrecompile(blockingPrecompile)
 	ctx, sut := newSUT(t, 1, timeOpt, precompileOpt)
@@ -612,7 +612,7 @@ func TestGetLogs(t *testing.T) {
 	// We shorten section size to reduce number of required blocks in the test.
 	const bloomSectionSize = 8
 
-	timeOpt, vmTime := withVMTime(t, time.Unix(saeparams.Tau, 0))
+	timeOpt, vmTime := withVMTime(t, saeparams.Tau.AsUnixTime())
 	rng := crypto.NewKeccakState()
 	emitter := common.Address{'l', 'o', 'g'}
 	precompile := vm.NewStatefulPrecompile(func(env vm.PrecompileEnvironment, _ []byte) ([]byte, error) {
@@ -790,7 +790,7 @@ func TestGetReceipts(t *testing.T) {
 	// Blocking precompile creates accepted-but-not-executed blocks
 	blockingPrecompile := common.Address{'b', 'l', 'o', 'c', 'k'}
 
-	timeOpt, vmTime := withVMTime(t, time.Unix(saeparams.Tau, 0))
+	timeOpt, vmTime := withVMTime(t, saeparams.Tau.AsUnixTime())
 	precompileOpt, unblock := withBlockingPrecompile(blockingPrecompile)
 	ctx, sut := newSUT(t, 1, timeOpt, precompileOpt)
 	t.Cleanup(unblock)
@@ -1466,7 +1466,7 @@ func withDebugAPI() sutOption {
 }
 
 func TestResolveBlockNumberOrHash(t *testing.T) {
-	opt, vmTime := withVMTime(t, time.Unix(saeparams.Tau, 0))
+	opt, vmTime := withVMTime(t, saeparams.Tau.AsUnixTime())
 	ctx, sut := newSUT(t, 0, opt)
 
 	settled := sut.runConsensusLoop(t)

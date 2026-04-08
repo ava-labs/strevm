@@ -204,10 +204,10 @@ func (b *Block) Executed() bool {
 func executionArtefact[T any](b *Block, desc string, get func(*executionResults) T) T {
 	select {
 	case <-b.executed:
-	case <-time.After(saeparams.MaxQueueWallTime):
+	case <-time.After(saeparams.MaxQueueWallTime.Seconds()):
 		b.log.Warn("blocking on execution artefact longer than expected",
 			zap.String("artefact", desc),
-			zap.Duration("waited", saeparams.MaxQueueWallTime),
+			zap.Duration("waited", saeparams.MaxQueueWallTime.Seconds()),
 		)
 		<-b.executed
 	}

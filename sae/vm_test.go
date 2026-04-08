@@ -134,7 +134,7 @@ func newSUT(tb testing.TB, numAccounts uint, opts ...sutOption) (context.Context
 		genesis: core.Genesis{
 			Config:     saetest.ChainConfig(),
 			Alloc:      saetest.MaxAllocFor(keys.Addresses()...),
-			Timestamp:  saeparams.Tau,
+			Timestamp:  uint64(saeparams.Tau),
 			Difficulty: big.NewInt(0), // irrelevant but required
 		},
 		db: memdb.New(),
@@ -257,8 +257,7 @@ func (t *vmTime) advance(d time.Duration) {
 func (t *vmTime) advanceToSettle(ctx context.Context, tb testing.TB, b *blocks.Block) {
 	tb.Helper()
 	require.NoErrorf(tb, b.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", b)
-	const timeToSettle = saeparams.Tau * time.Second
-	to := b.ExecutedByGasTime().AsTime().Add(timeToSettle)
+	to := b.ExecutedByGasTime().AsTime().Add(saeparams.Tau.Seconds())
 	if t.Before(to) {
 		t.set(to)
 	}
@@ -771,7 +770,7 @@ func TestAcceptBlock(t *testing.T) {
 		require.Zero(t, blocks.InMemoryBlockCount(), "initial in-memory block count")
 	}, 5*time.Second, 50*time.Millisecond)
 
-	opt, vmTime := withVMTime(t, time.Unix(saeparams.Tau, 0))
+	opt, vmTime := withVMTime(t, saeparams.Tau.AsUnixTime())
 
 	ctx, sut := newSUT(t, 1, opt)
 	// Causes [VM.AcceptBlock] to wait until the block has executed.
@@ -782,7 +781,7 @@ func TestAcceptBlock(t *testing.T) {
 
 	rng := rand.New(rand.NewPCG(0, 0)) //nolint:gosec // Reproducibility is useful for tests
 	for range 100 {
-		ffMillis := 100 + rng.IntN(1000*(1+saeparams.Tau))
+		ffMillis := 100 + rng.IntN(1000*int(1+saeparams.Tau))
 		vmTime.advance(time.Millisecond * time.Duration(ffMillis))
 
 		b := sut.runConsensusLoop(t)
@@ -843,7 +842,7 @@ func TestSemanticBlockChecks(t *testing.T) {
 		},
 		{
 			name:    "block_time_under_minimum",
-			time:    saeparams.Tau - 1,
+			time:    uint64(saeparams.Tau - 1),
 			wantErr: errBlockTimeUnderMinimum,
 		},
 		{
@@ -934,7 +933,7 @@ func TestGossip(t *testing.T) {
 }
 
 func TestBlockSources(t *testing.T) {
-	opt, vmTime := withVMTime(t, time.Unix(saeparams.Tau, 0))
+	opt, vmTime := withVMTime(t, saeparams.Tau.AsUnixTime())
 	ctx, sut := newSUT(t, 1, opt)
 
 	genesis := sut.lastAcceptedBlock(t)

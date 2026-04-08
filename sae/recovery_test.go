@@ -35,7 +35,7 @@ import (
 func TestRecoverFromDatabase(t *testing.T) {
 	t.Parallel()
 
-	sutOpt, vmTime := withVMTime(t, time.Unix(saeparams.Tau, 0))
+	sutOpt, vmTime := withVMTime(t, saeparams.Tau.AsUnixTime())
 
 	var srcDB database.Database
 	srcHDB := saetest.NewHeightIndexDB()
@@ -163,7 +163,7 @@ func TestRecoverSimple(t *testing.T) {
 			var srcDB database.Database
 			srcHDB := saetest.NewHeightIndexDB()
 
-			sutOpt, vmTime := withVMTime(t, time.Unix(saeparams.Tau, 0))
+			sutOpt, vmTime := withVMTime(t, saeparams.Tau.AsUnixTime())
 			ctx, src := newSUT(t, 1, sutOpt, withExecResultsDB(srcHDB), withCommitInterval(commitInterval), options.Func[sutConfig](func(c *sutConfig) {
 				srcDB = c.db
 				c.logLevel = logging.Warn

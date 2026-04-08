@@ -6,7 +6,6 @@ package sae
 import (
 	"math/big"
 	"testing"
-	"time"
 
 	"github.com/arr4n/shed/testerr"
 	"github.com/ava-labs/avalanchego/utils"
@@ -199,7 +198,7 @@ func TestDebugTrace(t *testing.T) {
 }
 
 func TestEthCall(t *testing.T) {
-	opt, vmTime := withVMTime(t, time.Unix(saeparams.Tau, 0))
+	opt, vmTime := withVMTime(t, saeparams.Tau.AsUnixTime())
 	ctx, sut := newSUT(t, 1, opt)
 
 	deploy := &types.LegacyTx{

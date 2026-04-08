@@ -29,8 +29,7 @@ import (
 //nolint:testableexamples // Output is meaningless
 func ExampleRange() {
 	parent := blockBuildingPreference()
-	timeToSettle := params.Tau * time.Second
-	settle, ok, err := LastToSettleAt(vmHooks(), time.Now().Add(-timeToSettle), parent)
+	settle, ok, err := LastToSettleAt(vmHooks(), time.Now().Add(-params.Tau.Seconds()), parent)
 	if err != nil {
 		// Due to a malformed input to block verification.
 		return // err
