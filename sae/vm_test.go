@@ -709,13 +709,11 @@ func TestCustomTransactionInclusion(t *testing.T) {
 // TestVerifyWhenBootstrapping verifies that verification is skipped during
 // bootstrapping.
 func TestVerifyWhenBootstrapping(t *testing.T) {
-	var (
-		op = hookstest.Op{
-			ID:        ids.GenerateTestID(),
-			Gas:       100_000,
-			GasFeeCap: *uint256.NewInt(params.Wei),
-		}
-	)
+	op := hookstest.Op{
+		ID:        ids.GenerateTestID(),
+		Gas:       100_000,
+		GasFeeCap: *uint256.NewInt(params.Wei),
+	}
 	ctx, sut := newSUT(t, 0, options.Func[sutConfig](func(c *sutConfig) {
 		c.hooks.Ops = []hookstest.Op{op}
 	}))
