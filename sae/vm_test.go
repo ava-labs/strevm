@@ -706,13 +706,12 @@ func TestCustomTransactionInclusion(t *testing.T) {
 	}
 }
 
-// TestInvalidCustomTransactionAllowedInBootstrapping verifies that blocks with
-// invalid custom transactions are only allowed during bootstrapping.
-func TestInvalidCustomTransactionAllowedInBootstrapping(t *testing.T) {
+// TestVerifyWhenBootstrapping verifies that verification is skipped during
+// bootstrapping.
+func TestVerifyWhenBootstrapping(t *testing.T) {
 	var (
-		invalidID = ids.ID{'i', 'n', 'v', 'a', 'l', 'i', 'd'}
-		op        = hookstest.Op{
-			ID:        invalidID,
+		op = hookstest.Op{
+			ID:        ids.GenerateTestID(),
 			Gas:       100_000,
 			GasFeeCap: *uint256.NewInt(params.Wei),
 		}
@@ -728,7 +727,8 @@ func TestInvalidCustomTransactionAllowedInBootstrapping(t *testing.T) {
 	require.NoErrorf(t, err, "%T.EndOfBlockOps()", sut.hooks)
 	require.Equal(t, []hook.Op{op.AsOp()}, ops, "ops included in block")
 
-	sut.hooks.InvalidOpIDs = set.Of(invalidID)
+	// Mark the op invalid to distingush whether verification happens.
+	sut.hooks.InvalidOpIDs = set.Of(op.ID)
 
 	tests := []struct {
 		consensusState snow.State
