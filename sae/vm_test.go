@@ -344,7 +344,7 @@ func (s *SUT) context(tb testing.TB) context.Context {
 	return s.logger.CancelOnError(tb.Context())
 }
 
-// mustSendTx guarantees all transactions are delivered to the mempool, and triggers
+// mustSendTx guarantees all transactions are delivered to the mempool, which triggers
 // an asynchronous reorg to move all possible transactions from the source addresses
 // to the pending label.
 func (s *SUT) mustSendTx(tb testing.TB, txs ...*types.Transaction) {
@@ -356,15 +356,22 @@ func (s *SUT) mustSendTx(tb testing.TB, txs ...*types.Transaction) {
 	}
 }
 
-// mustAddToMempool sends all transactions to the mempool, and waits for
-// each transaction to be marked as pending.
-func (s *SUT) mustAddToMempool(tb testing.TB, txs ...*types.Transaction) {
+// sendTxsAndWaitUntilPending sends all `txs` to the mempool, and waits for
+// each to be marked as pending.
+func (s *SUT) sendTxsAndWaitUntilPending(tb testing.TB, txs ...*types.Transaction) {
 	tb.Helper()
 
-	txgossiptest.MustAddToMempool(tb, s.context(tb), s.rawVM.mempool.Pool, s.mustSendTx, txs...)
+	s.mustSendTx(tb, txs...)
+	s.waitUntilTxsPending(tb, txs...)
 }
 
-// buildAndParseBlock calls [SUT.mustAddToMempool] with the provided transactions,
+func (s *SUT) waitUntilTxsPending(tb testing.TB, txs ...*types.Transaction) {
+	tb.Helper()
+
+	txgossiptest.WaitUntilPending(tb, s.context(tb), s.rawVM.mempool.Pool, txs...)
+}
+
+// buildAndParseBlock adds all `txs` to the mempool and ensures they are pending,
 // builds a new block and passes its bytes to [VM.ParseBlock], the result of
 // which is returned. This is equivalent to a validator having received valid
 // bytes from a peer, but with no element of consensus performed.
@@ -373,7 +380,7 @@ func (s *SUT) mustAddToMempool(tb testing.TB, txs ...*types.Transaction) {
 // of a [blocks.Block], hence its return as a [snowman.Block].
 func (s *SUT) buildAndParseBlock(tb testing.TB, preference *blocks.Block, txs ...*types.Transaction) snowman.Block {
 	tb.Helper()
-	s.mustAddToMempool(tb, txs...)
+	s.sendTxsAndWaitUntilPending(tb, txs...)
 
 	ctx := s.context(tb)
 	require.NoError(tb, s.SetPreference(ctx, preference.ID()), "SetPreference()")
@@ -549,7 +556,7 @@ func TestIntegration(t *testing.T) {
 			GasFeeCap: big.NewInt(1),
 			Value:     transfer.ToBig(),
 		})
-		sut.mustAddToMempool(t, tx)
+		sut.sendTxsAndWaitUntilPending(t, tx)
 	}
 
 	select {

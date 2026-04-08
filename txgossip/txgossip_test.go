@@ -139,12 +139,10 @@ func TestExecutorIntegration(t *testing.T) {
 		}
 	}
 
-	txgossiptest.MustAddToMempool(t, ctx, s.Pool, func(tb testing.TB, txs ...*types.Transaction) {
-		tb.Helper()
-		for _, tx := range txs {
-			require.NoErrorf(tb, s.Add(Transaction{tx}), "%T.Add()", s.set)
-		}
-	}, signedTxs...)
+	for _, tx := range signedTxs {
+		require.NoErrorf(t, s.Add(Transaction{tx}), "%T.Add()", s.set)
+	}
+	txgossiptest.WaitUntilPending(t, ctx, s.Pool, signedTxs...)
 
 	t.Run("Iterate_after_Add", func(t *testing.T) {
 		require.Lenf(t, slices.Collect(s.Iterate), numTxs, "slices.Collect(%T.Iterate)", s.Set)
@@ -310,11 +308,9 @@ func TestP2PIntegration(t *testing.T) {
 				send.RegisterPushGossiper(g)
 			}
 
-			txgossiptest.MustAddToMempool(t, ctx, send.Pool, func(tb testing.TB, _ ...*types.Transaction) {
-				tb.Helper()
-				require.NoErrorf(tb, send.Add(txViaGossip), "%T.Add()", send.Set)
-				require.NoErrorf(tb, send.SendTx(ctx, txViaRPC.Transaction), "%T.SendTx()", send.Set)
-			}, txViaRPC.Transaction, txViaGossip.Transaction)
+			require.NoErrorf(t, send.Add(txViaGossip), "%T.Add()", send.Set)
+			require.NoErrorf(t, send.SendTx(ctx, txViaRPC.Transaction), "%T.SendTx()", send.Set)
+			txgossiptest.WaitUntilPending(t, ctx, send.Pool, txViaRPC.Transaction, txViaGossip.Transaction)
 
 			t.Run("confirm_setup", func(t *testing.T) {
 				for _, tx := range bothTxs {

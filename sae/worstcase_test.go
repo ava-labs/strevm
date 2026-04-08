@@ -233,7 +233,9 @@ func TestWorstCase(t *testing.T) {
 
 					if err := sut.SendTransaction(ctx, tx); err != nil {
 						sut.wallet.DecrementNonce(t, from)
+						continue
 					}
+					sut.waitUntilTxsPending(t, tx)
 				}
 
 				for accepted := false; !accepted; {

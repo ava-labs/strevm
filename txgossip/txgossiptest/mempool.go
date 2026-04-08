@@ -13,20 +13,34 @@ import (
 	"github.com/ava-labs/libevm/core/types"
 )
 
-// MustAddToMempool performs `addTx` and waits until `pool` marks all transactions provided as pending.
-func MustAddToMempool(tb testing.TB, ctx context.Context, pool *txpool.TxPool, addTx func(testing.TB, ...*types.Transaction), txs ...*types.Transaction) {
+// WaitUntilPending waits until all transactions provided are marked as pending in `pool`.
+func WaitUntilPending(tb testing.TB, ctx context.Context, pool *txpool.TxPool, txs ...*types.Transaction) {
 	tb.Helper()
 
 	if len(txs) == 0 {
 		return
 	}
 
-	txCh := make(chan core.NewTxsEvent, len(txs))
+	txCh := make(chan core.NewTxsEvent, 1) // size arbitrary
 	sub := pool.SubscribeTransactions(txCh, true /*reorgs but ignored by legacypool*/)
 	defer sub.Unsubscribe()
 
-	addTx(tb, txs...)
 	set := toSet(txs, (*types.Transaction).Hash)
+
+	// Optimistically check current mempool - any reorgs after this will
+	// certainly be caught by the subscription.
+	pendingByAddr, _ := pool.Content()
+	for _, list := range pendingByAddr {
+		for _, tx := range list {
+			delete(set, tx.Hash())
+		}
+	}
+
+	if len(set) == 0 {
+		// already found all txs
+		return
+	}
+
 	for {
 		select {
 		case <-ctx.Done():
