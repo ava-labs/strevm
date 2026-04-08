@@ -8,6 +8,8 @@ import (
 	"context"
 	"testing"
 
+	"github.com/ava-labs/avalanchego/utils/set"
+	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core"
 	"github.com/ava-labs/libevm/core/txpool"
 	"github.com/ava-labs/libevm/core/types"
@@ -25,18 +27,21 @@ func WaitUntilPending(tb testing.TB, ctx context.Context, pool *txpool.TxPool, t
 	sub := pool.SubscribeTransactions(txCh, true /*reorgs but ignored by legacypool*/)
 	defer sub.Unsubscribe()
 
-	set := toSet(txs, (*types.Transaction).Hash)
+	s := set.NewSet[common.Hash](len(txs))
+	for _, tx := range txs {
+		s.Add(tx.Hash())
+	}
 
 	// Optimistically check current mempool - any reorgs after this will
 	// certainly be caught by the subscription.
 	pendingByAddr, _ := pool.Content()
 	for _, list := range pendingByAddr {
 		for _, tx := range list {
-			delete(set, tx.Hash())
+			s.Remove(tx.Hash())
 		}
 	}
 
-	if len(set) == 0 {
+	if s.Len() == 0 {
 		// already found all txs
 		return
 	}
@@ -49,20 +54,12 @@ func WaitUntilPending(tb testing.TB, ctx context.Context, pool *txpool.TxPool, t
 			tb.Fatalf("%T.SubscribeTransactions.Err() returned %v", pool, err)
 		case txEvent := <-txCh:
 			for _, tx := range txEvent.Txs {
-				delete(set, tx.Hash())
+				s.Remove(tx.Hash())
 			}
 
-			if len(set) == 0 {
+			if s.Len() == 0 {
 				return
 			}
 		}
 	}
-}
-
-func toSet[T any, I comparable](list []T, indexer func(T) I) map[I]struct{} {
-	m := make(map[I]struct{}, len(list))
-	for _, t := range list {
-		m[indexer(t)] = struct{}{}
-	}
-	return m
 }

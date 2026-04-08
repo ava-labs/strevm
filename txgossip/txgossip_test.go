@@ -177,12 +177,13 @@ func TestExecutorIntegration(t *testing.T) {
 	require.Lenf(t, txs, numTxs, "%T.TransactionsByPriority()", s.Set)
 	require.Equalf(t, numTxs, s.Len(), "%T.Len()", s.Set)
 
+	b := s.chain.NewBlock(t, txs)
+	require.NoErrorf(t, s.exec.Enqueue(ctx, b), "%T.Enqueue([txs from %T.TransactionsByPriority()])", s.exec, s.Set)
+
 	t.Run("block_execution", func(t *testing.T) {
 		// The above test for nonce ordering only runs if the same sender has 2
 		// consecutive transactions. Successful execution demonstrates correct
 		// nonce ordering across the board.
-		b := s.chain.NewBlock(t, txs)
-		require.NoErrorf(t, s.exec.Enqueue(ctx, b), "%T.Enqueue([txs from %T.TransactionsByPriority()])", s.exec, s.Set)
 
 		require.NoErrorf(t, b.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", b)
 
