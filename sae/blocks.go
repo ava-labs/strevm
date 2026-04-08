@@ -66,11 +66,9 @@ func (vm *VM) BuildBlock(ctx context.Context, bCtx *block.Context) (*blocks.Bloc
 }
 
 var (
-	errUnknownParent         = errors.New("unknown parent")
-	errBlockHeightTooLow     = errors.New("block height too low")
-	errSettledRootMismatch   = errors.New("settled root mismatch")
-	errSettledHeightMismatch = errors.New("settled height mismatch")
-	errHashMismatch          = errors.New("hash mismatch")
+	errUnknownParent     = errors.New("unknown parent")
+	errBlockHeightTooLow = errors.New("block height too low")
+	errHashMismatch      = errors.New("hash mismatch")
 )
 
 // VerifyBlock validates the block and, if successful, populates its ancestry.
@@ -112,6 +110,11 @@ func (vm *VM) VerifyBlock(ctx context.Context, bCtx *block.Context, b *blocks.Bl
 	vm.consensusCritical.Store(b.Hash(), b)
 	return nil
 }
+
+var (
+	errSettledRootMismatch   = errors.New("settled root mismatch")
+	errSettledHeightMismatch = errors.New("settled height mismatch")
+)
 
 // verifyWhenBootstrapping skips verification in its entirety.
 //
