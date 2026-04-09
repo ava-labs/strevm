@@ -56,6 +56,7 @@ import (
 	"github.com/ava-labs/strevm/blocks"
 	"github.com/ava-labs/strevm/blocks/blockstest"
 	"github.com/ava-labs/strevm/cmputils"
+	"github.com/ava-labs/strevm/hook"
 	"github.com/ava-labs/strevm/hook/hookstest"
 	saeparams "github.com/ava-labs/strevm/params"
 	"github.com/ava-labs/strevm/saetest"
@@ -290,6 +291,12 @@ func withExecResultsDB(hdb database.HeightIndex) sutOption {
 	})
 }
 
+func withCommitInterval(interval uint64) sutOption {
+	return options.Func[sutConfig](func(c *sutConfig) {
+		c.vmConfig.DBConfig.TrieCommitInterval = interval
+	})
+}
+
 func withBloomSectionSize(size uint64) sutOption {
 	return options.Func[sutConfig](func(c *sutConfig) {
 		c.vmConfig.RPCConfig.BlocksPerBloomSection = size
@@ -428,43 +435,6 @@ func (s *SUT) runConsensusLoop(tb testing.TB, txs ...*types.Transaction) *blocks
 	return s.runConsensusLoopOnPreference(tb, s.lastAcceptedBlock(tb), txs...)
 }
 
-// waitUntilExecuted blocks until an external indicator shows that `b` has been
-// executed.
-func (s *SUT) waitUntilExecuted(tb testing.TB, b *blocks.Block) {
-	tb.Helper()
-	defer func() {
-		tb.Helper()
-		require.True(tb, b.Executed(), "%T.Executed()", b)
-	}()
-
-	// The subscription is opened before checking the block number to avoid
-	// missing the notification that the block was executed.
-	c := make(chan *types.Header)
-	ctx := tb.Context()
-	sub, err := s.SubscribeNewHead(ctx, c)
-	require.NoErrorf(tb, err, "%T.SubscribeNewHead()", s.Client)
-	defer sub.Unsubscribe()
-
-	num, err := s.BlockNumber(ctx)
-	require.NoErrorf(tb, err, "%T.BlockNumber()", s.Client)
-	if num >= b.Height() {
-		return
-	}
-
-	for {
-		select {
-		case <-ctx.Done():
-			tb.Fatalf("waiting for block %d to execute: %v", b.Height(), ctx.Err())
-		case err := <-sub.Err():
-			tb.Fatalf("%T.SubscribeNewHead().Err() returned: %v", s.Client, err)
-		case h := <-c:
-			if h.Number.Uint64() >= b.Height() {
-				return
-			}
-		}
-	}
-}
-
 func (s *SUT) stateAt(tb testing.TB, root common.Hash) *state.StateDB {
 	tb.Helper()
 	sdb, err := s.rawVM.exec.StateDB(root)
@@ -504,10 +474,7 @@ func (s *SUT) assertBlockHashInvariants(ctx context.Context, t *testing.T) {
 	t.Helper()
 	t.Run("block_hash_invariants", func(t *testing.T) {
 		b := s.lastAcceptedBlock(t)
-		// The API client is an external reader, so we must wait on an external
-		// indicator. The block's WaitUntilExecuted is only an internal
-		// indicator.
-		s.waitUntilExecuted(t, b)
+		require.NoError(t, b.WaitUntilExecuted(ctx), "WaitUntilExecuted()")
 		t.Logf("Last accepted (and executed) block: %d", b.Height())
 
 		for num, want := range map[rpc.BlockNumber]common.Hash{
@@ -717,6 +684,50 @@ func TestCustomTransactionInclusion(t *testing.T) {
 	for _, a := range accounts {
 		assert.Equalf(t, a.nonce, sdb.GetNonce(a.address), "%T.GetNonce([%s])", sdb, a.name)
 		assert.Equalf(t, uint256.NewInt(a.balance), sdb.GetBalance(a.address), "%T.GetBalance([%s])", sdb, a.name)
+	}
+}
+
+// TestVerifyWhenBootstrapping verifies that verification is skipped during
+// bootstrapping.
+func TestVerifyWhenBootstrapping(t *testing.T) {
+	op := hookstest.Op{
+		ID:        ids.GenerateTestID(),
+		Gas:       100_000,
+		GasFeeCap: *uint256.NewInt(params.Wei),
+	}
+	ctx, sut := newSUT(t, 0, options.Func[sutConfig](func(c *sutConfig) {
+		c.hooks.Ops = []hookstest.Op{op}
+	}))
+
+	blk := sut.buildAndParseBlock(t, sut.lastAcceptedBlock(t))
+
+	// Sanity check that the op was included in the block.
+	ops, err := sut.hooks.EndOfBlockOps(unwrap(t, blk).EthBlock())
+	require.NoErrorf(t, err, "%T.EndOfBlockOps()", sut.hooks)
+	require.Equal(t, []hook.Op{op.AsOp()}, ops, "ops included in block")
+
+	// Mark the op invalid to distinguish whether [snowman.Block.Verify]
+	// verifies the block ops.
+	sut.hooks.InvalidOpIDs = set.Of(op.ID)
+
+	tests := []struct {
+		consensusState snow.State
+		want           error
+	}{
+		{
+			consensusState: snow.NormalOp,
+			want:           errHashMismatch,
+		},
+		{
+			consensusState: snow.Bootstrapping,
+			want:           nil,
+		},
+	}
+	for _, test := range tests {
+		require.NoErrorf(t, sut.SetState(ctx, test.consensusState), "%T.SetState(%s)", sut, test.consensusState)
+		t.Run(test.consensusState.String(), func(t *testing.T) {
+			assert.ErrorIsf(t, blk.Verify(ctx), test.want, "%T.Verify()", blk)
+		})
 	}
 }
 

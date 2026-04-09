@@ -50,6 +50,7 @@ type rpcTest struct {
 	args         []any
 	want         any // untyped nil means no return value.
 	wantErr      testerr.Want
+	parallel     bool
 	eventually   bool
 	extraCmpOpts []cmp.Option
 }
@@ -87,6 +88,9 @@ func (s *SUT) testRPC(ctx context.Context, t *testing.T, tcs ...rpcTest) {
 		}
 
 		t.Run(tc.method, func(t *testing.T) {
+			if tc.parallel {
+				t.Parallel()
+			}
 			t.Logf("%T.CallContext(ctx, %T, %q, %v...)", s.rpcClient, &tc.want, tc.method, tc.args)
 			if tc.eventually {
 				require.EventuallyWithT(t, func(c *assert.CollectT) {
@@ -831,7 +835,7 @@ func TestGetReceipts(t *testing.T) {
 	settled, wantSettled := slice(t, 2, 4)
 	vmTime.advanceToSettle(ctx, t, settled)
 	unsettled, wantUnsettled := slice(t, 4, 6)
-	sut.waitUntilExecuted(t, unsettled)
+	require.NoError(t, unsettled.WaitUntilExecuted(ctx), "WaitUntilExecuted()")
 
 	pending := sut.runConsensusLoop(t, sut.wallet.SetNonceAndSign(t, 0, &types.LegacyTx{
 		To:       &blockingPrecompile,
