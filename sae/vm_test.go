@@ -34,7 +34,6 @@ import (
 	"github.com/ava-labs/libevm/core"
 	"github.com/ava-labs/libevm/core/rawdb"
 	"github.com/ava-labs/libevm/core/state"
-	"github.com/ava-labs/libevm/core/txpool"
 	"github.com/ava-labs/libevm/core/txpool/legacypool"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/core/vm"
@@ -57,10 +56,12 @@ import (
 	"github.com/ava-labs/strevm/blocks"
 	"github.com/ava-labs/strevm/blocks/blockstest"
 	"github.com/ava-labs/strevm/cmputils"
+	"github.com/ava-labs/strevm/hook"
 	"github.com/ava-labs/strevm/hook/hookstest"
 	saeparams "github.com/ava-labs/strevm/params"
-	"github.com/ava-labs/strevm/saedb"
 	"github.com/ava-labs/strevm/saetest"
+	"github.com/ava-labs/strevm/txgossip/txgossiptest"
+	saetypes "github.com/ava-labs/strevm/types"
 )
 
 func TestMain(m *testing.M) {
@@ -124,7 +125,7 @@ func newSUT(tb testing.TB, numAccounts uint, opts ...sutOption) (context.Context
 
 	xdb := saetest.NewExecutionResultsDB()
 	conf := options.ApplyTo(&sutConfig{
-		hooks: hookstest.NewStub(100e6, hookstest.WithExecutionResultsDBFn(func(string) (saedb.ExecutionResults, error) {
+		hooks: hookstest.NewStub(100e6, hookstest.WithExecutionResultsDBFn(func(string) (saetypes.ExecutionResults, error) {
 			return xdb, nil
 		})),
 		vmConfig: Config{
@@ -284,9 +285,15 @@ func withVMTime(tb testing.TB, startTime time.Time) (sutOption, *vmTime) {
 // execution-results database with the provided one.
 func withExecResultsDB(hdb database.HeightIndex) sutOption {
 	return options.Func[sutConfig](func(c *sutConfig) {
-		c.hooks.ExecutionResultsDBFn = func(string) (saedb.ExecutionResults, error) {
-			return saedb.ExecutionResults{HeightIndex: hdb}, nil
+		c.hooks.ExecutionResultsDBFn = func(string) (saetypes.ExecutionResults, error) {
+			return saetypes.ExecutionResults{HeightIndex: hdb}, nil
 		}
+	})
+}
+
+func withCommitInterval(interval uint64) sutOption {
+	return options.Func[sutConfig](func(c *sutConfig) {
+		c.vmConfig.DBConfig.TrieCommitInterval = interval
 	})
 }
 
@@ -344,50 +351,34 @@ func (s *SUT) context(tb testing.TB) context.Context {
 	return s.logger.CancelOnError(tb.Context())
 }
 
-func (s *SUT) mustSendTx(tb testing.TB, tx *types.Transaction) {
+// mustSendTx guarantees all transactions are delivered to the mempool, which triggers
+// an asynchronous reorg to move all possible transactions from the source addresses
+// to the pending label.
+func (s *SUT) mustSendTx(tb testing.TB, txs ...*types.Transaction) {
 	tb.Helper()
-	require.NoErrorf(tb, s.Client.SendTransaction(s.context(tb), tx), "%T.SendTransaction([%#x])", s.Client, tx.Hash())
-}
 
-// addToMempool is a convenience wrapper around [SUT.mustSendTx] (per tx) and
-// [SUT.requireInMempool].
-func (s *SUT) addToMempool(tb testing.TB, txs ...*types.Transaction) {
-	tb.Helper()
-	txHashes := make([]common.Hash, len(txs))
-	for i, tx := range txs {
-		s.mustSendTx(tb, tx)
-		txHashes[i] = tx.Hash()
+	ctx := s.context(tb)
+	for _, tx := range txs {
+		require.NoErrorf(tb, s.Client.SendTransaction(ctx, tx), "%T.SendTransaction([%#x])", s.Client, tx.Hash())
 	}
-	s.requireInMempool(tb, txHashes...)
 }
 
-// syncMempool is a convenience wrapper for calling [txpool.TxPool.Sync], which
-// MUST NOT be done in production.
-func (s *SUT) syncMempool(tb testing.TB) {
+// sendTxsAndWaitUntilPending sends all `txs` to the mempool, and waits for
+// each to be marked as pending.
+func (s *SUT) sendTxsAndWaitUntilPending(tb testing.TB, txs ...*types.Transaction) {
 	tb.Helper()
-	var _ txpool.TxPool // maintain import for [comment] rendering
-	p := s.rawVM.mempool.Pool
-	require.NoErrorf(tb, p.Sync(), "%T.Sync()", p)
+
+	s.mustSendTx(tb, txs...)
+	s.waitUntilTxsPending(tb, txs...)
 }
 
-// requireInMempool requires that the transaction with the specified hash is
-// eventually in the mempool. It calls [SUT.syncMempool] before every check.
-func (s *SUT) requireInMempool(tb testing.TB, txs ...common.Hash) {
+func (s *SUT) waitUntilTxsPending(tb testing.TB, txs ...*types.Transaction) {
 	tb.Helper()
-	require.EventuallyWithTf(
-		tb,
-		func(c *assert.CollectT) {
-			s.syncMempool(tb)
-			for i, tx := range txs {
-				assert.Truef(c, s.rawVM.mempool.Pool.Has(tx), "tx %d:%v not in mempool", i, tx)
-			}
-		},
-		250*time.Millisecond, 25*time.Millisecond,
-		"all of txs [%v] to in mempool", txs,
-	)
+
+	txgossiptest.WaitUntilPending(tb, s.context(tb), s.rawVM.mempool.Pool, txs...)
 }
 
-// buildAndParseBlock calls [SUT.addToMempool] with the provided transactions,
+// buildAndParseBlock adds all `txs` to the mempool and ensures they are pending,
 // builds a new block and passes its bytes to [VM.ParseBlock], the result of
 // which is returned. This is equivalent to a validator having received valid
 // bytes from a peer, but with no element of consensus performed.
@@ -396,7 +387,7 @@ func (s *SUT) requireInMempool(tb testing.TB, txs ...common.Hash) {
 // of a [blocks.Block], hence its return as a [snowman.Block].
 func (s *SUT) buildAndParseBlock(tb testing.TB, preference *blocks.Block, txs ...*types.Transaction) snowman.Block {
 	tb.Helper()
-	s.addToMempool(tb, txs...)
+	s.sendTxsAndWaitUntilPending(tb, txs...)
 
 	ctx := s.context(tb)
 	require.NoError(tb, s.SetPreference(ctx, preference.ID()), "SetPreference()")
@@ -444,43 +435,6 @@ func (s *SUT) runConsensusLoop(tb testing.TB, txs ...*types.Transaction) *blocks
 	return s.runConsensusLoopOnPreference(tb, s.lastAcceptedBlock(tb), txs...)
 }
 
-// waitUntilExecuted blocks until an external indicator shows that `b` has been
-// executed.
-func (s *SUT) waitUntilExecuted(tb testing.TB, b *blocks.Block) {
-	tb.Helper()
-	defer func() {
-		tb.Helper()
-		require.True(tb, b.Executed(), "%T.Executed()", b)
-	}()
-
-	// The subscription is opened before checking the block number to avoid
-	// missing the notification that the block was executed.
-	c := make(chan *types.Header)
-	ctx := tb.Context()
-	sub, err := s.SubscribeNewHead(ctx, c)
-	require.NoErrorf(tb, err, "%T.SubscribeNewHead()", s.Client)
-	defer sub.Unsubscribe()
-
-	num, err := s.BlockNumber(ctx)
-	require.NoErrorf(tb, err, "%T.BlockNumber()", s.Client)
-	if num >= b.Height() {
-		return
-	}
-
-	for {
-		select {
-		case <-ctx.Done():
-			tb.Fatalf("waiting for block %d to execute: %v", b.Height(), ctx.Err())
-		case err := <-sub.Err():
-			tb.Fatalf("%T.SubscribeNewHead().Err() returned: %v", s.Client, err)
-		case h := <-c:
-			if h.Number.Uint64() >= b.Height() {
-				return
-			}
-		}
-	}
-}
-
 func (s *SUT) stateAt(tb testing.TB, root common.Hash) *state.StateDB {
 	tb.Helper()
 	sdb, err := s.rawVM.exec.StateDB(root)
@@ -520,10 +474,7 @@ func (s *SUT) assertBlockHashInvariants(ctx context.Context, t *testing.T) {
 	t.Helper()
 	t.Run("block_hash_invariants", func(t *testing.T) {
 		b := s.lastAcceptedBlock(t)
-		// The API client is an external reader, so we must wait on an external
-		// indicator. The block's WaitUntilExecuted is only an internal
-		// indicator.
-		s.waitUntilExecuted(t, b)
+		require.NoError(t, b.WaitUntilExecuted(ctx), "WaitUntilExecuted()")
 		t.Logf("Last accepted (and executed) block: %d", b.Height())
 
 		for num, want := range map[rpc.BlockNumber]common.Hash{
@@ -572,7 +523,7 @@ func TestIntegration(t *testing.T) {
 			GasFeeCap: big.NewInt(1),
 			Value:     transfer.ToBig(),
 		})
-		sut.mustSendTx(t, tx)
+		sut.sendTxsAndWaitUntilPending(t, tx)
 	}
 
 	select {
@@ -589,9 +540,6 @@ func TestIntegration(t *testing.T) {
 	for range numTxs + 1 {
 		t.Run("WaitForEvent_with_existing_txs", testWaitForEvent)
 	}
-
-	sut.syncMempool(t) // technically we've only proven 1 tx added, as unlikely as a race is
-	require.Equal(t, numTxs, sut.rawVM.numPendingTxs(), "number of pending txs")
 
 	b := sut.runConsensusLoopOnPreference(t, sut.genesis)
 	assert.Equal(t, sut.genesis.ID(), b.Parent(), "BuildBlock() builds on preference")
@@ -736,6 +684,50 @@ func TestCustomTransactionInclusion(t *testing.T) {
 	for _, a := range accounts {
 		assert.Equalf(t, a.nonce, sdb.GetNonce(a.address), "%T.GetNonce([%s])", sdb, a.name)
 		assert.Equalf(t, uint256.NewInt(a.balance), sdb.GetBalance(a.address), "%T.GetBalance([%s])", sdb, a.name)
+	}
+}
+
+// TestVerifyWhenBootstrapping verifies that verification is skipped during
+// bootstrapping.
+func TestVerifyWhenBootstrapping(t *testing.T) {
+	op := hookstest.Op{
+		ID:        ids.GenerateTestID(),
+		Gas:       100_000,
+		GasFeeCap: *uint256.NewInt(params.Wei),
+	}
+	ctx, sut := newSUT(t, 0, options.Func[sutConfig](func(c *sutConfig) {
+		c.hooks.Ops = []hookstest.Op{op}
+	}))
+
+	blk := sut.buildAndParseBlock(t, sut.lastAcceptedBlock(t))
+
+	// Sanity check that the op was included in the block.
+	ops, err := sut.hooks.EndOfBlockOps(unwrap(t, blk).EthBlock())
+	require.NoErrorf(t, err, "%T.EndOfBlockOps()", sut.hooks)
+	require.Equal(t, []hook.Op{op.AsOp()}, ops, "ops included in block")
+
+	// Mark the op invalid to distinguish whether [snowman.Block.Verify]
+	// verifies the block ops.
+	sut.hooks.InvalidOpIDs = set.Of(op.ID)
+
+	tests := []struct {
+		consensusState snow.State
+		want           error
+	}{
+		{
+			consensusState: snow.NormalOp,
+			want:           errHashMismatch,
+		},
+		{
+			consensusState: snow.Bootstrapping,
+			want:           nil,
+		},
+	}
+	for _, test := range tests {
+		require.NoErrorf(t, sut.SetState(ctx, test.consensusState), "%T.SetState(%s)", sut, test.consensusState)
+		t.Run(test.consensusState.String(), func(t *testing.T) {
+			assert.ErrorIsf(t, blk.Verify(ctx), test.want, "%T.Verify()", blk)
+		})
 	}
 }
 
