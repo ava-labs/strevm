@@ -25,7 +25,6 @@ import (
 
 	"github.com/ava-labs/strevm/cmputils"
 	"github.com/ava-labs/strevm/gastime"
-	"github.com/ava-labs/strevm/hook"
 	"github.com/ava-labs/strevm/saetest"
 	saetypes "github.com/ava-labs/strevm/types"
 )
@@ -174,7 +173,7 @@ type selfAsHasher common.Hash
 
 func (h selfAsHasher) Hash() common.Hash { return common.Hash(h) }
 
-func mustNewGasTime(tb testing.TB, at time.Time, target, excess gas.Gas, gasPriceConfig hook.GasPriceConfig) *gastime.Time {
+func mustNewGasTime(tb testing.TB, at time.Time, target, excess gas.Gas, gasPriceConfig saetypes.GasPriceConfig) *gastime.Time {
 	tb.Helper()
 	tm, err := gastime.New(at, target, excess, gasPriceConfig)
 	require.NoError(tb, err, "gastime.New()")

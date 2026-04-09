@@ -22,6 +22,7 @@ import (
 	"github.com/ava-labs/libevm/params"
 	"github.com/holiman/uint256"
 
+	"github.com/ava-labs/strevm/gastime"
 	"github.com/ava-labs/strevm/hook"
 	"github.com/ava-labs/strevm/saetest"
 	saetypes "github.com/ava-labs/strevm/types"
@@ -35,7 +36,7 @@ type Stub struct {
 	Ops                     []Op
 	ExecutionResultsDBFn    func(string) (saetypes.ExecutionResults, error)
 	CanExecuteTransactionFn func(common.Address, *common.Address, libevm.StateReader) error
-	GasPriceConfig          hook.GasPriceConfig
+	GasPriceConfig          saetypes.GasPriceConfig
 }
 
 var _ hook.PointsG[Op] = (*Stub)(nil)
@@ -44,7 +45,7 @@ var _ hook.PointsG[Op] = (*Stub)(nil)
 type HookOption = options.Option[Stub]
 
 // WithGasPriceConfig overrides the default gas config.
-func WithGasPriceConfig(cfg hook.GasPriceConfig) HookOption {
+func WithGasPriceConfig(cfg saetypes.GasPriceConfig) HookOption {
 	return options.Func[Stub](func(s *Stub) {
 		s.GasPriceConfig = cfg
 	})
@@ -81,16 +82,9 @@ func WithExecutionResultsDBFn(fn func(string) (saetypes.ExecutionResults, error)
 // NewStub returns a stub with defaults applied.
 // It uses [gastime.DefaultGasPriceConfig] unless overridden by [WithGasPriceConfig].
 func NewStub(target gas.Gas, opts ...HookOption) *Stub {
-	// defaultGasPriceConfig is the same as [gastime.DefaultGasPriceConfig]. It is defined
-	// here to avoid a circular dependency between [gastime] and [hookstest].
-	defaultGasPriceConfig := hook.GasPriceConfig{
-		TargetToExcessScaling: 87,
-		MinPrice:              1,
-		StaticPricing:         false,
-	}
 	return options.ApplyTo(&Stub{
 		Target:         target,
-		GasPriceConfig: defaultGasPriceConfig,
+		GasPriceConfig: gastime.DefaultGasPriceConfig(),
 	}, opts...)
 }
 
@@ -196,7 +190,7 @@ func (s *Stub) BlockRebuilderFrom(b *types.Block) (hook.BlockBuilder[Op], error)
 }
 
 // GasConfigAfter ignores its argument and always returns [Stub.Target] and [Stub.GasPriceConfig].
-func (s *Stub) GasConfigAfter(*types.Header) (gas.Gas, hook.GasPriceConfig) {
+func (s *Stub) GasConfigAfter(*types.Header) (gas.Gas, saetypes.GasPriceConfig) {
 	return s.Target, s.GasPriceConfig
 }
 

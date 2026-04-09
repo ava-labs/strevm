@@ -10,15 +10,13 @@ import (
 	"time"
 
 	"github.com/ava-labs/avalanchego/vms/components/gas"
-	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/params"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/text/language"
 	"golang.org/x/text/message"
 
-	"github.com/ava-labs/strevm/hook"
-	"github.com/ava-labs/strevm/hook/hookstest"
+	saetypes "github.com/ava-labs/strevm/types"
 )
 
 // TestInvalidConfigRejected verifies that zero values for TargetToExcessScaling
@@ -29,17 +27,17 @@ func TestInvalidConfigRejected(t *testing.T) {
 
 	tests := []struct {
 		name     string
-		config   hook.GasPriceConfig
+		config   saetypes.GasPriceConfig
 		expected error
 	}{
 		{
 			"zero_scaling",
-			hook.GasPriceConfig{TargetToExcessScaling: 0, MinPrice: DefaultGasPriceConfig().MinPrice},
+			saetypes.GasPriceConfig{TargetToExcessScaling: 0, MinPrice: DefaultGasPriceConfig().MinPrice},
 			errInvalidGasPriceConfig,
 		},
 		{
 			"zero_min_price",
-			hook.GasPriceConfig{TargetToExcessScaling: DefaultGasPriceConfig().TargetToExcessScaling, MinPrice: 0},
+			saetypes.GasPriceConfig{TargetToExcessScaling: DefaultGasPriceConfig().TargetToExcessScaling, MinPrice: 0},
 			errInvalidGasPriceConfig,
 		},
 	}
@@ -50,8 +48,7 @@ func TestInvalidConfigRejected(t *testing.T) {
 
 			initialScaling := tm.config.targetToExcessScaling
 			initialMinPrice := tm.config.minPrice
-			hooks := hookstest.NewStub(target, hookstest.WithGasPriceConfig(tt.config))
-			err := tm.AfterBlock(0, hooks, &types.Header{Time: 42})
+			err := tm.AfterBlock(0, target, tt.config)
 			require.ErrorIs(t, err, tt.expected, "AfterBlock()")
 
 			// Config unchanged after rejected update
@@ -76,13 +73,9 @@ func TestTargetUpdateTiming(t *testing.T) {
 		newTime   uint64 = initialTime + 1
 		newTarget        = initialTarget + 100_000
 	)
-	hook := hookstest.NewStub(newTarget)
-	header := &types.Header{
-		Time: newTime,
-	}
 
 	initialPrice := tm.Price()
-	tm.BeforeBlock(hook, header)
+	tm.BeforeBlock(newTime, 0)
 	assert.Equal(t, newTime, tm.Unix(), "Unix time advanced by BeforeBlock()")
 	assert.Equal(t, initialTarget, tm.Target(), "Target not changed by BeforeBlock()")
 	// While the price technically could remain the same, being more strict
@@ -98,7 +91,7 @@ func TestTargetUpdateTiming(t *testing.T) {
 		expectedEndTime  = newTime + secondsOfGasUsed
 	)
 	used := initialRate * secondsOfGasUsed
-	require.NoError(t, tm.AfterBlock(used, hook, header), "AfterBlock()")
+	require.NoError(t, tm.AfterBlock(used, newTarget, DefaultGasPriceConfig()), "AfterBlock()")
 	assert.Equal(t, expectedEndTime, tm.Unix(), "Unix time advanced by AfterBlock() due to gas consumption")
 	assert.Equal(t, newTarget, tm.Target(), "Target updated by AfterBlock()")
 	// While the price technically could remain the same, being more strict
@@ -116,6 +109,7 @@ func FuzzWorstCasePrice(f *testing.F) {
 		time3, nanos3, used3, limit3, target3 uint64,
 	) {
 		initTarget = max(initTarget, 1)
+		gasCfg := DefaultGasPriceConfig()
 
 		initUnix := int64(min(initTimestamp, math.MaxInt64)) //nolint:gosec // I can't believe I have to be explicit about this!
 		worstcase := mustNew(t, time.Unix(initUnix, 0), gas.Gas(initTarget), gas.Gas(initExcess), DefaultGasPriceConfig())
@@ -161,24 +155,14 @@ func FuzzWorstCasePrice(f *testing.F) {
 			block.limit = max(block.used, block.limit)
 			block.target = clampTarget(max(block.target, 1))
 
-			header := &types.Header{
-				Time: block.time,
-			}
-			hook := hookstest.NewStub(block.target, hookstest.WithNow(func() time.Time {
-				return time.Unix(
-					int64(block.time), //nolint:gosec // Won't overflow for a few millennia
-					int64(block.nanos),
-				)
-			}))
-
-			worstcase.BeforeBlock(hook, header)
-			actual.BeforeBlock(hook, header)
+			worstcase.BeforeBlock(block.time, block.nanos)
+			actual.BeforeBlock(block.time, block.nanos)
 
 			// The crux of this test lies in the maintaining of this inequality
 			// through the use of `limit` instead of `used` in `AfterBlock()`
 			require.LessOrEqualf(t, actual.Price(), worstcase.Price(), "actual <= worst-case %T.Price()", actual)
-			require.NoError(t, worstcase.AfterBlock(block.limit, hook, header), "worstcase.AfterBlock()")
-			require.NoError(t, actual.AfterBlock(block.used, hook, header), "actual.AfterBlock()")
+			require.NoError(t, worstcase.AfterBlock(block.limit, block.target, gasCfg), "worstcase.AfterBlock()")
+			require.NoError(t, actual.AfterBlock(block.used, block.target, gasCfg), "actual.AfterBlock()")
 		}
 	})
 }
@@ -339,7 +323,7 @@ func FuzzPriceInvarianceAfterBlock(f *testing.F) {
 			t.Skip("New target too low")
 		}
 
-		initConfig := hook.GasPriceConfig{
+		initConfig := saetypes.GasPriceConfig{
 			TargetToExcessScaling: gas.Gas(initScaling),
 			MinPrice:              gas.Price(initMinPrice),
 			StaticPricing:         initStaticPricing,
@@ -366,13 +350,11 @@ func FuzzPriceInvarianceAfterBlock(f *testing.F) {
 		initPrice := tm.Price()
 
 		{
-			hooks := hookstest.NewStub(
-				gas.Gas(newTarget),
-				hookstest.WithGasPriceConfig(hook.GasPriceConfig{
-					MinPrice:              gas.Price(newMinPrice),
-					TargetToExcessScaling: gas.Gas(newScaling),
-					StaticPricing:         newStaticPricing,
-				}))
+			cfg := saetypes.GasPriceConfig{
+				MinPrice:              gas.Price(newMinPrice),
+				TargetToExcessScaling: gas.Gas(newScaling),
+				StaticPricing:         newStaticPricing,
+			}
 
 			var wantErrIs error
 			if newScaling == 0 || newMinPrice == 0 {
@@ -382,8 +364,8 @@ func FuzzPriceInvarianceAfterBlock(f *testing.F) {
 			// Consuming gas increases the excess, which changes the price.
 			// We're only interested in invariance under changes in config.
 			const gasUsed = 0
-			err := tm.AfterBlock(gasUsed, hooks, nil)
-			require.ErrorIsf(t, err, wantErrIs, "AfterBlock([%+v])", hooks)
+			err := tm.AfterBlock(gasUsed, gas.Gas(newTarget), cfg)
+			require.ErrorIsf(t, err, wantErrIs, "AfterBlock(%d, [%+v])", newTarget, cfg)
 			if wantErrIs != nil {
 				return
 			}
@@ -441,8 +423,8 @@ func FuzzPriceInvarianceAfterBlock(f *testing.F) {
 }
 
 // equalHookConfig is equivalent to [config.equal] but accepts a
-// [hook.GasPriceConfig] that is first converted and validated.
-func (c *config) equalHookConfig(tb testing.TB, hookCfg hook.GasPriceConfig) bool {
+// [saetypes.GasPriceConfig] that is first converted and validated.
+func (c *config) equalHookConfig(tb testing.TB, hookCfg saetypes.GasPriceConfig) bool {
 	tb.Helper()
 	other, err := newConfig(hookCfg)
 	require.NoError(tb, err)
