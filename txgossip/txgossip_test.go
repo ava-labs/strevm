@@ -180,27 +180,26 @@ func TestExecutorIntegration(t *testing.T) {
 	b := s.chain.NewBlock(t, txs)
 	require.NoErrorf(t, s.exec.Enqueue(ctx, b), "%T.Enqueue([txs from %T.TransactionsByPriority()])", s.exec, s.Set)
 
+	// After the block is executed, a [core.ChainHeadEvent] triggers a reorg
+	// in the mempool. We can't be explicitly notified when the reorg completes,
+	// so polling is necessary.
+	assert.EventuallyWithTf(
+		t, func(c *assert.CollectT) {
+			assert.Zerof(c, s.Len(), "%T.Len()", s.Set)
+			assert.Emptyf(c, slices.Collect(s.Iterate), "slices.Collect(%T.Iterate)", s.Set)
+			for _, tx := range txs {
+				assert.Falsef(c, s.Has(ids.ID(tx.Hash())), "%T.Has(%#x)", s.Set, tx.Hash())
+			}
+		},
+		2*time.Second, 10*time.Millisecond,
+		"empty %T after transactions included in a block", s.Set,
+	)
+
 	t.Run("block_execution", func(t *testing.T) {
 		// The above test for nonce ordering only runs if the same sender has 2
 		// consecutive transactions. Successful execution demonstrates correct
 		// nonce ordering across the board.
-
 		require.NoErrorf(t, b.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", b)
-
-		// After the block is executed, a [core.ChainHeadEvent] triggers a reorg
-		// in the mempool. We can't be explicitly notified when the reorg completes,
-		// so polling is necessary.
-		assert.EventuallyWithTf(
-			t, func(c *assert.CollectT) {
-				assert.Zerof(c, s.Len(), "%T.Len()", s.Set)
-				assert.Emptyf(c, slices.Collect(s.Iterate), "slices.Collect(%T.Iterate)", s.Set)
-				for _, tx := range txs {
-					assert.Falsef(c, s.Has(ids.ID(tx.Hash())), "%T.Has(%#x)", s.Set, tx.Hash())
-				}
-			},
-			2*time.Second, 10*time.Millisecond,
-			"empty %T after transactions included in a block", s.Set,
-		)
 
 		for i, r := range b.Receipts() {
 			assert.Equalf(t, types.ReceiptStatusSuccessful, r.Status, "%T[%d].Status", r, i)
