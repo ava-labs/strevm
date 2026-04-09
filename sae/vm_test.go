@@ -11,7 +11,6 @@ import (
 	"math/big"
 	"math/rand/v2"
 	"net/http/httptest"
-	"os"
 	"runtime"
 	"sync"
 	"testing"
@@ -43,7 +42,6 @@ import (
 	"github.com/ava-labs/libevm/libevm"
 	libevmhookstest "github.com/ava-labs/libevm/libevm/hookstest"
 	"github.com/ava-labs/libevm/libevm/options"
-	"github.com/ava-labs/libevm/log"
 	"github.com/ava-labs/libevm/params"
 	"github.com/ava-labs/libevm/rpc"
 	"github.com/google/go-cmp/cmp"
@@ -67,8 +65,6 @@ import (
 func TestMain(m *testing.M) {
 	createWorstCaseFuzzFlags(flag.CommandLine)
 	flag.Parse()
-
-	log.SetDefault(log.NewLogger(log.NewTerminalHandlerWithLevel(os.Stderr, log.LevelError, true)))
 
 	goleak.VerifyTestMain(
 		m,
@@ -117,6 +113,8 @@ var chainID = ids.GenerateTestID()
 
 func newSUT(tb testing.TB, numAccounts uint, opts ...sutOption) (context.Context, *SUT) {
 	tb.Helper()
+
+	saetest.EnableLibEVMTBLogger(tb)
 
 	mempoolConf := legacypool.DefaultConfig // copies
 	mempoolConf.Journal = "/dev/null"

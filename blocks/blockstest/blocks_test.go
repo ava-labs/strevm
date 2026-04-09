@@ -27,6 +27,8 @@ import (
 )
 
 func TestIntegration(t *testing.T) {
+	saetest.EnableLibEVMTBLogger(t)
+
 	const (
 		numAccounts           = 2
 		numBlocks             = 3
