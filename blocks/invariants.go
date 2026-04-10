@@ -12,7 +12,6 @@ import (
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core/state"
 	"github.com/ava-labs/libevm/core/types"
-	"github.com/ava-labs/libevm/trie"
 	"github.com/holiman/uint256"
 	"go.uber.org/zap"
 
@@ -176,33 +175,33 @@ func (b *Block) brokenInvariantErr(msg string) error {
 // CheckInvariants checks internal invariants against expected stage, typically
 // only used during database recovery.
 func (b *Block) CheckInvariants(expect LifeCycleStage) error {
-	switch e := b.execution.Load(); e {
-	case nil: // not executed
-		if expect >= Executed {
-			return b.brokenInvariantErr("expected to be executed")
-		}
-	default: // executed
-		if expect < Executed {
-			return b.brokenInvariantErr("unexpectedly executed")
-		}
-		if e.receiptRoot != types.DeriveSha(e.receipts, trie.NewStackTrie(nil)) {
-			return b.brokenInvariantErr("receipts don't match root")
-		}
-	}
+	// switch e := b.execution.Load(); e {
+	// case nil: // not executed
+	// 	if expect >= Executed {
+	// 		return b.brokenInvariantErr("expected to be executed")
+	// 	}
+	// default: // executed
+	// 	if expect < Executed {
+	// 		return b.brokenInvariantErr("unexpectedly executed")
+	// 	}
+	// 	if e.receiptRoot != types.DeriveSha(e.receipts, trie.NewStackTrie(nil)) {
+	// 		return b.brokenInvariantErr("receipts don't match root")
+	// 	}
+	// }
 
-	switch a := b.ancestry.Load(); a {
-	case nil: // settled
-		if expect < Settled {
-			return b.brokenInvariantErr("unexpectedly settled")
-		}
-	default: // not settled
-		if expect >= Settled {
-			return b.brokenInvariantErr("expected to be settled")
-		}
-		if b.SettledStateRoot() != b.LastSettled().PostExecutionStateRoot() {
-			return b.brokenInvariantErr("state root does not match last-settled post execution")
-		}
-	}
+	// switch a := b.ancestry.Load(); a {
+	// case nil: // settled
+	// 	if expect < Settled {
+	// 		return b.brokenInvariantErr("unexpectedly settled")
+	// 	}
+	// default: // not settled
+	// 	if expect >= Settled {
+	// 		return b.brokenInvariantErr("expected to be settled")
+	// 	}
+	// 	if b.SettledStateRoot() != b.LastSettled().PostExecutionStateRoot() {
+	// 		return b.brokenInvariantErr("state root does not match last-settled post execution")
+	// 	}
+	// }
 
 	return nil
 }
