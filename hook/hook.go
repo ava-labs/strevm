@@ -8,6 +8,7 @@
 package hook
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"iter"
@@ -27,7 +28,6 @@ import (
 
 	"github.com/ava-labs/strevm/intmath"
 	saeparams "github.com/ava-labs/strevm/params"
-	"github.com/ava-labs/strevm/saedb"
 	saetypes "github.com/ava-labs/strevm/types"
 )
 
@@ -54,7 +54,7 @@ type Points interface {
 	// ExecutionResultsDB opens and returns a height-indexed database, which
 	// will be closed by the VM when no longer needed. It MAY use the provided
 	// directory for persistence and MUST NOT write data outside of it.
-	ExecutionResultsDB(dataDir string) (saedb.ExecutionResults, error)
+	ExecutionResultsDB(dataDir string) (saetypes.ExecutionResults, error)
 
 	// GasConfigAfter returns the gas target and configuration that should go
 	// into effect immediately after the provided block.
@@ -63,6 +63,10 @@ type Points interface {
 	// which MUST be non-negative and strictly shorter than a second; i.e. a
 	// value d such that 0 <= d < [time.Second].
 	SubSecondBlockTime(h *types.Header) time.Duration
+	// SettledHeight returns the block height which [types.Header.Root] corresponds
+	// with as the post-execution state root. It MUST match the value passed to
+	// [BlockBuilder.BuildBlock], from which the [types.Header] will be sourced.
+	SettledHeight(*types.Header) uint64
 	// EndOfBlockOps returns operations outside of the normal EVM state changes
 	// to perform while executing the block, after regular EVM transactions.
 	// These operations will be performed during both worst-case and actual
@@ -100,6 +104,7 @@ type BlockBuilder[T Transaction] interface {
 	// SAE will filter any transactions whose [Op] can not be safely applied to
 	// the state.
 	PotentialEndOfBlockOps(
+		ctx context.Context,
 		header *types.Header,
 		lastSettledBlock common.Hash,
 		source saetypes.BlockSource,
@@ -114,6 +119,7 @@ type BlockBuilder[T Transaction] interface {
 		txs []*types.Transaction,
 		receipts []*types.Receipt,
 		endOfBlockOps []T,
+		settledHeight uint64,
 	) (*types.Block, error)
 }
 

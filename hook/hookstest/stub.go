@@ -5,13 +5,14 @@
 package hookstest
 
 import (
+	"context"
 	"iter"
 	"math/big"
-	"slices"
 	"time"
 
 	"github.com/ava-labs/avalanchego/ids"
 	"github.com/ava-labs/avalanchego/snow/engine/snowman/block"
+	"github.com/ava-labs/avalanchego/utils/set"
 	"github.com/ava-labs/avalanchego/vms/components/gas"
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core/state"
@@ -22,7 +23,6 @@ import (
 	"github.com/holiman/uint256"
 
 	"github.com/ava-labs/strevm/hook"
-	"github.com/ava-labs/strevm/saedb"
 	"github.com/ava-labs/strevm/saetest"
 	saetypes "github.com/ava-labs/strevm/types"
 )
@@ -31,8 +31,9 @@ import (
 type Stub struct {
 	Now                     func() time.Time
 	Target                  gas.Gas
+	InvalidOpIDs            set.Set[ids.ID]
 	Ops                     []Op
-	ExecutionResultsDBFn    func(string) (saedb.ExecutionResults, error)
+	ExecutionResultsDBFn    func(string) (saetypes.ExecutionResults, error)
 	CanExecuteTransactionFn func(common.Address, *common.Address, libevm.StateReader) error
 	GasPriceConfig          hook.GasPriceConfig
 }
@@ -56,6 +57,13 @@ func WithNow(now func() time.Time) HookOption {
 	})
 }
 
+// WithInvalidOpIDs overrides the default invalid end-of-block opIDs.
+func WithInvalidOpIDs(invalidOps set.Set[ids.ID]) HookOption {
+	return options.Func[Stub](func(s *Stub) {
+		s.InvalidOpIDs = invalidOps
+	})
+}
+
 // WithOps overrides the default end-of-block ops.
 func WithOps(ops []Op) HookOption {
 	return options.Func[Stub](func(s *Stub) {
@@ -64,7 +72,7 @@ func WithOps(ops []Op) HookOption {
 }
 
 // WithExecutionResultsDBFn overrides the default ExecutionResultsDB function.
-func WithExecutionResultsDBFn(fn func(string) (saedb.ExecutionResults, error)) HookOption {
+func WithExecutionResultsDBFn(fn func(string) (saetypes.ExecutionResults, error)) HookOption {
 	return options.Func[Stub](func(s *Stub) {
 		s.ExecutionResultsDBFn = fn
 	})
@@ -89,11 +97,11 @@ func NewStub(target gas.Gas, opts ...HookOption) *Stub {
 // ExecutionResultsDB propagates arguments to and from
 // [Stub.ExecutionResultsDBFn] if non-nil, otherwise it returns a fresh
 // [saetest.NewHeightIndexDB] on every call.
-func (s *Stub) ExecutionResultsDB(dataDir string) (saedb.ExecutionResults, error) {
+func (s *Stub) ExecutionResultsDB(dataDir string) (saetypes.ExecutionResults, error) {
 	if fn := s.ExecutionResultsDBFn; fn != nil {
 		return fn(dataDir)
 	}
-	return saedb.ExecutionResults{
+	return saetypes.ExecutionResults{
 		HeightIndex: saetest.NewHeightIndexDB(),
 	}, nil
 }
@@ -121,10 +129,19 @@ func (s *Stub) BuildHeader(parent *types.Header) (*types.Header, error) {
 	return hdr, nil
 }
 
-// PotentialEndOfBlockOps ignores its arguments and returns [Stub.Ops] as a
-// sequence.
-func (s *Stub) PotentialEndOfBlockOps(header *types.Header, lastSettledBlock common.Hash, source saetypes.BlockSource) iter.Seq[Op] {
-	return slices.Values(s.Ops)
+// PotentialEndOfBlockOps ignores its arguments and returns a sequence of ops
+// taken from [Stub.Ops] after removing [Stub.InvalidOpIDs].
+func (s *Stub) PotentialEndOfBlockOps(ctx context.Context, header *types.Header, lastSettledBlock common.Hash, source saetypes.BlockSource) iter.Seq[Op] {
+	return func(yield func(Op) bool) {
+		for _, op := range s.Ops {
+			if s.InvalidOpIDs.Contains(op.ID) {
+				continue
+			}
+			if !yield(op) {
+				return
+			}
+		}
+	}
 }
 
 // BuildBlock calls [BuildBlock] with its arguments.
@@ -134,8 +151,9 @@ func (*Stub) BuildBlock(
 	txs []*types.Transaction,
 	receipts []*types.Receipt,
 	ops []Op,
+	settledHeight uint64,
 ) (*types.Block, error) {
-	return BuildBlock(header, blockCtx, txs, receipts, ops)
+	return BuildBlock(header, blockCtx, txs, receipts, ops, settledHeight)
 }
 
 // BuildBlock encodes ops into [types.Header.Extra] and calls [types.NewBlock]
@@ -146,6 +164,7 @@ func BuildBlock(
 	txs []*types.Transaction,
 	receipts []*types.Receipt,
 	ops []Op,
+	settledHeight uint64,
 ) (*types.Block, error) {
 	var e extra
 	// If the header originally had fractional seconds set, we keep them in the
@@ -155,6 +174,7 @@ func BuildBlock(
 	}
 
 	e.ops = ops
+	e.settledHeight = settledHeight
 	header.Extra = e.MarshalCanoto()
 	return types.NewBlock(header, txs, nil, receipts, saetest.TrieHasher()), nil
 }
@@ -167,7 +187,7 @@ func (s *Stub) BlockRebuilderFrom(b *types.Block) (hook.BlockBuilder[Op], error)
 		return nil, err
 	}
 
-	return NewStub(s.Target, WithOps(e.ops), WithNow(func() time.Time {
+	return NewStub(s.Target, WithInvalidOpIDs(s.InvalidOpIDs), WithOps(e.ops), WithNow(func() time.Time {
 		return time.Unix(
 			int64(b.Time()), //nolint:gosec // Won't overflow for a few millennia
 			int64(e.subSec),
@@ -184,26 +204,33 @@ func (s *Stub) GasConfigAfter(*types.Header) (gas.Gas, hook.GasPriceConfig) {
 // [Stub.BuildHeader] in the header's `Extra` field. If said field is empty,
 // SubSecondBlockTime returns 0.
 func (s *Stub) SubSecondBlockTime(hdr *types.Header) time.Duration {
+	return getHeaderExtra(hdr, func(e extra) time.Duration { return e.subSec })
+}
+
+// SettledHeight returns the height encoded in the Header by [Stub.BuildBlock]
+// or [BuildBlock].
+func (*Stub) SettledHeight(hdr *types.Header) uint64 {
+	return getHeaderExtra(hdr, func(e extra) uint64 { return e.settledHeight })
+}
+
+// EndOfBlockOps return the ops included in the block by [BuildBlock].
+func (s *Stub) EndOfBlockOps(b *types.Block) ([]hook.Op, error) {
+	eOps := getHeaderExtra(b.Header(), func(e extra) []Op { return e.ops })
+	hookOps := make([]hook.Op, len(eOps))
+	for i, op := range eOps {
+		hookOps[i] = op.AsOp()
+	}
+	return hookOps, nil
+}
+
+func getHeaderExtra[T any](hdr *types.Header, get func(extra) T) T {
 	var e extra
 	if err := e.UnmarshalCanoto(hdr.Extra); err != nil {
 		// This is left as a panic to avoid polluting various functions with
 		// error returns when no error is possible in production.
 		panic(err)
 	}
-	return e.subSec
-}
-
-// EndOfBlockOps return the ops included in the block by [BuildBlock].
-func (s *Stub) EndOfBlockOps(b *types.Block) ([]hook.Op, error) {
-	var e extra
-	if err := e.UnmarshalCanoto(b.Extra()); err != nil {
-		return nil, err
-	}
-	ops := make([]hook.Op, len(e.ops))
-	for i, op := range e.ops {
-		ops[i] = op.AsOp()
-	}
-	return ops, nil
+	return get(e)
 }
 
 // CanExecuteTransaction proxies to [Stub.CanExecuteTransactionFn] if non-nil,
@@ -228,8 +255,9 @@ func (*Stub) AfterExecutingBlock(*state.StateDB, *types.Block, types.Receipts) e
 //go:generate go run github.com/StephenButtolph/canoto/canoto $GOFILE
 
 type extra struct {
-	subSec time.Duration `canoto:"int,1"` //nolint:staticcheck // subSec intentionally communicates that the value is < time.Second
-	ops    []Op          `canoto:"repeated value,2"`
+	subSec        time.Duration `canoto:"int,1"` //nolint:staticcheck // subSec intentionally communicates that the value is < time.Second
+	ops           []Op          `canoto:"repeated value,2"`
+	settledHeight uint64        `canoto:"uint,3"`
 
 	canotoData canotoData_extra
 }

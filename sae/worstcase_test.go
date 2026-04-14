@@ -15,7 +15,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ava-labs/avalanchego/snow"
 	"github.com/ava-labs/avalanchego/utils/logging"
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core/types"
@@ -110,7 +109,6 @@ func (g *guzzler) guzzle(env vm.PrecompileEnvironment, input []byte) ([]byte, er
 	return nil, nil
 }
 
-//nolint:tparallel // Why should we call t.Parallel at the top level by default?
 func TestWorstCase(t *testing.T) {
 	flags := worstCaseFuzzFlags
 	t.Logf("Flags: %+v", flags)
@@ -162,12 +160,13 @@ func TestWorstCase(t *testing.T) {
 				wantUsed: params.TxGas + 8*params.TxDataNonZeroGasEIP2028,
 			},
 		}
+		txs := make([]*types.Transaction, 0, len(precompileTests))
 		for _, tt := range precompileTests {
 			var data []byte
 			if k := tt.keep; k != nil {
 				data = binary.BigEndian.AppendUint64(nil, *k)
 			}
-			sut.mustSendTx(t, sut.wallet.SetNonceAndSign(t, 0, &types.DynamicFeeTx{
+			txs = append(txs, sut.wallet.SetNonceAndSign(t, 0, &types.DynamicFeeTx{
 				To:        &guzzle,
 				GasFeeCap: big.NewInt(1),
 				Gas:       tt.limit,
@@ -175,7 +174,7 @@ func TestWorstCase(t *testing.T) {
 			}))
 		}
 
-		b := sut.runConsensusLoop(t)
+		b := sut.runConsensusLoop(t, txs...)
 		require.NoError(t, b.WaitUntilExecuted(ctx), "%T.WaitUntilExecuted()", b)
 		require.Lenf(t, b.Receipts(), len(precompileTests), "%T.Receipts()", b)
 		for i, r := range b.Receipts() {
@@ -193,11 +192,6 @@ func TestWorstCase(t *testing.T) {
 			timeOpt, vmTime := withVMTime(t, time.Unix(saeparams.TauSeconds, 0))
 
 			ctx, sut := newSUT(t, flags.numAccounts, sutOpt, timeOpt)
-			// If we don't wait for blocks to be executed then their results may
-			// not be ready once they need to be settled, which will result in a
-			// WARNING log, which is considered an error. VMs in a bootstrapping
-			// state will automatically wait for execution.
-			require.NoError(t, sut.SetState(ctx, snow.Bootstrapping), "SetState(Bootstrapping)")
 
 			addrs := sut.wallet.Addresses()
 			numEOAs := len(addrs)
@@ -233,9 +227,10 @@ func TestWorstCase(t *testing.T) {
 
 					if err := sut.SendTransaction(ctx, tx); err != nil {
 						sut.wallet.DecrementNonce(t, from)
+						continue
 					}
+					sut.waitUntilTxsPending(t, tx)
 				}
-				sut.syncMempool(t)
 
 				for accepted := false; !accepted; {
 					vmTime.advance(time.Millisecond * time.Duration(rng.IntN(1000*3*saeparams.TauSeconds)))
@@ -250,6 +245,11 @@ func TestWorstCase(t *testing.T) {
 					default:
 						require.NoError(t, b.Verify(ctx), "Verify()")
 						require.NoError(t, b.Accept(ctx), "Accept()")
+
+						// Ensure the execution results are available for future
+						// LastToSettleAt calls.
+						require.NoError(t, unwrap(t, b).WaitUntilExecuted(ctx), "WaitUntilExecuted()")
+
 						accepted = true
 					}
 				}
